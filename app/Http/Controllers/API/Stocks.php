@@ -20,6 +20,19 @@ use Illuminate\Validation\ValidationException;
 
 class Stocks extends Controller
 {
+    /**
+     * Return a path relative to the Laravel public root (e.g. Images/Items/...).
+     * Clients prepend their own API image base — avoids cross-origin CORS from legacy STORE_DOMAIN hosts.
+     */
+    private function publicImagePath(?string $imageUrl): string
+    {
+        if ($imageUrl === null || $imageUrl === '') {
+            return 'no image';
+        }
+
+        return ltrim($imageUrl, '/');
+    }
+
     public function allProducts(){
 
 
@@ -37,7 +50,7 @@ class Stocks extends Controller
                         'product_id'    => $product->id,
                         'product_name'  => $product->nameAr, 
                         'product_stock' => $product->stock,
-                        'product_image' => $image ? env('STORE_DOMAIN').$image->imageUrl : 'no image',
+                        'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
                     ];
                 });
 
@@ -126,20 +139,20 @@ class Stocks extends Controller
 
 
             $product['product_normalImages'] = $product->normalImages->map(function($img) {
-                return $img->imageUrl 
-                    ? env('STORE_DOMAIN') . $img->imageUrl 
+                return $img->imageUrl
+                    ? $this->publicImagePath($img->imageUrl)
                     : 'no image';
             });
 
             $product['product_viewImages'] = $product->viewImages->map(function($img) {
-                return $img->imageUrl 
-                    ? env('STORE_DOMAIN') . $img->imageUrl 
+                return $img->imageUrl
+                    ? $this->publicImagePath($img->imageUrl)
                     : 'no image';
             });
 
             $product['product_image3d'] = $product->image3d->map(function($img) {
-                return $img->imageUrl 
-                    ? env('STORE_DOMAIN') . $img->imageUrl 
+                return $img->imageUrl
+                    ? $this->publicImagePath($img->imageUrl)
                     : 'no image';
             });
 
@@ -148,7 +161,7 @@ class Stocks extends Controller
             unset($product->image3d);
 
 
-            $product->videoUrl = $product->videoUrl? env('STORE_DOMAIN').$product->videoUrl : null;
+            $product->videoUrl = $product->videoUrl ? $this->publicImagePath($product->videoUrl) : null;
 
             return response()->json([
                 'status'=>'success',
@@ -546,7 +559,7 @@ private function replaceSizes(Request $request)
 
             $closeouts = Closeout::
             with('product:id,nameAr,min_sale_price,stock',
-           'product.normalImages:id,itemId,imageUrl')
+           'product.viewImages:id,itemId,imageUrl')
             ->where('status',$status)->get(['id','status','product_id']);
 
             $formatted = $closeouts->map(function($closeout){
@@ -560,7 +573,7 @@ private function replaceSizes(Request $request)
                         'product_stock' => $closeout->product->stock,
                         'product_min_sale_price' => $closeout->product->min_sale_price,
 
-                        'product_image' => $image ? env('STORE_DOMAIN').$image->imageUrl : 'no image',
+                        'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
                     ];
                 });
             return response()->json([
@@ -686,13 +699,13 @@ private function replaceSizes(Request $request)
             ->get(['id', 'nameAr','stock']); // select only needed columns
 
             $formatted = $productsWithCombinations->map(function($product){
-                $image = $product->viewImages->first();
+                $image = $product->normalImages->first();
 
                 return [
                     'product_id'=> $product->id,
                     'product_name'=> $product->nameAr,
                     'product_stock' => $product->stock,
-                    'product_image' => $image ? env('STORE_DOMAIN').$image->imageUrl : 'no image',
+                    'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
 
                     'number_of_used_products' => $product->combinations_count,
                 ];
@@ -822,7 +835,7 @@ private function replaceSizes(Request $request)
                         'product_id'    => $product->id,
                         'product_name'  => $product->nameAr, 
                         'product_stock' => $product->stock,
-                        'product_image' => $image ? env('STORE_DOMAIN').$image->imageUrl : 'no image',
+                        'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
                     ];
                 });
 
