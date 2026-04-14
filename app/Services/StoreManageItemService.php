@@ -68,18 +68,20 @@ class StoreManageItemService
             'stock_المرسل_لـ_ManageItem' => $targetStock,
         ]);
 
-        $parts = $this->buildManageItemMultipart($item, $targetStock);
+        $form = $this->buildManageItemFormParams($item, $targetStock);
         $url = $base.'/Items/ManageItem';
 
         $trace('ManageItem: طلب', [
             'url' => $url,
-            'parts_count' => count($parts),
+            'fields_count' => count($form),
+            'field_keys' => array_keys($form),
         ]);
 
+        // application/x-www-form-urlencoded يطابق ربط [FromForm] في ASP.NET أفضل من multipart من Laravel هنا
         $response = Http::withToken($token)
             ->timeout(120)
-            ->asMultipart($parts)
-            ->post($url);
+            ->asForm()
+            ->post($url, $form);
 
         $bodyPreview = mb_substr($response->body(), 0, 2000);
 
@@ -209,120 +211,116 @@ class StoreManageItemService
     }
 
     /**
-     * Build multipart parts for ItemWriterDtos / ManageItem. Only Stock is replaced with $targetStock.
+     * حقول مطابقة لـ ItemWriterDtos في المتجر (.NET) لربط [FromForm].
+     * المفاتيح: PascalCase كما في الخصائص، والمصفوفات بصيغة supCategoriesIds[0] و ItemSizes[0].Property.
      *
-     * @param  array<string, mixed>  $item  JSON from GetItemById (camelCase)
-     * @return array<int, array{name: string, contents: string}>
+     * @param  array<string, mixed>  $item  JSON من GetItemById (قد يكون camelCase أو PascalCase)
+     * @return array<string, scalar>
      */
-    private function buildManageItemMultipart(array $item, int $targetStock): array
+    private function buildManageItemFormParams(array $item, int $targetStock): array
     {
-        $parts = [];
+        $v = function (array $row, array $keys, $default = '') {
+            foreach ($keys as $k) {
+                if (array_key_exists($k, $row) && $row[$k] !== null) {
+                    return $row[$k];
+                }
+            }
 
-        $add = function (string $name, $value) use (&$parts): void {
-            if ($value === null) {
-                return;
-            }
-            if (is_bool($value)) {
-                $value = $value ? 'true' : 'false';
-            }
-            $parts[] = ['name' => $name, 'contents' => (string) $value];
+            return $default;
         };
 
-        $id = (int) ($item['id'] ?? 0);
-        $add('Id', $id);
+        $id = (int) $v($item, ['id', 'Id'], 0);
 
-        $add('NameAr', $item['nameAr'] ?? '');
-        $add('NameEng', $item['nameEng'] ?? '');
-        $add('NameAbree', $item['nameAbree'] ?? '');
+        $form = [
+            'Id' => $id,
+            'NameAr' => (string) $v($item, ['nameAr', 'NameAr'], ''),
+            'NameEng' => (string) $v($item, ['nameEng', 'NameEng'], ''),
+            'NameAbree' => (string) $v($item, ['nameAbree', 'NameAbree'], ''),
+            'IsShow' => filter_var($v($item, ['isShow', 'IsShow'], true), FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false',
+            'DescriptionAr' => (string) $v($item, ['descriptionAr', 'DescriptionAr'], ''),
+            'DescriptionEng' => (string) $v($item, ['descriptionEng', 'DescriptionEng'], ''),
+            'DescriptionAbree' => (string) $v($item, ['descriptionAbree', 'DescriptionAbree'], ''),
+            'Model' => (string) $v($item, ['model', 'Model'], ''),
+            'IsNewItem' => filter_var($v($item, ['isNewItem', 'IsNewItem'], true), FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false',
+            'IsMoreSales' => filter_var($v($item, ['isMoreSales', 'IsMoreSales'], true), FILTER_VALIDATE_BOOLEAN) ? 'true' : 'false',
+            'rate' => (string) $v($item, ['rate', 'Rate'], 4),
+            'ManufactureYear' => (string) (int) $v($item, ['manufactureYear', 'ManufactureYear'], 0),
+            'NormailPrice' => (string) $v($item, ['normailPrice', 'NormailPrice'], 0),
+            'WholesalePrice' => (string) $v($item, ['wholesalePrice', 'WholesalePrice'], 0),
+            'Discount' => (string) $v($item, ['discount', 'Discount'], 0),
+            'Stock' => (string) $targetStock,
+        ];
 
-        $add('IsShow', (bool) ($item['isShow'] ?? true));
-        $add('DescriptionAr', $item['descriptionAr'] ?? '');
-        $add('DescriptionEng', $item['descriptionEng'] ?? '');
-        $add('DescriptionAbree', $item['descriptionAbree'] ?? '');
-        $add('Model', $item['model'] ?? '');
-
-        $add('IsNewItem', $item['isNewItem'] ?? true);
-        $add('IsMoreSales', $item['isMoreSales'] ?? true);
-
-        $add('rate', $item['rate'] ?? 4);
-        $add('ManufactureYear', $item['manufactureYear'] ?? 0);
-
-        $add('NormailPrice', $item['normailPrice'] ?? 0);
-        $add('WholesalePrice', $item['wholesalePrice'] ?? 0);
-        $add('Discount', $item['discount'] ?? 0);
-
-        $add('Stock', $targetStock);
-
-        if (! empty($item['userIdAdd'])) {
-            $add('UserIdAdd', $item['userIdAdd']);
+        $uidAdd = $v($item, ['userIdAdd', 'UserIdAdd'], '');
+        if ($uidAdd !== '' && $uidAdd !== null) {
+            $form['UserIdAdd'] = (string) $uidAdd;
         }
-        $this->addDatePart($add, 'DateAdd', $item['dateAdd'] ?? null);
-        if (! empty($item['userIdUpdate'])) {
-            $add('UserIdUpdate', $item['userIdUpdate']);
+        $uidUp = $v($item, ['userIdUpdate', 'UserIdUpdate'], '');
+        if ($uidUp !== '' && $uidUp !== null) {
+            $form['UserIdUpdate'] = (string) $uidUp;
         }
-        $this->addDatePart($add, 'DateUpdate', $item['dateUpdate'] ?? null);
 
-        $supCategories = $item['supCategory'] ?? [];
+        $dateAdd = $v($item, ['dateAdd', 'DateAdd'], null);
+        if ($dateAdd !== null && $dateAdd !== '' && ! is_array($dateAdd)) {
+            $form['DateAdd'] = (string) $dateAdd;
+        }
+        $dateUp = $v($item, ['dateUpdate', 'DateUpdate'], null);
+        if ($dateUp !== null && $dateUp !== '' && ! is_array($dateUp)) {
+            $form['DateUpdate'] = (string) $dateUp;
+        }
+
+        $supCategories = $v($item, ['supCategory', 'SupCategory'], []);
         if (! is_array($supCategories)) {
             $supCategories = [];
         }
-        $i = 0;
+        $si = 0;
         foreach ($supCategories as $sub) {
             if (! is_array($sub)) {
                 continue;
             }
-            if (isset($sub['id'])) {
-                $parts[] = ['name' => 'supCategoriesIds['.$i.']', 'contents' => (string) $sub['id']];
-                $i++;
+            $sid = $sub['id'] ?? $sub['Id'] ?? null;
+            if ($sid !== null) {
+                $form['supCategoriesIds['.$si.']'] = (int) $sid;
+                $si++;
             }
         }
 
-        $sizes = $item['itemSizes'] ?? [];
-        if (is_array($sizes)) {
-            foreach ($sizes as $si => $size) {
-                if (! is_array($size)) {
+        $sizes = $v($item, ['itemSizes', 'ItemSizes'], []);
+        if (! is_array($sizes)) {
+            $sizes = [];
+        }
+        foreach ($sizes as $sx => $size) {
+            if (! is_array($size)) {
+                continue;
+            }
+            $p = 'ItemSizes['.$sx.']';
+            $form[$p.'.Id'] = (int) $v($size, ['id', 'Id'], 0);
+            $form[$p.'.ItemId'] = (int) $v($size, ['itemId', 'ItemId'], $id);
+            $form[$p.'.Size'] = (string) $v($size, ['size', 'Size'], '');
+            $form[$p.'.Discount'] = (string) $v($size, ['discount', 'Discount'], 0);
+            $form[$p.'.Description'] = (string) $v($size, ['description', 'Description'], '');
+
+            $colors = $v($size, ['itemSizeColor', 'ItemSizeColor'], []);
+            if (! is_array($colors)) {
+                $colors = [];
+            }
+            foreach ($colors as $ci => $color) {
+                if (! is_array($color)) {
                     continue;
                 }
-                $p = 'ItemSizes['.$si.']';
-                $add($p.'.Id', $size['id'] ?? 0);
-                $add($p.'.ItemId', $size['itemId'] ?? $id);
-                $add($p.'.Size', $size['size'] ?? '');
-                $add($p.'.Discount', $size['discount'] ?? 0);
-                $add($p.'.Description', $size['description'] ?? '');
-
-                $colors = $size['itemSizeColor'] ?? [];
-                if (! is_array($colors)) {
-                    $colors = [];
-                }
-                foreach ($colors as $ci => $color) {
-                    if (! is_array($color)) {
-                        continue;
-                    }
-                    $cp = $p.'.ItemSizeColor['.$ci.']';
-                    $add($cp.'.Id', $color['id'] ?? 0);
-                    $add($cp.'.SizeId', $color['sizeId'] ?? ($size['id'] ?? 0));
-                    $add($cp.'.ColorAr', $color['colorAr'] ?? '');
-                    $add($cp.'.ColorEn', $color['colorEn'] ?? '');
-                    $add($cp.'.ColorAbbr', $color['colorAbbr'] ?? '');
-                    $add($cp.'.NormailPrice', $color['normailPrice'] ?? 0);
-                    $add($cp.'.WholesalePrice', $color['wholesalePrice'] ?? 0);
-                    $add($cp.'.Discount', $color['discount'] ?? 0);
-                    $add($cp.'.Stock', $color['stock'] ?? 0);
-                }
+                $cp = $p.'.ItemSizeColor['.$ci.']';
+                $form[$cp.'.Id'] = (int) $v($color, ['id', 'Id'], 0);
+                $form[$cp.'.SizeId'] = (int) $v($color, ['sizeId', 'SizeId'], (int) $v($size, ['id', 'Id'], 0));
+                $form[$cp.'.ColorAr'] = (string) $v($color, ['colorAr', 'ColorAr'], '');
+                $form[$cp.'.ColorEn'] = (string) $v($color, ['colorEn', 'ColorEn'], '');
+                $form[$cp.'.ColorAbbr'] = (string) $v($color, ['colorAbbr', 'ColorAbbr'], '');
+                $form[$cp.'.NormailPrice'] = (string) $v($color, ['normailPrice', 'NormailPrice'], 0);
+                $form[$cp.'.WholesalePrice'] = (string) $v($color, ['wholesalePrice', 'WholesalePrice'], 0);
+                $form[$cp.'.Discount'] = (string) $v($color, ['discount', 'Discount'], 0);
+                $form[$cp.'.Stock'] = (string) $v($color, ['stock', 'Stock'], 0);
             }
         }
 
-        return $parts;
-    }
-
-    private function addDatePart(callable $add, string $name, $value): void
-    {
-        if ($value === null || $value === '') {
-            return;
-        }
-        if (is_array($value)) {
-            return;
-        }
-        $add($name, $value);
+        return $form;
     }
 }
