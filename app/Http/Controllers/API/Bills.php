@@ -9,6 +9,7 @@ use App\Models\BillQuantity;
 use App\Models\Debt;
 use App\Models\Product;
 use App\Models\PurchaseProduct;
+use App\Services\StoreManageItemService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -37,6 +38,7 @@ class Bills extends Controller
                 'total' => $request->total
 
             ]);
+            $storeSyncWarnings = [];
             foreach($request->products as $item){
                 $product = Product::findOrFail($item['product_id']);
 
@@ -63,6 +65,11 @@ class Bills extends Controller
                     'quantity'=> $item['quantity'],
                     'price' => $item['purchase_price'],
                 ]);
+
+                $sync = app(StoreManageItemService::class)->syncProductStockToStore($product->fresh());
+                if (! ($sync['ok'] ?? false)) {
+                    $storeSyncWarnings[] = ($sync['error'] ?? __('messages.something_wrong')).' (منتج '.$product->id.')';
+                }
                 
             }
 
@@ -72,10 +79,15 @@ class Bills extends Controller
             Logs::createLog('انشاء فاتورة جديدة','انشاء فاتورة جديدة للتاجر'.' '
             .$bill->seller->name.' '.'بقيمة'.' '.$bill->total,'bills');
 
-            return response()->json([
+            $payload = [
                 'status'=>'success',
                 'message'=> __('messages.bill_added'),
-            ],200);
+            ];
+            if (count($storeSyncWarnings) > 0) {
+                $payload['store_sync_warnings'] = $storeSyncWarnings;
+            }
+
+            return response()->json($payload,200);
             
         }
 
@@ -232,6 +244,7 @@ private function getBills($statuses)
 
             ]);
 
+                $storeSyncWarnings = [];
                 foreach($request->products as $item){
                     $product = Product::findOrFail($item['product_id']);
                     $product->update(['stock'=> $product->stock+ $item['quantity']]);
@@ -239,14 +252,24 @@ private function getBills($statuses)
                     BillQuantity::create([
                         'product_id'=> $product->id,
                         'quantity' => $item['quantity'],
-                    ],200);
+                    ]);
+
+                    $sync = app(StoreManageItemService::class)->syncProductStockToStore($product->fresh());
+                    if (! ($sync['ok'] ?? false)) {
+                        $storeSyncWarnings[] = ($sync['error'] ?? __('messages.something_wrong')).' (منتج '.$product->id.')';
+                    }
 
                 }
 
-                return response()->json([
+                $payload = [
                 'status'=>'success',
                 'message'=> __('messages.bill_quantity_added'),
-            ],200);
+            ];
+                if (count($storeSyncWarnings) > 0) {
+                    $payload['store_sync_warnings'] = $storeSyncWarnings;
+                }
+
+                return response()->json($payload,200);
             
         }
 
