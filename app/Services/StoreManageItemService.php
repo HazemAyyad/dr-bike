@@ -12,21 +12,41 @@ use Illuminate\Support\Facades\Log;
  */
 class StoreManageItemService
 {
-    public function syncProductStockToStore(Product $product): array
+    /**
+     * @param  callable|null  $step  function (string $message, array $context = []): void
+     */
+    public function syncProductStockToStore(Product $product, ?callable $step = null): array
     {
+        $trace = $this->makeTracer($step);
+
+        $trace('بدء المزامنة', [
+            'product_id' => $product->id,
+            'stock_محلي' => $product->stock,
+        ]);
+
         if (! config('store.sync_stock_on_bill')) {
-            return ['ok' => true];
+            $trace('تخطي: STORE_SYNC_STOCK_ON_BILL معطّل', []);
+
+            return ['ok' => true, 'skipped' => true];
         }
 
         $base = config('store.domain');
         $email = config('store.email');
         $password = config('store.password');
 
+        $trace('إعدادات المتجر', [
+            'domain' => $base,
+            'email' => $email,
+            'password_set' => $password !== null && $password !== '',
+        ]);
+
         if ($base === '' || $email === null || $password === null) {
-            return ['ok' => true];
+            $trace('تخطي: إعدادات المتجر غير مكتملة', []);
+
+            return ['ok' => true, 'skipped' => true];
         }
 
-        $token = $this->login($base, $email, $password);
+        $token = $this->login($base, $email, $password, $trace);
         if ($token === null) {
             $msg = 'متجر: فشل تسجيل الدخول';
             Log::warning($msg, ['product_id' => $product->id]);
@@ -34,7 +54,7 @@ class StoreManageItemService
             return ['ok' => false, 'error' => $msg];
         }
 
-        $item = $this->fetchItemById($base, $token, (int) $product->id);
+        $item = $this->fetchItemById($base, $token, (int) $product->id, $trace);
         if ($item === null) {
             $msg = 'متجر: تعذر جلب الصنف';
             Log::warning($msg, ['product_id' => $product->id]);
@@ -42,13 +62,26 @@ class StoreManageItemService
             return ['ok' => false, 'error' => $msg];
         }
 
-        $parts = $this->buildManageItemMultipart($item, (int) $product->stock);
+        $targetStock = (int) $product->stock;
+        $trace('بيانات الصنف من المتجر (قبل التعديل)', [
+            'stock_في_المتجر' => $item['stock'] ?? null,
+            'stock_المرسل_لـ_ManageItem' => $targetStock,
+        ]);
+
+        $parts = $this->buildManageItemMultipart($item, $targetStock);
         $url = $base.'/Items/ManageItem';
+
+        $trace('ManageItem: طلب', [
+            'url' => $url,
+            'parts_count' => count($parts),
+        ]);
 
         $response = Http::withToken($token)
             ->timeout(120)
             ->asMultipart($parts)
             ->post($url);
+
+        $bodyPreview = mb_substr($response->body(), 0, 2000);
 
         if (! $response->successful()) {
             $msg = 'متجر: فشل ManageItem (HTTP '.$response->status().')';
@@ -56,28 +89,77 @@ class StoreManageItemService
                 'product_id' => $product->id,
                 'body' => $response->body(),
             ]);
+            $trace('ManageItem: فشل', [
+                'http_status' => $response->status(),
+                'body_preview' => $bodyPreview,
+            ]);
 
             return ['ok' => false, 'error' => $msg];
         }
 
+        $trace('ManageItem: نجاح', [
+            'http_status' => $response->status(),
+            'body_preview' => $bodyPreview,
+        ]);
+
+        Log::info('متجر: تم تحديث المخزون عبر ManageItem', [
+            'product_id' => $product->id,
+            'stock' => $product->stock,
+        ]);
+
         return ['ok' => true];
     }
 
-    private function login(string $base, string $email, string $password): ?string
+    /**
+     * @param  callable|null  $step
+     */
+    private function makeTracer(?callable $step): callable
     {
-        $response = Http::timeout(30)->post($base.'/Auth/login', [
-            'email' => $email,
-            'password' => $password,
-        ]);
+        return function (string $message, array $context = []) use ($step): void {
+            Log::info('[store-sync] '.$message, $context);
+            if ($step !== null) {
+                $step($message, $context);
+            }
+        };
+    }
+
+    private function login(string $base, string $email, string $password, ?callable $trace = null): ?string
+    {
+        $trace = $trace ?? function (): void {};
+        $trace('Auth/login: إرسال الطلب', ['url' => $base.'/Auth/login']);
+
+        $response = Http::timeout(30)
+            ->acceptJson()
+            ->asJson()
+            ->post($base.'/Auth/login', [
+                'email' => $email,
+                'password' => $password,
+            ]);
 
         if (! $response->successful()) {
+            Log::warning('متجر: Auth/login فشل', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+            $trace('Auth/login: فشل', [
+                'http_status' => $response->status(),
+                'body_preview' => mb_substr($response->body(), 0, 1500),
+            ]);
+
             return null;
         }
 
-        return $response->json('token');
+        $json = $response->json();
+        $token = $json['token'] ?? $json['Token'] ?? null;
+
+        $trace('Auth/login: نجاح', [
+            'token_length' => $token !== null ? strlen($token) : 0,
+        ]);
+
+        return $token;
     }
 
-    private function fetchItemById(string $base, string $token, int $itemId): ?array
+    private function fetchItemById(string $base, string $token, int $itemId, ?callable $trace = null): ?array
     {
         $criteria = [
             'listRelatedObjects' => [
@@ -93,15 +175,35 @@ class StoreManageItemService
             'paginationInfo' => ['pageIndex' => 0, 'pageSize' => 0],
         ];
 
+        $trace = $trace ?? function (): void {};
+        $trace('GetItemById: إرسال الطلب', ['itemId' => $itemId, 'url' => $base.'/Items/GetItemById?itemId='.$itemId]);
+
         $response = Http::withToken($token)
+            ->acceptJson()
+            ->asJson()
             ->timeout(120)
             ->post($base.'/Items/GetItemById?itemId='.$itemId, $criteria);
 
         if (! $response->successful()) {
+            Log::warning('متجر: GetItemById فشل', [
+                'item_id' => $itemId,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+            $trace('GetItemById: فشل', [
+                'http_status' => $response->status(),
+                'body_preview' => mb_substr($response->body(), 0, 1500),
+            ]);
+
             return null;
         }
 
         $data = $response->json();
+        $trace('GetItemById: نجاح', [
+            'id' => is_array($data) ? ($data['id'] ?? null) : null,
+            'stock' => is_array($data) ? ($data['stock'] ?? null) : null,
+            'nameAr' => is_array($data) ? ($data['nameAr'] ?? null) : null,
+        ]);
 
         return is_array($data) ? $data : null;
     }
@@ -151,9 +253,13 @@ class StoreManageItemService
 
         $add('Stock', $targetStock);
 
-        $add('UserIdAdd', $item['userIdAdd'] ?? '');
+        if (! empty($item['userIdAdd'])) {
+            $add('UserIdAdd', $item['userIdAdd']);
+        }
         $this->addDatePart($add, 'DateAdd', $item['dateAdd'] ?? null);
-        $add('UserIdUpdate', $item['userIdUpdate'] ?? '');
+        if (! empty($item['userIdUpdate'])) {
+            $add('UserIdUpdate', $item['userIdUpdate']);
+        }
         $this->addDatePart($add, 'DateUpdate', $item['dateUpdate'] ?? null);
 
         $supCategories = $item['supCategory'] ?? [];
