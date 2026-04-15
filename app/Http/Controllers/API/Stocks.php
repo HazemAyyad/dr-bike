@@ -13,6 +13,7 @@ use App\Models\SizeColor;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\WholesaleProduct;
+use App\Services\StoreManageItemService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -408,10 +409,18 @@ private function replaceSizes(Request $request)
             $this->replaceSizes($request);
             $this->replaceWholesales($request,$request->product_id);
 
-            return response()->json([
+            $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($request->product_id);
+            $storeSync = app(StoreManageItemService::class)->syncProductEditToStore($product);
+
+            $payload = [
                 'status'=>'success',
                 'message'=> __('messages.product_updated'),
-            ],200);
+            ];
+            if (! ($storeSync['ok'] ?? false) && empty($storeSync['skipped'])) {
+                $payload['store_sync_warning'] = $storeSync['error'] ?? __('messages.something_wrong');
+            }
+
+            return response()->json($payload,200);
 
         }
 

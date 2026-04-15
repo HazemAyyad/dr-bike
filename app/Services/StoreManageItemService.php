@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Product;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -110,6 +111,268 @@ class StoreManageItemService
         ]);
 
         return ['ok' => true];
+    }
+
+    /**
+     * بعد تعديل المنتج محلياً: يدمج بيانات Laravel مع صف المتجر ويرسل ManageItem.
+     *
+     * @param  callable|null  $step  function (string $message, array $context = []): void
+     * @param  Request|null  $request  إن وُجدت ملفات (صور/فيديو) تُرسل multipart كـ ManageItem في .NET
+     */
+    public function syncProductEditToStore(Product $product, ?callable $step = null, ?Request $request = null): array
+    {
+        $trace = $this->makeTracer($step);
+
+        $trace('بدء مزامنة تعديل المنتج', ['product_id' => $product->id]);
+
+        if (! config('store.sync_on_product_edit')) {
+            $trace('تخطي: STORE_SYNC_ON_PRODUCT_EDIT معطّل', []);
+
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        $base = config('store.domain');
+        $email = config('store.email');
+        $password = config('store.password');
+
+        if ($base === '' || $email === null || $password === null) {
+            $trace('تخطي: إعدادات المتجر غير مكتملة', []);
+
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        $token = $this->login($base, $email, $password, $trace);
+        if ($token === null) {
+            return ['ok' => false, 'error' => 'متجر: فشل تسجيل الدخول'];
+        }
+
+        $item = $this->fetchItemById($base, $token, (int) $product->id, $trace);
+        if ($item === null) {
+            return ['ok' => false, 'error' => 'متجر: تعذر جلب الصنف'];
+        }
+
+        $merged = $this->mergeStoreItemWithProduct($item, $product);
+        $targetStock = $this->resolveStockForManageItem($product);
+
+        $trace('بعد الدمج مع Laravel', [
+            'stock_المرسل' => $targetStock,
+            'nameAr' => $merged['nameAr'] ?? $merged['NameAr'] ?? null,
+        ]);
+
+        $form = $this->buildManageItemFormParams($merged, $targetStock);
+        $url = $base.'/Items/ManageItem';
+
+        $trace('ManageItem (تعديل): طلب', [
+            'url' => $url,
+            'fields_count' => count($form),
+            'multipart_files' => $request ? $this->countManageItemUploads($request) : 0,
+        ]);
+
+        $response = $this->postManageItem($base, $token, $form, $request, $trace);
+
+        $bodyPreview = mb_substr($response->body(), 0, 2000);
+
+        if (! $response->successful()) {
+            Log::warning('متجر: فشل ManageItem بعد تعديل المنتج', [
+                'product_id' => $product->id,
+                'body' => $response->body(),
+            ]);
+            $trace('ManageItem: فشل', [
+                'http_status' => $response->status(),
+                'body_preview' => $bodyPreview,
+            ]);
+
+            return ['ok' => false, 'error' => 'متجر: فشل ManageItem (HTTP '.$response->status().')'];
+        }
+
+        $trace('ManageItem (تعديل): نجاح', ['http_status' => $response->status()]);
+        Log::info('متجر: تمت مزامنة تعديل المنتج', ['product_id' => $product->id]);
+
+        return ['ok' => true];
+    }
+
+    /**
+     * @param  array<string, scalar>  $form
+     */
+    private function postManageItem(string $base, string $token, array $form, ?Request $request, callable $trace): \Illuminate\Http\Client\Response
+    {
+        $url = $base.'/Items/ManageItem';
+
+        if ($request === null || ! $this->requestHasManageItemFiles($request)) {
+            return Http::withToken($token)
+                ->timeout(120)
+                ->asForm()
+                ->post($url, $form);
+        }
+
+        $http = Http::withToken($token)->timeout(300);
+
+        if ($request->hasFile('video')) {
+            $v = $request->file('video');
+            if ($v->isValid()) {
+                $http = $http->attach('Video', file_get_contents($v->getRealPath()), $v->getClientOriginalName());
+            }
+        }
+
+        foreach ($request->file('normal_images', []) ?: [] as $f) {
+            if ($f && $f->isValid()) {
+                $http = $http->attach('NormalImg', file_get_contents($f->getRealPath()), $f->getClientOriginalName());
+            }
+        }
+
+        foreach ($request->file('three_d_images', []) ?: [] as $f) {
+            if ($f && $f->isValid()) {
+                $http = $http->attach('threeDImg', file_get_contents($f->getRealPath()), $f->getClientOriginalName());
+            }
+        }
+
+        foreach ($request->file('view_images', []) ?: [] as $f) {
+            if ($f && $f->isValid()) {
+                $http = $http->attach('ViewImg', file_get_contents($f->getRealPath()), $f->getClientOriginalName());
+            }
+        }
+
+        $trace('ManageItem: إرسال multipart (ملفات مرفقة)', []);
+
+        return $http->post($url, $form);
+    }
+
+    private function requestHasManageItemFiles(Request $request): bool
+    {
+        if ($request->hasFile('video')) {
+            return true;
+        }
+
+        foreach (['normal_images', 'three_d_images', 'view_images'] as $key) {
+            foreach ($request->file($key, []) ?: [] as $f) {
+                if ($f && $f->isValid()) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function countManageItemUploads(Request $request): int
+    {
+        $n = $request->hasFile('video') ? 1 : 0;
+        foreach (['normal_images', 'three_d_images', 'view_images'] as $key) {
+            $n += count(array_filter($request->file($key, []) ?: []));
+        }
+
+        return $n;
+    }
+
+    /**
+     * يدمج حقول المنتج المحلي فوق JSON GetItemById.
+     *
+     * @param  array<string, mixed>  $item
+     * @return array<string, mixed>
+     */
+    private function mergeStoreItemWithProduct(array $item, Product $product): array
+    {
+        $nameAr = (string) $product->nameAr;
+        $merged = $item;
+
+        $merged['nameAr'] = $nameAr;
+        $merged['nameEng'] = $product->nameEng !== null && $product->nameEng !== ''
+            ? (string) $product->nameEng
+            : $nameAr;
+        $merged['nameAbree'] = $product->nameAbree !== null && $product->nameAbree !== ''
+            ? (string) $product->nameAbree
+            : $nameAr;
+
+        $merged['descriptionAr'] = (string) $product->descriptionAr;
+        $merged['descriptionEng'] = $product->descriptionEng !== null
+            ? (string) $product->descriptionEng
+            : (string) $product->descriptionAr;
+        $merged['descriptionAbree'] = $product->descriptionAbree !== null
+            ? (string) $product->descriptionAbree
+            : (string) $product->descriptionAr;
+
+        $merged['isShow'] = (bool) $product->isShow;
+        $merged['model'] = $product->model !== null ? (string) $product->model : '';
+        $merged['isNewItem'] = (bool) $product->isNewItem;
+        $merged['isMoreSales'] = (bool) $product->isMoreSales;
+        $merged['rate'] = $product->rate !== null ? (float) $product->rate : 4;
+        $merged['manufactureYear'] = $product->manufactureYear !== null ? (int) $product->manufactureYear : 0;
+        $merged['normailPrice'] = $product->normailPrice !== null ? $product->normailPrice : 0;
+        $merged['wholesalePrice'] = $product->wholesalePrice !== null ? $product->wholesalePrice : 0;
+        $merged['discount'] = $product->discount !== null ? $product->discount : 0;
+
+        $subIds = $product->subCategories
+            ->pluck('sub_category_id')
+            ->filter()
+            ->values()
+            ->all();
+
+        if (count($subIds) > 0) {
+            $merged['supCategory'] = array_map(fn (int $id) => ['id' => $id], $subIds);
+        }
+
+        if ($product->relationLoaded('sizes') && $product->sizes->isNotEmpty()) {
+            $merged['itemSizes'] = $this->buildItemSizesPayloadFromProduct($product);
+        }
+
+        return $merged;
+    }
+
+    /**
+     * مخزون الصنف للـ API: بدون مقاسات = product.stock؛ مع ألوان = مجموع مخزون الألوان.
+     */
+    private function resolveStockForManageItem(Product $product): int
+    {
+        if (! $product->relationLoaded('sizes')) {
+            $product->load('sizes.colorSizes');
+        }
+
+        if ($product->sizes->isEmpty()) {
+            return (int) $product->stock;
+        }
+
+        $sum = 0;
+        foreach ($product->sizes as $size) {
+            foreach ($size->colorSizes as $color) {
+                $sum += (int) $color->stock;
+            }
+        }
+
+        return $sum;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildItemSizesPayloadFromProduct(Product $product): array
+    {
+        $rows = [];
+        foreach ($product->sizes as $size) {
+            $colorRows = [];
+            foreach ($size->colorSizes as $c) {
+                $colorRows[] = [
+                    'id' => (int) $c->id,
+                    'sizeId' => (int) $c->sizeId,
+                    'colorAr' => (string) $c->colorAr,
+                    'colorEn' => $c->colorEn !== null ? (string) $c->colorEn : '',
+                    'colorAbbr' => $c->colorAbbr !== null ? (string) $c->colorAbbr : '',
+                    'normailPrice' => $c->normailPrice !== null ? $c->normailPrice : 0,
+                    'wholesalePrice' => $c->wholesalePrice !== null ? $c->wholesalePrice : 0,
+                    'discount' => $c->discount !== null ? $c->discount : 0,
+                    'stock' => (int) $c->stock,
+                ];
+            }
+            $rows[] = [
+                'id' => (int) $size->id,
+                'itemId' => (int) $product->id,
+                'size' => (string) $size->size,
+                'discount' => $size->discount !== null ? $size->discount : 0,
+                'description' => $size->description !== null ? (string) $size->description : '',
+                'itemSizeColor' => $colorRows,
+            ];
+        }
+
+        return $rows;
     }
 
     /**

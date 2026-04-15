@@ -5,6 +5,7 @@ use App\Http\Controllers\API\EmployeeTasks;
 use App\Http\Controllers\API\Products;
 use App\Http\Controllers\API\Stocks;
 use App\Http\Controllers\API\Test;
+use App\Http\Controllers\ProductEditTestController;
 use App\Http\Controllers\StoreSyncTestController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -27,6 +28,10 @@ Route::get('/', function () {
 /** اختبار مزامنة المخزون مع متجر .NET — راجع الصفحة والتحذير داخلها */
 Route::get('/test/store-sync', [StoreSyncTestController::class, 'show'])->name('test.store-sync');
 Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('test.store-sync.run');
+
+/** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
+Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
+Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');
 
 Route::get('/test/tasks', [EmployeeTasks::class, 'getCompletedTasks']);
 

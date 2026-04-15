@@ -11,4 +11,5 @@ return [
     'email' => env('STORE_EMAIL') !== null ? trim((string) env('STORE_EMAIL')) : null,
     'password' => env('STORE_PASSWORD') !== null ? trim((string) env('STORE_PASSWORD')) : null,
     'sync_stock_on_bill' => filter_var(env('STORE_SYNC_STOCK_ON_BILL', true), FILTER_VALIDATE_BOOLEAN),
+    'sync_on_product_edit' => filter_var(env('STORE_SYNC_ON_PRODUCT_EDIT', true), FILTER_VALIDATE_BOOLEAN),
 ];
