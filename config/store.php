@@ -12,4 +12,17 @@ return [
     'password' => env('STORE_PASSWORD') !== null ? trim((string) env('STORE_PASSWORD')) : null,
     'sync_stock_on_bill' => filter_var(env('STORE_SYNC_STOCK_ON_BILL', true), FILTER_VALIDATE_BOOLEAN),
     'sync_on_product_edit' => filter_var(env('STORE_SYNC_ON_PRODUCT_EDIT', true), FILTER_VALIDATE_BOOLEAN),
+
+    /**
+     * أحجام افتراضية تظهر في قائمة الاختبار إضافةً إلى القيم المميزة من جدول sizes.
+     * ليست مرتبطة بالتصنيف في Laravel — الحقل sizes.size نص حر لكل منتج (ومثل .NET ItemSize.Size).
+     * يمكن تجاوزها بمتغير بيئة مفصول بفواصل: STORE_SIZE_OPTIONS="صغير,متوسط,كبير,XL"
+     */
+    'size_options' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('STORE_SIZE_OPTIONS', 'صغير,متوسط,كبير'))
+    ))),
+
+    /** حد أقصى لعدد المنتجات في قائمة اختيار المنتج (صفحة التعديل) */
+    'product_picker_limit' => max(1, (int) env('STORE_PRODUCT_PICKER_LIMIT', 8000)),
 ];

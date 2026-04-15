@@ -33,6 +33,10 @@ Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
 Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');
 
+/** جدول المنتجات (DataTables) + JSON للخادم */
+Route::get('/test/products-list', [ProductEditTestController::class, 'productsList'])->name('test.products-list');
+Route::get('/test/products-list/data', [ProductEditTestController::class, 'productsData'])->name('test.products-list.data');
+
 Route::get('/test/tasks', [EmployeeTasks::class, 'getCompletedTasks']);
 
 Auth::routes();
@@ -41,21 +45,16 @@ Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name
 Route::get('/edit/{id}', [Test::class, 'edit']);
 Route::put('/update/{id}', [Test::class, 'update'])->name('projects.update');
 
-
 // Route::get('/test/per', [EmployeeDetails::class, 'viewTest']);
 Route::get('/test/store/products', [Products::class, 'importAllProducts']);
-
 
 // main categories
 Route::get('/store/shown/main/categories', [Products::class, 'storeShownMainCategories']);
 Route::get('/store/unshown/main/categories', [Products::class, 'storeUnshownMainCategories']);
 
-
 // sub categories
 Route::get('/store/sub/categories', [Products::class, 'storeSubCategories']);
 
-
 Route::get('/test/products', [Test::class, 'importAllProducts']);
 
-
-  //  Route::get('/max' , [Stocks::class,'maxExc']);
+//  Route::get('/max' , [Stocks::class,'maxExc']);

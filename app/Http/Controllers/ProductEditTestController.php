@@ -8,60 +8,164 @@ use App\Models\SizeColor;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Services\StoreManageItemService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\View\View;
 
 /**
  * نموذج تجريبي يشبه لوحة إدارة المتجر — تعديل محلي ثم مزامنة ManageItem.
  */
 class ProductEditTestController extends Controller
 {
-    public function show(Request $request)
+    public function show(Request $request): View|\Illuminate\Http\RedirectResponse
     {
-        $pid = (int) $request->query('product_id', 532);
-        $prefill = Product::with(['subCategories', 'sizes.colorSizes'])->find($pid);
-
-        $sizeOptions = Size::query()
-            ->whereNotNull('size')
-            ->where('size', '!=', '')
-            ->distinct()
-            ->orderBy('size')
-            ->pluck('size')
-            ->values();
-
-        if ($prefill) {
-            foreach ($prefill->sizes as $s) {
-                if ($s->size && ! $sizeOptions->contains($s->size)) {
-                    $sizeOptions->push($s->size);
-                }
-            }
-            $sizeOptions = $sizeOptions->unique()->sort()->values();
+        $pid = $request->query('product_id');
+        if ($pid === null || $pid === '') {
+            return redirect()->route('test.products-list');
         }
+
+        $prefill = Product::with([
+            'subCategories',
+            'sizes.colorSizes',
+            'normalImages',
+            'viewImages',
+            'image3d',
+        ])->find($pid);
+
+        if (! $prefill) {
+            return redirect()
+                ->route('test.products-list')
+                ->with('warning', 'المنتج المطلوب غير موجود.');
+        }
+
+        $sizeOptions = $this->buildSizeOptions($prefill);
 
         $subCategoriesList = SubCategory::query()
             ->with('category:id,nameAr')
             ->orderBy('nameAr')
             ->get(['id', 'nameAr', 'mainCategoryId']);
 
-        $selectedSubCategoryIds = $prefill
-            ? $prefill->subCategories->pluck('sub_category_id')->all()
-            : [];
+        $selectedSubCategoryIds = $prefill->subCategories->pluck('sub_category_id')->all();
+
+        $limit = (int) config('store.product_picker_limit', 8000);
+        $productsForPicker = Product::query()
+            ->orderBy('nameAr')
+            ->limit($limit)
+            ->get(['id', 'nameAr', 'stock']);
 
         return view('product-edit-test', [
             'prefill' => $prefill,
             'sizeOptions' => $sizeOptions,
             'subCategoriesList' => $subCategoriesList,
             'selectedSubCategoryIds' => $selectedSubCategoryIds,
+            'productsForPicker' => $productsForPicker,
+            'resolveMediaUrl' => static function (?string $url): ?string {
+                if ($url === null || $url === '') {
+                    return null;
+                }
+                if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
+                    return $url;
+                }
+                $base = rtrim((string) config('store.domain'), '/');
+                if ($base === '') {
+                    return $url;
+                }
+
+                return $base.'/'.ltrim($url, '/');
+            },
             'steps' => session('steps'),
             'result' => session('result'),
             'product' => session('product_model'),
         ]);
     }
 
+    /**
+     * جدول كل المنتجات (DataTables + Bootstrap).
+     */
+    public function productsList(): View
+    {
+        return view('products-test-list');
+    }
+
+    /**
+     * بيانات DataTables (خادم) للبحث والترقيم.
+     */
+    public function productsData(Request $request): JsonResponse
+    {
+        $draw = (int) $request->input('draw', 1);
+        $start = max(0, (int) $request->input('start', 0));
+        $length = min(max((int) $request->input('length', 25), 10), 100);
+        $search = trim((string) data_get($request->input('search'), 'value', ''));
+
+        $query = Product::query()->select(['id', 'nameAr', 'stock', 'normailPrice', 'isShow']);
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('nameAr', 'like', '%'.$search.'%');
+                if (ctype_digit($search)) {
+                    $q->orWhere('id', $search);
+                }
+            });
+        }
+
+        $recordsFiltered = (clone $query)->count();
+        $recordsTotal = Product::count();
+
+        $rows = (clone $query)
+            ->orderByDesc('id')
+            ->skip($start)
+            ->take($length)
+            ->get();
+
+        $data = $rows->map(fn (Product $p) => [
+            'id' => $p->id,
+            'nameAr' => $p->nameAr,
+            'stock' => $p->stock,
+            'normailPrice' => $p->normailPrice,
+            'isShow' => $p->isShow,
+            'edit_url' => route('test.product-edit', ['product_id' => $p->id]),
+        ]);
+
+        return response()->json([
+            'draw' => $draw,
+            'recordsTotal' => $recordsTotal,
+            'recordsFiltered' => $recordsFiltered,
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * دمج: إعدادات config + قيم مميزة من جدول sizes + أحجام المنتج الحالي.
+     * لا يوجد في Laravel ربط رسمي بين الحجم والتصنيف (الحقل نص حر كما في .NET).
+     */
+    private function buildSizeOptions(Product $prefill): Collection
+    {
+        $fromConfig = collect(config('store.size_options', []))->filter(fn ($s) => $s !== null && $s !== '');
+
+        $fromDb = Size::query()
+            ->whereNotNull('size')
+            ->where('size', '!=', '')
+            ->distinct()
+            ->orderBy('size')
+            ->pluck('size');
+
+        $merged = $fromConfig->merge($fromDb)->unique()->sort()->values();
+
+        foreach ($prefill->sizes as $s) {
+            if ($s->size && ! $merged->contains($s->size)) {
+                $merged->push($s->size);
+            }
+        }
+
+        return $merged->unique()->sort()->values();
+    }
+
     public function run(Request $request, StoreManageItemService $storeManageItemService)
     {
         $validated = $request->validate([
-            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'product_id' => ['required', 'exists:products,id'],
             'nameAr' => ['required', 'string', 'max:500'],
             'nameEng' => ['nullable', 'string', 'max:500'],
             'nameAbree' => ['nullable', 'string', 'max:500'],
@@ -172,7 +276,7 @@ class ProductEditTestController extends Controller
             $request->input('sizes', []),
             fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
         ));
-        $this->replaceSizesFromTestForm($sizesInput, (int) $product->id);
+        $this->replaceSizesFromTestForm($sizesInput, $product->id);
         $pageLog('تم تحديث المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
 
         $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($product->id);
@@ -192,7 +296,10 @@ class ProductEditTestController extends Controller
      *
      * @param  array<int, mixed>  $newSizes
      */
-    private function replaceSizesFromTestForm(array $newSizes, int $productId): void
+    /**
+     * @param  int|string  $productId
+     */
+    private function replaceSizesFromTestForm(array $newSizes, $productId): void
     {
         if ($newSizes === []) {
             Size::where('itemId', $productId)->delete();
