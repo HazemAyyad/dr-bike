@@ -205,6 +205,93 @@ class StoreManageItemService
     }
 
     /**
+     * منتج جديد في Laravel (معرّف محلي = max(id)+1): لا يوجد صف في المتجر بعد — نبني هيكلاً فارغاً ثم ندمج كما في التعديل.
+     * يُستخدم نفس STORE_SYNC_ON_PRODUCT_EDIT و ManageItem + AddImgToItem.
+     *
+     * @param  callable|null  $step  function (string $message, array $context = []): void
+     */
+    public function syncNewProductToStore(Product $product, ?callable $step = null, ?Request $request = null): array
+    {
+        $trace = $this->makeTracer($step);
+
+        $trace('بدء مزامنة منتج جديد', ['product_id' => $product->id]);
+
+        if (! config('store.sync_on_product_edit')) {
+            $trace('تخطي: STORE_SYNC_ON_PRODUCT_EDIT معطّل', []);
+
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        $base = config('store.domain');
+        $email = config('store.email');
+        $password = config('store.password');
+
+        if ($base === '' || $email === null || $password === null) {
+            $trace('تخطي: إعدادات المتجر غير مكتملة', []);
+
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        $token = $this->login($base, $email, $password, $trace);
+        if ($token === null) {
+            return ['ok' => false, 'error' => 'متجر: فشل تسجيل الدخول'];
+        }
+
+        $skeleton = [
+            'id' => (int) $product->id,
+            'supCategory' => [],
+            'itemSizes' => [],
+        ];
+
+        $merged = $this->mergeStoreItemWithProduct($skeleton, $product);
+        $targetStock = $this->resolveStockForManageItem($product);
+
+        $trace('بعد الدمج (إنشاء)', [
+            'stock_المرسل' => $targetStock,
+            'nameAr' => $merged['nameAr'] ?? $merged['NameAr'] ?? null,
+        ]);
+
+        $form = $this->buildManageItemFormParams($merged, $targetStock);
+        $url = $base.'/Items/ManageItem';
+
+        $trace('ManageItem (إنشاء): طلب', [
+            'url' => $url,
+            'fields_count' => count($form),
+            'video_مع_ManageItem' => $request && $request->hasFile('video'),
+            'صور_تُرفع_بعدها_عبر_AddImgToItem' => $request ? $this->countImageOnlyUploads($request) : 0,
+        ]);
+
+        $response = $this->postManageItem($base, $token, $form, $request, $trace);
+
+        $bodyPreview = mb_substr($response->body(), 0, 2000);
+
+        if (! $response->successful()) {
+            Log::warning('متجر: فشل ManageItem بعد إنشاء المنتج محلياً', [
+                'product_id' => $product->id,
+                'body' => $response->body(),
+            ]);
+            $trace('ManageItem: فشل', [
+                'http_status' => $response->status(),
+                'body_preview' => $bodyPreview,
+            ]);
+
+            return ['ok' => false, 'error' => 'متجر: فشل ManageItem (HTTP '.$response->status().')'];
+        }
+
+        $trace('ManageItem (إنشاء): نجاح', ['http_status' => $response->status()]);
+        Log::info('متجر: تمت مزامنة منتج جديد', ['product_id' => $product->id]);
+
+        if ($request !== null && $this->requestHasStandaloneImageUploads($request)) {
+            $imgRes = $this->pushImagesViaAddImgToItem($base, $token, $request, $product, $trace);
+            if (! ($imgRes['ok'] ?? false)) {
+                return $imgRes;
+            }
+        }
+
+        return ['ok' => true];
+    }
+
+    /**
      * ManageItem يستقبل multipart أساساً لـ **الفيديو** في مسار التعديل (.NET Edit يتعامل مع Video فقط).
      * الصور تُرسل لاحقاً عبر AddImgToItem.
      *

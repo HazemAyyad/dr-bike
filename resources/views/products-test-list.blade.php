@@ -12,6 +12,7 @@
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
         <h1 class="h4 mb-0">كل المنتجات</h1>
         <div class="d-flex gap-2">
+            <a class="btn btn-success btn-sm" href="{{ route('test.product-create') }}">منتج جديد</a>
             <a class="btn btn-outline-secondary btn-sm" href="{{ route('test.store-sync') }}">اختبار المخزون</a>
             @php $firstId = \App\Models\Product::query()->orderBy('id')->value('id'); @endphp
             @if ($firstId)

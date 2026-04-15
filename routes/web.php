@@ -29,6 +29,10 @@ Route::get('/', function () {
 Route::get('/test/store-sync', [StoreSyncTestController::class, 'show'])->name('test.store-sync');
 Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('test.store-sync.run');
 
+/** إضافة منتج جديد (محلي ثم متجر عبر syncNewProductToStore) */
+Route::get('/test/product-create', [ProductEditTestController::class, 'create'])->name('test.product-create');
+Route::post('/test/product-create', [ProductEditTestController::class, 'createRun'])->name('test.product-create.run');
+
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
 Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');

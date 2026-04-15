@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>Doctor Bike — تعديل منتج (اختبار)</title>
+    <title>Doctor Bike — @if(!empty($isCreate))إضافة منتج@elseتعديل منتج@endif (اختبار)</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.rtl.min.css" rel="stylesheet">
@@ -25,16 +25,25 @@
 <body class="bg-light">
 <div class="container py-4" style="max-width: 960px;">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <h1 class="h4 mb-0">تعديل منتج</h1>
+        <h1 class="h4 mb-0">@if(!empty($isCreate))إضافة منتج جديد@elseتعديل منتج@endif</h1>
         <div class="d-flex flex-wrap gap-2 align-items-center">
             <a class="btn btn-outline-secondary btn-sm" href="{{ route('test.products-list') }}">كل المنتجات</a>
+            @if(empty($isCreate))
+                <a class="btn btn-outline-success btn-sm" href="{{ route('test.product-create') }}">منتج جديد</a>
+            @endif
             <a class="btn btn-outline-secondary btn-sm" href="{{ route('test.store-sync') }}">اختبار المخزون</a>
-            <a class="btn btn-outline-primary btn-sm" href="{{ route('test.product-edit', ['product_id' => $prefill->id]) }}">تحديث الصفحة</a>
+            @if(empty($isCreate))
+                <a class="btn btn-outline-primary btn-sm" href="{{ route('test.product-edit', ['product_id' => $prefill->id]) }}">تحديث الصفحة</a>
+            @endif
         </div>
     </div>
 
     <div class="alert alert-warning small">
-        صفحة تجريبية. رفع الصور/الفيديو عبر <code>multipart</code> إلى <code>ManageItem</code>.
+        @if(!empty($isCreate))
+            سيتم تعيين رقم المنتج تلقائياً في قاعدة Laravel (التالي المتوقع: <strong>#{{ $nextIdHint ?? '—' }}</strong>) ثم مزامنة المتجر عبر <code>ManageItem</code> و<code>AddImgToItem</code>.
+        @else
+            صفحة تجريبية. رفع الصور/الفيديو عبر <code>multipart</code> إلى <code>ManageItem</code>.
+        @endif
     </div>
 
     @if ($errors->any())
@@ -52,6 +61,7 @@
         }
     @endphp
 
+    @if(empty($isCreate))
     <div class="card shadow-sm mb-3">
         <div class="card-body">
             <label class="form-label fw-semibold" for="product-picker">اختر المنتج للتعديل</label>
@@ -70,10 +80,13 @@
             </p>
         </div>
     </div>
+    @endif
 
-    <form method="post" action="{{ route('test.product-edit.run') }}" enctype="multipart/form-data">
+    <form method="post" action="{{ empty($isCreate) ? route('test.product-edit.run') : route('test.product-create.run') }}" enctype="multipart/form-data">
         @csrf
+        @if(empty($isCreate))
         <input type="hidden" name="product_id" value="{{ old('product_id', $p->id) }}">
+        @endif
 
         <div class="card shadow-sm mb-3">
             <div class="card-body">
@@ -274,7 +287,7 @@
             </div>
         </div>
 
-        <button type="submit" class="btn btn-primary btn-lg mb-4">حفظ محلياً + مزامنة المتجر</button>
+        <button type="submit" class="btn btn-primary btn-lg mb-4">@if(!empty($isCreate))إنشاء محلياً + مزامنة المتجر@elseحفظ محلياً + مزامنة المتجر@endif</button>
     </form>
 
     @if(session('result'))
@@ -409,13 +422,16 @@
 
         initSelect2Size(document);
 
-        $('#product-picker').on('change', function () {
-            var v = $(this).val();
-            if (!v || $(this).prop('disabled')) {
-                return;
-            }
-            window.location.href = productEditBase + '?product_id=' + encodeURIComponent(v);
-        });
+        var $productPicker = $('#product-picker');
+        if ($productPicker.length) {
+            $productPicker.on('change', function () {
+                var v = $(this).val();
+                if (!v || $(this).prop('disabled')) {
+                    return;
+                }
+                window.location.href = productEditBase + '?product_id=' + encodeURIComponent(v);
+            });
+        }
 
         function setInputFiles(input, fileList) {
             var dt = new DataTransfer();
