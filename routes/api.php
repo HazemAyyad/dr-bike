@@ -516,6 +516,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::get('/get/products/list' , [Stocks::class,'allProducts']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
     Route::post('/edit/product' , [Stocks::class,'editProduct']);
+    /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */
+    Route::post('/create/product' , [Stocks::class,'createProduct']);
+    Route::post('/update/product/full' , [Stocks::class,'updateProductFull']);
     Route::post('/add/product/to/closeouts' , [Stocks::class,'addProductToCloseout']);
     Route::post('/archive/closeout' , [Stocks::class,'archiveCloseout']);
 

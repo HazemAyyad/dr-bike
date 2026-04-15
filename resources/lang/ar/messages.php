@@ -312,6 +312,7 @@ return [
     'paper_updated' => 'تم تعديل الورقة بنجاح',
     //stocks
     'product_updated'=>'تم تعديل المنتج بنجاح',
+    'product_created'=>'تم إنشاء المنتج بنجاح',
 
         // closeouts
     'closeout_added'=>'تم اضافة المنتج الى التصفيات بنجاح',

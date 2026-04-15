@@ -299,6 +299,7 @@ return [
 
         //stocks
     'product_updated'=>'Product was updated successfully',
+    'product_created'=>'Product was created successfully',
 
     // closeouts
     'closeout_added'=>'Product was added to close outs successfully',

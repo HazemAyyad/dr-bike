@@ -10,6 +10,7 @@ use App\Models\SizeColor;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\ViewImageProduct;
+use App\Services\ProductFormService;
 use App\Services\StoreManageItemService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -98,10 +99,8 @@ class ProductEditTestController extends Controller
     /**
      * إنشاء منتج: المتجر يُنشئ المعرف عبر ManageItem بـ Id=0؛ نحفظ محلياً بنفس الرقم ثم نرفع الصور.
      */
-    public function createRun(Request $request, StoreManageItemService $storeManageItemService): RedirectResponse
+    public function createRun(Request $request, ProductFormService $productFormService): RedirectResponse
     {
-        $validated = $this->validateProductFormRequest($request, false);
-
         $steps = [];
         $pageLog = function (string $msg, array $ctx = []) use (&$steps): void {
             $steps[] = [
@@ -112,237 +111,52 @@ class ProductEditTestController extends Controller
             Log::info('[product-create-test page] '.$msg, $ctx);
         };
 
-        $localOnly = ! $this->wantsStoreSync($request);
-        $pageLog('طلب إنشاء منتج', ['save_scope' => $validated['save_scope'], 'local_only' => $localOnly]);
-
-        $nameAr = $validated['nameAr'];
-        $nameEng = $validated['nameEng'] !== null && $validated['nameEng'] !== '' ? $validated['nameEng'] : $nameAr;
-        $nameAbree = $validated['nameAbree'] !== null && $validated['nameAbree'] !== '' ? $validated['nameAbree'] : $nameAr;
-
-        $insert = [
-            'nameAr' => $nameAr,
-            'nameEng' => $nameEng,
-            'nameAbree' => $nameAbree,
-            'descriptionAr' => $validated['descriptionAr'],
-            'descriptionEng' => $validated['descriptionEng'] ?? $validated['descriptionAr'],
-            'descriptionAbree' => $validated['descriptionAbree'] ?? $validated['descriptionAr'],
-            'min_stock' => $validated['min_stock'],
-            'normailPrice' => $validated['normailPrice'],
-            'wholesalePrice' => $validated['wholesalePrice'] ?? 0,
-            'discount' => $validated['discount'],
-            'is_sold_with_paper' => (int) $validated['is_sold_with_paper'],
-            'manufactureYear' => $validated['manufactureYear'] ?? 0,
-            'rate' => $validated['rate'] ?? 4,
-            'isShow' => $request->boolean('isShow'),
-            'isNewItem' => $request->boolean('isNewItem'),
-            'isMoreSales' => $request->boolean('isMoreSales'),
-            'model' => $validated['model'] ?? '',
-            'stock' => 0,
-        ];
-
-        if ($request->filled('stock')) {
-            $insert['stock'] = (int) $validated['stock'];
-        }
-        if ($request->filled('min_sale_price')) {
-            $insert['min_sale_price'] = $validated['min_sale_price'];
-        }
-        if ($request->filled('rotation_date')) {
-            $insert['rotation_date'] = $validated['rotation_date'];
-        }
-        if ($request->filled('price')) {
-            $insert['price'] = $validated['price'];
+        try {
+            $out = $productFormService->create($request, $pageLog);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return redirect()
+                ->route('test.product-create')
+                ->withInput()
+                ->withErrors($e->errors());
         }
 
-        $virtual = new Product($insert);
-        $virtual->id = 0;
-
-        $subIds = array_values(array_unique(array_filter(
-            array_map('intval', (array) $request->input('sub_categories', [])),
-            fn (int $id) => $id > 0
-        )));
-        $virtual->setRelation('subCategories', collect($subIds)->map(
-            fn (int $sid) => new SubCategoryProduct([
-                'product_id' => 0,
-                'sub_category_id' => $sid,
-            ])
-        ));
-
-        $this->attachUnsavedSizesFromRequest($virtual, $request);
-
-        if ($localOnly) {
-            $newId = (int) (Product::query()->max('id') ?? 0) + 1;
-            if (Product::query()->where('id', $newId)->exists()) {
+        if (empty($out['success'])) {
+            if (($out['reason'] ?? '') === 'id_conflict') {
                 return redirect()
                     ->route('test.product-create')
                     ->withInput()
-                    ->withErrors(['nameAr' => 'تعارض في رقم المنتج، أعد المحاولة.']);
+                    ->withErrors(['nameAr' => $out['message'] ?? 'تعارض في رقم المنتج، أعد المحاولة.']);
+            }
+            if (($out['reason'] ?? '') === 'local_duplicate') {
+                return redirect()
+                    ->route('test.product-create')
+                    ->withInput()
+                    ->withErrors(['nameAr' => $out['message'] ?? 'المنتج موجود مسبقاً محلياً.']);
+            }
+            if (($out['reason'] ?? '') === 'store_sync_failed' || ($out['reason'] ?? '') === 'no_store_id') {
+                return redirect()
+                    ->route('test.product-create')
+                    ->withInput()
+                    ->with('steps', $steps)
+                    ->with('result', $out['sync_result'] ?? ['ok' => false]);
             }
 
-            Product::query()->create(array_merge($insert, ['id' => $newId]));
-            $pageLog('تم إنشاء المنتج محلياً (بدون متجر)', ['product_id' => $newId]);
-
-            foreach ($subIds as $sid) {
-                SubCategoryProduct::create([
-                    'product_id' => $newId,
-                    'sub_category_id' => $sid,
-                ]);
-            }
-            $sizesInput = array_values(array_filter(
-                $request->input('sizes', []),
-                fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
-            ));
-            $this->replaceSizesFromTestForm($sizesInput, $newId);
-            $pageLog('مقاسات/ألوان محلية', ['count' => count($sizesInput)]);
-
-            $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($newId);
-
-            $mediaRes = $storeManageItemService->saveUploadedMediaToLaravelOnly($request, $product, $pageLog);
-            $pageLog('وسائط محلية (صور/فيديو)', $mediaRes);
-
-            $localResult = ['ok' => true, 'skipped' => true, 'local_only' => true];
-            if (empty($mediaRes['ok'])) {
-                $localResult['ok'] = false;
-                $localResult['media_error'] = $mediaRes['error'] ?? 'فشل حفظ الملفات';
-            }
-
-            return redirect()
-                ->route('test.product-edit', ['product_id' => $product->id])
-                ->with('steps', $steps)
-                ->with('result', $localResult)
-                ->with('product_model', $product->fresh([
-                    'subCategories',
-                    'sizes.colorSizes',
-                    'normalImages',
-                    'viewImages',
-                    'image3d',
-                ]));
-        }
-
-        $result = $storeManageItemService->syncNewProductToStore($virtual, $pageLog, $request);
-        $pageLog('نتيجة ManageItem (إنشاء)', $result);
-
-        if (empty($result['ok'])) {
             return redirect()
                 ->route('test.product-create')
                 ->withInput()
                 ->with('steps', $steps)
-                ->with('result', $result);
+                ->with('result', ['ok' => false, 'error' => $out['message'] ?? 'فشل الإنشاء']);
         }
 
-        if (! empty($result['skipped'])) {
-            $newId = (int) (Product::query()->max('id') ?? 0) + 1;
-            $pageLog('مزامنة المتجر متخطاة — تخصيص محلي', ['allocated_id' => $newId]);
-        } else {
-            $newId = (int) ($result['store_new_id'] ?? 0);
-        }
-
-        if ($newId <= 0) {
-            return redirect()
-                ->route('test.product-create')
-                ->withInput()
-                ->with('steps', $steps)
-                ->with('result', [
-                    'ok' => false,
-                    'error' => 'لم يُستخرج رقم المنتج من المتجر.',
-                ]);
-        }
-
-        if (Product::query()->where('id', $newId)->exists()) {
-            return redirect()
-                ->route('test.product-create')
-                ->withInput()
-                ->withErrors(['nameAr' => 'المنتج #'.$newId.' موجود مسبقاً محلياً.']);
-        }
-
-        Product::query()->create(array_merge($insert, ['id' => $newId]));
-        $pageLog('تم إنشاء المنتج محلياً', ['product_id' => $newId]);
-
-        foreach ($subIds as $sid) {
-            SubCategoryProduct::create([
-                'product_id' => $newId,
-                'sub_category_id' => $sid,
-            ]);
-        }
-        $pageLog('فئات فرعية', ['ids' => $subIds]);
-
-        $sizesInput = array_values(array_filter(
-            $request->input('sizes', []),
-            fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
-        ));
-        $this->replaceSizesFromTestForm($sizesInput, $newId);
-        $pageLog('تم حفظ المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
-
-        $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($newId);
-
-        $imgResult = $storeManageItemService->pushStandaloneImagesToStore($product, $pageLog, $request);
-        $pageLog('رفع الصور (AddImgToItem)', $imgResult);
-
-        $mergedResult = $result;
-        if (empty($imgResult['ok'] ?? true) && empty($imgResult['skipped'] ?? false)) {
-            $mergedResult = array_merge($result, ['image_error' => $imgResult['error'] ?? 'فشل رفع الصور']);
-        }
+        /** @var Product $product */
+        $product = $out['product'];
+        $mergedResult = $out['sync_result'] ?? ['ok' => true];
 
         return redirect()
             ->route('test.product-edit', ['product_id' => $product->id])
             ->with('steps', $steps)
             ->with('result', $mergedResult)
-            ->with('product_model', $product->fresh(['subCategories', 'sizes.colorSizes']));
-    }
-
-    /**
-     * مقاسات/ألوان من الطلب كعلاقات غير محفوظة (للدمج مع المتجر قبل وجود صف في Laravel).
-     */
-    private function attachUnsavedSizesFromRequest(Product $product, Request $request): void
-    {
-        $sizesInput = array_values(array_filter(
-            $request->input('sizes', []),
-            fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
-        ));
-
-        if ($sizesInput === []) {
-            $product->setRelation('sizes', collect());
-
-            return;
-        }
-
-        $sizes = collect();
-        foreach ($sizesInput as $sizeData) {
-            if (! is_array($sizeData)) {
-                continue;
-            }
-
-            $size = new Size([
-                'size' => $sizeData['size'] ?? '',
-                'itemId' => 0,
-                'discount' => 0,
-                'description' => '',
-            ]);
-            $size->id = 0;
-
-            $colors = collect();
-            foreach ($sizeData['color_sizes'] ?? [] as $colorData) {
-                if (! is_array($colorData)) {
-                    continue;
-                }
-                $color = new SizeColor([
-                    'colorAr' => $colorData['colorAr'] ?? '',
-                    'colorEn' => $colorData['colorEn'] ?? '',
-                    'colorAbbr' => $colorData['colorAbbr'] ?? '',
-                    'normailPrice' => $colorData['normailPrice'] ?? 0,
-                    'wholesalePrice' => 0,
-                    'discount' => 0,
-                    'stock' => (int) ($colorData['stock'] ?? 0),
-                    'sizeId' => 0,
-                ]);
-                $color->id = 0;
-                $colors->push($color);
-            }
-
-            $size->setRelation('colorSizes', $colors);
-            $sizes->push($size);
-        }
-
-        $product->setRelation('sizes', $sizes);
+            ->with('product_model', $product);
     }
 
     public function show(Request $request, StoreManageItemService $storeManageItemService): View|\Illuminate\Http\RedirectResponse
@@ -611,10 +425,8 @@ class ProductEditTestController extends Controller
         return $merged->unique()->sort()->values();
     }
 
-    public function run(Request $request, StoreManageItemService $storeManageItemService)
+    public function run(Request $request, ProductFormService $productFormService): RedirectResponse
     {
-        $validated = $this->validateProductFormRequest($request, true);
-
         $steps = [];
         $pageLog = function (string $msg, array $ctx = []) use (&$steps): void {
             $steps[] = [
@@ -625,245 +437,23 @@ class ProductEditTestController extends Controller
             Log::info('[product-edit-test page] '.$msg, $ctx);
         };
 
-        $pageLog('طلب التعديل', [
-            'product_id' => $validated['product_id'],
-            'save_scope' => $validated['save_scope'],
-            'local_only' => ! $this->wantsStoreSync($request),
-        ]);
-
-        $product = Product::findOrFail($validated['product_id']);
-
-        $nameAr = $validated['nameAr'];
-        $nameEng = $validated['nameEng'] !== null && $validated['nameEng'] !== '' ? $validated['nameEng'] : $nameAr;
-        $nameAbree = $validated['nameAbree'] !== null && $validated['nameAbree'] !== '' ? $validated['nameAbree'] : $nameAr;
-
-        $update = [
-            'nameAr' => $nameAr,
-            'nameEng' => $nameEng,
-            'nameAbree' => $nameAbree,
-            'descriptionAr' => $validated['descriptionAr'],
-            'descriptionEng' => $validated['descriptionEng'] ?? $validated['descriptionAr'],
-            'descriptionAbree' => $validated['descriptionAbree'] ?? $validated['descriptionAr'],
-            'min_stock' => $validated['min_stock'],
-            'normailPrice' => $validated['normailPrice'],
-            'wholesalePrice' => $validated['wholesalePrice'] ?? 0,
-            'discount' => $validated['discount'],
-            'is_sold_with_paper' => (int) $validated['is_sold_with_paper'],
-            'manufactureYear' => $validated['manufactureYear'] ?? 0,
-            'rate' => $validated['rate'] ?? 4,
-            // Unchecked HTML checkboxes are omitted from the request; default must be false.
-            'isShow' => $request->boolean('isShow'),
-            'isNewItem' => $request->boolean('isNewItem'),
-            'isMoreSales' => $request->boolean('isMoreSales'),
-            'model' => $validated['model'] ?? '',
-        ];
-
-        if ($request->filled('stock')) {
-            $update['stock'] = (int) $validated['stock'];
-        }
-        if ($request->filled('min_sale_price')) {
-            $update['min_sale_price'] = $validated['min_sale_price'];
-        }
-        if ($request->filled('rotation_date')) {
-            $update['rotation_date'] = $validated['rotation_date'];
-        }
-        if ($request->filled('price')) {
-            $update['price'] = $validated['price'];
+        try {
+            $out = $productFormService->update($request, $pageLog);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return redirect()
+                ->route('test.product-edit', ['product_id' => $request->input('product_id')])
+                ->withInput()
+                ->withErrors($e->errors());
         }
 
-        $product->update($update);
-        $pageLog('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
-
-        $subIds = array_values(array_unique(array_filter(
-            array_map('intval', (array) $request->input('sub_categories', [])),
-            fn (int $id) => $id > 0
-        )));
-        SubCategoryProduct::where('product_id', $product->id)->delete();
-        foreach ($subIds as $sid) {
-            SubCategoryProduct::create([
-                'product_id' => $product->id,
-                'sub_category_id' => $sid,
-            ]);
-        }
-        $pageLog('فئات فرعية', ['ids' => $subIds]);
-
-        $sizesInput = array_values(array_filter(
-            $request->input('sizes', []),
-            fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
-        ));
-        $this->replaceSizesFromTestForm($sizesInput, $product->id);
-        $pageLog('تم تحديث المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
-
-        $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($product->id);
-
-        if ($this->wantsStoreSync($request)) {
-            $result = $storeManageItemService->syncProductEditToStore($product, $pageLog, $request);
-            $pageLog('انتهاء المزامنة', $result);
-        } else {
-            $pageLog('تخطي المتجر — حفظ Laravel فقط');
-            $mediaRes = $storeManageItemService->saveUploadedMediaToLaravelOnly($request, $product, $pageLog);
-            $pageLog('وسائط محلية', $mediaRes);
-            $result = ['ok' => (bool) ($mediaRes['ok'] ?? true), 'skipped' => true, 'local_only' => true];
-            if (empty($mediaRes['ok'])) {
-                $result['media_error'] = $mediaRes['error'] ?? 'فشل حفظ الملفات';
-            }
-        }
+        /** @var Product $product */
+        $product = $out['product'];
+        $result = $out['sync_result'];
 
         return redirect()
             ->route('test.product-edit', ['product_id' => $product->id])
             ->with('steps', $steps)
             ->with('result', $result)
-            ->with('product_model', $product->fresh([
-                'subCategories',
-                'sizes.colorSizes',
-                'normalImages',
-                'viewImages',
-                'image3d',
-            ]));
-    }
-
-    /**
-     * قواعد مشتركة بين إنشاء منتج وتعديله.
-     *
-     * @return array<string, mixed>
-     */
-    private function validateProductFormRequest(Request $request, bool $forEdit): array
-    {
-        $rules = [
-            'nameAr' => ['required', 'string', 'max:500'],
-            'nameEng' => ['nullable', 'string', 'max:500'],
-            'nameAbree' => ['nullable', 'string', 'max:500'],
-            'descriptionAr' => ['required', 'string'],
-            'descriptionEng' => ['nullable', 'string'],
-            'descriptionAbree' => ['nullable', 'string'],
-            'manufactureYear' => ['nullable', 'integer', 'min:0', 'max:2100'],
-            'discount' => ['required', 'numeric', 'min:0'],
-            'normailPrice' => ['required', 'numeric', 'min:0'],
-            'wholesalePrice' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
-            'rate' => ['nullable', 'numeric', 'min:0'],
-            'isShow' => ['nullable', 'boolean'],
-            'isNewItem' => ['nullable', 'boolean'],
-            'isMoreSales' => ['nullable', 'boolean'],
-            'model' => ['nullable', 'string', 'max:255'],
-            'min_stock' => ['required', 'numeric', 'min:0'],
-            'is_sold_with_paper' => ['required', 'in:0,1'],
-            'min_sale_price' => ['nullable', 'numeric', 'min:0'],
-            'rotation_date' => ['nullable', 'date'],
-            'price' => ['nullable', 'numeric', 'min:0'],
-            'sub_categories' => ['nullable', 'array'],
-            'sub_categories.*' => ['integer', 'exists:sub_categories,id'],
-            'sizes' => ['nullable', 'array'],
-            'sizes.*.id' => ['nullable', 'integer', 'exists:sizes,id'],
-            'sizes.*.size' => ['nullable', 'string', 'max:50'],
-            'sizes.*.color_sizes' => ['nullable', 'array'],
-            'sizes.*.color_sizes.*.id' => ['nullable', 'integer', 'exists:size_colors,id'],
-            'sizes.*.color_sizes.*.colorAr' => ['nullable', 'string', 'max:100'],
-            'sizes.*.color_sizes.*.colorEn' => ['nullable', 'string', 'max:100'],
-            'sizes.*.color_sizes.*.colorAbbr' => ['nullable', 'string', 'max:100'],
-            'sizes.*.color_sizes.*.normailPrice' => ['nullable', 'numeric', 'min:0'],
-            'sizes.*.color_sizes.*.stock' => ['nullable', 'integer', 'min:0'],
-            'video' => ['nullable', 'file', 'mimes:mp4,mov,avi', 'max:51200'],
-            'normal_images.*' => ['nullable', 'image', 'max:10240'],
-            'three_d_images.*' => ['nullable', 'image', 'max:10240'],
-            'view_images.*' => ['nullable', 'image', 'max:10240'],
-            /** full = حفظ Laravel + مزامنة المتجر؛ local_only = Laravel فقط */
-            'save_scope' => ['required', 'in:full,local_only'],
-        ];
-
-        if ($forEdit) {
-            $rules['product_id'] = ['required', 'exists:products,id'];
-        }
-
-        return $request->validate($rules);
-    }
-
-    private function wantsStoreSync(Request $request): bool
-    {
-        return $request->input('save_scope', 'full') === 'full';
-    }
-
-    /**
-     * نفس منطق Stocks::replaceSizes لطلب الاختبار.
-     *
-     * @param  array<int, mixed>  $newSizes
-     */
-    /**
-     * @param  int|string  $productId
-     */
-    private function replaceSizesFromTestForm(array $newSizes, $productId): void
-    {
-        if ($newSizes === []) {
-            Size::where('itemId', $productId)->delete();
-
-            return;
-        }
-
-        $existingSizeIds = Size::where('itemId', $productId)->pluck('id')->toArray();
-        $newSizeIds = collect($newSizes)->pluck('id')->filter()->map(fn ($id) => (int) $id)->toArray();
-        $sizesToDelete = array_diff($existingSizeIds, $newSizeIds);
-
-        if (! empty($sizesToDelete)) {
-            Size::whereIn('id', $sizesToDelete)->delete();
-        }
-
-        foreach ($newSizes as $sizeData) {
-            if (! is_array($sizeData)) {
-                continue;
-            }
-
-            if (! empty($sizeData['id']) && in_array((int) $sizeData['id'], $existingSizeIds, true)) {
-                $size = Size::find($sizeData['id']);
-                if ($size) {
-                    $size->update([
-                        'size' => $sizeData['size'] ?? $size->size,
-                        'itemId' => $productId,
-                    ]);
-                } else {
-                    continue;
-                }
-            } else {
-                $size = Size::create([
-                    'size' => $sizeData['size'] ?? '',
-                    'itemId' => $productId,
-                ]);
-            }
-
-            $existingColorIds = $size->colorSizes()->pluck('id')->toArray();
-            $newColors = $sizeData['color_sizes'] ?? [];
-            $newColorIds = collect($newColors)->pluck('id')->filter()->map(fn ($id) => (int) $id)->all();
-            $colorsToDelete = array_diff($existingColorIds, $newColorIds);
-
-            if (! empty($colorsToDelete)) {
-                SizeColor::whereIn('id', $colorsToDelete)->delete();
-            }
-
-            foreach ($newColors as $colorData) {
-                if (! is_array($colorData)) {
-                    continue;
-                }
-                if (! empty($colorData['id']) && in_array((int) $colorData['id'], $existingColorIds, true)) {
-                    $color = SizeColor::find($colorData['id']);
-                    if ($color) {
-                        $color->update([
-                            'colorAr' => $colorData['colorAr'] ?? $color->colorAr,
-                            'colorEn' => $colorData['colorEn'] ?? $color->colorEn,
-                            'colorAbbr' => $colorData['colorAbbr'] ?? $color->colorAbbr,
-                            'normailPrice' => $colorData['normailPrice'] ?? $color->normailPrice,
-                            'stock' => $colorData['stock'] ?? $color->stock,
-                        ]);
-                    }
-                } else {
-                    SizeColor::create([
-                        'sizeId' => $size->id,
-                        'colorAr' => $colorData['colorAr'] ?? '',
-                        'colorEn' => $colorData['colorEn'] ?? '',
-                        'colorAbbr' => $colorData['colorAbbr'] ?? '',
-                        'normailPrice' => $colorData['normailPrice'] ?? 0,
-                        'stock' => $colorData['stock'] ?? 0,
-                    ]);
-                }
-            }
-        }
+            ->with('product_model', $product);
     }
 }
