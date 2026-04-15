@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('incoming_check_boxes')) {
+            return;
+        }
+
         Schema::create('incoming_check_boxes', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('incoming_check_id')->nullable();

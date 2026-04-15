@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('employee_tasks', function (Blueprint $table) {
+            if (! Schema::hasColumn('employee_tasks', 'is_canceled')) {
                 $table->boolean('is_canceled')->default(0);
+            }
 
         });
     }
@@ -23,7 +25,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('employee_tasks', function (Blueprint $table) {
-                        $table->dropColumn('is_canceled');
+            $table->dropColumn('is_canceled');
 
         });
     }

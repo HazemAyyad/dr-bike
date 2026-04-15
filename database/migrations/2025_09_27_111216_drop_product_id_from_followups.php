@@ -12,8 +12,10 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('followups', function (Blueprint $table) {
-            $table->unsignedBigInteger('file_id')->nullable();
-            $table->foreign('file_id')->references('id')->on('files')->onDelete('set null');
+            if (! Schema::hasColumn('followups', 'file_id')) {
+                $table->unsignedBigInteger('file_id')->nullable();
+                $table->foreign('file_id')->references('id')->on('files')->onDelete('set null');
+            }
         });
 
     }

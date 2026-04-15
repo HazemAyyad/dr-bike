@@ -11,13 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('employee_permissions')) {
+            return;
+        }
+
         Schema::create('employee_permissions', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('employee_id')->nullable();
             $table->foreign('employee_id')->references('id')->on('employee_details')->onDelete('cascade');
-             $table->unsignedBigInteger('permission_id')->nullable();
+            $table->unsignedBigInteger('permission_id')->nullable();
             $table->foreign('permission_id')->references('id')->on('permissions')->onDelete('cascade');
-           
+
             $table->timestamps();
         });
     }

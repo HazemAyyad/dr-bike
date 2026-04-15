@@ -11,14 +11,18 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('customers', 'address')) {
+            return;
+        }
+
         Schema::table('customers', function (Blueprint $table) {
-            $table->dropForeign(['user_id']);
-
-            // Then drop the column (optional)
-            $table->dropColumn('user_id');
-
-            // Add new address column
-            $table->string('address')->nullable();            
+            if (Schema::hasColumn('customers', 'user_id')) {
+                $table->dropForeign(['user_id']);
+                $table->dropColumn('user_id');
+            }
+            if (! Schema::hasColumn('customers', 'address')) {
+                $table->string('address')->nullable();
+            }
         });
     }
 

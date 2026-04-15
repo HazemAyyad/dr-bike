@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('profit_sales')) {
+            return;
+        }
+
         Schema::create('profit_sales', function (Blueprint $table) {
             $table->id();
             $table->float('total_cost')->default(0);

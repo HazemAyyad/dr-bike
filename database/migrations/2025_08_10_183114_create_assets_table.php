@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('assets')) {
+            return;
+        }
+
         Schema::create('assets', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
@@ -20,7 +24,6 @@ return new class extends Migration
             $table->float('depreciation_price')->default(0);
             $table->float('months_number')->default(0);
             $table->json('media')->nullable();
-
 
             $table->timestamps();
         });

@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('attendace_qrs')) {
+            return;
+        }
+
         Schema::create('attendace_qrs', function (Blueprint $table) {
             $table->id();
             $table->string('code_text')->nullable();

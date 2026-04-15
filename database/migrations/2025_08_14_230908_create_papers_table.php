@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('papers')) {
+            return;
+        }
+
         Schema::create('papers', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
@@ -22,7 +26,6 @@ return new class extends Migration
             $table->foreign('file_id')->references('id')->on('files')->onDelete('set null');
             $table->string('img')->nullable();
             $table->text('notes')->nullable();
-
 
             $table->timestamps();
         });

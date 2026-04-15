@@ -11,13 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('instant_buyings')) {
+            return;
+        }
+
         Schema::create('instant_buyings', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('customer_id')->nullable();
             $table->foreign('customer_id')->references('id')->on('customers')->onDelete('cascade');
             $table->float('total')->nullable();
             $table->string('payment_method')->nullable();
-            
+
             $table->timestamps();
         });
     }

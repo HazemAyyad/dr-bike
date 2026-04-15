@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('special_tasks', function (Blueprint $table) {
-            $table->integer('parent_id')->nullable();
+            if (! Schema::hasColumn('special_tasks', 'parent_id')) {
+                $table->integer('parent_id')->nullable();
+            }
         });
     }
 

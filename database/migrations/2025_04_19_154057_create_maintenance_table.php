@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('maintenance')) {
+            return;
+        }
+
         Schema::create('maintenance', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('customer_id')->nullable();
@@ -19,7 +23,6 @@ return new class extends Migration
             $table->string('status')->default('ongoing');
             $table->date('receipt_date')->nullable();
             $table->date('end_date')->nullable();
-
 
             $table->timestamps();
         });

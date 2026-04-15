@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('maintenance', function (Blueprint $table) {
-            $table->time('reciept_time')->nullable();
-            $table->json('files')->nullable();
+            if (! Schema::hasColumn('maintenance', 'reciept_time')) {
+                $table->time('reciept_time')->nullable();
+            }
+            if (! Schema::hasColumn('maintenance', 'files')) {
+                $table->json('files')->nullable();
+            }
 
         });
     }
@@ -24,7 +28,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('maintenance', function (Blueprint $table) {
-            $table->dropColumns(['reciept_time','files']);
+            $table->dropColumns(['reciept_time', 'files']);
         });
     }
 };

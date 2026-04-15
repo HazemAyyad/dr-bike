@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('closeouts')) {
+            return;
+        }
+
         Schema::create('closeouts', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('product_id')->nullable();

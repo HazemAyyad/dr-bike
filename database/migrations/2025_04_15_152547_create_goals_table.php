@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('goals')) {
+            return;
+        }
+
         Schema::create('goals', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
@@ -23,8 +27,6 @@ return new class extends Migration
             $table->foreign('user_id')->references('id')->on('users')->onDelete('set null');
             $table->unsignedBigInteger('product_id')->nullable();
             $table->foreign('product_id')->references('id')->on('products')->onDelete('set null');
-
-
 
             $table->timestamps();
         });

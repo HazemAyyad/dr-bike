@@ -12,9 +12,15 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('employee_orders', function (Blueprint $table) {
-            $table->integer('overtime_value')->nullable();
-            $table->integer('loan_value')->nullable();
-            $table->string('type')->nullable();
+            if (! Schema::hasColumn('employee_orders', 'overtime_value')) {
+                $table->integer('overtime_value')->nullable();
+            }
+            if (! Schema::hasColumn('employee_orders', 'loan_value')) {
+                $table->integer('loan_value')->nullable();
+            }
+            if (! Schema::hasColumn('employee_orders', 'type')) {
+                $table->string('type')->nullable();
+            }
 
         });
     }

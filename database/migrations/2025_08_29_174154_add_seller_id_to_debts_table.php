@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('debts', function (Blueprint $table) {
-           $table->unsignedBigInteger('seller_id')->nullable();
-           $table->foreign('seller_id')->references('id')->on('sellers')->onDelete('cascade');
+            if (! Schema::hasColumn('debts', 'seller_id')) {
+                $table->unsignedBigInteger('seller_id')->nullable();
+            }
+            if (! Schema::hasColumn('debts', 'seller_id')) {
+                $table->foreign('seller_id')->references('id')->on('sellers')->onDelete('cascade');
+            }
         });
     }
 

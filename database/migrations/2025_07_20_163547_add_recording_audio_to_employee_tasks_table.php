@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('employee_tasks', function (Blueprint $table) {
-            $table->string('audio')->nullable();
+            if (! Schema::hasColumn('employee_tasks', 'audio')) {
+                $table->string('audio')->nullable();
+            }
 
         });
     }

@@ -12,10 +12,18 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('special_tasks', function (Blueprint $table) {
-            $table->string('admin_img')->nullable();
-            $table->boolean('force_employee_to_add_img_for_sub_task')->default(0);
-            $table->boolean('force_employee_to_add_img')->default(0);
-            $table->string('audio')->nullable();
+            if (! Schema::hasColumn('special_tasks', 'admin_img')) {
+                $table->string('admin_img')->nullable();
+            }
+            if (! Schema::hasColumn('special_tasks', 'force_employee_to_add_img_for_sub_task')) {
+                $table->boolean('force_employee_to_add_img_for_sub_task')->default(0);
+            }
+            if (! Schema::hasColumn('special_tasks', 'force_employee_to_add_img')) {
+                $table->boolean('force_employee_to_add_img')->default(0);
+            }
+            if (! Schema::hasColumn('special_tasks', 'audio')) {
+                $table->string('audio')->nullable();
+            }
 
         });
     }

@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('employee_tasks')) {
+            return;
+        }
+
         Schema::create('employee_tasks', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
@@ -28,7 +32,6 @@ return new class extends Migration
             $table->boolean('is_forced_to_upload_img')->nullable();
             $table->string('task_recurrence')->nullable();
             $table->string('task_recurrence_time')->nullable();
-
 
             $table->timestamps();
         });

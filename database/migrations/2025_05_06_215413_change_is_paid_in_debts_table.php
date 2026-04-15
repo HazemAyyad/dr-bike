@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('debts', function (Blueprint $table) {
-            $table->dropColumn('is_paid');
-            $table->string('status')->nullable();
+            if (Schema::hasColumn('debts', 'is_paid')) {
+                $table->dropColumn('is_paid');
+            }
+            if (! Schema::hasColumn('debts', 'status')) {
+                $table->string('status')->nullable();
+            }
         });
     }
 

@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('debts', function (Blueprint $table) {
-            $table->boolean('is_paid')->default(0);
+            if (! Schema::hasColumn('debts', 'is_paid')) {
+                $table->boolean('is_paid')->default(0);
+            }
         });
     }
 

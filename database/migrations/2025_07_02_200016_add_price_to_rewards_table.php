@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('rewards', function (Blueprint $table) {
-            $table->float('price')->default(0);
+            if (! Schema::hasColumn('rewards', 'price')) {
+                $table->float('price')->default(0);
+            }
         });
     }
 

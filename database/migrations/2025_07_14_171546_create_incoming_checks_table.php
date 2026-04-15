@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('incoming_checks')) {
+            return;
+        }
+
         Schema::create('incoming_checks', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('from_customer')->nullable();
@@ -22,7 +26,7 @@ return new class extends Migration
             $table->foreign('to_customer')->references('id')->on('customers')->onDelete('set null');
             $table->foreign('from_seller')->references('id')->on('sellers')->onDelete('set null');
             $table->foreign('to_seller')->references('id')->on('sellers')->onDelete('set null');
-            
+
             $table->float('total')->default(0);
             $table->date('due_date')->nullable();
             $table->string('currency')->default('dollar');

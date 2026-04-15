@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('outgoing_checks')) {
+            return;
+        }
+
         Schema::create('outgoing_checks', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('customer_id')->nullable();
@@ -22,7 +26,6 @@ return new class extends Migration
             $table->string('check_id')->nullable();
             $table->string('bank_name')->nullable();
             $table->string('img')->nullable();
-
 
             $table->timestamps();
         });

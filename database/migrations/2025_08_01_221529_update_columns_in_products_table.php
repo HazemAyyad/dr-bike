@@ -12,27 +12,69 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('products', function (Blueprint $table) {
-            $table->string('nameAr');
-            $table->string('nameEng')->nullable();
-            $table->string('nameAbree')->nullable();
-            $table->boolean('isShow')->default(true);
-            $table->text('descriptionAr')->nullable();
-            $table->text('descriptionEng')->nullable();
-            $table->text('descriptionAbree')->nullable();
-            $table->string('videoUrl')->nullable();
-            $table->decimal('normailPrice', 10, 2)->default(0);
-            $table->decimal('wholesalePrice', 10, 2)->default(0);
-            $table->integer('stock')->default(0);
-            $table->string('model')->nullable();
-            $table->boolean('isNewItem')->default(true);
-            $table->boolean('isMoreSales')->default(false);
-            $table->float('rate')->default(0);
-            $table->integer('manufactureYear')->default(0);
-            $table->decimal('discount', 10, 2)->default(0);
-            $table->unsignedBigInteger('userIdAdd')->nullable();
-            $table->timestamp('dateAdd')->nullable();
-            $table->unsignedBigInteger('userIdUpdate')->nullable();
-            $table->timestamp('dateUpdate')->nullable();
+            if (! Schema::hasColumn('products', 'nameAr')) {
+                $table->string('nameAr');
+            }
+            if (! Schema::hasColumn('products', 'nameEng')) {
+                $table->string('nameEng')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'nameAbree')) {
+                $table->string('nameAbree')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'isShow')) {
+                $table->boolean('isShow')->default(true);
+            }
+            if (! Schema::hasColumn('products', 'descriptionAr')) {
+                $table->text('descriptionAr')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'descriptionEng')) {
+                $table->text('descriptionEng')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'descriptionAbree')) {
+                $table->text('descriptionAbree')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'videoUrl')) {
+                $table->string('videoUrl')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'normailPrice')) {
+                $table->decimal('normailPrice', 10, 2)->default(0);
+            }
+            if (! Schema::hasColumn('products', 'wholesalePrice')) {
+                $table->decimal('wholesalePrice', 10, 2)->default(0);
+            }
+            if (! Schema::hasColumn('products', 'stock')) {
+                $table->integer('stock')->default(0);
+            }
+            if (! Schema::hasColumn('products', 'model')) {
+                $table->string('model')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'isNewItem')) {
+                $table->boolean('isNewItem')->default(true);
+            }
+            if (! Schema::hasColumn('products', 'isMoreSales')) {
+                $table->boolean('isMoreSales')->default(false);
+            }
+            if (! Schema::hasColumn('products', 'rate')) {
+                $table->float('rate')->default(0);
+            }
+            if (! Schema::hasColumn('products', 'manufactureYear')) {
+                $table->integer('manufactureYear')->default(0);
+            }
+            if (! Schema::hasColumn('products', 'discount')) {
+                $table->decimal('discount', 10, 2)->default(0);
+            }
+            if (! Schema::hasColumn('products', 'userIdAdd')) {
+                $table->unsignedBigInteger('userIdAdd')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'dateAdd')) {
+                $table->timestamp('dateAdd')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'userIdUpdate')) {
+                $table->unsignedBigInteger('userIdUpdate')->nullable();
+            }
+            if (! Schema::hasColumn('products', 'dateUpdate')) {
+                $table->timestamp('dateUpdate')->nullable();
+            }
         });
     }
 

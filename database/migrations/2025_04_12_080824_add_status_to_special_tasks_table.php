@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('special_tasks', function (Blueprint $table) {
-            $table->string('status')->default('ongoing');
+            if (! Schema::hasColumn('special_tasks', 'status')) {
+                $table->string('status')->default('ongoing');
+            }
         });
     }
 

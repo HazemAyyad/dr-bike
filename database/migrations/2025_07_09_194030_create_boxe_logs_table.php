@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('box_logs')) {
+            return;
+        }
+
         Schema::create('box_logs', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('from_box_id')->nullable();
@@ -21,8 +25,6 @@ return new class extends Migration
             $table->float('transfered_balance')->default(0);
             $table->unsignedBigInteger('box_id')->nullable();
             $table->foreign('box_id')->references('id')->on('boxes')->onDelete('cascade');
-
-
 
             $table->timestamps();
         });

@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('special_tasks', function (Blueprint $table) {
-            $table->boolean('is_canceled')->default(0);
+            if (! Schema::hasColumn('special_tasks', 'is_canceled')) {
+                $table->boolean('is_canceled')->default(0);
+            }
         });
     }
 

@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('goal_people')) {
+            return;
+        }
+
         Schema::create('goal_people', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('goal_id')->nullable();
@@ -20,7 +24,7 @@ return new class extends Migration
             $table->foreign('goal_id')->references('id')->on('goals')->onDelete('cascade');
             $table->foreign('customer_id')->references('id')->on('customers')->onDelete('cascade');
             $table->foreign('seller_id')->references('id')->on('sellers')->onDelete('cascade');
-    
+
             $table->timestamps();
         });
     }

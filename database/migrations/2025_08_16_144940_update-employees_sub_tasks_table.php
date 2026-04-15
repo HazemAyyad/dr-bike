@@ -13,10 +13,14 @@ return new class extends Migration
     {
         Schema::table('sub_employee_tasks', function (Blueprint $table) {
 
-            $table->string('admin_img')->nullable();
-            $table->boolean('is_forced_to_upload_img')->default(0);
+            if (! Schema::hasColumn('sub_employee_tasks', 'admin_img')) {
+                $table->string('admin_img')->nullable();
+            }
+            if (! Schema::hasColumn('sub_employee_tasks', 'is_forced_to_upload_img')) {
+                $table->boolean('is_forced_to_upload_img')->default(0);
+            }
         });
- 
+
     }
 
     /**

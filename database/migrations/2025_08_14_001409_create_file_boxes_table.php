@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('file_boxes')) {
+            return;
+        }
+
         Schema::create('file_boxes', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();

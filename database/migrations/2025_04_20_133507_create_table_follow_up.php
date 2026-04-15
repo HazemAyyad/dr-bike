@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('followups')) {
+            return;
+        }
+
         Schema::create('followups', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('customer_id')->nullable();
@@ -22,9 +26,6 @@ return new class extends Migration
             $table->date('end_date')->nullable();
             $table->text('notes')->nullable();
 
-
-
-           
             $table->timestamps();
         });
     }

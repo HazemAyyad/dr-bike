@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('deposits')) {
+            return;
+        }
+
         Schema::create('deposits', function (Blueprint $table) {
             $table->id();
             $table->string('deposit_way')->nullable();

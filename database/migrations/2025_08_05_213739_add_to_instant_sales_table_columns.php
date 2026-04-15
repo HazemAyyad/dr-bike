@@ -12,10 +12,14 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('instant_sales', function (Blueprint $table) {
-           $table->unsignedBigInteger('project_id')->nullable();
-           $table->foreign('project_id')->references('id')->on('projects')->onDelete('set null');
+            if (! Schema::hasColumn('instant_sales', 'project_id')) {
+                $table->unsignedBigInteger('project_id')->nullable();
+                $table->foreign('project_id')->references('id')->on('projects')->onDelete('set null');
+            }
 
-           $table->string('type')->default('normal');
+            if (! Schema::hasColumn('instant_sales', 'type')) {
+                $table->string('type')->default('normal');
+            }
         });
     }
 
@@ -24,7 +28,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('instant_sales_table_columns', function (Blueprint $table) {
+        Schema::table('instant_sales', function (Blueprint $table) {
             //
         });
     }

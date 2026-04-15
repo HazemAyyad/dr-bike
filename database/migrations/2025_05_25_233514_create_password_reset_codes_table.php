@@ -9,16 +9,19 @@ return new class extends Migration
     /**
      * Run the migrations.
      */
-public function up()
-{
-    Schema::create('password_reset_codes', function (Blueprint $table) {
-        $table->id();
-        $table->string('email')->index();
-        $table->string('token'); // this will be your 4-digit code
-        $table->timestamps();
-    });
-}
+    public function up(): void
+    {
+        if (Schema::hasTable('password_reset_codes')) {
+            return;
+        }
 
+        Schema::create('password_reset_codes', function (Blueprint $table) {
+            $table->id();
+            $table->string('email')->index();
+            $table->string('token'); // this will be your 4-digit code
+            $table->timestamps();
+        });
+    }
 
     /**
      * Reverse the migrations.

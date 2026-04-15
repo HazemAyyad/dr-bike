@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('projects', function (Blueprint $table) {
-            $table->float('achievement_percentage')->nullable();
-            $table->string('status')->default('ongoing');
+            if (! Schema::hasColumn('projects', 'achievement_percentage')) {
+                $table->float('achievement_percentage')->nullable();
+            }
+            if (! Schema::hasColumn('projects', 'status')) {
+                $table->string('status')->default('ongoing');
+            }
 
         });
     }
@@ -24,7 +28,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('projects', function (Blueprint $table) {
-            $table->dropColumn(['achievement percentage','status']);
+            $table->dropColumn(['achievement percentage', 'status']);
         });
     }
 };

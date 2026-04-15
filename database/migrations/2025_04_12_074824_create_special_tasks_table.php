@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('special_tasks')) {
+            return;
+        }
+
         Schema::create('special_tasks', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
@@ -22,8 +26,6 @@ return new class extends Migration
             $table->boolean('shown_for_employee')->default(0);
             $table->string('task_recurrence')->nullable();
             $table->string('task_recurrence_time')->nullable();
-
-
 
             $table->timestamps();
         });

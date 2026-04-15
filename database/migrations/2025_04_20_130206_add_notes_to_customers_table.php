@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('customers', function (Blueprint $table) {
-            $table->text('notes')->default('no notes');
+            if (! Schema::hasColumn('customers', 'notes')) {
+                $table->text('notes')->default('no notes');
+            }
         });
     }
 

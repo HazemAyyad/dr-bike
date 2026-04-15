@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('verify_tokens')) {
+            return;
+        }
+
         Schema::create('verify_tokens', function (Blueprint $table) {
             $table->id();
             $table->string('token')->nullable();

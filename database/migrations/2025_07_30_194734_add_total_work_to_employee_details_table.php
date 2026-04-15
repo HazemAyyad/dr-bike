@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('employee_details', function (Blueprint $table) {
-            $table->float('total_work_hours')->default(0);
+            if (! Schema::hasColumn('employee_details', 'total_work_hours')) {
+                $table->float('total_work_hours')->default(0);
+            }
         });
     }
 

@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('instant_buying_product')) {
+            return;
+        }
+
         Schema::create('instant_buying_product', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('instant_buying_id')->nullable();
@@ -18,7 +22,7 @@ return new class extends Migration
 
             $table->unsignedBigInteger('product_id')->nullable();
             $table->foreign('product_id')->references('id')->on('products')->onDelete('set null');
-            $table->integer('quantity')->default(1); 
+            $table->integer('quantity')->default(1);
 
             $table->timestamps();
         });
