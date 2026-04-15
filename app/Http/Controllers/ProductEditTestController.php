@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Product;
 use App\Models\Size;
 use App\Models\SizeColor;
+use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Services\StoreManageItemService;
 use Illuminate\Http\Request;
@@ -20,8 +21,37 @@ class ProductEditTestController extends Controller
         $pid = (int) $request->query('product_id', 532);
         $prefill = Product::with(['subCategories', 'sizes.colorSizes'])->find($pid);
 
+        $sizeOptions = Size::query()
+            ->whereNotNull('size')
+            ->where('size', '!=', '')
+            ->distinct()
+            ->orderBy('size')
+            ->pluck('size')
+            ->values();
+
+        if ($prefill) {
+            foreach ($prefill->sizes as $s) {
+                if ($s->size && ! $sizeOptions->contains($s->size)) {
+                    $sizeOptions->push($s->size);
+                }
+            }
+            $sizeOptions = $sizeOptions->unique()->sort()->values();
+        }
+
+        $subCategoriesList = SubCategory::query()
+            ->with('category:id,nameAr')
+            ->orderBy('nameAr')
+            ->get(['id', 'nameAr', 'mainCategoryId']);
+
+        $selectedSubCategoryIds = $prefill
+            ? $prefill->subCategories->pluck('sub_category_id')->all()
+            : [];
+
         return view('product-edit-test', [
             'prefill' => $prefill,
+            'sizeOptions' => $sizeOptions,
+            'subCategoriesList' => $subCategoriesList,
+            'selectedSubCategoryIds' => $selectedSubCategoryIds,
             'steps' => session('steps'),
             'result' => session('result'),
             'product' => session('product_model'),
@@ -53,13 +83,16 @@ class ProductEditTestController extends Controller
             'min_sale_price' => ['nullable', 'numeric', 'min:0'],
             'rotation_date' => ['nullable', 'date'],
             'price' => ['nullable', 'numeric', 'min:0'],
-            'sub_categories' => ['nullable', 'string'],
+            'sub_categories' => ['nullable', 'array'],
+            'sub_categories.*' => ['integer', 'exists:sub_categories,id'],
             'sizes' => ['nullable', 'array'],
             'sizes.*.id' => ['nullable', 'integer', 'exists:sizes,id'],
             'sizes.*.size' => ['nullable', 'string', 'max:50'],
             'sizes.*.color_sizes' => ['nullable', 'array'],
             'sizes.*.color_sizes.*.id' => ['nullable', 'integer', 'exists:size_colors,id'],
             'sizes.*.color_sizes.*.colorAr' => ['nullable', 'string', 'max:100'],
+            'sizes.*.color_sizes.*.colorEn' => ['nullable', 'string', 'max:100'],
+            'sizes.*.color_sizes.*.colorAbbr' => ['nullable', 'string', 'max:100'],
             'sizes.*.color_sizes.*.normailPrice' => ['nullable', 'numeric', 'min:0'],
             'sizes.*.color_sizes.*.stock' => ['nullable', 'integer', 'min:0'],
             'video' => ['nullable', 'file', 'mimes:mp4,mov,avi', 'max:51200'],
@@ -122,29 +155,25 @@ class ProductEditTestController extends Controller
         $product->update($update);
         $pageLog('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
 
-        if ($request->filled('sub_categories')) {
-            $ids = array_filter(array_map('trim', explode(',', $request->input('sub_categories', ''))));
-            SubCategoryProduct::where('product_id', $product->id)->delete();
-            foreach ($ids as $sid) {
-                $sid = (int) $sid;
-                if ($sid > 0) {
-                    SubCategoryProduct::create([
-                        'product_id' => $product->id,
-                        'sub_category_id' => $sid,
-                    ]);
-                }
-            }
-            $pageLog('فئات فرعية', ['ids' => $ids]);
+        $subIds = array_values(array_unique(array_filter(
+            array_map('intval', (array) $request->input('sub_categories', [])),
+            fn (int $id) => $id > 0
+        )));
+        SubCategoryProduct::where('product_id', $product->id)->delete();
+        foreach ($subIds as $sid) {
+            SubCategoryProduct::create([
+                'product_id' => $product->id,
+                'sub_category_id' => $sid,
+            ]);
         }
+        $pageLog('فئات فرعية', ['ids' => $subIds]);
 
         $sizesInput = array_values(array_filter(
             $request->input('sizes', []),
             fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
         ));
-        if (count($sizesInput) > 0) {
-            $this->replaceSizesFromTestForm($sizesInput, (int) $product->id);
-            $pageLog('تم تحديث المقاسات/الألوان محلياً', []);
-        }
+        $this->replaceSizesFromTestForm($sizesInput, (int) $product->id);
+        $pageLog('تم تحديث المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
 
         $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($product->id);
 
@@ -165,6 +194,12 @@ class ProductEditTestController extends Controller
      */
     private function replaceSizesFromTestForm(array $newSizes, int $productId): void
     {
+        if ($newSizes === []) {
+            Size::where('itemId', $productId)->delete();
+
+            return;
+        }
+
         $existingSizeIds = Size::where('itemId', $productId)->pluck('id')->toArray();
         $newSizeIds = collect($newSizes)->pluck('id')->filter()->map(fn ($id) => (int) $id)->toArray();
         $sizesToDelete = array_diff($existingSizeIds, $newSizeIds);
@@ -213,6 +248,8 @@ class ProductEditTestController extends Controller
                     if ($color) {
                         $color->update([
                             'colorAr' => $colorData['colorAr'] ?? $color->colorAr,
+                            'colorEn' => $colorData['colorEn'] ?? $color->colorEn,
+                            'colorAbbr' => $colorData['colorAbbr'] ?? $color->colorAbbr,
                             'normailPrice' => $colorData['normailPrice'] ?? $color->normailPrice,
                             'stock' => $colorData['stock'] ?? $color->stock,
                         ]);
@@ -221,6 +258,8 @@ class ProductEditTestController extends Controller
                     SizeColor::create([
                         'sizeId' => $size->id,
                         'colorAr' => $colorData['colorAr'] ?? '',
+                        'colorEn' => $colorData['colorEn'] ?? '',
+                        'colorAbbr' => $colorData['colorAbbr'] ?? '',
                         'normailPrice' => $colorData['normailPrice'] ?? 0,
                         'stock' => $colorData['stock'] ?? 0,
                     ]);

@@ -83,8 +83,21 @@
         .size-block {
             border: 1px solid var(--border); border-radius: 10px; padding: 1rem; margin-bottom: 0.75rem; background: #fafbfc;
         }
-        .color-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem; align-items: end; }
-        @media (max-width: 600px) { .color-row { grid-template-columns: 1fr; } }
+        .size-toolbar { display: flex; gap: 0.75rem; align-items: flex-end; margin-bottom: 0.75rem; }
+        .color-subhead {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.85rem; font-weight: 700; color: #334155; margin: 0.75rem 0 0.5rem;
+            padding-top: 0.5rem; border-top: 1px dashed var(--border);
+        }
+        .color-fields {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 0.5rem;
+            margin-bottom: 0.65rem;
+            padding-bottom: 0.65rem;
+            border-bottom: 1px solid #e8eef4;
+        }
+        .color-fields:last-child { border-bottom: none; }
         .flex { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
         .checks label { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: 500; color: var(--text); }
         .log { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 10px; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; }
@@ -122,7 +135,10 @@
 
     @php
         $p = $prefill;
-        $subStr = $p ? $p->subCategories->pluck('sub_category_id')->implode(',') : '60';
+        $selSubs = old('sub_categories', $selectedSubCategoryIds ?? []);
+        if (! is_array($selSubs)) {
+            $selSubs = $selSubs !== null && $selSubs !== '' ? [(int) $selSubs] : [];
+        }
     @endphp
 
     <form method="post" action="{{ route('test.product-edit.run') }}" enctype="multipart/form-data">
@@ -220,24 +236,34 @@
 
         <div class="card">
             <div class="cat-bar">
-                <span>التصنيف — فئات فرعية (أرقام مفصولة بفاصلة)</span>
+                <span>التصنيف — فئات فرعية</span>
             </div>
-            <input type="text" name="sub_categories" value="{{ old('sub_categories', $subStr) }}" placeholder="مثال: 60">
-            <p class="hint">مثال واجهة المتجر: «كوشوك وجنطات» يقابل عادةً رقم فئة فرعية محدد في قاعدتكم.</p>
+            <label for="sub_categories">اختر فئة أو أكثر (اضغط Ctrl أو السحب للاختيار المتعدد)</label>
+            <select id="sub_categories" name="sub_categories[]" multiple size="10" style="min-height:12rem">
+                @foreach ($subCategoriesList as $sub)
+                    <option value="{{ $sub->id }}" @selected(in_array((int) $sub->id, array_map('intval', $selSubs), true))>
+                        {{ $sub->category->nameAr ?? '—' }} — {{ $sub->nameAr }} ({{ $sub->id }})
+                    </option>
+                @endforeach
+            </select>
+            <p class="hint">يُحفظ كعلاقات many-to-many مثل لوحة المتجر (.NET: <code>supCategoriesIds</code>).</p>
         </div>
 
         <div class="card">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
                 <h2 class="card-title" style="margin:0;border:0;padding:0">الحجم واللون</h2>
-                <button type="button" class="btn-icon" id="btn-add-size" title="إضافة مقاس">+</button>
+                <div style="display:flex;gap:0.35rem">
+                    <button type="button" class="btn-icon" id="btn-remove-last-size" title="حذف آخر مقاس" style="background:#475569">−</button>
+                    <button type="button" class="btn-icon" id="btn-add-size" title="إضافة مقاس">+</button>
+                </div>
             </div>
             <div id="sizes-container">
                 @if($p && $p->sizes->isNotEmpty())
                     @foreach($p->sizes as $si => $size)
-                        @include('partials.product-edit-size-block', ['size' => $size, 'si' => $si])
+                        @include('partials.product-edit-size-block', ['size' => $size, 'si' => $si, 'sizeOptions' => $sizeOptions])
                     @endforeach
                 @else
-                    @include('partials.product-edit-size-block', ['size' => null, 'si' => 0])
+                    @include('partials.product-edit-size-block', ['size' => null, 'si' => 0, 'sizeOptions' => $sizeOptions])
                 @endif
             </div>
         </div>
@@ -324,7 +350,7 @@
 </div>
 
 <template id="tpl-size-block">
-    @include('partials.product-edit-size-block', ['size' => null, 'si' => '__SI__'])
+    @include('partials.product-edit-size-block', ['size' => null, 'si' => '__SI__', 'sizeOptions' => $sizeOptions])
 </template>
 
 <script>
@@ -333,29 +359,43 @@
     var tpl = document.getElementById('tpl-size-block');
     var idx = container ? container.querySelectorAll('.size-block').length : 1;
 
-    document.getElementById('btn-add-size').addEventListener('click', function () {
+    function appendNewSizeBlock() {
         var html = tpl.innerHTML.replace(/__SI__/g, String(idx));
         var div = document.createElement('div');
         div.innerHTML = html.trim();
         var block = div.firstElementChild;
-        if (block) container.appendChild(block);
-        idx++;
+        if (block) {
+            block.setAttribute('data-si', String(idx));
+            container.appendChild(block);
+            idx++;
+        }
+    }
+
+    document.getElementById('btn-add-size').addEventListener('click', appendNewSizeBlock);
+
+    document.getElementById('btn-remove-last-size').addEventListener('click', function () {
+        var blocks = container.querySelectorAll('.size-block');
+        if (blocks.length === 0) return;
+        blocks[blocks.length - 1].remove();
     });
 
     document.addEventListener('click', function (e) {
-        if (e.target.classList.contains('btn-add-color')) {
-            var sizeBlock = e.target.closest('.size-block');
+        var addColor = e.target.closest('.btn-add-color');
+        if (addColor) {
+            var sizeBlock = addColor.closest('.size-block');
             var si = sizeBlock.getAttribute('data-si');
-            var tbody = sizeBlock.querySelector('.colors-wrap');
-            var cj = tbody.querySelectorAll('.color-row').length;
+            var wrap = sizeBlock.querySelector('.colors-wrap');
+            var cj = wrap.querySelectorAll('.color-fields').length;
             var row = document.createElement('div');
-            row.className = 'color-row';
+            row.className = 'color-fields';
             row.innerHTML =
                 '<input type="hidden" name="sizes[' + si + '][color_sizes][' + cj + '][id]" value="">' +
-                '<div><label>لون</label><input type="text" name="sizes[' + si + '][color_sizes][' + cj + '][colorAr]" placeholder="لون"></div>' +
-                '<div><label>سعر</label><input type="number" step="0.01" name="sizes[' + si + '][color_sizes][' + cj + '][normailPrice]" value="0"></div>' +
-                '<div><label>مخزون</label><input type="number" name="sizes[' + si + '][color_sizes][' + cj + '][stock]" value="0"></div>';
-            tbody.appendChild(row);
+                '<div><label>اللون بالعربية</label><input type="text" name="sizes[' + si + '][color_sizes][' + cj + '][colorAr]" placeholder="اللون بالعربية"></div>' +
+                '<div><label>اللون بالإنجليزية</label><input type="text" name="sizes[' + si + '][color_sizes][' + cj + '][colorEn]" placeholder="Color in English"></div>' +
+                '<div><label>اللون بالعبرية</label><input type="text" name="sizes[' + si + '][color_sizes][' + cj + '][colorAbbr]" placeholder="עברית"></div>' +
+                '<div><label>الكمية</label><input type="number" name="sizes[' + si + '][color_sizes][' + cj + '][stock]" value="0" min="0"></div>' +
+                '<div><label>السعر</label><input type="number" step="0.01" name="sizes[' + si + '][color_sizes][' + cj + '][normailPrice]" value="0" min="0"></div>';
+            wrap.appendChild(row);
         }
     });
 })();

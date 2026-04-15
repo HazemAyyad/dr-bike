@@ -1,49 +1,80 @@
 @php
     $si = $si ?? 0;
+    $opts = isset($sizeOptions) ? collect($sizeOptions) : collect();
+    $curSize = old('sizes.'.$si.'.size', $size->size ?? '');
 @endphp
 <div class="size-block" data-si="{{ $si }}">
-    <input type="hidden" name="sizes[{{ $si }}][id]" value="{{ old('sizes.'.$si.'.id', $size->id ?? '') }}">
-    <div style="margin-bottom:0.65rem">
-        <label>المقاس (الحجم)</label>
-        <input type="text" name="sizes[{{ $si }}][size]" value="{{ old('sizes.'.$si.'.size', $size->size ?? '') }}" placeholder="مثال: 18×9.5×8">
+    <div class="size-toolbar">
+        <div style="flex:1;min-width:200px">
+            <label>اختر الحجم</label>
+            <select name="sizes[{{ $si }}][size]" class="size-select">
+                <option value="">اختر الحجم</option>
+                @foreach ($opts as $opt)
+                    <option value="{{ $opt }}" @selected((string) $curSize === (string) $opt)>{{ $opt }}</option>
+                @endforeach
+                @if ($curSize !== '' && $curSize !== null && ! $opts->contains($curSize))
+                    <option value="{{ $curSize }}" selected>{{ $curSize }}</option>
+                @endif
+            </select>
+        </div>
     </div>
-    <p style="font-size:0.8rem;color:#64748b;margin:0 0 0.5rem">ألوان هذا المقاس</p>
+    <input type="hidden" name="sizes[{{ $si }}][id]" value="{{ old('sizes.'.$si.'.id', $size->id ?? '') }}">
+
+    <div class="color-subhead">
+        <span>اللون والكمية</span>
+        <button type="button" class="btn-icon btn-add-color" title="إضافة لون" style="width:1.75rem;height:1.75rem;font-size:1rem">+</button>
+    </div>
     <div class="colors-wrap">
-        @if($size && $size->colorSizes->isNotEmpty())
-            @foreach($size->colorSizes as $cj => $color)
-                <div class="color-row">
+        @if ($size && $size->colorSizes->isNotEmpty())
+            @foreach ($size->colorSizes as $cj => $color)
+                <div class="color-fields">
                     <input type="hidden" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][id]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.id', $color->id) }}">
                     <div>
-                        <label>لون</label>
-                        <input type="text" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][colorAr]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.colorAr', $color->colorAr ?? '') }}" placeholder="لون">
+                        <label>اللون بالعربية</label>
+                        <input type="text" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][colorAr]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.colorAr', $color->colorAr ?? '') }}" placeholder="اللون بالعربية">
                     </div>
                     <div>
-                        <label>سعر</label>
-                        <input type="number" step="0.01" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][normailPrice]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.normailPrice', $color->normailPrice ?? 0) }}">
+                        <label>اللون بالإنجليزية</label>
+                        <input type="text" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][colorEn]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.colorEn', $color->colorEn ?? '') }}" placeholder="Color in English">
                     </div>
                     <div>
-                        <label>مخزون</label>
-                        <input type="number" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][stock]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.stock', $color->stock ?? 0) }}">
+                        <label>اللون بالعبرية</label>
+                        <input type="text" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][colorAbbr]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.colorAbbr', $color->colorAbbr ?? '') }}" placeholder="עברית">
+                    </div>
+                    <div>
+                        <label>الكمية</label>
+                        <input type="number" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][stock]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.stock', $color->stock ?? 0) }}" min="0">
+                    </div>
+                    <div>
+                        <label>السعر</label>
+                        <input type="number" step="0.01" name="sizes[{{ $si }}][color_sizes][{{ $cj }}][normailPrice]" value="{{ old('sizes.'.$si.'.color_sizes.'.$cj.'.normailPrice', $color->normailPrice ?? 0) }}" min="0">
                     </div>
                 </div>
             @endforeach
         @else
-            <div class="color-row">
+            <div class="color-fields">
                 <input type="hidden" name="sizes[{{ $si }}][color_sizes][0][id]" value="">
                 <div>
-                    <label>لون</label>
-                    <input type="text" name="sizes[{{ $si }}][color_sizes][0][colorAr]" value="{{ old('sizes.'.$si.'.color_sizes.0.colorAr', '') }}" placeholder="لون">
+                    <label>اللون بالعربية</label>
+                    <input type="text" name="sizes[{{ $si }}][color_sizes][0][colorAr]" value="{{ old('sizes.'.$si.'.color_sizes.0.colorAr', '') }}" placeholder="اللون بالعربية">
                 </div>
                 <div>
-                    <label>سعر</label>
-                    <input type="number" step="0.01" name="sizes[{{ $si }}][color_sizes][0][normailPrice]" value="{{ old('sizes.'.$si.'.color_sizes.0.normailPrice', 0) }}">
+                    <label>اللون بالإنجليزية</label>
+                    <input type="text" name="sizes[{{ $si }}][color_sizes][0][colorEn]" value="{{ old('sizes.'.$si.'.color_sizes.0.colorEn', '') }}" placeholder="Color in English">
                 </div>
                 <div>
-                    <label>مخزون</label>
-                    <input type="number" name="sizes[{{ $si }}][color_sizes][0][stock]" value="{{ old('sizes.'.$si.'.color_sizes.0.stock', 0) }}">
+                    <label>اللون بالعبرية</label>
+                    <input type="text" name="sizes[{{ $si }}][color_sizes][0][colorAbbr]" value="{{ old('sizes.'.$si.'.color_sizes.0.colorAbbr', '') }}" placeholder="עברית">
+                </div>
+                <div>
+                    <label>الكمية</label>
+                    <input type="number" name="sizes[{{ $si }}][color_sizes][0][stock]" value="{{ old('sizes.'.$si.'.color_sizes.0.stock', 0) }}" min="0">
+                </div>
+                <div>
+                    <label>السعر</label>
+                    <input type="number" step="0.01" name="sizes[{{ $si }}][color_sizes][0][normailPrice]" value="{{ old('sizes.'.$si.'.color_sizes.0.normailPrice', 0) }}" min="0">
                 </div>
             </div>
         @endif
     </div>
-    <button type="button" class="btn btn-outline btn-sm btn-add-color" style="margin-top:0.5rem">+ لون</button>
 </div>
