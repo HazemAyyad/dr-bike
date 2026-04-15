@@ -37,6 +37,7 @@ Route::post('/test/product-create', [ProductEditTestController::class, 'createRu
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
 Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');
 Route::post('/test/product-edit/delete-image', [ProductEditTestController::class, 'deleteImage'])->name('test.product-edit.delete-image');
+Route::post('/test/product-edit/delete-product', [ProductEditTestController::class, 'deleteProduct'])->name('test.product-edit.delete-product');
 
 /** جدول المنتجات (DataTables) + JSON للخادم */
 Route::get('/test/products-list', [ProductEditTestController::class, 'productsList'])->name('test.products-list');

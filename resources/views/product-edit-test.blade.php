@@ -38,9 +38,23 @@
         </div>
     </div>
 
+    @if(empty($isCreate))
+    @php $se = $store_item_exists ?? null; @endphp
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+        @if ($se === true)
+            <span class="badge bg-success rounded-pill">موجود في المتجر</span>
+        @elseif ($se === false)
+            <span class="badge bg-danger rounded-pill">غير موجود في المتجر</span>
+        @else
+            <span class="badge bg-secondary rounded-pill">المتجر: تعذر التحقق</span>
+        @endif
+        <button type="button" class="btn btn-outline-danger btn-sm" id="btn-delete-product-test">حذف المنتج…</button>
+    </div>
+    @endif
+
     <div class="alert alert-warning small">
         @if(!empty($isCreate))
-            سيتم تعيين رقم المنتج تلقائياً في قاعدة Laravel (التالي المتوقع: <strong>#{{ $nextIdHint ?? '—' }}</strong>) ثم مزامنة المتجر عبر <code>ManageItem</code> و<code>AddImgToItem</code>.
+            يُنشأ الصنف في المتجر أولاً بـ <code>ManageItem</code> مع <strong>Id=0</strong>؛ يعيد المتجر رقم المنتج فيُحفظ محلياً بنفس الرقم (تلميح إن تعطّل المزامنة: آخر id+1 ≈ <strong>#{{ $nextIdHint ?? '—' }}</strong>) ثم رفع الصور عبر <code>AddImgToItem</code>.
         @else
             صفحة تجريبية. رفع الصور/الفيديو عبر <code>multipart</code> إلى <code>ManageItem</code>.
         @endif
@@ -571,6 +585,64 @@
                     });
             });
         });
+
+        @if(empty($isCreate))
+        var deleteProductUrl = @json(route('test.product-edit.delete-product'));
+        var deleteProductId = {{ (int) $prefill->id }};
+        var productsListUrl = @json(route('test.products-list'));
+        $('#btn-delete-product-test').on('click', function () {
+            Swal.fire({
+                title: 'حذف المنتج',
+                html: '<p class="small text-muted mb-2 text-end">اختر نوع الحذف. الأرشفة آمنة؛ الحذف النهائي قد يفشل إن وُجدت فواتير مرتبطة.</p>',
+                input: 'select',
+                inputOptions: {
+                    soft: 'أرشفة (soft delete) — إخفاء من القوائم',
+                    laravel_hard: 'حذف نهائي من Laravel فقط (لا يمس المتجر)',
+                    store_and_laravel: 'حذف من المتجر ثم حذف نهائي من Laravel'
+                },
+                inputPlaceholder: 'اختر...',
+                showCancelButton: true,
+                confirmButtonText: 'تنفيذ',
+                cancelButtonText: 'إلغاء',
+                inputValidator: function (value) {
+                    if (!value) {
+                        return 'اختر نوع الحذف';
+                    }
+                }
+            }).then(function (result) {
+                if (!result.isConfirmed || !result.value) {
+                    return;
+                }
+                fetch(deleteProductUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken(),
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    body: JSON.stringify({ product_id: deleteProductId, mode: result.value })
+                })
+                    .then(function (res) {
+                        return res.json().then(function (data) {
+                            return { httpOk: res.ok, data: data };
+                        });
+                    })
+                    .then(function (out) {
+                        if (out.data && out.data.ok) {
+                            Swal.fire({ icon: 'success', title: out.data.message || 'تم' }).then(function () {
+                                window.location.href = productsListUrl;
+                            });
+                        } else {
+                            Swal.fire({ icon: 'error', title: (out.data && out.data.message) ? out.data.message : 'فشل الحذف' });
+                        }
+                    })
+                    .catch(function () {
+                        Swal.fire({ icon: 'error', title: 'خطأ في الاتصال' });
+                    });
+            });
+        });
+        @endif
     });
 })(jQuery);
 </script>

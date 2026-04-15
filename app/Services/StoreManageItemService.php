@@ -205,16 +205,18 @@ class StoreManageItemService
     }
 
     /**
-     * منتج جديد في Laravel (معرّف محلي = max(id)+1): لا يوجد صف في المتجر بعد — نبني هيكلاً فارغاً ثم ندمج كما في التعديل.
-     * يُستخدم نفس STORE_SYNC_ON_PRODUCT_EDIT و ManageItem + AddImgToItem.
+     * إنشاء صنف في المتجر: ManageItem يتوقع **Id=0** حتى يُنشئ السطر؛ إرسال Id غير موجود يعيد ThisItemNotFound (400).
+     * يُمرَّر منتج افتراضي بـ id=0 (غير محفوظ في Laravel). بعد النجاح يُستخرج رقم الصنف من JSON الاستجابة → `store_new_id`.
+     * الصور تُرفع لاحقاً عبر pushStandaloneImagesToStore بعد حفظ المنتج محلياً بالمعرّف الصحيح.
      *
      * @param  callable|null  $step  function (string $message, array $context = []): void
+     * @return array{ok: bool, error?: string, store_new_id?: int, skipped?: bool}
      */
     public function syncNewProductToStore(Product $product, ?callable $step = null, ?Request $request = null): array
     {
         $trace = $this->makeTracer($step);
 
-        $trace('بدء مزامنة منتج جديد', ['product_id' => $product->id]);
+        $trace('بدء مزامنة منتج جديد (ManageItem بـ Id=0)', ['local_id_placeholder' => (int) $product->id]);
 
         if (! config('store.sync_on_product_edit')) {
             $trace('تخطي: STORE_SYNC_ON_PRODUCT_EDIT معطّل', []);
@@ -232,13 +234,17 @@ class StoreManageItemService
             return ['ok' => true, 'skipped' => true];
         }
 
+        if ((int) $product->id !== 0) {
+            return ['ok' => false, 'error' => 'منطق داخلي: منتج الإنشاء الافتراضي يجب أن يكون id=0'];
+        }
+
         $token = $this->login($base, $email, $password, $trace);
         if ($token === null) {
             return ['ok' => false, 'error' => 'متجر: فشل تسجيل الدخول'];
         }
 
         $skeleton = [
-            'id' => (int) $product->id,
+            'id' => 0,
             'supCategory' => [],
             'itemSizes' => [],
         ];
@@ -252,13 +258,13 @@ class StoreManageItemService
         ]);
 
         $form = $this->buildManageItemFormParams($merged, $targetStock);
-        $url = $base.'/Items/ManageItem';
+        $form = $this->forceManageItemFormIdsForInsert($form);
 
         $trace('ManageItem (إنشاء): طلب', [
-            'url' => $url,
+            'url' => $base.'/Items/ManageItem',
             'fields_count' => count($form),
+            'Id' => $form['Id'] ?? null,
             'video_مع_ManageItem' => $request && $request->hasFile('video'),
-            'صور_تُرفع_بعدها_عبر_AddImgToItem' => $request ? $this->countImageOnlyUploads($request) : 0,
         ]);
 
         $response = $this->postManageItem($base, $token, $form, $request, $trace);
@@ -266,8 +272,7 @@ class StoreManageItemService
         $bodyPreview = mb_substr($response->body(), 0, 2000);
 
         if (! $response->successful()) {
-            Log::warning('متجر: فشل ManageItem بعد إنشاء المنتج محلياً', [
-                'product_id' => $product->id,
+            Log::warning('متجر: فشل ManageItem عند إنشاء صنف جديد', [
                 'body' => $response->body(),
             ]);
             $trace('ManageItem: فشل', [
@@ -278,17 +283,110 @@ class StoreManageItemService
             return ['ok' => false, 'error' => 'متجر: فشل ManageItem (HTTP '.$response->status().')'];
         }
 
-        $trace('ManageItem (إنشاء): نجاح', ['http_status' => $response->status()]);
-        Log::info('متجر: تمت مزامنة منتج جديد', ['product_id' => $product->id]);
+        $newId = $this->parseCreatedItemIdFromManageItemResponse($response);
+        $trace('ManageItem (إنشاء): نجاح', [
+            'http_status' => $response->status(),
+            'body_preview' => $bodyPreview,
+            'parsed_store_new_id' => $newId,
+        ]);
 
-        if ($request !== null && $this->requestHasStandaloneImageUploads($request)) {
-            $imgRes = $this->pushImagesViaAddImgToItem($base, $token, $request, $product, $trace);
-            if (! ($imgRes['ok'] ?? false)) {
-                return $imgRes;
+        if ($newId === null || $newId <= 0) {
+            Log::warning('متجر: ManageItem نجح لكن لم يُعرف رقم الصنف الجديد', ['body' => $response->body()]);
+
+            return [
+                'ok' => false,
+                'error' => 'متجر: نجح الحفظ لكن لم يُستخرج رقم المنتج من استجابة المتجر. راجع السجل.',
+            ];
+        }
+
+        Log::info('متجر: أُنشئ صنف جديد', ['store_new_id' => $newId]);
+
+        return ['ok' => true, 'store_new_id' => $newId];
+    }
+
+    /**
+     * رفع الصور بعد أن يصبح للمنتج معرّف حقيقي في المتجر وLaravel.
+     *
+     * @return array{ok: bool, error?: string, skipped?: bool}
+     */
+    public function pushStandaloneImagesToStore(Product $product, ?callable $step = null, ?Request $request = null): array
+    {
+        $trace = $this->makeTracer($step);
+
+        if ($request === null || ! $this->requestHasStandaloneImageUploads($request)) {
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        if (! config('store.sync_on_product_edit')) {
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        $base = config('store.domain');
+        $email = config('store.email');
+        $password = config('store.password');
+
+        if ($base === '' || $email === null || $password === null) {
+            return ['ok' => true, 'skipped' => true];
+        }
+
+        $token = $this->login($base, $email, $password, $trace);
+        if ($token === null) {
+            return ['ok' => false, 'error' => 'متجر: فشل تسجيل الدخول'];
+        }
+
+        return $this->pushImagesViaAddImgToItem($base, $token, $request, $product, $trace);
+    }
+
+    /**
+     * يضمن Id=0 و ItemSizes[i].ItemId=0 لمسار الإدراج في .NET.
+     *
+     * @param  array<string, scalar>  $form
+     * @return array<string, scalar>
+     */
+    private function forceManageItemFormIdsForInsert(array $form): array
+    {
+        $form['Id'] = '0';
+        foreach (array_keys($form) as $key) {
+            if (preg_match('/^ItemSizes\[\d+\]\.ItemId$/', (string) $key)) {
+                $form[$key] = '0';
             }
         }
 
-        return ['ok' => true];
+        return $form;
+    }
+
+    private function parseCreatedItemIdFromManageItemResponse(\Illuminate\Http\Client\Response $response): ?int
+    {
+        $json = $response->json();
+        if (! is_array($json)) {
+            return null;
+        }
+
+        $candidates = [
+            data_get($json, 'id'),
+            data_get($json, 'Id'),
+            data_get($json, 'data.id'),
+            data_get($json, 'Data.Id'),
+            data_get($json, 'item.id'),
+            data_get($json, 'Item.Id'),
+            data_get($json, 'result.id'),
+            data_get($json, 'Result.Id'),
+        ];
+
+        foreach ($candidates as $v) {
+            if ($v !== null && $v !== '' && is_numeric($v)) {
+                $n = (int) $v;
+                if ($n > 0) {
+                    return $n;
+                }
+            }
+        }
+
+        if (preg_match('/\"id\"\s*:\s*(\d+)/i', (string) $response->body(), $m)) {
+            return (int) $m[1];
+        }
+
+        return null;
     }
 
     /**
@@ -854,6 +952,118 @@ class StoreManageItemService
             ]);
 
             return ['ok' => false, 'error' => 'متجر: فشل حذف الصورة (HTTP '.$response->status().')'];
+        }
+
+        return ['ok' => true];
+    }
+
+    /**
+     * هل يوجد صنف بهذا الرقم في المتجر؟ (GetItemById ناجح ويُرجع نفس id)
+     *
+     * @return bool|null null عند تعذّر التحقق (إعدادات/شبكة)
+     */
+    public function itemExistsInStore(int $itemId): ?bool
+    {
+        $base = rtrim((string) config('store.domain'), '/');
+        $email = config('store.email');
+        $password = config('store.password');
+
+        if ($base === '' || $email === null || $password === null) {
+            return null;
+        }
+
+        $token = $this->login($base, $email, $password, null);
+        if ($token === null) {
+            return null;
+        }
+
+        $item = $this->fetchItemById($base, $token, $itemId, null);
+        if ($item === null) {
+            return false;
+        }
+
+        $rid = $item['id'] ?? $item['Id'] ?? null;
+
+        return $rid !== null && (int) $rid === (int) $itemId;
+    }
+
+    /**
+     * @param  array<int, int>  $itemIds
+     * @return array<int, bool|null> كل مفتاح id → true موجود، false غير موجود، null تعذّر التحقق
+     */
+    public function batchItemsExistInStore(array $itemIds): array
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $itemIds), fn (int $id) => $id > 0)));
+        $out = [];
+        foreach ($ids as $id) {
+            $out[$id] = null;
+        }
+        if ($ids === []) {
+            return [];
+        }
+
+        $base = rtrim((string) config('store.domain'), '/');
+        $email = config('store.email');
+        $password = config('store.password');
+
+        if ($base === '' || $email === null || $password === null) {
+            return $out;
+        }
+
+        $token = $this->login($base, $email, $password, null);
+        if ($token === null) {
+            return $out;
+        }
+
+        foreach ($ids as $id) {
+            $item = $this->fetchItemById($base, $token, $id, null);
+            if ($item === null) {
+                $out[$id] = false;
+            } else {
+                $rid = $item['id'] ?? $item['Id'] ?? null;
+                $out[$id] = $rid !== null && (int) $rid === $id;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * حذف الصنف من متجر .NET (مسار قابل للتعديل عبر STORE_DELETE_ITEM_PATH).
+     *
+     * @return array{ok: bool, error?: string}
+     */
+    public function deleteItemFromStore(int $itemId): array
+    {
+        $base = rtrim((string) config('store.domain'), '/');
+        $email = config('store.email');
+        $password = config('store.password');
+
+        if ($base === '' || $email === null || $password === null) {
+            return ['ok' => false, 'error' => 'إعدادات المتجر غير مكتملة'];
+        }
+
+        $token = $this->login($base, $email, $password, null);
+        if ($token === null) {
+            return ['ok' => false, 'error' => 'متجر: فشل تسجيل الدخول'];
+        }
+
+        $path = trim((string) config('store.delete_item_path', 'Items/DeleteItem'), '/');
+        $url = $base.'/'.$path.'?'.http_build_query(['itemId' => $itemId]);
+
+        $response = Http::withToken($token)
+            ->timeout(120)
+            ->post($url);
+
+        if (! $response->successful()) {
+            Log::warning('متجر: فشل حذف الصنف', [
+                'item_id' => $itemId,
+                'url' => $url,
+                'status' => $response->status(),
+                'body' => mb_substr($response->body(), 0, 1500),
+            ]);
+
+            return ['ok' => false, 'error' => 'متجر: فشل حذف الصنف (HTTP '.$response->status().')'];
         }
 
         return ['ok' => true];

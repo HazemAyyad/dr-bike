@@ -25,4 +25,13 @@ return [
 
     /** حد أقصى لعدد المنتجات في قائمة اختيار المنتج (صفحة التعديل) */
     'product_picker_limit' => max(1, (int) env('STORE_PRODUCT_PICKER_LIMIT', 8000)),
+
+    /**
+     * مسار حذف الصنف في متجر .NET (نسبي لـ STORE_DOMAIN)، مثال: Items/DeleteItem
+     * يُستدعى كـ POST مع ?itemId=
+     */
+    'delete_item_path' => trim((string) env('STORE_DELETE_ITEM_PATH', 'Items/DeleteItem')),
+
+    /** جدول المنتجات التجريبي: التحقق من وجود كل صف في المتجر (GetItemById لكل صف في الصفحة) */
+    'check_product_in_store_on_list' => filter_var(env('STORE_CHECK_PRODUCT_IN_STORE_ON_LIST', true), FILTER_VALIDATE_BOOLEAN),
 ];

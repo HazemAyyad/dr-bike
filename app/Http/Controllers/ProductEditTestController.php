@@ -15,7 +15,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 /**
@@ -73,11 +75,12 @@ class ProductEditTestController extends Controller
             'steps' => session('steps'),
             'result' => session('result'),
             'product' => session('product_model'),
+            'store_item_exists' => null,
         ]);
     }
 
     /**
-     * حفظ منتج جديد محلياً ثم مزامنة المتجر (ManageItem + صور عبر AddImgToItem).
+     * إنشاء منتج: المتجر يُنشئ المعرف عبر ManageItem بـ Id=0؛ نحفظ محلياً بنفس الرقم ثم نرفع الصور.
      */
     public function createRun(Request $request, StoreManageItemService $storeManageItemService): RedirectResponse
     {
@@ -93,22 +96,13 @@ class ProductEditTestController extends Controller
             Log::info('[product-create-test page] '.$msg, $ctx);
         };
 
-        $nextId = (int) (Product::query()->max('id') ?? 0) + 1;
-        if (Product::query()->where('id', $nextId)->exists()) {
-            return redirect()
-                ->route('test.product-create')
-                ->withInput()
-                ->withErrors(['nameAr' => 'تعارض في رقم المنتج، أعد المحاولة.']);
-        }
-
-        $pageLog('طلب إنشاء منتج', ['allocated_id' => $nextId]);
+        $pageLog('طلب إنشاء منتج (مزامنة المتجر أولاً بـ Id=0)');
 
         $nameAr = $validated['nameAr'];
         $nameEng = $validated['nameEng'] !== null && $validated['nameEng'] !== '' ? $validated['nameEng'] : $nameAr;
         $nameAbree = $validated['nameAbree'] !== null && $validated['nameAbree'] !== '' ? $validated['nameAbree'] : $nameAr;
 
         $insert = [
-            'id' => $nextId,
             'nameAr' => $nameAr,
             'nameEng' => $nameEng,
             'nameAbree' => $nameAbree,
@@ -142,16 +136,64 @@ class ProductEditTestController extends Controller
             $insert['price'] = $validated['price'];
         }
 
-        Product::query()->create($insert);
-        $pageLog('تم إنشاء المنتج محلياً', ['product_id' => $nextId]);
+        $virtual = new Product($insert);
+        $virtual->id = 0;
 
         $subIds = array_values(array_unique(array_filter(
             array_map('intval', (array) $request->input('sub_categories', [])),
             fn (int $id) => $id > 0
         )));
+        $virtual->setRelation('subCategories', collect($subIds)->map(
+            fn (int $sid) => new SubCategoryProduct([
+                'product_id' => 0,
+                'sub_category_id' => $sid,
+            ])
+        ));
+
+        $this->attachUnsavedSizesFromRequest($virtual, $request);
+
+        $result = $storeManageItemService->syncNewProductToStore($virtual, $pageLog, $request);
+        $pageLog('نتيجة ManageItem (إنشاء)', $result);
+
+        if (empty($result['ok'])) {
+            return redirect()
+                ->route('test.product-create')
+                ->withInput()
+                ->with('steps', $steps)
+                ->with('result', $result);
+        }
+
+        if (! empty($result['skipped'])) {
+            $newId = (int) (Product::query()->max('id') ?? 0) + 1;
+            $pageLog('مزامنة المتجر متخطاة — تخصيص محلي', ['allocated_id' => $newId]);
+        } else {
+            $newId = (int) ($result['store_new_id'] ?? 0);
+        }
+
+        if ($newId <= 0) {
+            return redirect()
+                ->route('test.product-create')
+                ->withInput()
+                ->with('steps', $steps)
+                ->with('result', [
+                    'ok' => false,
+                    'error' => 'لم يُستخرج رقم المنتج من المتجر.',
+                ]);
+        }
+
+        if (Product::query()->where('id', $newId)->exists()) {
+            return redirect()
+                ->route('test.product-create')
+                ->withInput()
+                ->withErrors(['nameAr' => 'المنتج #'.$newId.' موجود مسبقاً محلياً.']);
+        }
+
+        Product::query()->create(array_merge($insert, ['id' => $newId]));
+        $pageLog('تم إنشاء المنتج محلياً', ['product_id' => $newId]);
+
         foreach ($subIds as $sid) {
             SubCategoryProduct::create([
-                'product_id' => $nextId,
+                'product_id' => $newId,
                 'sub_category_id' => $sid,
             ]);
         }
@@ -161,22 +203,83 @@ class ProductEditTestController extends Controller
             $request->input('sizes', []),
             fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
         ));
-        $this->replaceSizesFromTestForm($sizesInput, $nextId);
+        $this->replaceSizesFromTestForm($sizesInput, $newId);
         $pageLog('تم حفظ المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
 
-        $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($nextId);
+        $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($newId);
 
-        $result = $storeManageItemService->syncNewProductToStore($product, $pageLog, $request);
-        $pageLog('انتهاء المزامنة', $result);
+        $imgResult = $storeManageItemService->pushStandaloneImagesToStore($product, $pageLog, $request);
+        $pageLog('رفع الصور (AddImgToItem)', $imgResult);
+
+        $mergedResult = $result;
+        if (empty($imgResult['ok'] ?? true) && empty($imgResult['skipped'] ?? false)) {
+            $mergedResult = array_merge($result, ['image_error' => $imgResult['error'] ?? 'فشل رفع الصور']);
+        }
 
         return redirect()
             ->route('test.product-edit', ['product_id' => $product->id])
             ->with('steps', $steps)
-            ->with('result', $result)
+            ->with('result', $mergedResult)
             ->with('product_model', $product->fresh(['subCategories', 'sizes.colorSizes']));
     }
 
-    public function show(Request $request): View|\Illuminate\Http\RedirectResponse
+    /**
+     * مقاسات/ألوان من الطلب كعلاقات غير محفوظة (للدمج مع المتجر قبل وجود صف في Laravel).
+     */
+    private function attachUnsavedSizesFromRequest(Product $product, Request $request): void
+    {
+        $sizesInput = array_values(array_filter(
+            $request->input('sizes', []),
+            fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
+        ));
+
+        if ($sizesInput === []) {
+            $product->setRelation('sizes', collect());
+
+            return;
+        }
+
+        $sizes = collect();
+        foreach ($sizesInput as $sizeData) {
+            if (! is_array($sizeData)) {
+                continue;
+            }
+
+            $size = new Size([
+                'size' => $sizeData['size'] ?? '',
+                'itemId' => 0,
+                'discount' => 0,
+                'description' => '',
+            ]);
+            $size->id = 0;
+
+            $colors = collect();
+            foreach ($sizeData['color_sizes'] ?? [] as $colorData) {
+                if (! is_array($colorData)) {
+                    continue;
+                }
+                $color = new SizeColor([
+                    'colorAr' => $colorData['colorAr'] ?? '',
+                    'colorEn' => $colorData['colorEn'] ?? '',
+                    'colorAbbr' => $colorData['colorAbbr'] ?? '',
+                    'normailPrice' => $colorData['normailPrice'] ?? 0,
+                    'wholesalePrice' => 0,
+                    'discount' => 0,
+                    'stock' => (int) ($colorData['stock'] ?? 0),
+                    'sizeId' => 0,
+                ]);
+                $color->id = 0;
+                $colors->push($color);
+            }
+
+            $size->setRelation('colorSizes', $colors);
+            $sizes->push($size);
+        }
+
+        $product->setRelation('sizes', $sizes);
+    }
+
+    public function show(Request $request, StoreManageItemService $storeManageItemService): View|\Illuminate\Http\RedirectResponse
     {
         $pid = $request->query('product_id');
         if ($pid === null || $pid === '') {
@@ -195,6 +298,13 @@ class ProductEditTestController extends Controller
             return redirect()
                 ->route('test.products-list')
                 ->with('warning', 'المنتج المطلوب غير موجود.');
+        }
+
+        $storeItemExists = null;
+        try {
+            $storeItemExists = $storeManageItemService->itemExistsInStore((int) $prefill->id);
+        } catch (\Throwable $e) {
+            Log::warning('[product-edit-test] تعذر التحقق من وجود الصنف في المتجر', ['id' => $prefill->id, 'error' => $e->getMessage()]);
         }
 
         $sizeOptions = $this->buildSizeOptions($prefill);
@@ -237,6 +347,7 @@ class ProductEditTestController extends Controller
             'steps' => session('steps'),
             'result' => session('result'),
             'product' => session('product_model'),
+            'store_item_exists' => $storeItemExists,
         ]);
     }
 
@@ -296,7 +407,7 @@ class ProductEditTestController extends Controller
     /**
      * بيانات DataTables (خادم) للبحث والترقيم.
      */
-    public function productsData(Request $request): JsonResponse
+    public function productsData(Request $request, StoreManageItemService $storeManageItemService): JsonResponse
     {
         $draw = (int) $request->input('draw', 1);
         $start = max(0, (int) $request->input('start', 0));
@@ -323,14 +434,29 @@ class ProductEditTestController extends Controller
             ->take($length)
             ->get();
 
-        $data = $rows->map(fn (Product $p) => [
-            'id' => $p->id,
-            'nameAr' => $p->nameAr,
-            'stock' => $p->stock,
-            'normailPrice' => $p->normailPrice,
-            'isShow' => $p->isShow,
-            'edit_url' => route('test.product-edit', ['product_id' => $p->id]),
-        ]);
+        $storeMap = [];
+        if (config('store.check_product_in_store_on_list', true) && $rows->isNotEmpty()) {
+            try {
+                $storeMap = $storeManageItemService->batchItemsExistInStore($rows->pluck('id')->all());
+            } catch (\Throwable $e) {
+                Log::warning('[products-list] batchItemsExistInStore failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        $data = $rows->map(function (Product $p) use ($storeMap) {
+            $sid = (int) $p->id;
+            $inStore = $storeMap[$sid] ?? null;
+
+            return [
+                'id' => $p->id,
+                'nameAr' => $p->nameAr,
+                'stock' => $p->stock,
+                'normailPrice' => $p->normailPrice,
+                'isShow' => $p->isShow,
+                'in_store' => $inStore,
+                'edit_url' => route('test.product-edit', ['product_id' => $p->id]),
+            ];
+        });
 
         return response()->json([
             'draw' => $draw,
@@ -338,6 +464,72 @@ class ProductEditTestController extends Controller
             'recordsFiltered' => $recordsFiltered,
             'data' => $data,
         ]);
+    }
+
+    /**
+     * حذف منتج (أرشفة soft، أو حذف نهائي محلي، أو متجر + محلي) — Ajax.
+     */
+    public function deleteProduct(Request $request, StoreManageItemService $storeManageItemService): JsonResponse
+    {
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', Rule::exists('products', 'id')],
+            'mode' => ['required', 'in:soft,laravel_hard,store_and_laravel'],
+        ]);
+
+        $product = Product::query()->findOrFail($data['product_id']);
+
+        try {
+            if ($data['mode'] === 'soft') {
+                $product->delete();
+
+                return response()->json(['ok' => true, 'message' => 'تم أرشفة المنتج (يمكن استعادته لاحقاً من قاعدة البيانات).']);
+            }
+
+            if ($data['mode'] === 'laravel_hard') {
+                $this->hardDeleteProductRecords($product);
+
+                return response()->json(['ok' => true, 'message' => 'تم حذف المنتج من Laravel فقط.']);
+            }
+
+            $remote = $storeManageItemService->deleteItemFromStore((int) $product->id);
+            if (! ($remote['ok'] ?? false)) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => $remote['error'] ?? 'فشل حذف الصنف من المتجر',
+                ], 422);
+            }
+
+            $this->hardDeleteProductRecords($product);
+
+            return response()->json(['ok' => true, 'message' => 'تم الحذف من المتجر ومن Laravel.']);
+        } catch (\Throwable $e) {
+            Log::error('[product-delete-test] '.$e->getMessage(), ['trace' => $e->getTraceAsString()]);
+
+            return response()->json([
+                'ok' => false,
+                'message' => 'فشل الحذف: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
+    private function hardDeleteProductRecords(Product $product): void
+    {
+        $id = $product->id;
+
+        DB::transaction(function () use ($product, $id) {
+            NormalImageProduct::query()->where('itemId', $id)->delete();
+            ViewImageProduct::query()->where('itemId', $id)->delete();
+            Image3dProduct::query()->where('itemId', $id)->delete();
+            SubCategoryProduct::query()->where('product_id', $id)->delete();
+
+            $sizeIds = Size::query()->where('itemId', $id)->pluck('id');
+            if ($sizeIds->isNotEmpty()) {
+                SizeColor::query()->whereIn('sizeId', $sizeIds)->delete();
+            }
+            Size::query()->where('itemId', $id)->delete();
+
+            $product->forceDelete();
+        });
     }
 
     /**
