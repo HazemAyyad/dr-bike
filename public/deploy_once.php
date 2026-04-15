@@ -46,9 +46,11 @@ if (! config('app.debug')) {
     exit('Deploy script disabled.');
 }
 
-// ترتيب النشر: مسح إعدادات الكاش أولاً ثم المايجريشن (قاعدة البيانات) ثم باقي التنظيف.
+// ترتيب النشر: config ثم storage:link قبل migrate — إذا فشل migrate يُرمى استثناء ويُوقف الحلقة؛
+// وضع الرابط مبكراً يضمن إنشاء public/storage حتى عند فشل قاعدة البيانات.
 $allowedCommands = [
     ['name' => 'config:clear', 'params' => []],
+    ['name' => 'storage:link', 'params' => []],
     [
         'name' => 'migrate',
         'params' => ['--force' => true],
@@ -58,7 +60,6 @@ $allowedCommands = [
     ['name' => 'cache:clear', 'params' => []],
     // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
     ['name' => '__composer_dump_autoload__', 'params' => []],
-    ['name' => 'storage:link', 'params' => []],
 ];
 
 $lines = [];

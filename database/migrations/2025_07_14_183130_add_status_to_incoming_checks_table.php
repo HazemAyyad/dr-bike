@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasColumn('incoming_checks', 'status')) {
+            return;
+        }
+
         Schema::table('incoming_checks', function (Blueprint $table) {
             $table->string('status')->default('not_cashed');
         });
@@ -21,8 +25,12 @@ return new class extends Migration
      */
     public function down(): void
     {
+        if (! Schema::hasColumn('incoming_checks', 'status')) {
+            return;
+        }
+
         Schema::table('incoming_checks', function (Blueprint $table) {
-            //
+            $table->dropColumn('status');
         });
     }
 };
