@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Image3dProduct;
+use App\Models\NormalImageProduct;
 use App\Models\Product;
+use App\Models\ViewImageProduct;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -192,7 +195,7 @@ class StoreManageItemService
         // تعديل الصنف في .NET لا يمرّر NormalImg/ViewImg/threeDImg إلى منطق الحفظ — يُرفع الفيديو فقط عبر ManageItem.
         // الصور تُضاف عبر نقطة AddImgToItem كما في لوحة المتجر.
         if ($request !== null && $this->requestHasStandaloneImageUploads($request)) {
-            $imgRes = $this->pushImagesViaAddImgToItem($base, $token, $request, (int) $product->id, $trace);
+            $imgRes = $this->pushImagesViaAddImgToItem($base, $token, $request, $product, $trace);
             if (! ($imgRes['ok'] ?? false)) {
                 return $imgRes;
             }
@@ -244,19 +247,28 @@ class StoreManageItemService
 
     /**
      * يطابق POST /Items/AddImgToItem — DoctorBike.Shared.Enums.TypeImg: View, _3d, Normal
+     * ثم يحفظ نفس السجل في جداول Laravel (normal_image_products، view_image_products، image3d_products).
      *
      * @return array{ok: bool, error?: string}
      */
-    private function pushImagesViaAddImgToItem(string $base, string $token, Request $request, int $itemId, callable $trace): array
+    private function pushImagesViaAddImgToItem(string $base, string $token, Request $request, Product $product, callable $trace): array
     {
         $url = $base.'/Items/AddImgToItem';
-        $map = [
+        $itemId = (int) $product->id;
+
+        $typeToForm = [
             'normal_images' => 'Normal',
             'view_images' => 'View',
             'three_d_images' => '_3d',
         ];
 
-        foreach ($map as $field => $typeImg) {
+        $fieldToModel = [
+            'normal_images' => NormalImageProduct::class,
+            'view_images' => ViewImageProduct::class,
+            'three_d_images' => Image3dProduct::class,
+        ];
+
+        foreach ($typeToForm as $field => $typeImg) {
             foreach ($request->file($field, []) ?: [] as $f) {
                 if (! $f || ! $f->isValid()) {
                     continue;
@@ -295,12 +307,82 @@ class StoreManageItemService
 
                     return ['ok' => false, 'error' => $msg];
                 }
+
+                $parsed = $this->parseAddImgToItemResponse($response);
+                if ($parsed === null) {
+                    Log::warning('متجر: AddImgToItem نجح لكن استجابة JSON غير متوقعة — لم يُحفظ محلياً', [
+                        'product_id' => $product->id,
+                        'field' => $field,
+                        'body_preview' => mb_substr($response->body(), 0, 600),
+                    ]);
+                    $trace('Laravel: تعذر استخراج id/imageUrl من استجابة المتجر', [
+                        'body_preview' => mb_substr($response->body(), 0, 400),
+                    ]);
+
+                    continue;
+                }
+
+                /** @var class-string<\Illuminate\Database\Eloquent\Model> $modelClass */
+                $modelClass = $fieldToModel[$field];
+                $modelClass::updateOrCreate(
+                    ['id' => $parsed['id']],
+                    [
+                        'itemId' => $product->getKey(),
+                        'imageUrl' => $parsed['imageUrl'],
+                    ]
+                );
+
+                $trace('Laravel: حُفظت صورة محلياً', [
+                    'table' => (new $modelClass)->getTable(),
+                    'image_id' => $parsed['id'],
+                ]);
             }
         }
 
         $trace('AddImgToItem: اكتمل رفع الصور', []);
 
         return ['ok' => true];
+    }
+
+    /**
+     * يستخرج حقول ImagesItemDto من جسم الاستجابة (أشكال مختلفة حسب غلاف الـ API).
+     *
+     * @return array{id: int|string, imageUrl: string}|null
+     */
+    private function parseAddImgToItemResponse(\Illuminate\Http\Client\Response $response): ?array
+    {
+        $json = $response->json();
+        if (! is_array($json)) {
+            return null;
+        }
+
+        $try = function (array $row): ?array {
+            $id = $row['id'] ?? $row['Id'] ?? null;
+            $imageUrl = $row['imageUrl'] ?? $row['ImageUrl'] ?? null;
+            if ($id === null || $imageUrl === null || $imageUrl === '') {
+                return null;
+            }
+
+            return ['id' => $id, 'imageUrl' => (string) $imageUrl];
+        };
+
+        foreach (['data', 'Data', 'result', 'Result'] as $k) {
+            if (isset($json[$k]) && is_array($json[$k])) {
+                $got = $try($json[$k]);
+                if ($got !== null) {
+                    return $got;
+                }
+                $inner = $json[$k]['data'] ?? $json[$k]['Data'] ?? null;
+                if (is_array($inner)) {
+                    $got = $try($inner);
+                    if ($got !== null) {
+                        return $got;
+                    }
+                }
+            }
+        }
+
+        return $try($json);
     }
 
     private function countImageOnlyUploads(Request $request): int
