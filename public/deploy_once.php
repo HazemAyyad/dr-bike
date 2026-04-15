@@ -42,11 +42,16 @@ if (! config('app.debug')) {
     exit('Deploy script disabled.');
 }
 
+// ترتيب النشر: مسح إعدادات الكاش أولاً ثم المايجريشن (قاعدة البيانات) ثم باقي التنظيف.
 $allowedCommands = [
-    ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'config:clear', 'params' => []],
+    [
+        'name' => 'migrate',
+        'params' => ['--force' => true],
+        'label' => '=== تشغيل migrations (php artisan migrate --force) ===',
+    ],
+    ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'cache:clear', 'params' => []],
-    ['name' => 'migrate', 'params' => ['--force' => true]],
     // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
     ['name' => '__composer_dump_autoload__', 'params' => []],
     ['name' => 'storage:link', 'params' => []],
@@ -59,24 +64,14 @@ $lines[] = '';
 header('Content-Type: text/html; charset=UTF-8');
 echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Deploy output</title></head><body><pre>';
 
-// Check Firebase credentials path: directory and file must exist and be readable
-$firebaseCredentialsPath = base_path('storage/firebase/firebase_credentials.json');
-$firebaseDir = dirname($firebaseCredentialsPath);
-$dirExists = is_dir($firebaseDir);
-$fileExists = is_file($firebaseCredentialsPath);
-$fileReadable = $fileExists && is_readable($firebaseCredentialsPath);
-echo ">>> Checking Firebase credentials (storage/firebase/firebase_credentials.json)\n";
-echo '   Resolved path: '.htmlspecialchars($firebaseCredentialsPath, ENT_QUOTES, 'UTF-8')."\n";
-echo '   Directory exists: '.($dirExists ? 'yes' : 'no')."\n";
-echo '   File exists: '.($fileExists ? 'yes' : 'no')."\n";
-echo '   File readable: '.($fileReadable ? 'yes' : 'no')."\n";
-if (! $dirExists || ! $fileExists || ! $fileReadable) {
-    echo "   WARNING  FCM will not work until the credentials file is present and readable.\n";
-}
-echo "----------------------------------------\n";
+ 
 
 foreach ($allowedCommands as $cmd) {
     $commandName = $cmd['name'].(isset($cmd['params']['--force']) ? ' --force' : '');
+
+    if (! empty($cmd['label'])) {
+        echo htmlspecialchars($cmd['label']."\n", ENT_QUOTES, 'UTF-8');
+    }
 
     // Skip storage:link if the link already exists (avoids "link already exists" message)
     if ($cmd['name'] === 'storage:link') {

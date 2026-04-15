@@ -96,7 +96,8 @@ class ProductEditTestController extends Controller
             Log::info('[product-create-test page] '.$msg, $ctx);
         };
 
-        $pageLog('طلب إنشاء منتج (مزامنة المتجر أولاً بـ Id=0)');
+        $localOnly = ! $this->wantsStoreSync($request);
+        $pageLog('طلب إنشاء منتج', ['save_scope' => $validated['save_scope'], 'local_only' => $localOnly]);
 
         $nameAr = $validated['nameAr'];
         $nameEng = $validated['nameEng'] !== null && $validated['nameEng'] !== '' ? $validated['nameEng'] : $nameAr;
@@ -151,6 +152,40 @@ class ProductEditTestController extends Controller
         ));
 
         $this->attachUnsavedSizesFromRequest($virtual, $request);
+
+        if ($localOnly) {
+            $newId = (int) (Product::query()->max('id') ?? 0) + 1;
+            if (Product::query()->where('id', $newId)->exists()) {
+                return redirect()
+                    ->route('test.product-create')
+                    ->withInput()
+                    ->withErrors(['nameAr' => 'تعارض في رقم المنتج، أعد المحاولة.']);
+            }
+
+            Product::query()->create(array_merge($insert, ['id' => $newId]));
+            $pageLog('تم إنشاء المنتج محلياً (بدون متجر)', ['product_id' => $newId]);
+
+            foreach ($subIds as $sid) {
+                SubCategoryProduct::create([
+                    'product_id' => $newId,
+                    'sub_category_id' => $sid,
+                ]);
+            }
+            $sizesInput = array_values(array_filter(
+                $request->input('sizes', []),
+                fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
+            ));
+            $this->replaceSizesFromTestForm($sizesInput, $newId);
+            $pageLog('مقاسات/ألوان محلية', ['count' => count($sizesInput)]);
+
+            $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($newId);
+
+            return redirect()
+                ->route('test.product-edit', ['product_id' => $product->id])
+                ->with('steps', $steps)
+                ->with('result', ['ok' => true, 'skipped' => true, 'local_only' => true])
+                ->with('product_model', $product->fresh(['subCategories', 'sizes.colorSizes']));
+        }
 
         $result = $storeManageItemService->syncNewProductToStore($virtual, $pageLog, $request);
         $pageLog('نتيجة ManageItem (إنشاء)', $result);
@@ -572,7 +607,11 @@ class ProductEditTestController extends Controller
             Log::info('[product-edit-test page] '.$msg, $ctx);
         };
 
-        $pageLog('طلب التعديل', ['product_id' => $validated['product_id']]);
+        $pageLog('طلب التعديل', [
+            'product_id' => $validated['product_id'],
+            'save_scope' => $validated['save_scope'],
+            'local_only' => ! $this->wantsStoreSync($request),
+        ]);
 
         $product = Product::findOrFail($validated['product_id']);
 
@@ -639,8 +678,13 @@ class ProductEditTestController extends Controller
 
         $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($product->id);
 
-        $result = $storeManageItemService->syncProductEditToStore($product, $pageLog, $request);
-        $pageLog('انتهاء المزامنة', $result);
+        if ($this->wantsStoreSync($request)) {
+            $result = $storeManageItemService->syncProductEditToStore($product, $pageLog, $request);
+            $pageLog('انتهاء المزامنة', $result);
+        } else {
+            $pageLog('تخطي المتجر — حفظ Laravel فقط');
+            $result = ['ok' => true, 'skipped' => true, 'local_only' => true];
+        }
 
         return redirect()
             ->route('test.product-edit', ['product_id' => $product->id])
@@ -694,6 +738,8 @@ class ProductEditTestController extends Controller
             'normal_images.*' => ['nullable', 'image', 'max:10240'],
             'three_d_images.*' => ['nullable', 'image', 'max:10240'],
             'view_images.*' => ['nullable', 'image', 'max:10240'],
+            /** full = حفظ Laravel + مزامنة المتجر؛ local_only = Laravel فقط */
+            'save_scope' => ['required', 'in:full,local_only'],
         ];
 
         if ($forEdit) {
@@ -701,6 +747,11 @@ class ProductEditTestController extends Controller
         }
 
         return $request->validate($rules);
+    }
+
+    private function wantsStoreSync(Request $request): bool
+    {
+        return $request->input('save_scope', 'full') === 'full';
     }
 
     /**

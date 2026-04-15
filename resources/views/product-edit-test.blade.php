@@ -301,20 +301,43 @@
             </div>
         </div>
 
-        <button type="submit" class="btn btn-primary btn-lg mb-4">@if(!empty($isCreate))إنشاء محلياً + مزامنة المتجر@elseحفظ محلياً + مزامنة المتجر@endif</button>
+        <div class="card shadow-sm mb-3 border-primary-subtle">
+            <div class="card-body">
+                <h2 class="h6 border-bottom pb-2 mb-3">أين يُطبَّق الحفظ؟</h2>
+                @php $scope = old('save_scope', 'full'); @endphp
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="radio" name="save_scope" id="save_scope_full" value="full" @checked($scope === 'full')>
+                    <label class="form-check-label" for="save_scope_full">
+                        <strong>Laravel + المتجر معاً</strong> — حفظ في القاعدة ثم مزامنة (<code>ManageItem</code> والصور عبر المتجر عند اختيار هذا الخيار).
+                    </label>
+                </div>
+                <div class="form-check mb-0">
+                    <input class="form-check-input" type="radio" name="save_scope" id="save_scope_local" value="local_only" @checked($scope === 'local_only')>
+                    <label class="form-check-label" for="save_scope_local">
+                        <strong>Laravel فقط</strong> — لا يُرسل شيء إلى المتجر (مفيد للتجربة أو عند انقطاع المتجر). الصور/الفيديو الجديدة لا تُرفع للمتجر في هذا الوضع.
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg mb-4">@if(!empty($isCreate))إنشاء المنتج@elseحفظ التعديلات@endif</button>
     </form>
 
     @if(session('result'))
         @php $r = session('result'); @endphp
         <div class="alert {{ !empty($r['ok']) ? 'alert-success' : 'alert-danger' }}">
-            <strong>المتجر:</strong>
-            @if(!empty($r['ok']))
-                نجاح
+            @if(!empty($r['local_only']))
+                <strong>الوضع:</strong> حفظ في Laravel فقط (لم تُمزامن بيانات مع المتجر).
             @else
-                فشل
+                <strong>المتجر:</strong>
+                @if(!empty($r['ok']))
+                    نجاح
+                @else
+                    فشل
+                @endif
+                @if(!empty($r['error'])) — {{ $r['error'] }} @endif
+                @if(!empty($r['skipped'])) — تخطي @endif
             @endif
-            @if(!empty($r['error'])) — {{ $r['error'] }} @endif
-            @if(!empty($r['skipped'])) — تخطي @endif
         </div>
     @endif
 
