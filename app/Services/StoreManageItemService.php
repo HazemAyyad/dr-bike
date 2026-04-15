@@ -165,7 +165,8 @@ class StoreManageItemService
         $trace('ManageItem (تعديل): طلب', [
             'url' => $url,
             'fields_count' => count($form),
-            'multipart_files' => $request ? $this->countManageItemUploads($request) : 0,
+            'video_مع_ManageItem' => $request && $request->hasFile('video'),
+            'صور_تُرفع_بعدها_عبر_AddImgToItem' => $request ? $this->countImageOnlyUploads($request) : 0,
         ]);
 
         $response = $this->postManageItem($base, $token, $form, $request, $trace);
@@ -188,17 +189,29 @@ class StoreManageItemService
         $trace('ManageItem (تعديل): نجاح', ['http_status' => $response->status()]);
         Log::info('متجر: تمت مزامنة تعديل المنتج', ['product_id' => $product->id]);
 
+        // تعديل الصنف في .NET لا يمرّر NormalImg/ViewImg/threeDImg إلى منطق الحفظ — يُرفع الفيديو فقط عبر ManageItem.
+        // الصور تُضاف عبر نقطة AddImgToItem كما في لوحة المتجر.
+        if ($request !== null && $this->requestHasStandaloneImageUploads($request)) {
+            $imgRes = $this->pushImagesViaAddImgToItem($base, $token, $request, (int) $product->id, $trace);
+            if (! ($imgRes['ok'] ?? false)) {
+                return $imgRes;
+            }
+        }
+
         return ['ok' => true];
     }
 
     /**
+     * ManageItem يستقبل multipart أساساً لـ **الفيديو** في مسار التعديل (.NET Edit يتعامل مع Video فقط).
+     * الصور تُرسل لاحقاً عبر AddImgToItem.
+     *
      * @param  array<string, scalar>  $form
      */
     private function postManageItem(string $base, string $token, array $form, ?Request $request, callable $trace): \Illuminate\Http\Client\Response
     {
         $url = $base.'/Items/ManageItem';
 
-        if ($request === null || ! $this->requestHasManageItemFiles($request)) {
+        if ($request === null || ! $request->hasFile('video')) {
             return Http::withToken($token)
                 ->timeout(120)
                 ->asForm()
@@ -206,43 +219,18 @@ class StoreManageItemService
         }
 
         $http = Http::withToken($token)->timeout(300);
-
-        if ($request->hasFile('video')) {
-            $v = $request->file('video');
-            if ($v->isValid()) {
-                $http = $http->attach('Video', file_get_contents($v->getRealPath()), $v->getClientOriginalName());
-            }
+        $v = $request->file('video');
+        if ($v->isValid()) {
+            $http = $http->attach('Video', file_get_contents($v->getRealPath()), $v->getClientOriginalName());
         }
 
-        foreach ($request->file('normal_images', []) ?: [] as $f) {
-            if ($f && $f->isValid()) {
-                $http = $http->attach('NormalImg', file_get_contents($f->getRealPath()), $f->getClientOriginalName());
-            }
-        }
-
-        foreach ($request->file('three_d_images', []) ?: [] as $f) {
-            if ($f && $f->isValid()) {
-                $http = $http->attach('threeDImg', file_get_contents($f->getRealPath()), $f->getClientOriginalName());
-            }
-        }
-
-        foreach ($request->file('view_images', []) ?: [] as $f) {
-            if ($f && $f->isValid()) {
-                $http = $http->attach('ViewImg', file_get_contents($f->getRealPath()), $f->getClientOriginalName());
-            }
-        }
-
-        $trace('ManageItem: إرسال multipart (ملفات مرفقة)', []);
+        $trace('ManageItem: إرسال multipart (فيديو)', []);
 
         return $http->post($url, $form);
     }
 
-    private function requestHasManageItemFiles(Request $request): bool
+    private function requestHasStandaloneImageUploads(Request $request): bool
     {
-        if ($request->hasFile('video')) {
-            return true;
-        }
-
         foreach (['normal_images', 'three_d_images', 'view_images'] as $key) {
             foreach ($request->file($key, []) ?: [] as $f) {
                 if ($f && $f->isValid()) {
@@ -254,9 +242,70 @@ class StoreManageItemService
         return false;
     }
 
-    private function countManageItemUploads(Request $request): int
+    /**
+     * يطابق POST /Items/AddImgToItem — DoctorBike.Shared.Enums.TypeImg: View, _3d, Normal
+     *
+     * @return array{ok: bool, error?: string}
+     */
+    private function pushImagesViaAddImgToItem(string $base, string $token, Request $request, int $itemId, callable $trace): array
     {
-        $n = $request->hasFile('video') ? 1 : 0;
+        $url = $base.'/Items/AddImgToItem';
+        $map = [
+            'normal_images' => 'Normal',
+            'view_images' => 'View',
+            'three_d_images' => '_3d',
+        ];
+
+        foreach ($map as $field => $typeImg) {
+            foreach ($request->file($field, []) ?: [] as $f) {
+                if (! $f || ! $f->isValid()) {
+                    continue;
+                }
+                $path = $f->getRealPath();
+                if ($path === false) {
+                    $trace('AddImgToItem: ملف غير صالح', ['field' => $field, 'name' => $f->getClientOriginalName()]);
+
+                    continue;
+                }
+                $trace('AddImgToItem: إرسال', [
+                    'itemId' => $itemId,
+                    'TypeImg' => $typeImg,
+                    'name' => $f->getClientOriginalName(),
+                ]);
+
+                $response = Http::withToken($token)
+                    ->timeout(120)
+                    ->attach('Img', file_get_contents($path), $f->getClientOriginalName())
+                    ->post($url, [
+                        'ItemId' => $itemId,
+                        'TypeImg' => $typeImg,
+                    ]);
+
+                if (! $response->successful()) {
+                    $msg = 'متجر: فشل AddImgToItem (HTTP '.$response->status().')';
+                    Log::warning($msg, [
+                        'item_id' => $itemId,
+                        'type' => $typeImg,
+                        'body' => mb_substr($response->body(), 0, 1500),
+                    ]);
+                    $trace('AddImgToItem: فشل', [
+                        'http_status' => $response->status(),
+                        'body_preview' => mb_substr($response->body(), 0, 800),
+                    ]);
+
+                    return ['ok' => false, 'error' => $msg];
+                }
+            }
+        }
+
+        $trace('AddImgToItem: اكتمل رفع الصور', []);
+
+        return ['ok' => true];
+    }
+
+    private function countImageOnlyUploads(Request $request): int
+    {
+        $n = 0;
         foreach (['normal_images', 'three_d_images', 'view_images'] as $key) {
             $n += count(array_filter($request->file($key, []) ?: []));
         }
@@ -375,9 +424,6 @@ class StoreManageItemService
         return $rows;
     }
 
-    /**
-     * @param  callable|null  $step
-     */
     private function makeTracer(?callable $step): callable
     {
         return function (string $message, array $context = []) use ($step): void {
