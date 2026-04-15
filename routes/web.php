@@ -32,6 +32,7 @@ Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
 Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');
+Route::post('/test/product-edit/delete-image', [ProductEditTestController::class, 'deleteImage'])->name('test.product-edit.delete-image');
 
 /** جدول المنتجات (DataTables) + JSON للخادم */
 Route::get('/test/products-list', [ProductEditTestController::class, 'productsList'])->name('test.products-list');

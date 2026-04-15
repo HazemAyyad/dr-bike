@@ -7,7 +7,7 @@
     <div class="size-toolbar">
         <div style="flex:1;min-width:200px">
             <label class="form-label">اختر الحجم</label>
-            <select name="sizes[{{ $si }}][size]" class="form-select form-select-sm size-select">
+            <select name="sizes[{{ $si }}][size]" class="form-select form-select-sm size-select select2-size">
                 <option value="">اختر الحجم</option>
                 @foreach ($opts as $opt)
                     <option value="{{ $opt }}" @selected((string) $curSize === (string) $opt)>{{ $opt }}</option>

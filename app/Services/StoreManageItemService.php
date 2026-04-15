@@ -714,4 +714,61 @@ class StoreManageItemService
 
         return $form;
     }
+
+    /**
+     * حذف صورة من متجر .NET ثم يحذف المستدعي السجل محلياً.
+     * POST Items/DeleteImg?imgId=&ItemId=&type= — TypeImg: View=0، _3d=1، Normal=2
+     *
+     * @param  'normal'|'view'|'three_d'  $kind
+     * @return array{ok: bool, error?: string}
+     */
+    public function deleteImageFromStore(int $itemId, int|string $imageId, string $kind): array
+    {
+        $base = rtrim((string) config('store.domain'), '/');
+        $email = config('store.email');
+        $password = config('store.password');
+
+        if ($base === '' || $email === null || $password === null) {
+            return ['ok' => false, 'error' => 'إعدادات المتجر غير مكتملة'];
+        }
+
+        $typeInt = match ($kind) {
+            'view' => 0,
+            'three_d' => 1,
+            'normal' => 2,
+            default => -1,
+        };
+        if ($typeInt === -1) {
+            return ['ok' => false, 'error' => 'نوع الصورة غير صالح'];
+        }
+
+        $token = $this->login($base, $email, $password, null);
+        if ($token === null) {
+            return ['ok' => false, 'error' => 'متجر: فشل تسجيل الدخول'];
+        }
+
+        $url = $base.'/Items/DeleteImg?'.http_build_query([
+            'imgId' => $imageId,
+            'ItemId' => $itemId,
+            'type' => $typeInt,
+        ]);
+
+        $response = Http::withToken($token)
+            ->timeout(60)
+            ->post($url);
+
+        if (! $response->successful()) {
+            Log::warning('متجر: فشل DeleteImg', [
+                'item_id' => $itemId,
+                'img_id' => $imageId,
+                'kind' => $kind,
+                'status' => $response->status(),
+                'body' => mb_substr($response->body(), 0, 1200),
+            ]);
+
+            return ['ok' => false, 'error' => 'متجر: فشل حذف الصورة (HTTP '.$response->status().')'];
+        }
+
+        return ['ok' => true];
+    }
 }

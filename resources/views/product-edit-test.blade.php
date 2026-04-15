@@ -3,8 +3,11 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Doctor Bike — تعديل منتج (اختبار)</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.rtl.min.css" rel="stylesheet">
     <style>
         .size-block { border: 1px solid #dee2e6; border-radius: 0.5rem; padding: 1rem; margin-bottom: 0.75rem; background: #f8f9fa; }
         .size-toolbar { display: flex; gap: 0.75rem; align-items: flex-end; margin-bottom: 0.75rem; }
@@ -12,6 +15,9 @@
         .color-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.5rem; margin-bottom: 0.65rem; padding-bottom: 0.65rem; border-bottom: 1px solid #e9ecef; }
         .color-fields:last-child { border-bottom: none; }
         .upload-zone { border: 2px dashed #ced4da; border-radius: 0.5rem; min-height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0.75rem; background: #fafafa; }
+        .drop-zone:hover { background: #f8f9fa; border-color: #86b7fe !important; }
+        .drop-zone.border-primary { border-color: #0d6efd !important; background: #eef5ff; }
+        .select2-container { z-index: 2055; }
         .log { background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 0.5rem; font-size: 0.8rem; white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; }
         .btn-icon { width: 2rem; height: 2rem; border-radius: 0.375rem; background: #0d6efd; color: #fff; border: none; cursor: pointer; font-size: 1.1rem; line-height: 1; }
     </style>
@@ -49,7 +55,7 @@
     <div class="card shadow-sm mb-3">
         <div class="card-body">
             <label class="form-label fw-semibold" for="product-picker">اختر المنتج للتعديل</label>
-            <select id="product-picker" class="form-select" @if($productsForPicker->isEmpty()) disabled @endif>
+            <select id="product-picker" class="form-select select2-field" @if($productsForPicker->isEmpty()) disabled @endif>
                 @forelse ($productsForPicker as $pr)
                     <option value="{{ $pr->id }}" @selected((string) $p->id === (string) $pr->id)>
                         #{{ $pr->id }} — {{ $pr->nameAr }} (مخزون {{ $pr->stock }})
@@ -64,62 +70,6 @@
             </p>
         </div>
     </div>
-
-    @php
-        $hasStoredMedia = $p->normalImages->isNotEmpty() || $p->viewImages->isNotEmpty() || $p->image3d->isNotEmpty();
-    @endphp
-    @if ($hasStoredMedia)
-        <div class="card shadow-sm mb-3">
-            <div class="card-body">
-                <h2 class="h6 border-bottom pb-2 mb-3">صور مخزنة حالياً</h2>
-                @if ($p->normalImages->isNotEmpty())
-                    <p class="small fw-bold mb-2">صور عادية</p>
-                    <div class="row g-2 mb-3">
-                        @foreach ($p->normalImages as $img)
-                            @php $u = $resolveMediaUrl($img->imageUrl); @endphp
-                            @if ($u)
-                                <div class="col-6 col-md-3">
-                                    <a href="{{ $u }}" target="_blank" rel="noopener" class="d-block border rounded overflow-hidden bg-white">
-                                        <img src="{{ $u }}" alt="" class="img-fluid w-100" style="object-fit: cover; max-height: 140px;" loading="lazy">
-                                    </a>
-                                </div>
-                            @endif
-                        @endforeach
-                    </div>
-                @endif
-                @if ($p->viewImages->isNotEmpty())
-                    <p class="small fw-bold mb-2">صور عرض</p>
-                    <div class="row g-2 mb-3">
-                        @foreach ($p->viewImages as $img)
-                            @php $u = $resolveMediaUrl($img->imageUrl); @endphp
-                            @if ($u)
-                                <div class="col-6 col-md-3">
-                                    <a href="{{ $u }}" target="_blank" rel="noopener" class="d-block border rounded overflow-hidden bg-white">
-                                        <img src="{{ $u }}" alt="" class="img-fluid w-100" style="object-fit: cover; max-height: 140px;" loading="lazy">
-                                    </a>
-                                </div>
-                            @endif
-                        @endforeach
-                    </div>
-                @endif
-                @if ($p->image3d->isNotEmpty())
-                    <p class="small fw-bold mb-2">صور ثلاثية الأبعاد</p>
-                    <div class="row g-2">
-                        @foreach ($p->image3d as $img)
-                            @php $u = $resolveMediaUrl($img->imageUrl); @endphp
-                            @if ($u)
-                                <div class="col-6 col-md-3">
-                                    <a href="{{ $u }}" target="_blank" rel="noopener" class="d-block border rounded overflow-hidden bg-white">
-                                        <img src="{{ $u }}" alt="" class="img-fluid w-100" style="object-fit: cover; max-height: 140px;" loading="lazy">
-                                    </a>
-                                </div>
-                            @endif
-                        @endforeach
-                    </div>
-                @endif
-            </div>
-        </div>
-    @endif
 
     <form method="post" action="{{ route('test.product-edit.run') }}" enctype="multipart/form-data">
         @csrf
@@ -184,7 +134,7 @@
                 </div>
                 <div class="col-md-6 col-lg-4">
                     <label class="form-label">يُباع مع ورق *</label>
-                    <select class="form-select" name="is_sold_with_paper" required>
+                    <select class="form-select select2-field" id="is_sold_with_paper" name="is_sold_with_paper" required>
                         <option value="1" @selected(old('is_sold_with_paper', $p?->is_sold_with_paper ?? 1) == 1)>نعم</option>
                         <option value="0" @selected(old('is_sold_with_paper', $p?->is_sold_with_paper ?? 1) == 0)>لا</option>
                     </select>
@@ -221,8 +171,8 @@
         <div class="card shadow-sm mb-3">
             <div class="card-body">
             <h2 class="h6 border-bottom pb-2 mb-3">التصنيف — فئات فرعية</h2>
-            <label class="form-label" for="sub_categories">اختر فئة أو أكثر (Ctrl + نقر للمتعدد)</label>
-            <select class="form-select" id="sub_categories" name="sub_categories[]" multiple size="10" style="min-height:12rem">
+            <label class="form-label" for="sub_categories">اختر فئة أو أكثر</label>
+            <select class="form-select select2-field" id="sub_categories" name="sub_categories[]" multiple="multiple">
                 @foreach ($subCategoriesList as $sub)
                     <option value="{{ $sub->id }}" @selected(in_array((int) $sub->id, array_map('intval', $selSubs), true))>
                         {{ $sub->category->nameAr ?? '—' }} — {{ $sub->nameAr }} ({{ $sub->id }})
@@ -256,43 +206,51 @@
 
         <div class="card shadow-sm mb-3">
             <div class="card-body">
-            <h2 class="h6 border-bottom pb-2 mb-3">الوسائط (رفع جديد — يُرسل للمتجر)</h2>
-            <div class="row g-3">
-                <div class="col-md-6">
-                    <div class="upload-zone">
-                        <strong>صور عادية</strong>
-                        <p class="small text-muted mb-2">عدة ملفات</p>
-                        <input type="file" class="form-control form-control-sm" name="normal_images[]" multiple accept="image/*">
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="upload-zone">
-                        <strong>صور ثلاثية الأبعاد</strong>
-                        <input type="file" class="form-control form-control-sm" name="three_d_images[]" multiple accept="image/*">
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="upload-zone">
-                        <strong>صور عرض</strong>
-                        <input type="file" class="form-control form-control-sm" name="view_images[]" multiple accept="image/*">
-                    </div>
-                </div>
-                <div class="col-md-6">
-                    <div class="upload-zone">
-                        <strong>فيديو</strong>
-                        <input type="file" class="form-control form-control-sm" name="video" accept="video/mp4,video/quicktime,video/x-msvideo">
-                    </div>
+            <h2 class="h6 border-bottom pb-2 mb-3">الوسائط</h2>
+            <p class="small text-muted mb-3">الصور المخزنة تظهر تحت كل قسم؛ الحذف فوري عبر المتجر. الرفع الجديد يُرسل مع حفظ النموذج.</p>
+
+            @include('partials.product-edit-media-type', [
+                'title' => 'صور عادية',
+                'kind' => 'normal',
+                'inputName' => 'normal_images[]',
+                'inputId' => 'input-normal-images',
+                'collection' => $p?->normalImages ?? collect(),
+                'resolveMediaUrl' => $resolveMediaUrl,
+            ])
+            @include('partials.product-edit-media-type', [
+                'title' => 'صور عرض',
+                'kind' => 'view',
+                'inputName' => 'view_images[]',
+                'inputId' => 'input-view-images',
+                'collection' => $p?->viewImages ?? collect(),
+                'resolveMediaUrl' => $resolveMediaUrl,
+            ])
+            @include('partials.product-edit-media-type', [
+                'title' => 'صور ثلاثية الأبعاد',
+                'kind' => 'three_d',
+                'inputName' => 'three_d_images[]',
+                'inputId' => 'input-3d-images',
+                'collection' => $p?->image3d ?? collect(),
+                'resolveMediaUrl' => $resolveMediaUrl,
+            ])
+
+            <div class="mb-2">
+                <h6 class="fw-bold">فيديو</h6>
+                <p class="small text-muted mb-2">
+                    @php $vUrl = $p?->videoUrl ? $resolveMediaUrl($p->videoUrl) : null; @endphp
+                    الفيديو الحالي:
+                    @if ($vUrl)
+                        <a href="{{ $vUrl }}" target="_blank" rel="noopener">عرض الرابط</a>
+                    @else
+                        لا يوجد فيديو مخزن
+                    @endif
+                </p>
+                <div class="drop-zone rounded-3 border border-2 border-dashed p-3 text-center bg-white" data-target="input-product-video" style="min-height: 88px; cursor: pointer;">
+                    <p class="mb-1 small fw-semibold">اسحب ملف الفيديو هنا أو انقر</p>
+                    <p class="mb-0 text-muted small drop-zone-hint"></p>
+                    <input type="file" class="d-none file-input-staged" id="input-product-video" name="video" accept="video/mp4,video/quicktime,video/x-msvideo">
                 </div>
             </div>
-            <p class="small text-muted mt-3 mb-0">
-                الفيديو الحالي:
-                @php $vUrl = $p?->videoUrl ? $resolveMediaUrl($p->videoUrl) : null; @endphp
-                @if($vUrl)
-                    <a href="{{ $vUrl }}" target="_blank" rel="noopener">عرض الرابط</a>
-                @else
-                    ليس هناك فيديو حالياً
-                @endif
-            </p>
             </div>
         </div>
 
@@ -352,6 +310,11 @@
     @include('partials.product-edit-size-block', ['size' => null, 'si' => '__SI__', 'sizeOptions' => $sizeOptions])
 </template>
 
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
 <script>
 (function () {
     var container = document.getElementById('sizes-container');
@@ -366,6 +329,9 @@
         if (block) {
             block.setAttribute('data-si', String(idx));
             container.appendChild(block);
+            if (window.jQuery && window.initSelect2Size) {
+                window.initSelect2Size(block);
+            }
             idx++;
         }
     }
@@ -375,7 +341,15 @@
     document.getElementById('btn-remove-last-size').addEventListener('click', function () {
         var blocks = container.querySelectorAll('.size-block');
         if (blocks.length === 0) return;
-        blocks[blocks.length - 1].remove();
+        var last = blocks[blocks.length - 1];
+        if (window.jQuery) {
+            jQuery(last).find('.select2-size').each(function () {
+                if (jQuery(this).data('select2')) {
+                    jQuery(this).select2('destroy');
+                }
+            });
+        }
+        last.remove();
     });
 
     document.addEventListener('click', function (e) {
@@ -399,18 +373,190 @@
     });
 })();
 </script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-(function () {
-    var sel = document.getElementById('product-picker');
-    if (!sel || sel.disabled) return;
-    var base = @json(url('/test/product-edit'));
-    sel.addEventListener('change', function () {
-        var v = this.value;
-        if (!v) return;
-        window.location.href = base + '?product_id=' + encodeURIComponent(v);
+(function ($) {
+    var deleteImageUrl = @json(route('test.product-edit.delete-image'));
+    var productEditBase = @json(url('/test/product-edit'));
+
+    function csrfToken() {
+        var m = document.querySelector('meta[name="csrf-token"]');
+        return m ? m.getAttribute('content') : '';
+    }
+
+    window.initSelect2Size = function (root) {
+        var $root = root ? $(root) : $(document);
+        $root.find('.select2-size').each(function () {
+            var $el = $(this);
+            if ($el.data('select2')) {
+                return;
+            }
+            $el.select2({
+                theme: 'bootstrap-5',
+                width: '100%',
+                dir: 'rtl',
+                placeholder: 'اختر الحجم',
+                allowClear: true,
+            });
+        });
+    };
+
+    $(function () {
+        $('.select2-field').select2({
+            theme: 'bootstrap-5',
+            width: '100%',
+            dir: 'rtl',
+        });
+
+        initSelect2Size(document);
+
+        $('#product-picker').on('change', function () {
+            var v = $(this).val();
+            if (!v || $(this).prop('disabled')) {
+                return;
+            }
+            window.location.href = productEditBase + '?product_id=' + encodeURIComponent(v);
+        });
+
+        function setInputFiles(input, fileList) {
+            var dt = new DataTransfer();
+            for (var i = 0; i < fileList.length; i++) {
+                dt.items.add(fileList[i]);
+            }
+            input.files = dt.files;
+        }
+
+        function hintForInput(zone, input) {
+            var hint = zone.querySelector('.drop-zone-hint');
+            if (!hint) {
+                return;
+            }
+            if (!input.files || input.files.length === 0) {
+                hint.textContent = '';
+                return;
+            }
+            var names = [];
+            for (var i = 0; i < input.files.length; i++) {
+                names.push(input.files[i].name);
+            }
+            hint.textContent = names.join('، ');
+        }
+
+        function wireDropZone(zone) {
+            var targetId = zone.getAttribute('data-target');
+            if (!targetId) {
+                return;
+            }
+            var input = document.getElementById(targetId);
+            if (!input) {
+                return;
+            }
+
+            zone.addEventListener('click', function (e) {
+                if (e.target.closest('.btn-delete-stored-img')) {
+                    return;
+                }
+                input.click();
+            });
+
+            input.addEventListener('change', function () {
+                hintForInput(zone, input);
+            });
+
+            ['dragenter', 'dragover'].forEach(function (ev) {
+                zone.addEventListener(ev, function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    zone.classList.add('border-primary');
+                });
+            });
+            ['dragleave', 'drop'].forEach(function (ev) {
+                zone.addEventListener(ev, function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    zone.classList.remove('border-primary');
+                });
+            });
+            zone.addEventListener('drop', function (e) {
+                var files = e.dataTransfer && e.dataTransfer.files;
+                if (!files || files.length === 0) {
+                    return;
+                }
+                if (input.multiple) {
+                    setInputFiles(input, files);
+                } else {
+                    setInputFiles(input, [files[0]]);
+                }
+                hintForInput(zone, input);
+            });
+        }
+
+        document.querySelectorAll('.drop-zone').forEach(wireDropZone);
+
+        document.addEventListener('click', function (e) {
+            var btn = e.target.closest('.btn-delete-stored-img');
+            if (!btn) {
+                return;
+            }
+            e.preventDefault();
+            var kind = btn.getAttribute('data-kind');
+            var imageId = btn.getAttribute('data-id');
+            var pidEl = document.querySelector('input[name="product_id"]');
+            var productId = pidEl ? pidEl.value : '';
+            if (!kind || !imageId || !productId) {
+                return;
+            }
+
+            Swal.fire({
+                title: 'تأكيد الحذف',
+                text: 'سيتم حذف الصورة من المتجر ومن قاعدة البيانات. لا يمكن التراجع.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'حذف',
+                cancelButtonText: 'إلغاء',
+                reverseButtons: true,
+                focusCancel: true,
+            }).then(function (result) {
+                if (!result.isConfirmed) {
+                    return;
+                }
+                fetch(deleteImageUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken(),
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: JSON.stringify({
+                        product_id: parseInt(productId, 10),
+                        image_id: imageId,
+                        kind: kind,
+                    }),
+                })
+                    .then(function (res) {
+                        return res.json().then(function (data) {
+                            return { ok: res.ok, status: res.status, data: data };
+                        });
+                    })
+                    .then(function (out) {
+                        if (out.ok && out.data && out.data.ok) {
+                            var tile = btn.closest('.existing-img-tile');
+                            if (tile) {
+                                tile.remove();
+                            }
+                            Swal.fire({ icon: 'success', title: 'تم الحذف', toast: true, position: 'top-start', showConfirmButton: false, timer: 2500 });
+                        } else {
+                            var msg = (out.data && out.data.message) ? out.data.message : 'فشل الحذف';
+                            Swal.fire({ icon: 'error', title: msg });
+                        }
+                    })
+                    .catch(function () {
+                        Swal.fire({ icon: 'error', title: 'خطأ في الاتصال' });
+                    });
+            });
+        });
     });
-})();
+})(jQuery);
 </script>
 </body>
 </html>

@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Image3dProduct;
+use App\Models\NormalImageProduct;
 use App\Models\Product;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
+use App\Models\ViewImageProduct;
 use App\Services\StoreManageItemService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -84,6 +87,51 @@ class ProductEditTestController extends Controller
     /**
      * جدول كل المنتجات (DataTables + Bootstrap).
      */
+    /**
+     * حذف صورة مخزنة (متجر + Laravel) — Ajax من صفحة الاختبار.
+     */
+    public function deleteImage(Request $request, StoreManageItemService $storeManageItemService): JsonResponse
+    {
+        $data = $request->validate([
+            'product_id' => ['required', 'exists:products,id'],
+            'image_id' => ['required'],
+            'kind' => ['required', 'in:normal,view,three_d'],
+        ]);
+
+        $product = Product::findOrFail($data['product_id']);
+
+        $model = match ($data['kind']) {
+            'normal' => NormalImageProduct::query()
+                ->where('id', $data['image_id'])
+                ->where('itemId', $product->getKey())
+                ->first(),
+            'view' => ViewImageProduct::query()
+                ->where('id', $data['image_id'])
+                ->where('itemId', $product->getKey())
+                ->first(),
+            'three_d' => Image3dProduct::query()
+                ->where('id', $data['image_id'])
+                ->where('itemId', $product->getKey())
+                ->first(),
+        };
+
+        if ($model === null) {
+            return response()->json(['ok' => false, 'message' => 'الصورة غير موجودة أو لا تخص هذا المنتج'], 404);
+        }
+
+        $remote = $storeManageItemService->deleteImageFromStore((int) $product->id, $model->id, $data['kind']);
+        if (! ($remote['ok'] ?? false)) {
+            return response()->json([
+                'ok' => false,
+                'message' => $remote['error'] ?? 'فشل حذف الصورة من المتجر',
+            ], 422);
+        }
+
+        $model->delete();
+
+        return response()->json(['ok' => true]);
+    }
+
     public function productsList(): View
     {
         return view('products-test-list');
@@ -237,9 +285,10 @@ class ProductEditTestController extends Controller
             'is_sold_with_paper' => (int) $validated['is_sold_with_paper'],
             'manufactureYear' => $validated['manufactureYear'] ?? 0,
             'rate' => $validated['rate'] ?? 4,
-            'isShow' => $request->boolean('isShow', true),
-            'isNewItem' => $request->boolean('isNewItem', true),
-            'isMoreSales' => $request->boolean('isMoreSales', true),
+            // Unchecked HTML checkboxes are omitted from the request; default must be false.
+            'isShow' => $request->boolean('isShow'),
+            'isNewItem' => $request->boolean('isNewItem'),
+            'isMoreSales' => $request->boolean('isMoreSales'),
             'model' => $validated['model'] ?? '',
         ];
 
