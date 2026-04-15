@@ -7,6 +7,7 @@ use App\Http\Controllers\API\Stocks;
 use App\Http\Controllers\API\Test;
 use App\Http\Controllers\ProductEditTestController;
 use App\Http\Controllers\StoreSyncTestController;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
@@ -32,6 +33,34 @@ Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('
 /** إضافة منتج جديد (محلي ثم متجر عبر syncNewProductToStore) */
 Route::get('/test/product-create', [ProductEditTestController::class, 'create'])->name('test.product-create');
 Route::post('/test/product-create', [ProductEditTestController::class, 'createRun'])->name('test.product-create.run');
+
+/**
+ * ربط public/storage → storage/app/public (مرة واحدة على السيرفر).
+ * الإنتاج: deploy_once.php معطّل؛ استخدم: /test/run-storage-link?token=TOKEN
+ * TOKEN نفس DEPLOY_ONCE_TOKEN أو القيمة الافتراضية في deploy_once.php
+ */
+Route::get('/test/run-storage-link', function () {
+    $token = (string) request()->query('token', '');
+    $expected = (string) env('DEPLOY_ONCE_TOKEN', 'eshterelyDeploy2026SecureToken123');
+    if ($token === '' || ! hash_equals($expected, $token)) {
+        abort(403);
+    }
+    $linkPath = public_path('storage');
+    if (file_exists($linkPath)) {
+        return response(
+            "OK: الرابط موجود مسبقاً:\n{$linkPath}\n",
+            200,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+    $exit = Artisan::call('storage:link');
+
+    return response(
+        Artisan::output()."\nExit code: {$exit}\n",
+        200,
+        ['Content-Type' => 'text/plain; charset=UTF-8']
+    );
+})->name('test.run-storage-link');
 
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');

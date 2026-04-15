@@ -25,6 +25,35 @@ use Illuminate\View\View;
  */
 class ProductEditTestController extends Controller
 {
+    /**
+     * صور Laravel (قرص public) أو روابط قديمة فيها localhost: تُحوَّل لـ URL الحالي عبر APP_URL.
+     * مسارات نسبية لمتجر .NET: تُسبَق بـ STORE_DOMAIN.
+     */
+    public static function resolveMediaUrlForProductEdit(?string $url): ?string
+    {
+        if ($url === null || $url === '') {
+            return null;
+        }
+        $trimmed = ltrim($url);
+        if (str_starts_with($trimmed, '/storage/')) {
+            return url($trimmed);
+        }
+        if (str_starts_with($trimmed, 'http://') || str_starts_with($trimmed, 'https://')) {
+            $path = parse_url($trimmed, PHP_URL_PATH);
+            if (is_string($path) && str_starts_with($path, '/storage/')) {
+                return url($path);
+            }
+
+            return $trimmed;
+        }
+        $base = rtrim((string) config('store.domain'), '/');
+        if ($base === '') {
+            return $trimmed;
+        }
+
+        return $base.'/'.ltrim($trimmed, '/');
+    }
+
     public function create(): View
     {
         $empty = new Product([
@@ -58,20 +87,7 @@ class ProductEditTestController extends Controller
             'subCategoriesList' => $subCategoriesList,
             'selectedSubCategoryIds' => [],
             'productsForPicker' => collect(),
-            'resolveMediaUrl' => static function (?string $url): ?string {
-                if ($url === null || $url === '') {
-                    return null;
-                }
-                if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
-                    return $url;
-                }
-                $base = rtrim((string) config('store.domain'), '/');
-                if ($base === '') {
-                    return $url;
-                }
-
-                return $base.'/'.ltrim($url, '/');
-            },
+            'resolveMediaUrl' => [self::class, 'resolveMediaUrlForProductEdit'],
             'steps' => session('steps'),
             'result' => session('result'),
             'product' => session('product_model'),
@@ -380,20 +396,7 @@ class ProductEditTestController extends Controller
             'subCategoriesList' => $subCategoriesList,
             'selectedSubCategoryIds' => $selectedSubCategoryIds,
             'productsForPicker' => $productsForPicker,
-            'resolveMediaUrl' => static function (?string $url): ?string {
-                if ($url === null || $url === '') {
-                    return null;
-                }
-                if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
-                    return $url;
-                }
-                $base = rtrim((string) config('store.domain'), '/');
-                if ($base === '') {
-                    return $url;
-                }
-
-                return $base.'/'.ltrim($url, '/');
-            },
+            'resolveMediaUrl' => [self::class, 'resolveMediaUrlForProductEdit'],
             'steps' => session('steps'),
             'result' => session('result'),
             'product' => session('product_model'),

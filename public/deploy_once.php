@@ -13,6 +13,10 @@ declare(strict_types=1);
  *
  * This file is TEMPORARY and should be deleted once normal deployment (e.g. SSH)
  * is available.
+ *
+ * On production this script exits early (environment=production). To create the
+ * storage symlink there, use the web route GET /test/run-storage-link?token=...
+ * (same token as DEPLOY_ONCE_TOKEN) or run: php artisan storage:link over SSH.
  */
 $expectedToken = 'eshterelyDeploy2026SecureToken123';
 $providedToken = $_GET['token'] ?? '';

@@ -9,7 +9,6 @@ use App\Models\ViewImageProduct;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * Pushes updated stock to the remote DoctorBike (.NET) store using ManageItem (multipart),
@@ -340,7 +339,7 @@ class StoreManageItemService
 
     /**
      * عند save_scope=local_only: حفظ الصور والفيديو على قرص public وربطها بجداول Laravel (بدون متجر).
-     * روابط الملفات مطلقة (http(s)...) لتعمل مع resolveMediaUrl في الواجهة.
+     * يُخزَّن المسار الجذري `/storage/...` فقط حتى لا يُثبَّت APP_URL وقت الرفع (مثل localhost) في قاعدة البيانات.
      *
      * @return array{ok: bool, error?: string}
      */
@@ -363,7 +362,7 @@ class StoreManageItemService
                     }
                     $dir = "product-uploads/{$itemId}/{$field}";
                     $path = $f->store($dir, 'public');
-                    $imageUrl = url(Storage::disk('public')->url($path));
+                    $imageUrl = '/storage/'.$path;
 
                     $newId = $this->nextIdForImageModel($modelClass);
                     $modelClass::query()->create([
@@ -383,7 +382,7 @@ class StoreManageItemService
                 $v = $request->file('video');
                 if ($v && $v->isValid()) {
                     $vPath = $v->store("product-uploads/{$itemId}/video", 'public');
-                    $videoUrl = url(Storage::disk('public')->url($vPath));
+                    $videoUrl = '/storage/'.$vPath;
                     $product->update(['videoUrl' => $videoUrl]);
                     $trace('وسائط محلية: فيديو', ['path' => $vPath]);
                 }
