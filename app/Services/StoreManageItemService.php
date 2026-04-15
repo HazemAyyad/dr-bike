@@ -9,6 +9,7 @@ use App\Models\ViewImageProduct;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Pushes updated stock to the remote DoctorBike (.NET) store using ManageItem (multipart),
@@ -335,6 +336,78 @@ class StoreManageItemService
         }
 
         return $this->pushImagesViaAddImgToItem($base, $token, $request, $product, $trace);
+    }
+
+    /**
+     * عند save_scope=local_only: حفظ الصور والفيديو على قرص public وربطها بجداول Laravel (بدون متجر).
+     * روابط الملفات مطلقة (http(s)...) لتعمل مع resolveMediaUrl في الواجهة.
+     *
+     * @return array{ok: bool, error?: string}
+     */
+    public function saveUploadedMediaToLaravelOnly(Request $request, Product $product, ?callable $step = null): array
+    {
+        $trace = $this->makeTracer($step);
+        $itemId = (int) $product->id;
+
+        $types = [
+            'normal_images' => NormalImageProduct::class,
+            'view_images' => ViewImageProduct::class,
+            'three_d_images' => Image3dProduct::class,
+        ];
+
+        try {
+            foreach ($types as $field => $modelClass) {
+                foreach ($request->file($field, []) ?: [] as $f) {
+                    if (! $f || ! $f->isValid()) {
+                        continue;
+                    }
+                    $dir = "product-uploads/{$itemId}/{$field}";
+                    $path = $f->store($dir, 'public');
+                    $imageUrl = url(Storage::disk('public')->url($path));
+
+                    $newId = $this->nextIdForImageModel($modelClass);
+                    $modelClass::query()->create([
+                        'id' => $newId,
+                        'itemId' => $itemId,
+                        'imageUrl' => $imageUrl,
+                    ]);
+                    $trace('وسائط محلية: صورة', [
+                        'table' => (new $modelClass)->getTable(),
+                        'row_id' => $newId,
+                        'field' => $field,
+                    ]);
+                }
+            }
+
+            if ($request->hasFile('video')) {
+                $v = $request->file('video');
+                if ($v && $v->isValid()) {
+                    $vPath = $v->store("product-uploads/{$itemId}/video", 'public');
+                    $videoUrl = url(Storage::disk('public')->url($vPath));
+                    $product->update(['videoUrl' => $videoUrl]);
+                    $trace('وسائط محلية: فيديو', ['path' => $vPath]);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::error('saveUploadedMediaToLaravelOnly failed', [
+                'product_id' => $itemId,
+                'message' => $e->getMessage(),
+            ]);
+
+            return ['ok' => false, 'error' => 'فشل حفظ الملفات محلياً: '.$e->getMessage()];
+        }
+
+        return ['ok' => true];
+    }
+
+    /**
+     * @param  class-string<\Illuminate\Database\Eloquent\Model>  $modelClass
+     */
+    private function nextIdForImageModel(string $modelClass): int
+    {
+        $max = $modelClass::query()->max('id');
+
+        return (int) ($max ?? 0) + 1;
     }
 
     /**

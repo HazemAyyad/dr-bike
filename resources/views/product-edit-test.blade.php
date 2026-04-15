@@ -314,7 +314,7 @@
                 <div class="form-check mb-0">
                     <input class="form-check-input" type="radio" name="save_scope" id="save_scope_local" value="local_only" @checked($scope === 'local_only')>
                     <label class="form-check-label" for="save_scope_local">
-                        <strong>Laravel فقط</strong> — لا يُرسل شيء إلى المتجر (مفيد للتجربة أو عند انقطاع المتجر). الصور/الفيديو الجديدة لا تُرفع للمتجر في هذا الوضع.
+                        <strong>Laravel فقط</strong> — لا مزامنة مع المتجر؛ تُحفظ الصور/الفيديو على السيرفر تحت <code>storage/app/public/product-uploads/…</code> وتُسجَّل في قاعدة Laravel (يتطلّب رابط <code>storage</code>).
                     </label>
                 </div>
             </div>
@@ -328,6 +328,9 @@
         <div class="alert {{ !empty($r['ok']) ? 'alert-success' : 'alert-danger' }}">
             @if(!empty($r['local_only']))
                 <strong>الوضع:</strong> حفظ في Laravel فقط (لم تُمزامن بيانات مع المتجر).
+                @if(!empty($r['media_error']))
+                    <br><span class="text-danger">وسائط: {{ $r['media_error'] }}</span>
+                @endif
             @else
                 <strong>المتجر:</strong>
                 @if(!empty($r['ok']))

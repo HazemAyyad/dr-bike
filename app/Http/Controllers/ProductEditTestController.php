@@ -180,11 +180,26 @@ class ProductEditTestController extends Controller
 
             $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($newId);
 
+            $mediaRes = $storeManageItemService->saveUploadedMediaToLaravelOnly($request, $product, $pageLog);
+            $pageLog('وسائط محلية (صور/فيديو)', $mediaRes);
+
+            $localResult = ['ok' => true, 'skipped' => true, 'local_only' => true];
+            if (empty($mediaRes['ok'])) {
+                $localResult['ok'] = false;
+                $localResult['media_error'] = $mediaRes['error'] ?? 'فشل حفظ الملفات';
+            }
+
             return redirect()
                 ->route('test.product-edit', ['product_id' => $product->id])
                 ->with('steps', $steps)
-                ->with('result', ['ok' => true, 'skipped' => true, 'local_only' => true])
-                ->with('product_model', $product->fresh(['subCategories', 'sizes.colorSizes']));
+                ->with('result', $localResult)
+                ->with('product_model', $product->fresh([
+                    'subCategories',
+                    'sizes.colorSizes',
+                    'normalImages',
+                    'viewImages',
+                    'image3d',
+                ]));
         }
 
         $result = $storeManageItemService->syncNewProductToStore($virtual, $pageLog, $request);
@@ -683,14 +698,25 @@ class ProductEditTestController extends Controller
             $pageLog('انتهاء المزامنة', $result);
         } else {
             $pageLog('تخطي المتجر — حفظ Laravel فقط');
-            $result = ['ok' => true, 'skipped' => true, 'local_only' => true];
+            $mediaRes = $storeManageItemService->saveUploadedMediaToLaravelOnly($request, $product, $pageLog);
+            $pageLog('وسائط محلية', $mediaRes);
+            $result = ['ok' => (bool) ($mediaRes['ok'] ?? true), 'skipped' => true, 'local_only' => true];
+            if (empty($mediaRes['ok'])) {
+                $result['media_error'] = $mediaRes['error'] ?? 'فشل حفظ الملفات';
+            }
         }
 
         return redirect()
             ->route('test.product-edit', ['product_id' => $product->id])
             ->with('steps', $steps)
             ->with('result', $result)
-            ->with('product_model', $product->fresh(['subCategories', 'sizes.colorSizes']));
+            ->with('product_model', $product->fresh([
+                'subCategories',
+                'sizes.colorSizes',
+                'normalImages',
+                'viewImages',
+                'image3d',
+            ]));
     }
 
     /**
