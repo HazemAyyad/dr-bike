@@ -14,7 +14,6 @@ use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\WholesaleProduct;
 use App\Services\ProductFormService;
-use App\Services\ProductFormService;
 use App\Services\StoreManageItemService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
