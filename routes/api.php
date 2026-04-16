@@ -27,6 +27,7 @@ use App\Http\Controllers\API\IncomingChecks;
 use App\Http\Controllers\API\InstantSales;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
+use App\Http\Controllers\API\LegacyStoreImageController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\Notifications;
@@ -66,6 +67,9 @@ use Illuminate\Support\Facades\Route;
 */
 
 // public routes
+
+    /** صور المتجر القديم (.NET) — بروكسي لـ Flutter Web (CORS) */
+    Route::get('/legacy-store-image', [LegacyStoreImageController::class, 'show']);
 
     //auth
     Route::post('/register' , [Authentication::class,'register']);
