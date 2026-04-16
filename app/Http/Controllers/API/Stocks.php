@@ -151,6 +151,27 @@ class Stocks extends Controller
                     : 'no image';
             });
 
+            $product['product_normalImages_items'] = $product->normalImages->map(function ($img) {
+                return [
+                    'id' => (string) $img->id,
+                    'url' => $img->imageUrl ? $this->publicImagePath($img->imageUrl) : null,
+                ];
+            })->values();
+
+            $product['product_viewImages_items'] = $product->viewImages->map(function ($img) {
+                return [
+                    'id' => (string) $img->id,
+                    'url' => $img->imageUrl ? $this->publicImagePath($img->imageUrl) : null,
+                ];
+            })->values();
+
+            $product['product_image3d_items'] = $product->image3d->map(function ($img) {
+                return [
+                    'id' => (string) $img->id,
+                    'url' => $img->imageUrl ? $this->publicImagePath($img->imageUrl) : null,
+                ];
+            })->values();
+
             unset($product->normalImages);
             unset($product->viewImages);
             unset($product->image3d);

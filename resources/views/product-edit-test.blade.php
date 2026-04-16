@@ -275,7 +275,7 @@
                 <div class="drop-zone rounded-3 border border-2 border-dashed p-3 text-center bg-white" data-target="input-product-video" style="min-height: 88px; cursor: pointer;">
                     <p class="mb-1 small fw-semibold">اسحب ملف الفيديو هنا أو انقر</p>
                     <p class="mb-0 text-muted small drop-zone-hint"></p>
-                    <input type="file" class="d-none file-input-staged" id="input-product-video" name="video" accept="video/mp4,video/quicktime,video/x-msvideo">
+                    <input type="file" class="d-none file-input-staged" id="input-product-video" name="video" accept="video/mp4,video/quicktime,video/x-msvideo,video/webm">
                 </div>
             </div>
             </div>

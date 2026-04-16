@@ -2,12 +2,16 @@
 
 namespace App\Services;
 
+use App\Models\Image3dProduct;
+use App\Models\NormalImageProduct;
 use App\Models\Product;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SubCategoryProduct;
+use App\Models\ViewImageProduct;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -62,11 +66,18 @@ class ProductFormService
             'sizes.*.color_sizes.*.colorAbbr' => ['nullable', 'string', 'max:100'],
             'sizes.*.color_sizes.*.normailPrice' => ['nullable', 'numeric', 'min:0'],
             'sizes.*.color_sizes.*.stock' => ['nullable', 'integer', 'min:0'],
-            'video' => ['nullable', 'file', 'mimes:mp4,mov,avi', 'max:51200'],
+            'video' => ['nullable', 'file', 'mimes:mp4,mov,avi,webm', 'max:51200'],
             'normal_images.*' => ['nullable', 'image', 'max:10240'],
             'three_d_images.*' => ['nullable', 'image', 'max:10240'],
             'view_images.*' => ['nullable', 'image', 'max:10240'],
             'save_scope' => ['required', 'in:full,local_only'],
+            'delete_normal_image_ids' => ['nullable', 'array'],
+            'delete_normal_image_ids.*' => ['integer'],
+            'delete_view_image_ids' => ['nullable', 'array'],
+            'delete_view_image_ids.*' => ['integer'],
+            'delete_three_d_image_ids' => ['nullable', 'array'],
+            'delete_three_d_image_ids.*' => ['integer'],
+            'delete_video' => ['nullable', 'boolean'],
         ];
 
         if ($forEdit) {
@@ -348,6 +359,10 @@ class ProductFormService
 
         $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($product->id);
 
+        $this->applyMediaDeletions($request, $product, $trace);
+
+        $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($product->id);
+
         if ($this->wantsStoreSync($request)) {
             $result = $this->storeManageItemService->syncProductEditToStore($product, $trace, $request);
             $trace('انتهاء المزامنة', $result);
@@ -372,6 +387,124 @@ class ProductFormService
             ]),
             'sync_result' => $result,
         ];
+    }
+
+    /**
+     * حذف صور/فيديو مسجّلة مسبقاً أثناء التعديل (Laravel دائماً؛ المتجر عند save_scope=full).
+     *
+     * @param  callable(string, array): void  $trace
+     */
+    private function applyMediaDeletions(Request $request, Product $product, callable $trace): void
+    {
+        $wantsSync = $this->wantsStoreSync($request);
+
+        foreach ((array) $request->input('delete_normal_image_ids', []) as $rawId) {
+            $id = (int) $rawId;
+            if ($id <= 0) {
+                continue;
+            }
+            $model = NormalImageProduct::query()
+                ->where('itemId', $product->id)
+                ->where('id', $id)
+                ->first();
+            if ($model === null) {
+                continue;
+            }
+            if ($wantsSync) {
+                $remote = $this->storeManageItemService->deleteImageFromStore((int) $product->id, $model->id, 'normal');
+                if (! ($remote['ok'] ?? false)) {
+                    throw ValidationException::withMessages([
+                        'delete_normal_image_ids' => [$remote['error'] ?? 'فشل حذف الصورة من المتجر'],
+                    ]);
+                }
+            }
+            $this->deletePublicDiskFileFromProductUrl($model->imageUrl);
+            $model->delete();
+            $trace('حذف صورة عادية', ['id' => $id]);
+        }
+
+        foreach ((array) $request->input('delete_view_image_ids', []) as $rawId) {
+            $id = (int) $rawId;
+            if ($id <= 0) {
+                continue;
+            }
+            $model = ViewImageProduct::query()
+                ->where('itemId', $product->id)
+                ->where('id', $id)
+                ->first();
+            if ($model === null) {
+                continue;
+            }
+            if ($wantsSync) {
+                $remote = $this->storeManageItemService->deleteImageFromStore((int) $product->id, $model->id, 'view');
+                if (! ($remote['ok'] ?? false)) {
+                    throw ValidationException::withMessages([
+                        'delete_view_image_ids' => [$remote['error'] ?? 'فشل حذف الصورة من المتجر'],
+                    ]);
+                }
+            }
+            $this->deletePublicDiskFileFromProductUrl($model->imageUrl);
+            $model->delete();
+            $trace('حذف صورة عرض', ['id' => $id]);
+        }
+
+        foreach ((array) $request->input('delete_three_d_image_ids', []) as $rawId) {
+            $id = (int) $rawId;
+            if ($id <= 0) {
+                continue;
+            }
+            $model = Image3dProduct::query()
+                ->where('itemId', $product->id)
+                ->where('id', $id)
+                ->first();
+            if ($model === null) {
+                continue;
+            }
+            if ($wantsSync) {
+                $remote = $this->storeManageItemService->deleteImageFromStore((int) $product->id, $model->id, 'three_d');
+                if (! ($remote['ok'] ?? false)) {
+                    throw ValidationException::withMessages([
+                        'delete_three_d_image_ids' => [$remote['error'] ?? 'فشل حذف الصورة من المتجر'],
+                    ]);
+                }
+            }
+            $this->deletePublicDiskFileFromProductUrl($model->imageUrl);
+            $model->delete();
+            $trace('حذف صورة ثلاثية الأبعاد', ['id' => $id]);
+        }
+
+        if ($request->boolean('delete_video')) {
+            $url = $product->videoUrl;
+            if (is_string($url) && $url !== '') {
+                $this->deletePublicDiskFileFromProductUrl($url);
+                $product->update(['videoUrl' => null]);
+                $trace('حذف فيديو المنتج', []);
+            }
+        }
+    }
+
+    private function deletePublicDiskFileFromProductUrl(?string $imageUrl): void
+    {
+        if ($imageUrl === null || $imageUrl === '') {
+            return;
+        }
+
+        $path = ltrim((string) $imageUrl, '/');
+        if (str_contains($path, '://')) {
+            $parsed = parse_url($path, PHP_URL_PATH);
+            if (! is_string($parsed) || $parsed === '') {
+                return;
+            }
+            $path = ltrim($parsed, '/');
+        }
+        if (str_starts_with($path, 'storage/')) {
+            $path = substr($path, strlen('storage/'));
+        }
+        if ($path === '') {
+            return;
+        }
+
+        Storage::disk('public')->delete($path);
     }
 
     /**
