@@ -207,6 +207,51 @@ class Stocks extends Controller
 
     }
 
+    /**
+     * خيارات حجم المنتج (config + جدول sizes + أحجام المنتج الحالي إن وُجد).
+     * يطابق منطق صفحة الاختبار test/product-edit.
+     */
+    public function productSizeOptions(Request $request)
+    {
+        try {
+            $productId = $request->query('product_id');
+            $product = $productId ? Product::with('sizes')->find($productId) : null;
+            if ($product === null) {
+                $product = new Product;
+                $product->setRelation('sizes', collect());
+            }
+
+            $fromConfig = collect(config('store.size_options', []))->filter(fn ($s) => $s !== null && $s !== '');
+
+            $fromDb = Size::query()
+                ->whereNotNull('size')
+                ->where('size', '!=', '')
+                ->distinct()
+                ->orderBy('size')
+                ->pluck('size');
+
+            $merged = $fromConfig->merge($fromDb)->unique();
+
+            foreach ($product->sizes as $s) {
+                if ($s->size && ! $merged->contains($s->size)) {
+                    $merged->push($s->size);
+                }
+            }
+
+            $sizes = $merged->unique()->sort()->values()->all();
+
+            return response()->json([
+                'status' => 'success',
+                'sizes' => $sizes,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     private function replaceSubCategories(Request $request)
     {
 
