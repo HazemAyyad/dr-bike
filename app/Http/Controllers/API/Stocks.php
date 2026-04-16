@@ -41,12 +41,13 @@ class Stocks extends Controller
         try {
             ini_set('max_execution_time', 2000); // 0 = unlimited
 
-            $products = Product::with(['viewImages'])
+            $products = Product::with(['viewImages', 'normalImages'])
                 ->select('id', 'nameAr', 'stock')
                 ->paginate(15);
 
             $formatted = $products->map(function ($product) {
-                $image = $product->viewImages->first();
+                $image = $product->viewImages->first()
+                    ?? $product->normalImages->first();
 
                 return [
                     'product_id' => $product->id,
@@ -95,7 +96,7 @@ class Stocks extends Controller
                     $q->select('id', 'size', 'itemId');
                 },
                 'sizes.colorSizes' => function ($q) {
-                    $q->select('id', 'colorAr', 'normailPrice', 'wholesalePrice', 'discount', 'stock', 'sizeId');
+                    $q->select('id', 'colorAr', 'colorEn', 'colorAbbr', 'normailPrice', 'wholesalePrice', 'discount', 'stock', 'sizeId');
                 },
                 'wholesales',
                 'normalImages:id,itemId,imageUrl',
@@ -104,6 +105,8 @@ class Stocks extends Controller
                 'purchase:id,name',
 
             ])->findOrFail($request->product_id);
+
+            $product->makeVisible(['wholesalePrice']);
 
             $subs = $product->subCategories->map(function ($pivot) {
                 return [
