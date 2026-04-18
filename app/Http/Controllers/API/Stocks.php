@@ -853,7 +853,7 @@ class Stocks extends Controller
     {
         try {
 
-            $subCategories = SubCategory::get(['id', 'nameAr']);
+            $subCategories = SubCategory::get(['id', 'nameAr', 'mainCategoryId']);
 
             return response()->json([
                 'status' => 'success',
