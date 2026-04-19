@@ -58,7 +58,8 @@ class GenerateLegacyThumbnails extends Command
                 $this->line("  <fg=green>done</>  {$filename}");
                 $generated++;
             } catch (\Throwable $e) {
-                $this->line("  <fg=red>fail</>  {$filename}: {$e->getMessage()}");
+                $this->line("  <fg=gray>skip</>  {$filename} (unreadable: {$e->getMessage()})");
+                $skipped++;
             }
         }
 
