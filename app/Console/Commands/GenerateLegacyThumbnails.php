@@ -70,7 +70,13 @@ class GenerateLegacyThumbnails extends Command
 
     private function makeThumbnail(string $src, string $dest): void
     {
-        [$origW, $origH, $type] = getimagesize($src);
+        $info = getimagesize($src);
+
+        if ($info === false) {
+            throw new \RuntimeException('Cannot read image (corrupted or unsupported format)');
+        }
+
+        [$origW, $origH, $type] = $info;
 
         $source = match ($type) {
             IMAGETYPE_JPEG => imagecreatefromjpeg($src),
@@ -106,6 +112,7 @@ class GenerateLegacyThumbnails extends Command
             IMAGETYPE_PNG  => imagepng($thumb, $dest, (int) round((100 - self::THUMB_QUALITY) / 10)),
             IMAGETYPE_WEBP => imagewebp($thumb, $dest, self::THUMB_QUALITY),
             IMAGETYPE_GIF  => imagegif($thumb, $dest),
+            default        => throw new \RuntimeException("Unsupported image type: {$type}"),
         };
 
         imagedestroy($source);
