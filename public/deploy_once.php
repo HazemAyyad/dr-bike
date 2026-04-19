@@ -58,6 +58,7 @@ $allowedCommands = [
     ],
     ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'cache:clear', 'params' => []],
+    ['name' => 'images:generate-legacy-thumbs', 'params' => []],
     // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
     ['name' => '__composer_dump_autoload__', 'params' => []],
 ];
