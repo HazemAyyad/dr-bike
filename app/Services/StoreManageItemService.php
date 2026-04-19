@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\ThumbnailHelper;
 use App\Models\Image3dProduct;
 use App\Models\NormalImageProduct;
 use App\Models\Product;
@@ -363,6 +364,12 @@ class StoreManageItemService
                     $dir = "product-uploads/{$itemId}/{$field}";
                     $path = $f->store($dir, 'public');
                     $imageUrl = '/storage/'.$path;
+
+                    try {
+                        ThumbnailHelper::makeThumbForDiskPath($path);
+                    } catch (\Throwable) {
+                        // Thumbnail failure must never block the upload
+                    }
 
                     $newId = $this->nextIdForImageModel($modelClass);
                     $modelClass::query()->create([

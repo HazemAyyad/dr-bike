@@ -2,15 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\Helpers\ThumbnailHelper;
 use Illuminate\Console\Command;
 
 class GenerateLegacyThumbnails extends Command
 {
     protected $signature = 'images:generate-legacy-thumbs';
     protected $description = 'Generate 400px thumbnails for legacy images in public/Images/Items (uses GD)';
-
-    private const THUMB_WIDTH   = 400;
-    private const THUMB_QUALITY = 75;
 
     public function handle(): int
     {
@@ -28,7 +26,10 @@ class GenerateLegacyThumbnails extends Command
 
         $files = array_filter(
             glob($sourceDir . DIRECTORY_SEPARATOR . '*'),
-            fn ($f) => is_file($f) && $this->isSupportedImage($f)
+            fn ($f) => is_file($f) && in_array(
+                strtolower(pathinfo($f, PATHINFO_EXTENSION)),
+                ['jpg', 'jpeg', 'png', 'webp', 'gif']
+            )
         );
 
         $total = count($files);
@@ -54,7 +55,7 @@ class GenerateLegacyThumbnails extends Command
             }
 
             try {
-                $this->makeThumbnail($path, $thumbPath);
+                ThumbnailHelper::makeThumbnail($path, $thumbPath);
                 $this->line("  <fg=green>done</>  {$filename}");
                 $generated++;
             } catch (\Throwable $e) {
@@ -67,61 +68,5 @@ class GenerateLegacyThumbnails extends Command
         $this->info("Done. Generated: {$generated} | Skipped: {$skipped} | Total: {$total}");
 
         return self::SUCCESS;
-    }
-
-    private function makeThumbnail(string $src, string $dest): void
-    {
-        $info = getimagesize($src);
-
-        if ($info === false) {
-            throw new \RuntimeException('Cannot read image (corrupted or unsupported format)');
-        }
-
-        [$origW, $origH, $type] = $info;
-
-        $source = match ($type) {
-            IMAGETYPE_JPEG => imagecreatefromjpeg($src),
-            IMAGETYPE_PNG  => imagecreatefrompng($src),
-            IMAGETYPE_WEBP => imagecreatefromwebp($src),
-            IMAGETYPE_GIF  => imagecreatefromgif($src),
-            default        => throw new \RuntimeException("Unsupported image type: {$type}"),
-        };
-
-        // No upscaling
-        if ($origW <= self::THUMB_WIDTH) {
-            $newW = $origW;
-            $newH = $origH;
-        } else {
-            $newW = self::THUMB_WIDTH;
-            $newH = (int) round($origH * self::THUMB_WIDTH / $origW);
-        }
-
-        $thumb = imagecreatetruecolor($newW, $newH);
-
-        // Preserve transparency for PNG/GIF
-        if ($type === IMAGETYPE_PNG || $type === IMAGETYPE_GIF) {
-            imagealphablending($thumb, false);
-            imagesavealpha($thumb, true);
-            $transparent = imagecolorallocatealpha($thumb, 0, 0, 0, 127);
-            imagefilledrectangle($thumb, 0, 0, $newW, $newH, $transparent);
-        }
-
-        imagecopyresampled($thumb, $source, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
-
-        match ($type) {
-            IMAGETYPE_JPEG => imagejpeg($thumb, $dest, self::THUMB_QUALITY),
-            IMAGETYPE_PNG  => imagepng($thumb, $dest, (int) round((100 - self::THUMB_QUALITY) / 10)),
-            IMAGETYPE_WEBP => imagewebp($thumb, $dest, self::THUMB_QUALITY),
-            IMAGETYPE_GIF  => imagegif($thumb, $dest),
-            default        => throw new \RuntimeException("Unsupported image type: {$type}"),
-        };
-
-        imagedestroy($source);
-        imagedestroy($thumb);
-    }
-
-    private function isSupportedImage(string $path): bool
-    {
-        return in_array(strtolower(pathinfo($path, PATHINFO_EXTENSION)), ['jpg', 'jpeg', 'png', 'webp', 'gif']);
     }
 }
