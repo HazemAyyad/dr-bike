@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\API\AssetLogs;
+use App\Http\Controllers\API\CategoryController;
 use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\Authentication;
@@ -684,6 +685,16 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     Route::get('/get/all/subcategories' , [Stocks::class,'allSubCategories']);
     Route::get('/get/all/categories' , [Stocks::class,'allCategories']);
+
+    // Category & SubCategory management (admin CRUD)
+    Route::get('/admin/categories',                         [CategoryController::class, 'getAllCategories']);
+    Route::post('/admin/category/store',                    [CategoryController::class, 'storeCategory']);
+    Route::post('/admin/category/update',                   [CategoryController::class, 'updateCategory']);
+    Route::post('/admin/category/toggle-status',            [CategoryController::class, 'toggleCategoryStatus']);
+    Route::post('/admin/subcategories/by-category',         [CategoryController::class, 'getSubCategoriesByCategory']);
+    Route::post('/admin/subcategory/store',                 [CategoryController::class, 'storeSubCategory']);
+    Route::post('/admin/subcategory/update',                [CategoryController::class, 'updateSubCategory']);
+    Route::post('/admin/subcategory/toggle-status',         [CategoryController::class, 'toggleSubCategoryStatus']);
     Route::get('/get/all/projects' , [Stocks::class,'allProjects']);
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
     Route::get('/all/sellers' , [Customers::class,'allSellers']);
