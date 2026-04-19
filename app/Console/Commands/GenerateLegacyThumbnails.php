@@ -3,14 +3,13 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Intervention\Image\Laravel\Facades\Image;
 
 class GenerateLegacyThumbnails extends Command
 {
     protected $signature = 'images:generate-legacy-thumbs';
-    protected $description = 'Generate 400px thumbnails for legacy images in public/Images/Items';
+    protected $description = 'Generate 400px thumbnails for legacy images in public/Images/Items (uses GD)';
 
-    private const THUMB_WIDTH  = 400;
+    private const THUMB_WIDTH   = 400;
     private const THUMB_QUALITY = 75;
 
     public function handle(): int
@@ -55,15 +54,7 @@ class GenerateLegacyThumbnails extends Command
             }
 
             try {
-                $image = Image::read($path);
-
-                // Only downscale — never upscale
-                if ($image->width() > self::THUMB_WIDTH) {
-                    $image->scaleDown(width: self::THUMB_WIDTH);
-                }
-
-                $image->save($thumbPath, quality: self::THUMB_QUALITY);
-
+                $this->makeThumbnail($path, $thumbPath);
                 $this->line("  <fg=green>done</>  {$filename}");
                 $generated++;
             } catch (\Throwable $e) {
@@ -75,6 +66,50 @@ class GenerateLegacyThumbnails extends Command
         $this->info("Done. Generated: {$generated} | Skipped: {$skipped} | Total: {$total}");
 
         return self::SUCCESS;
+    }
+
+    private function makeThumbnail(string $src, string $dest): void
+    {
+        [$origW, $origH, $type] = getimagesize($src);
+
+        $source = match ($type) {
+            IMAGETYPE_JPEG => imagecreatefromjpeg($src),
+            IMAGETYPE_PNG  => imagecreatefrompng($src),
+            IMAGETYPE_WEBP => imagecreatefromwebp($src),
+            IMAGETYPE_GIF  => imagecreatefromgif($src),
+            default        => throw new \RuntimeException("Unsupported image type: {$type}"),
+        };
+
+        // No upscaling
+        if ($origW <= self::THUMB_WIDTH) {
+            $newW = $origW;
+            $newH = $origH;
+        } else {
+            $newW = self::THUMB_WIDTH;
+            $newH = (int) round($origH * self::THUMB_WIDTH / $origW);
+        }
+
+        $thumb = imagecreatetruecolor($newW, $newH);
+
+        // Preserve transparency for PNG/GIF
+        if ($type === IMAGETYPE_PNG || $type === IMAGETYPE_GIF) {
+            imagealphablending($thumb, false);
+            imagesavealpha($thumb, true);
+            $transparent = imagecolorallocatealpha($thumb, 0, 0, 0, 127);
+            imagefilledrectangle($thumb, 0, 0, $newW, $newH, $transparent);
+        }
+
+        imagecopyresampled($thumb, $source, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
+
+        match ($type) {
+            IMAGETYPE_JPEG => imagejpeg($thumb, $dest, self::THUMB_QUALITY),
+            IMAGETYPE_PNG  => imagepng($thumb, $dest, (int) round((100 - self::THUMB_QUALITY) / 10)),
+            IMAGETYPE_WEBP => imagewebp($thumb, $dest, self::THUMB_QUALITY),
+            IMAGETYPE_GIF  => imagegif($thumb, $dest),
+        };
+
+        imagedestroy($source);
+        imagedestroy($thumb);
     }
 
     private function isSupportedImage(string $path): bool
