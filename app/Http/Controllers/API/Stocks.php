@@ -360,6 +360,10 @@ class Stocks extends Controller
                     'size' => $sizeData['size'],
                     'itemId' => $productId,
                 ]);
+                // Size::$incrementing = false — retrieve actual lastInsertId explicitly.
+                if (empty($size->id)) {
+                    $size->id = \DB::getPdo()->lastInsertId();
+                }
             }
 
             // ---- Handle colorSizes for this size ----
@@ -379,15 +383,23 @@ class Stocks extends Controller
                     $color = SizeColor::find($colorData['id']);
                     $color->update([
                         'colorAr' => $colorData['colorAr'] ?? $color->colorAr,
+                        'colorEn' => $colorData['colorEn'] ?? $color->colorEn,
+                        'colorAbbr' => $colorData['colorAbbr'] ?? $color->colorAbbr,
                         'normailPrice' => $colorData['normailPrice'] ?? $color->normailPrice,
+                        'wholesalePrice' => $colorData['wholesalePrice'] ?? $color->wholesalePrice,
+                        'discount' => $colorData['discount'] ?? $color->discount,
                         'stock' => $colorData['stock'] ?? $color->stock,
                     ]);
                 } else {
                     // Create new color
                     SizeColor::create([
                         'sizeId' => $size->id,
-                        'colorAr' => $colorData['colorAr'],
-                        'normailPrice' => $colorData['normailPrice'],
+                        'colorAr' => $colorData['colorAr'] ?? '',
+                        'colorEn' => $colorData['colorEn'] ?? '',
+                        'colorAbbr' => $colorData['colorAbbr'] ?? '',
+                        'normailPrice' => $colorData['normailPrice'] ?? 0,
+                        'wholesalePrice' => $colorData['wholesalePrice'] ?? 0,
+                        'discount' => $colorData['discount'] ?? 0,
                         'stock' => $colorData['stock'] ?? 0,
                     ]);
                 }

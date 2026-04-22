@@ -613,6 +613,11 @@ class ProductFormService
                     'size' => $sizeData['size'] ?? '',
                     'itemId' => $productId,
                 ]);
+                // Size::$incrementing = false — Eloquent won't fetch lastInsertId automatically.
+                // Retrieve it explicitly so colorSizes can reference the correct sizeId.
+                if (empty($size->id)) {
+                    $size->id = \DB::getPdo()->lastInsertId();
+                }
             }
 
             $existingColorIds = $size->colorSizes()->pluck('id')->toArray();
@@ -636,6 +641,8 @@ class ProductFormService
                             'colorEn' => $colorData['colorEn'] ?? $color->colorEn,
                             'colorAbbr' => $colorData['colorAbbr'] ?? $color->colorAbbr,
                             'normailPrice' => $colorData['normailPrice'] ?? $color->normailPrice,
+                            'wholesalePrice' => $colorData['wholesalePrice'] ?? $color->wholesalePrice,
+                            'discount' => $colorData['discount'] ?? $color->discount,
                             'stock' => $colorData['stock'] ?? $color->stock,
                         ]);
                     }
@@ -646,6 +653,8 @@ class ProductFormService
                         'colorEn' => $colorData['colorEn'] ?? '',
                         'colorAbbr' => $colorData['colorAbbr'] ?? '',
                         'normailPrice' => $colorData['normailPrice'] ?? 0,
+                        'wholesalePrice' => $colorData['wholesalePrice'] ?? 0,
+                        'discount' => $colorData['discount'] ?? 0,
                         'stock' => $colorData['stock'] ?? 0,
                     ]);
                 }
