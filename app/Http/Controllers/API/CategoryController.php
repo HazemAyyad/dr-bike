@@ -18,7 +18,7 @@ class CategoryController extends Controller
     /** Store an uploaded image on the 'public' disk and generate a thumbnail. */
     private function storeImage(\Illuminate\Http\UploadedFile $file, string $folder): string
     {
-        $path = $file->store($folder, 'public');          // e.g. category-images/xyz.jpg
+        $path = $file->store($folder, 'public');
 
         try {
             ThumbnailHelper::makeThumbForDiskPath($path);
@@ -35,11 +35,7 @@ class CategoryController extends Controller
         if ($raw === null || $raw === '' || $raw === 'no image') {
             return '';
         }
-        // If already absolute, return as-is
-        if (str_starts_with($raw, 'http://') || str_starts_with($raw, 'https://')) {
-            return $raw;
-        }
-        return $raw;  // relative paths like /storage/... are fine for the app
+        return $raw;
     }
 
     /** Format one category for API response. */
@@ -51,6 +47,7 @@ class CategoryController extends Controller
             'nameEng'              => $c->nameEng ?? '',
             'nameAbree'            => $c->nameAbree ?? '',
             'isShow'               => (bool) $c->isShow,
+            'sortOrder'            => (int) ($c->sortOrder ?? 0),
             'sub_categories_count' => $subCount,
             'imageUrl'             => $this->resolveImageUrl($c->imageUrl ?? null),
         ];
@@ -65,6 +62,7 @@ class CategoryController extends Controller
             'nameEng'        => $s->nameEng ?? '',
             'nameAbree'      => $s->nameAbree ?? '',
             'isShow'         => (bool) $s->isShow,
+            'sortOrder'      => (int) ($s->sortOrder ?? 0),
             'mainCategoryId' => $s->mainCategoryId,
             'imageUrl'       => $this->resolveImageUrl($s->imageUrl ?? null),
         ];
@@ -76,7 +74,8 @@ class CategoryController extends Controller
     {
         try {
             $categories = Category::withCount('subCategories')
-                ->select('id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'imageUrl')
+                ->select('id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'sortOrder', 'imageUrl')
+                ->orderBy('sortOrder')
                 ->orderBy('id')
                 ->get()
                 ->map(fn ($c) => $this->formatCategory($c, $c->sub_categories_count));
@@ -93,10 +92,11 @@ class CategoryController extends Controller
     {
         try {
             $request->validate([
-                'nameAr'    => 'required|string|max:255',
-                'nameEng'   => 'nullable|string|max:255',
-                'nameAbree' => 'nullable|string|max:255',
-                'image'     => 'nullable|image|max:5120',
+                'nameAr'     => 'required|string|max:255',
+                'nameEng'    => 'nullable|string|max:255',
+                'nameAbree'  => 'nullable|string|max:255',
+                'sortOrder'  => 'nullable|integer|min:0',
+                'image'      => 'nullable|image|max:5120',
             ]);
 
             $nextId  = (Category::max('id') ?? 0) + 1;
@@ -110,6 +110,7 @@ class CategoryController extends Controller
                 'nameEng'   => $request->nameEng ?? '',
                 'nameAbree' => $request->nameAbree ?? '',
                 'isShow'    => 1,
+                'sortOrder' => (int) ($request->sortOrder ?? 0),
                 'imageUrl'  => $imgPath,
                 'userAdd'   => auth()->user()?->name ?? 'admin',
                 'dateAdd'   => now(),
@@ -137,6 +138,7 @@ class CategoryController extends Controller
                 'nameAr'      => 'required|string|max:255',
                 'nameEng'     => 'nullable|string|max:255',
                 'nameAbree'   => 'nullable|string|max:255',
+                'sortOrder'   => 'nullable|integer|min:0',
                 'image'       => 'nullable|image|max:5120',
             ]);
 
@@ -146,12 +148,12 @@ class CategoryController extends Controller
                 'nameAr'    => $request->nameAr,
                 'nameEng'   => $request->nameEng ?? $category->nameEng,
                 'nameAbree' => $request->nameAbree ?? $category->nameAbree,
+                'sortOrder' => $request->has('sortOrder') ? (int) $request->sortOrder : (int) ($category->sortOrder ?? 0),
                 'userEdit'  => auth()->user()?->name ?? 'admin',
                 'dateEdit'  => now(),
             ];
 
             if ($request->hasFile('image')) {
-                // Delete old image if it's a local storage file
                 if ($category->imageUrl && str_starts_with($category->imageUrl, '/storage/')) {
                     $oldPath = str_replace('/storage/', '', $category->imageUrl);
                     Storage::disk('public')->delete($oldPath);
@@ -163,8 +165,8 @@ class CategoryController extends Controller
             $category->update($data);
 
             return response()->json([
-                'status'  => 'success',
-                'message' => 'تم تحديث الفئة بنجاح.',
+                'status'   => 'success',
+                'message'  => 'تم تحديث الفئة بنجاح.',
                 'category' => $this->formatCategory($category->fresh(), $category->subCategories()->count()),
             ]);
         } catch (ValidationException $e) {
@@ -204,7 +206,8 @@ class CategoryController extends Controller
             $request->validate(['category_id' => 'required|exists:categories,id']);
 
             $subs = SubCategory::where('mainCategoryId', $request->category_id)
-                ->select('id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'mainCategoryId', 'imageUrl')
+                ->select('id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'sortOrder', 'mainCategoryId', 'imageUrl')
+                ->orderBy('sortOrder')
                 ->orderBy('id')
                 ->get()
                 ->map(fn ($s) => $this->formatSub($s));
@@ -227,6 +230,7 @@ class CategoryController extends Controller
                 'nameEng'        => 'nullable|string|max:255',
                 'nameAbree'      => 'nullable|string|max:255',
                 'mainCategoryId' => 'required|exists:categories,id',
+                'sortOrder'      => 'nullable|integer|min:0',
                 'image'          => 'nullable|image|max:5120',
             ]);
 
@@ -241,6 +245,7 @@ class CategoryController extends Controller
                 'nameEng'        => $request->nameEng ?? '',
                 'nameAbree'      => $request->nameAbree ?? '',
                 'isShow'         => 1,
+                'sortOrder'      => (int) ($request->sortOrder ?? 0),
                 'mainCategoryId' => $request->mainCategoryId,
                 'imageUrl'       => $imgPath,
                 'userAdd'        => auth()->user()?->name ?? 'admin',
@@ -269,6 +274,7 @@ class CategoryController extends Controller
                 'nameAr'          => 'required|string|max:255',
                 'nameEng'         => 'nullable|string|max:255',
                 'nameAbree'       => 'nullable|string|max:255',
+                'sortOrder'       => 'nullable|integer|min:0',
                 'image'           => 'nullable|image|max:5120',
             ]);
 
@@ -277,6 +283,7 @@ class CategoryController extends Controller
                 'nameAr'    => $request->nameAr,
                 'nameEng'   => $request->nameEng ?? $sub->nameEng,
                 'nameAbree' => $request->nameAbree ?? $sub->nameAbree,
+                'sortOrder' => $request->has('sortOrder') ? (int) $request->sortOrder : (int) ($sub->sortOrder ?? 0),
                 'userEdit'  => auth()->user()?->name ?? 'admin',
                 'dateEdit'  => now(),
             ];
@@ -293,8 +300,8 @@ class CategoryController extends Controller
             $sub->update($data);
 
             return response()->json([
-                'status'  => 'success',
-                'message' => 'تم تحديث الفئة الفرعية بنجاح.',
+                'status'       => 'success',
+                'message'      => 'تم تحديث الفئة الفرعية بنجاح.',
                 'sub_category' => $this->formatSub($sub->fresh()),
             ]);
         } catch (ValidationException $e) {

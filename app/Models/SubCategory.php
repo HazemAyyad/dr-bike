@@ -20,6 +20,7 @@ class SubCategory extends Model
         'descriptionAbree',
         'imageUrl',
         'isShow',
+        'sortOrder',
         'mainCategoryId',
         'userAdd',
         'dateAdd',

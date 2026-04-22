@@ -20,6 +20,7 @@ protected $fillable = [
     'descriptionAbree',
     'imageUrl',
     'isShow',
+    'sortOrder',
     'userAdd',
     'dateAdd',
     'userEdit',
