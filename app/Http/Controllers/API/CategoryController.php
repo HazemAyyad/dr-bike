@@ -8,6 +8,7 @@ use App\Models\Category;
 use App\Models\SubCategory;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
@@ -73,17 +74,27 @@ class CategoryController extends Controller
     public function getAllCategories()
     {
         try {
-            $categories = Category::withCount('subCategories')
-                ->select('id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'sortOrder', 'imageUrl')
-                ->orderBy('sortOrder')
-                ->orderBy('id')
-                ->get()
-                ->map(fn ($c) => $this->formatCategory($c, $c->sub_categories_count));
+            // select() must come BEFORE withCount() — calling select() after withCount()
+            // replaces the columns list and discards the count subquery, yielding null.
+            $hasSortOrder = Schema::hasColumn('categories', 'sortOrder');
+
+            $query = Category::select(
+                array_filter(['id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', $hasSortOrder ? 'sortOrder' : null, 'imageUrl'])
+            )->withCount('subCategories');
+
+            if ($hasSortOrder) {
+                $query->orderBy('sortOrder');
+            }
+            $query->orderBy('id');
+
+            $categories = $query->get()
+                ->map(fn ($c) => $this->formatCategory($c, (int) ($c->sub_categories_count ?? 0)));
 
             return response()->json(['status' => 'success', 'categories' => $categories]);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // \Throwable catches both \Exception and \Error (e.g. TypeError in PHP 8)
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
@@ -125,7 +136,7 @@ class CategoryController extends Controller
             return response()->json(['status' => 'error', 'message' => 'بيانات غير صحيحة.', 'errors' => $e->errors()], 422);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
@@ -173,7 +184,7 @@ class CategoryController extends Controller
             return response()->json(['status' => 'error', 'message' => 'بيانات غير صحيحة.', 'errors' => $e->errors()], 422);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
@@ -193,7 +204,7 @@ class CategoryController extends Controller
             ]);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
@@ -205,19 +216,22 @@ class CategoryController extends Controller
         try {
             $request->validate(['category_id' => 'required|exists:categories,id']);
 
-            $subs = SubCategory::where('mainCategoryId', $request->category_id)
-                ->select('id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'sortOrder', 'mainCategoryId', 'imageUrl')
-                ->orderBy('sortOrder')
-                ->orderBy('id')
-                ->get()
-                ->map(fn ($s) => $this->formatSub($s));
+            $hasSortOrder = Schema::hasColumn('sub_categories', 'sortOrder');
+
+            $subQuery = SubCategory::where('mainCategoryId', $request->category_id)
+                ->select(array_filter(['id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', $hasSortOrder ? 'sortOrder' : null, 'mainCategoryId', 'imageUrl']));
+
+            if ($hasSortOrder) {
+                $subQuery->orderBy('sortOrder');
+            }
+            $subs = $subQuery->orderBy('id')->get()->map(fn ($s) => $this->formatSub($s));
 
             return response()->json(['status' => 'success', 'sub_categories' => $subs]);
         } catch (ValidationException $e) {
             return response()->json(['status' => 'error', 'message' => 'بيانات غير صحيحة.', 'errors' => $e->errors()], 422);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
@@ -261,7 +275,7 @@ class CategoryController extends Controller
             return response()->json(['status' => 'error', 'message' => 'بيانات غير صحيحة.', 'errors' => $e->errors()], 422);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
@@ -308,7 +322,7 @@ class CategoryController extends Controller
             return response()->json(['status' => 'error', 'message' => 'بيانات غير صحيحة.', 'errors' => $e->errors()], 422);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
@@ -328,7 +342,7 @@ class CategoryController extends Controller
             ]);
         } catch (QueryException $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ في قاعدة البيانات.'], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => 'حدث خطأ غير متوقع.'], 200);
         }
     }
