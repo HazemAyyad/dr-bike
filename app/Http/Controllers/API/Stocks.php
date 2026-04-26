@@ -14,6 +14,7 @@ use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\WholesaleProduct;
 use App\Services\ProductFormService;
+use App\Services\ProductTagService;
 use App\Services\StoreManageItemService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -41,8 +42,10 @@ class Stocks extends Controller
         try {
             ini_set('max_execution_time', 2000); // 0 = unlimited
 
-            $products = Product::with(['viewImages', 'normalImages'])
-                ->select('id', 'nameAr', 'stock')
+            $products = Product::with(['viewImages', 'normalImages', 'tags' => function ($q) {
+                $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+            }])
+                ->select('id', 'nameAr', 'stock', 'product_code')
                 ->paginate(15);
 
             $formatted = $products->map(function ($product) {
@@ -53,7 +56,13 @@ class Stocks extends Controller
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
                     'product_stock' => $product->stock,
+                    'product_code' => $product->product_code,
                     'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
+                    'tags' => $product->tags->map(fn ($t) => [
+                        'id' => $t->id,
+                        'name' => $t->name,
+                        'color' => $t->color,
+                    ])->values(),
                 ];
             });
 
@@ -103,10 +112,23 @@ class Stocks extends Controller
                 'viewImages:id,itemId,imageUrl',
                 'image3d:id,itemId,imageUrl',
                 'purchase:id,name',
+                'tags' => function ($q) {
+                    $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+                },
 
             ])->findOrFail($request->product_id);
 
             $product->makeVisible(['wholesalePrice']);
+
+            $product['product_tags'] = $product->tags->map(function ($t) {
+                return [
+                    'id' => $t->id,
+                    'name' => $t->name,
+                    'color' => $t->color,
+                    'is_active' => $t->is_active,
+                ];
+            })->values();
+            $product->unsetRelation('tags');
 
             $subs = $product->subCategories->map(function ($pivot) {
                 return [
@@ -443,11 +465,14 @@ class Stocks extends Controller
                 'sizes.*.color_sizes.*.normailPrice' => ['required', 'numeric', 'min:0'],
                 'sizes.*.color_sizes.*.stock' => ['required', 'integer', 'min:0'],
 
+                'tag_ids' => ['nullable', 'array'],
+                'tag_ids.*' => ['integer', 'exists:product_tags,id'],
+
             ]);
 
             $product = Product::findOrFail($request->product_id);
 
-            $updateData = $request->except(['product_id', 'sub_categories', 'wholesales', 'sizes', 'price']);
+            $updateData = $request->except(['product_id', 'sub_categories', 'wholesales', 'sizes', 'price', 'product_code', 'tag_ids']);
 
             $product->update($updateData);
 
@@ -469,6 +494,10 @@ class Stocks extends Controller
             $this->replaceSubCategories($request);
             $this->replaceSizes($request);
             $this->replaceWholesales($request, $request->product_id);
+
+            if ($request->has('tag_ids')) {
+                app(ProductTagService::class)->syncTagsForProduct((int) $request->product_id, (array) $request->input('tag_ids', []));
+            }
 
             $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($request->product_id);
             $storeSync = app(StoreManageItemService::class)->syncProductEditToStore($product);
@@ -825,9 +854,14 @@ class Stocks extends Controller
                  $query->select('main_product_id')
                      ->from('combinations');
              })
-                 ->with('normalImages:id,itemId,imageUrl')
+                 ->with([
+                     'normalImages:id,itemId,imageUrl',
+                     'tags' => function ($q) {
+                         $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+                     },
+                 ])
                  ->withCount('combinations')
-                 ->get(['id', 'nameAr', 'stock']); // select only needed columns
+                 ->get(['id', 'nameAr', 'stock', 'product_code']); // select only needed columns
 
             $formatted = $productsWithCombinations->map(function ($product) {
                 $image = $product->normalImages->first();
@@ -836,9 +870,15 @@ class Stocks extends Controller
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
                     'product_stock' => $product->stock,
+                    'product_code' => $product->product_code,
                     'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
 
                     'number_of_used_products' => $product->combinations_count,
+                    'tags' => $product->tags->map(fn ($t) => [
+                        'id' => $t->id,
+                        'name' => $t->name,
+                        'color' => $t->color,
+                    ])->values(),
                 ];
             });
 
@@ -941,8 +981,13 @@ class Stocks extends Controller
             $search = $request->name;
 
             $products = Product::where('nameAr', 'like', "%{$search}%")
-                ->with('viewImages:id,itemId,imageUrl')
-                ->get(['id', 'nameAr', 'stock']);
+                ->with([
+                    'viewImages:id,itemId,imageUrl',
+                    'tags' => function ($q) {
+                        $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+                    },
+                ])
+                ->get(['id', 'nameAr', 'stock', 'product_code']);
 
             $formatted = $products->map(function ($product) {
                 $image = $product->viewImages->first();
@@ -951,7 +996,13 @@ class Stocks extends Controller
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
                     'product_stock' => $product->stock,
+                    'product_code' => $product->product_code,
                     'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
+                    'tags' => $product->tags->map(fn ($t) => [
+                        'id' => $t->id,
+                        'name' => $t->name,
+                        'color' => $t->color,
+                    ])->values(),
                 ];
             });
 

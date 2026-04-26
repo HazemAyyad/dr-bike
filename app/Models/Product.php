@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Services\ProductCodeAllocator;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Product extends Model
@@ -12,6 +14,16 @@ class Product extends Model
     use SoftDeletes;
 
     public $incrementing = false;
+
+    protected static function booted(): void
+    {
+        static::creating(function (Product $product) {
+            $code = $product->product_code ?? null;
+            if ($code === null || $code === '') {
+                $product->product_code = app(ProductCodeAllocator::class)->allocate();
+            }
+        });
+    }
 
     protected $fillable = [
         'id',
@@ -155,5 +167,15 @@ class Product extends Model
     public function billQuantities()
     {
         return $this->hasMany(BillQuantity::class);
+    }
+
+    public function tags(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            ProductTag::class,
+            'product_product_tag',
+            'product_id',
+            'product_tag_id'
+        )->withTimestamps();
     }
 }

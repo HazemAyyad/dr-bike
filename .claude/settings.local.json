@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//f/flutter_projects/doctorbike/**)",
+      "Read(//f/net/DoctorBike/DoctorBike/**)",
+      "Bash(awk '{print $NF}')",
+      "Bash(php artisan:*)",
+      "Bash(php -r \"echo PHP_VERSION;\")",
+      "Bash(php -m)",
+      "Bash(composer require:*)"
+    ],
+    "additionalDirectories": [
+      "F:\\flutter_projects\\doctorbike\\lib\\core\\helpers",
+      "F:\\flutter_projects\\doctorbike\\lib\\translation",
+      "F:\\flutter_projects\\doctorbike\\lib\\features\\admin\\stock\\presentation\\widgets"
+    ]
+  }
+}

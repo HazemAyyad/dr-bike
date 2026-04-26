@@ -41,6 +41,7 @@ use App\Http\Controllers\API\PaymentAndRecieve;
 use App\Http\Controllers\API\Pictures;
 use App\Http\Controllers\API\ProductDevelopmentApi;
 use App\Http\Controllers\API\Products;
+use App\Http\Controllers\API\ProductTagController;
 use App\Http\Controllers\API\Profile;
 use App\Http\Controllers\API\ProfitSales;
 use App\Http\Controllers\API\Projects;
@@ -536,6 +537,14 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
 
 
     Route::post('/search/products/by/name' , [Stocks::class,'searchProduct']);
+
+    Route::get('/product/tags' , [ProductTagController::class,'index']);
+    Route::post('/product/tags' , [ProductTagController::class,'store']);
+    Route::post('/product/tags/update' , [ProductTagController::class,'update']);
+    Route::post('/product/tags/deactivate' , [ProductTagController::class,'deactivate']);
+    Route::post('/product/tags/attach' , [ProductTagController::class,'attach']);
+    Route::post('/product/tags/detach' , [ProductTagController::class,'detach']);
+    Route::get('/products/by/tag' , [ProductTagController::class,'productsByTag']);
 
 });
 

@@ -20,7 +20,8 @@ use Illuminate\Validation\ValidationException;
 class ProductFormService
 {
     public function __construct(
-        private readonly StoreManageItemService $storeManageItemService
+        private readonly StoreManageItemService $storeManageItemService,
+        private readonly ProductTagService $productTagService
     ) {}
 
     /**
@@ -78,6 +79,8 @@ class ProductFormService
             'delete_three_d_image_ids' => ['nullable', 'array'],
             'delete_three_d_image_ids.*' => ['integer'],
             'delete_video' => ['nullable', 'boolean'],
+            'tag_ids' => ['nullable', 'array'],
+            'tag_ids.*' => ['integer', 'exists:product_tags,id'],
         ];
 
         if ($forEdit) {
@@ -184,6 +187,8 @@ class ProductFormService
             $this->replaceSizesFromTestForm($sizesInput, $newId);
             $trace('مقاسات/ألوان محلية', ['count' => count($sizesInput)]);
 
+            $this->syncProductTagsFromRequest($request, $newId);
+
             $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($newId);
 
             $mediaRes = $this->storeManageItemService->saveUploadedMediaToLaravelOnly($request, $product, $step);
@@ -263,6 +268,8 @@ class ProductFormService
         ));
         $this->replaceSizesFromTestForm($sizesInput, $newId);
         $trace('تم حفظ المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
+
+        $this->syncProductTagsFromRequest($request, $newId);
 
         $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($newId);
 
@@ -356,6 +363,8 @@ class ProductFormService
         ));
         $this->replaceSizesFromTestForm($sizesInput, $product->id);
         $trace('تم تحديث المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
+
+        $this->syncProductTagsFromRequest($request, (int) $product->id);
 
         $product = Product::with(['subCategories', 'sizes.colorSizes'])->findOrFail($product->id);
 
@@ -510,6 +519,11 @@ class ProductFormService
     /**
      * @return callable(string, array): void
      */
+    private function syncProductTagsFromRequest(Request $request, int $productId): void
+    {
+        $this->productTagService->syncTagsForProduct($productId, (array) $request->input('tag_ids', []));
+    }
+
     private function makeTracer(?callable $step): callable
     {
         return function (string $message, array $context = []) use ($step): void {
