@@ -483,12 +483,18 @@ class Stocks extends Controller
             ]);
 
             $product = Product::findOrFail($request->product_id);
+            $previousMainCategoryId = $product->category_id;
 
             $updateData = $request->except(['product_id', 'sub_categories', 'wholesales', 'sizes', 'price', 'product_code', 'tag_ids']);
 
+            $newCategoryId = (int) $request->input('category_id');
             $product->update(array_merge($updateData, [
-                'category_id' => (int) $request->input('category_id'),
+                'category_id' => $newCategoryId,
             ]));
+
+            if ((int) ($previousMainCategoryId ?? 0) !== $newCategoryId) {
+                SubCategoryProduct::where('product_id', $request->product_id)->delete();
+            }
 
             if (! $product->price) {
                 $product->update(['price' => $request->price]);
