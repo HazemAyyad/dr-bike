@@ -344,13 +344,13 @@ class ProductFormService
             $update['price'] = $validated['price'];
         }
 
-        $previousMainCategoryId = $product->category_id;
         $product->update($update);
         $trace('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
 
-        if ((int) ($previousMainCategoryId ?? 0) !== (int) $validated['category_id']) {
-            SubCategoryProduct::where('product_id', $product->id)->delete();
-            $trace('تغيير الفئة الرئيسية — إزالة كل الفئات الفرعية المرتبطة سابقاً', []);
+        $mainCatId = (int) $validated['category_id'];
+        $pruned = SubCategoryProduct::deleteForProductOutsideMain((int) $product->id, $mainCatId);
+        if ($pruned > 0) {
+            $trace('إزالة فئات فرعية لا تطابق الفئة الرئيسية للمنتج', ['deleted' => $pruned, 'main_category_id' => $mainCatId]);
         }
 
         if ($request->has('sub_categories')) {

@@ -100,6 +100,7 @@ class Stocks extends Controller
 
             $request->validate(['product_id' => 'required|integer|exists:products,id']);
             $product = Product::with([
+                'category:id,nameAr',
                 'subCategories.subCategory:id,nameAr,mainCategoryId',
                 'subCategories.subCategory.category:id,nameAr',
                 'sizes' => function ($q) {
@@ -131,7 +132,20 @@ class Stocks extends Controller
             })->values();
             $product->unsetRelation('tags');
 
-            $subs = $product->subCategories->map(function ($pivot) {
+            $mainCatId = $product->category_id;
+            $filteredPivots = $product->subCategories->filter(function ($pivot) use ($mainCatId) {
+                if ($mainCatId === null || $mainCatId === '') {
+                    return true;
+                }
+                $subMain = $pivot->subCategory?->mainCategoryId;
+                if ($subMain === null || $subMain === '') {
+                    return false;
+                }
+
+                return (int) $subMain === (int) $mainCatId;
+            })->values();
+
+            $subs = $filteredPivots->map(function ($pivot) {
                 return [
                     'sub_category_id' => $pivot->sub_category_id,
                     'sub_category_name' => $pivot->subCategory->nameAr,
@@ -142,12 +156,14 @@ class Stocks extends Controller
             });
             $product['product_subCategories'] = $subs;
 
-            $product['sub_categories'] = $product->subCategories
+            $product['sub_categories'] = $filteredPivots
                 ->pluck('sub_category_id')
                 ->map(fn ($id) => (int) $id)
                 ->values()
                 ->all();
 
+            $product['category_name'] = $product->category?->nameAr;
+            $product->unsetRelation('category');
             unset($product->subCategories);
 
             $purchase_prices = $product->purchasePrices->map(function ($pivot) {
@@ -483,7 +499,6 @@ class Stocks extends Controller
             ]);
 
             $product = Product::findOrFail($request->product_id);
-            $previousMainCategoryId = $product->category_id;
 
             $updateData = $request->except(['product_id', 'sub_categories', 'wholesales', 'sizes', 'price', 'product_code', 'tag_ids']);
 
@@ -492,9 +507,7 @@ class Stocks extends Controller
                 'category_id' => $newCategoryId,
             ]));
 
-            if ((int) ($previousMainCategoryId ?? 0) !== $newCategoryId) {
-                SubCategoryProduct::where('product_id', $request->product_id)->delete();
-            }
+            SubCategoryProduct::deleteForProductOutsideMain((int) $request->product_id, $newCategoryId);
 
             if (! $product->price) {
                 $product->update(['price' => $request->price]);

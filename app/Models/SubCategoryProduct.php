@@ -26,4 +26,20 @@ class SubCategoryProduct extends Model
     {
         return $this->belongsTo(SubCategory::class, 'sub_category_id');
     }
+
+    /**
+     * Remove pivot rows whose subcategory does not belong to the product's main category.
+     */
+    public static function deleteForProductOutsideMain(int $productId, int $mainCategoryId): int
+    {
+        return (int) static::query()
+            ->where('product_id', $productId)
+            ->where(function ($q) use ($mainCategoryId) {
+                $q->whereDoesntHave('subCategory')
+                    ->orWhereHas('subCategory', function ($sq) use ($mainCategoryId) {
+                        $sq->where('mainCategoryId', '!=', $mainCategoryId);
+                    });
+            })
+            ->delete();
+    }
 }
