@@ -55,6 +55,7 @@ class ProductFormService
             'min_sale_price' => ['nullable', 'numeric', 'min:0'],
             'rotation_date' => ['nullable', 'date'],
             'price' => ['nullable', 'numeric', 'min:0'],
+            'category_id' => ['required', 'integer', 'exists:categories,id'],
             'sub_categories' => ['nullable', 'array'],
             'sub_categories.*' => ['integer', 'exists:sub_categories,id'],
             'sizes' => ['nullable', 'array'],
@@ -109,6 +110,7 @@ class ProductFormService
         $nameAbree = $validated['nameAbree'] !== null && $validated['nameAbree'] !== '' ? $validated['nameAbree'] : $nameAr;
 
         $insert = [
+            'category_id' => (int) $validated['category_id'],
             'nameAr' => $nameAr,
             'nameEng' => $nameEng,
             'nameAbree' => $nameAbree,
@@ -309,6 +311,7 @@ class ProductFormService
         $nameAbree = $validated['nameAbree'] !== null && $validated['nameAbree'] !== '' ? $validated['nameAbree'] : $nameAr;
 
         $update = [
+            'category_id' => (int) $validated['category_id'],
             'nameAr' => $nameAr,
             'nameEng' => $nameEng,
             'nameAbree' => $nameAbree,
@@ -344,18 +347,22 @@ class ProductFormService
         $product->update($update);
         $trace('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
 
-        $subIds = array_values(array_unique(array_filter(
-            array_map('intval', (array) $request->input('sub_categories', [])),
-            fn (int $id) => $id > 0
-        )));
-        SubCategoryProduct::where('product_id', $product->id)->delete();
-        foreach ($subIds as $sid) {
-            SubCategoryProduct::create([
-                'product_id' => $product->id,
-                'sub_category_id' => $sid,
-            ]);
+        if ($request->has('sub_categories')) {
+            $subIds = array_values(array_unique(array_filter(
+                array_map('intval', (array) $request->input('sub_categories', [])),
+                fn (int $id) => $id > 0
+            )));
+            if ($subIds !== []) {
+                SubCategoryProduct::where('product_id', $product->id)->delete();
+                foreach ($subIds as $sid) {
+                    SubCategoryProduct::create([
+                        'product_id' => $product->id,
+                        'sub_category_id' => $sid,
+                    ]);
+                }
+                $trace('فئات فرعية', ['ids' => $subIds]);
+            }
         }
-        $trace('فئات فرعية', ['ids' => $subIds]);
 
         $sizesInput = array_values(array_filter(
             $request->input('sizes', []),

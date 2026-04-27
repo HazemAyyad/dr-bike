@@ -45,7 +45,7 @@ class Stocks extends Controller
             $products = Product::with(['viewImages', 'normalImages', 'tags' => function ($q) {
                 $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
             }])
-                ->select('id', 'nameAr', 'stock', 'product_code')
+                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id')
                 ->paginate(15);
 
             $formatted = $products->map(function ($product) {
@@ -54,6 +54,7 @@ class Stocks extends Controller
 
                 return [
                     'product_id' => $product->id,
+                    'category_id' => $product->category_id !== null ? (int) $product->category_id : null,
                     'product_name' => $product->nameAr,
                     'product_stock' => $product->stock,
                     'product_code' => $product->product_code,
@@ -140,6 +141,12 @@ class Stocks extends Controller
                 ];
             });
             $product['product_subCategories'] = $subs;
+
+            $product['sub_categories'] = $product->subCategories
+                ->pluck('sub_category_id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all();
 
             unset($product->subCategories);
 
@@ -279,12 +286,16 @@ class Stocks extends Controller
 
         $existingsubCategoriesIds = SubCategoryProduct::where('product_id', $request->product_id)
             ->pluck('sub_category_id')
-            ->toArray();
+            ->map(fn ($id) => (int) $id)
+            ->all();
 
-        $newSubCategoryIds = $request->input('sub_categories', []); // array or empty array if nothing selected
+        $newSubCategoryIds = array_values(array_filter(
+            array_map('intval', (array) $request->input('sub_categories', [])),
+            fn (int $id) => $id > 0
+        ));
 
-        $toAdd = array_diff($newSubCategoryIds, $existingsubCategoriesIds);
-        $toDelete = array_diff($existingsubCategoriesIds, $newSubCategoryIds);
+        $toAdd = array_values(array_diff($newSubCategoryIds, $existingsubCategoriesIds));
+        $toDelete = array_values(array_diff($existingsubCategoriesIds, $newSubCategoryIds));
 
         // Delete unchecked permissions
         if (! empty($toDelete)) {
@@ -437,8 +448,9 @@ class Stocks extends Controller
                 'product_id' => 'required|integer|exists:products,id',
                 'nameAr' => 'required|string',
                 'descriptionAr' => 'required|string',
+                'category_id' => 'required|integer|exists:categories,id',
                 'sub_categories' => 'nullable|array',
-                'sub_categories.*' => 'required|integer|exists:sub_categories,id',
+                'sub_categories.*' => 'integer|exists:sub_categories,id',
                 'min_stock' => 'required|numeric|min:0',
                 'normailPrice' => 'required|numeric|min:1',
                 'discount' => 'required|numeric|min:0',
@@ -474,7 +486,9 @@ class Stocks extends Controller
 
             $updateData = $request->except(['product_id', 'sub_categories', 'wholesales', 'sizes', 'price', 'product_code', 'tag_ids']);
 
-            $product->update($updateData);
+            $product->update(array_merge($updateData, [
+                'category_id' => (int) $request->input('category_id'),
+            ]));
 
             if (! $product->price) {
                 $product->update(['price' => $request->price]);
@@ -491,7 +505,15 @@ class Stocks extends Controller
                     $closeout->save();
                 }
             }
-            $this->replaceSubCategories($request);
+            if ($request->has('sub_categories')) {
+                $subIds = array_values(array_filter(
+                    array_map('intval', (array) $request->input('sub_categories', [])),
+                    fn (int $id) => $id > 0
+                ));
+                if ($subIds !== []) {
+                    $this->replaceSubCategories($request);
+                }
+            }
             $this->replaceSizes($request);
             $this->replaceWholesales($request, $request->product_id);
 

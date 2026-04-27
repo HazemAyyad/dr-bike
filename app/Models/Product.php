@@ -27,6 +27,7 @@ class Product extends Model
 
     protected $fillable = [
         'id',
+        'category_id',
         'nameAr',
         'nameEng',
         'nameAbree',
@@ -76,6 +77,11 @@ class Product extends Model
     public function followups()
     {
         return $this->hasMany(Followup::class);
+    }
+
+    public function category()
+    {
+        return $this->belongsTo(Category::class, 'category_id');
     }
 
     public function department()
