@@ -12,7 +12,7 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        $schedule->command('sync:store')->everyFiveMinutes();
+        // $schedule->command('sync:store')->everyFiveMinutes();
     }
 
     /**

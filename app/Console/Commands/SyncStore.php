@@ -22,26 +22,10 @@ class SyncStore extends Command
 
     public function handle()
     {
-        try {
-            $token = $this->storeLogin();
+        // مزامنة المتجر الخارجي معطّلة — لا طلبات HTTP ولا تعديل على البيانات.
+        $this->warn('Store sync is disabled — no remote calls or DB updates will run.');
 
-
-            // 1) Sync categories
-            $this->info("Syncing Categories...");
-            $this->syncCategories($token);
-
-            // 2) Sync subcategories
-            $this->info("Syncing Subcategories...");
-            $this->syncSubCategories($token);
-
-            // 3) Sync products + relations
-            $this->info("Syncing Products...");
-            $this->importAllProducts($token);
-
-            $this->info("Sync Completed Successfully.");
-        } catch (\Exception $e) {
-            $this->error("Error: " . $e->getMessage());
-        }
+        return self::SUCCESS;
     }
 
     // -------------------------------
