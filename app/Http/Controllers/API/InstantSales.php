@@ -305,29 +305,32 @@ public function store(Request $request)
             ], 200);
         }
 }
-    public function getInstantSales()
-    {
-        try {
+   public function getInstantSales()
+{
+    try {
         $instantSales = InstantSale::whereNull('parent_id')
-            ->with(['subProducts']) // relation in model
+            ->with([
+                'product:id,nameAr',
+                'subProducts.product:id,nameAr',
+            ])
+            ->latest()
             ->get();
 
         $formatted = $instantSales->map(function ($sale) {
             return [
                 'id' => $sale->id,
-                'product' => $sale->product->nameAr,
+                'product' => optional($sale->product)->nameAr ?? 'منتج محذوف',
                 'cost' => $sale->cost,
                 'total_cost' => $sale->total_cost,
-                'quantity'=> $sale->quantity,
+                'quantity' => $sale->quantity,
                 'notes' => $sale->notes,
-                'date' => $sale->created_at->format('Y-m-d'),
+                'date' => optional($sale->created_at)->format('Y-m-d'),
                 'sub_products' => $sale->subProducts->map(function ($sub) {
                     return [
                         'id' => $sub->id,
-                        'product_name' => $sub->product->nameAr,
+                        'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
                         'cost' => $sub->cost,
-                        'quantity'=> $sub->quantity,
-
+                        'quantity' => $sub->quantity,
                     ];
                 }),
             ];
@@ -337,15 +340,18 @@ public function store(Request $request)
             'status' => 'success',
             'instant_sales' => $formatted,
         ], 200);
-    } catch (QueryException $e) {
+
+    } catch (\Throwable $e) {
+        \Log::error('getInstantSales error', [
+            'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
+
         return response()->json([
             'status' => 'error',
-            'message' => __('messages.retrieve_data_error')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.something_wrong')
+            'message' => __('messages.something_wrong'),
+            'debug' => config('app.debug') ? $e->getMessage() : null,
         ], 200);
     }
 }
