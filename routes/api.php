@@ -177,6 +177,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
 
     // qr generation
     Route::get('/qr-generation', [AttendanceController::class, 'generateQr']);
+    Route::get('/qr-history', [AttendanceController::class, 'qrHistory']);
 
 
 });
