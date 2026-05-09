@@ -85,7 +85,7 @@ class AttendanceController extends Controller
 
             file_put_contents($filePath, $qrImage);
 
-            AttendaceQr::create([
+            $record = AttendaceQr::create([
                 'code_text' => $codeText,
                 'file_name' => $fileName,
             ]);
@@ -94,6 +94,7 @@ class AttendanceController extends Controller
                 'status' => 'success',
                 'code_text' => $codeText,
                 'qr_image_url' => 'public/qr/'.$fileName,
+                'created_at' => $record->created_at?->toIso8601String(),
             ], 200);
         } catch (QueryException $e) {
             return response([
