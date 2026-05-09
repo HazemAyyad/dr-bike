@@ -16,6 +16,54 @@ use Illuminate\Support\Str;
 
 class AttendanceController extends Controller
 {
+    private function addLabelToQrPng(string $pngBytes, string $label): string
+    {
+        // Best-effort: if GD isn't available, return original image.
+        if (! function_exists('imagecreatefromstring') || ! function_exists('imagepng')) {
+            return $pngBytes;
+        }
+
+        $src = @imagecreatefromstring($pngBytes);
+        if ($src === false) {
+            return $pngBytes;
+        }
+
+        $w = imagesx($src);
+        $h = imagesy($src);
+        $pad = 16; // padding around
+        $labelHeight = 42; // space for label
+
+        $canvas = imagecreatetruecolor($w + ($pad * 2), $h + $labelHeight + ($pad * 2));
+        if ($canvas === false) {
+            imagedestroy($src);
+            return $pngBytes;
+        }
+
+        // white background
+        $white = imagecolorallocate($canvas, 255, 255, 255);
+        $black = imagecolorallocate($canvas, 0, 0, 0);
+        imagefilledrectangle($canvas, 0, 0, imagesx($canvas), imagesy($canvas), $white);
+
+        // place qr
+        imagecopy($canvas, $src, $pad, $pad, 0, 0, $w, $h);
+
+        // simple built-in font text (no TTF dependency)
+        $font = 3;
+        $textW = imagefontwidth($font) * strlen($label);
+        $textX = max($pad, (int) ((imagesx($canvas) - $textW) / 2));
+        $textY = $pad + $h + 12;
+        imagestring($canvas, $font, $textX, $textY, $label, $black);
+
+        ob_start();
+        imagepng($canvas);
+        $out = (string) ob_get_clean();
+
+        imagedestroy($src);
+        imagedestroy($canvas);
+
+        return $out !== '' ? $out : $pngBytes;
+    }
+
     public function generateQr()
     {
         try {
@@ -24,6 +72,8 @@ class AttendanceController extends Controller
             $qrImage = QrCode::format('png')
                 ->size(300)
                 ->generate($codeText);
+            $label = now()->format('Y-m-d H:i');
+            $qrImage = $this->addLabelToQrPng($qrImage, $label);
 
             $folderPath = public_path('qr');
             if (! file_exists($folderPath)) {
