@@ -162,6 +162,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
     Route::post('/get/employee/financial/data/report' , [EmployeeDetails::class,'employeeReportData']);
 
     Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs']);
+    Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory']);
 
 
        // employee orders

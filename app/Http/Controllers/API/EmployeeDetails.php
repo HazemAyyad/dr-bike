@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\EmployeeDetailResource;
 use App\Mail\NewEmployeeAccountMail;
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeePermission;
 use App\Models\Permission;
@@ -643,6 +644,182 @@ private function getEmployeeFinancialData($employeeId)
              'message' => __('messages.something_wrong')], 200);
         } catch (\Exception $e) {
             return response(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
+    /**
+     * سجل دوام الموظف (مسحات دخول/خروج) للعرض على الأدمن.
+     */
+    public function employeeAttendanceHistory(Request $request)
+    {
+        try {
+            $request->validate([
+                'employee_id' => 'required|integer|exists:employee_details,id',
+                'from_date' => 'nullable|date',
+                'to_date' => 'nullable|date|after_or_equal:from_date',
+            ]);
+
+            $employee = EmployeeDetail::with('user:id,name')->findOrFail($request->employee_id);
+
+            $from = $request->filled('from_date')
+                ? Carbon::parse($request->from_date)->startOfDay()
+                : now()->subDays(30)->startOfDay();
+            $to = $request->filled('to_date')
+                ? Carbon::parse($request->to_date)->endOfDay()
+                : now()->endOfDay();
+
+            $fromStr = $from->toDateString();
+            $toStr = $to->toDateString();
+
+            $scanDates = EmployeeAttendanceScan::query()
+                ->where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$fromStr, $toStr])
+                ->distinct()
+                ->pluck('work_date')
+                ->map(fn ($d) => $d instanceof Carbon ? $d->format('Y-m-d') : (string) $d);
+
+            $attDates = EmployeeAttendance::query()
+                ->where('employee_id', $employee->id)
+                ->whereBetween('date', [$fromStr, $toStr])
+                ->pluck('date')
+                ->map(fn ($d) => $d instanceof Carbon ? $d->format('Y-m-d') : (string) $d);
+
+            $allDates = $scanDates->merge($attDates)->unique()->sort()->values();
+
+            $expectedMinutes = (int) round(((float) $employee->number_of_work_hours) * 60);
+
+            $days = [];
+            foreach ($allDates as $dateStr) {
+                $dayScans = EmployeeAttendanceScan::query()
+                    ->where('employee_id', $employee->id)
+                    ->whereDate('work_date', $dateStr)
+                    ->orderBy('id')
+                    ->get();
+
+                $legacy = EmployeeAttendance::query()
+                    ->where('employee_id', $employee->id)
+                    ->whereDate('date', $dateStr)
+                    ->first();
+
+                if ($dayScans->isEmpty() && ! $legacy) {
+                    continue;
+                }
+
+                $workedMinutes = 0;
+                $awayMinutes = 0;
+                $segments = [];
+                $scansOut = [];
+                $firstCheckIn = null;
+                $lastCheckOut = null;
+                $currentlyIn = false;
+
+                if ($dayScans->isNotEmpty()) {
+                    $workedMinutes = EmployeeAttendanceScan::computeWorkedMinutes($dayScans);
+                    $awayMinutes = EmployeeAttendanceScan::computeAwayMinutes($dayScans);
+
+                    foreach ($dayScans as $s) {
+                        $scansOut[] = [
+                            'at' => $s->scanned_at->toIso8601String(),
+                            'direction' => $s->direction,
+                        ];
+                    }
+
+                    $firstInScan = $dayScans->firstWhere('direction', 'in');
+                    $firstCheckIn = $firstInScan?->scanned_at;
+
+                    $lastOutScan = $dayScans->where('direction', 'out')->last();
+                    $lastCheckOut = $lastOutScan?->scanned_at;
+
+                    $lastScan = $dayScans->last();
+                    $currentlyIn = $lastScan && $lastScan->direction === 'in';
+
+                    $pendingIn = null;
+                    foreach ($dayScans as $s) {
+                        if ($s->direction === 'in') {
+                            $pendingIn = $s;
+                        } elseif ($s->direction === 'out' && $pendingIn !== null) {
+                            $segments[] = [
+                                'check_in_at' => $pendingIn->scanned_at->toIso8601String(),
+                                'check_out_at' => $s->scanned_at->toIso8601String(),
+                                'worked_minutes' => Carbon::parse($pendingIn->scanned_at)->diffInMinutes(Carbon::parse($s->scanned_at)),
+                            ];
+                            $pendingIn = null;
+                        }
+                    }
+                    if ($pendingIn !== null) {
+                        $segments[] = [
+                            'check_in_at' => $pendingIn->scanned_at->toIso8601String(),
+                            'check_out_at' => null,
+                            'worked_minutes' => null,
+                            'open' => true,
+                        ];
+                    }
+                } elseif ($legacy) {
+                    $workedMinutes = (int) ($legacy->worked_minutes ?? 0);
+                    if ($legacy->arrived_at) {
+                        $firstCheckIn = Carbon::parse($dateStr.' '.$legacy->arrived_at);
+                    }
+                    if ($legacy->left_at) {
+                        $lastCheckOut = Carbon::parse($dateStr.' '.$legacy->left_at);
+                    }
+                    $currentlyIn = $legacy->arrived_at && ! $legacy->left_at;
+                    if ($legacy->arrived_at && $legacy->left_at) {
+                        $segments[] = [
+                            'check_in_at' => Carbon::parse($dateStr.' '.$legacy->arrived_at)->toIso8601String(),
+                            'check_out_at' => Carbon::parse($dateStr.' '.$legacy->left_at)->toIso8601String(),
+                            'worked_minutes' => $workedMinutes,
+                        ];
+                    }
+                }
+
+                $onTime = null;
+                if ($employee->start_work_time && $firstCheckIn) {
+                    $scheduledStart = Carbon::parse($dateStr.' '.$employee->start_work_time);
+                    $onTime = $firstCheckIn->lte($scheduledStart);
+                }
+
+                $overtimeMinutes = max(0, $workedMinutes - $expectedMinutes);
+
+                $days[] = [
+                    'date' => $dateStr,
+                    'first_check_in' => $firstCheckIn?->toIso8601String(),
+                    'last_check_out' => $lastCheckOut?->toIso8601String(),
+                    'currently_in' => $currentlyIn,
+                    'worked_minutes' => $workedMinutes,
+                    'away_minutes' => $awayMinutes,
+                    'expected_work_minutes' => $expectedMinutes,
+                    'on_time' => $onTime,
+                    'overtime_minutes' => $overtimeMinutes,
+                    'segments' => $segments,
+                    'scans' => $scansOut,
+                ];
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'employee' => [
+                    'id' => $employee->id,
+                    'name' => $employee->user?->name,
+                    'start_work_time' => $employee->start_work_time,
+                    'number_of_work_hours' => $employee->number_of_work_hours,
+                ],
+                'days' => $days,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response(['status' => 'error', 'message' => __('messages.employee_not_found')], 200);
+        } catch (QueryException $e) {
+            return response(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
         }
     }
 

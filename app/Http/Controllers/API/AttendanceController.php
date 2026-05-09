@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AttendaceQr;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceScan;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -134,60 +135,88 @@ class AttendanceController extends Controller
             $employee = EmployeeDetail::findOrFail($employee_id);
             $today = now()->toDateString();
 
-            $attendance = EmployeeAttendance::where('employee_id', $employee_id)
-                ->where('date', $today)
-                ->first();
+            $scans = EmployeeAttendanceScan::query()
+                ->where('employee_id', $employee_id)
+                ->whereDate('work_date', $today)
+                ->orderBy('id')
+                ->get();
 
-            if (! $attendance) {
-                $arrivalTime = now();
-                $leftTime = $arrivalTime->copy()->addHours($employee->number_of_work_hours);
-                $workedMinutes = $employee->number_of_work_hours * 60;
+            $nextIsIn = $scans->isEmpty() || $scans->last()->direction === 'out';
 
-                EmployeeAttendance::create([
-                    'employee_id' => $employee->id,
-                    'date' => $today,
-                    'arrived_at' => now()->toTimeString(),
-                    'worked_minutes' => $workedMinutes,
+            $attendance = EmployeeAttendance::firstOrNew([
+                'employee_id' => $employee_id,
+                'date' => $today,
+            ]);
+
+            if ($nextIsIn) {
+                EmployeeAttendanceScan::create([
+                    'employee_id' => $employee_id,
+                    'work_date' => $today,
+                    'scanned_at' => now(),
+                    'direction' => 'in',
                 ]);
 
-                $employee->total_work_hours += $employee->number_of_work_hours;
-                $employee->salary += $employee->number_of_work_hours * $employee->hour_work_price;
-                $employee->save();
+                if (! $attendance->exists || $attendance->arrived_at === null) {
+                    $attendance->arrived_at = now()->toTimeString();
+                }
+                $attendance->left_at = null;
+                $attendance->worked_minutes = EmployeeAttendanceScan::computeWorkedMinutes(
+                    EmployeeAttendanceScan::query()
+                        ->where('employee_id', $employee_id)
+                        ->whereDate('work_date', $today)
+                        ->orderBy('id')
+                        ->get()
+                );
+                $attendance->save();
 
                 return response()->json([
                     'status' => 'success',
                     'message' => __('messages.arrival_time'),
+                    'scan' => 'in',
+                    'day_worked_minutes' => $attendance->worked_minutes,
                 ], 200);
             }
 
-            if ($attendance && ! $attendance->left_at) {
-                $attendance->left_at = now()->toTimeString();
-
-                $start = Carbon::createFromTimeString($attendance->arrived_at);
-                $end = Carbon::createFromTimeString($attendance->left_at);
-                $workedMinutes = $end->diffInMinutes($start);
-                $attendance->worked_minutes = $workedMinutes;
-                $attendance->save();
-
-                if (($workedMinutes / 60) < $employee->number_of_work_hours) {
-                    $diff = $employee->number_of_work_hours - ($workedMinutes / 60);
-                    $employee->total_work_hours -= $diff;
-                    $employee->save();
-                    $employee->salary = $employee->total_work_hours * $employee->hour_work_price;
-                    $employee->save();
-                }
-
+            if ($scans->isEmpty() || $scans->last()->direction !== 'in') {
                 return response()->json([
-                    'status' => 'success',
-                    'message' => __('messages.departure_time'),
-                    'worked_minutes' => $workedMinutes,
-                    'updated_salary' => $employee->salary,
+                    'status' => 'error',
+                    'message' => __('messages.must_check_in_first'),
                 ], 200);
             }
+
+            $lastIn = $scans->last();
+            $segmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes(now()));
+
+            EmployeeAttendanceScan::create([
+                'employee_id' => $employee_id,
+                'work_date' => $today,
+                'scanned_at' => now(),
+                'direction' => 'out',
+            ]);
+
+            $allScans = EmployeeAttendanceScan::query()
+                ->where('employee_id', $employee_id)
+                ->whereDate('work_date', $today)
+                ->orderBy('id')
+                ->get();
+
+            $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
+            $attendance->worked_minutes = $totalWorked;
+            $attendance->left_at = now()->toTimeString();
+            $attendance->save();
+
+            $hours = $segmentMinutes / 60;
+            $employee->total_work_hours = (float) $employee->total_work_hours + $hours;
+            $employee->salary = (float) $employee->salary + ($hours * (float) $employee->hour_work_price);
+            $employee->save();
 
             return response()->json([
-                'status' => 'error',
-                'message' => __('messages.already_scanned'),
+                'status' => 'success',
+                'message' => __('messages.departure_time'),
+                'scan' => 'out',
+                'segment_minutes' => $segmentMinutes,
+                'day_worked_minutes' => $totalWorked,
+                'updated_salary' => $employee->salary,
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([

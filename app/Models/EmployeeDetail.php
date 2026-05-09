@@ -73,5 +73,10 @@ class EmployeeDetail extends Model
             return $this->hasMany(EmployeeAttendance::class, 'employee_id');
         }
 
+    public function attendanceScans()
+    {
+        return $this->hasMany(EmployeeAttendanceScan::class, 'employee_id');
+    }
+
 
 }

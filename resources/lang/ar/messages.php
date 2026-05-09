@@ -81,6 +81,7 @@ return [
     'arrival_time' => 'تم تسجيل وقت الوصول',
     'departure_time' => 'تم تسجيل وقت الرحيل',
     'already_scanned' => 'تم المسح بالفعل اليوم',
+    'must_check_in_first' => 'يجب مسح الدخول أولاً قبل مسح الخروج',
     'salary_paid' => 'تم دفع الراتب بنجاح',
     'points_updated' => 'تم تعديل نقاط الموظف بنجاح',
 

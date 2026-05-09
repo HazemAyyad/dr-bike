@@ -84,6 +84,7 @@ return [
     'arrival_time' => 'Arrival time recorded',
     'departure_time' => 'Departure time recorded',
     'already_scanned' => 'Already scanned in and out today',
+    'must_check_in_first' => 'You must scan check-in before check-out',
     'salary_paid' => 'Salary was paid successfully',
     'points_updated' => 'employee points were updated successfully',
     //projects
