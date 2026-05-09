@@ -34,16 +34,19 @@ class EmployeeDetails extends Controller
         try {
             $employees = EmployeeDetail::with('user:id,name')
                 ->orderBy('created_at', 'desc')
-                ->get(['id', 'hour_work_price', 'points', 'user_id','employee_img']);
+                ->get(['id', 'hour_work_price', 'points', 'user_id','employee_img', 'start_work_time']);
 
             $formatted = $employees->map(function ($employee) {
+                $statuses = $this->getAttendanceStatuses($employee->id, $employee->start_work_time);
                 return [
                     'id' => $employee->id,
                     'employee_name' => $employee->user?->name,
                     'hour_work_price' => $employee->hour_work_price,
                     'points' => $employee->points,
                     'employee_img' => $employee->employee_img? 'public/EmployeeImages/'.$employee->employee_img[0] : 'no images',
-                    
+                    'has_attended_today' => $statuses['has_attended_today'],
+                    'is_working_now' => $statuses['is_working_now'],
+                    'is_came_on_time' => $statuses['is_came_on_time'],
                 ];
             });
 
@@ -67,6 +70,7 @@ class EmployeeDetails extends Controller
                 ->get(['user_id', 'id', 'start_work_time', 'end_work_time', 'number_of_work_hours','employee_img']);
 
             $formatted = $employees->map(function ($employee) {
+                $statuses = $this->getAttendanceStatuses($employee->id, $employee->start_work_time);
                 return [
                     'id' => $employee->id,
                     'user_name' => $employee->user?->name,
@@ -74,7 +78,9 @@ class EmployeeDetails extends Controller
                     'end_work_time' => \Carbon\Carbon::parse($employee->end_work_time)->format('g:i A'),
                     'number_of_work_hours' => $employee->number_of_work_hours,
                     'employee_img' => $employee->employee_img? 'public/EmployeeImages/'.$employee->employee_img[0] : 'no images',
-
+                    'has_attended_today' => $statuses['has_attended_today'],
+                    'is_working_now' => $statuses['is_working_now'],
+                    'is_came_on_time' => $statuses['is_came_on_time'],
                 ];
             });
 
@@ -118,6 +124,62 @@ class EmployeeDetails extends Controller
         } catch (\Exception $e) {
             return response(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
         }
+    }
+
+    private function getAttendanceStatuses($employeeId, $startWorkTime) {
+        $today = Carbon::now()->toDateString();
+        $scans = EmployeeAttendanceScan::where('employee_id', $employeeId)
+                    ->whereDate('work_date', $today)
+                    ->orderBy('scanned_at', 'asc')
+                    ->get();
+        
+        $has_attended_today = false;
+        $is_working_now = false;
+        $is_came_on_time = false;
+
+        if ($scans->isNotEmpty()) {
+            $has_attended_today = true;
+            $firstScanIn = $scans->where('direction', 'in')->first();
+            
+            $lastScan = $scans->last();
+            if ($lastScan && $lastScan->direction === 'in') {
+                $is_working_now = true;
+            }
+
+            if ($firstScanIn && $startWorkTime) {
+                $startTimeStr = $today . ' ' . $startWorkTime;
+                $startTime = Carbon::parse($startTimeStr);
+                $firstScanTime = Carbon::parse($firstScanIn->scanned_at);
+                
+                if ($firstScanTime->lessThanOrEqualTo($startTime->addMinutes(15))) {
+                    $is_came_on_time = true;
+                }
+            }
+        } else {
+            $legacy = EmployeeAttendance::where('employee_id', $employeeId)
+                        ->whereDate('date', $today)
+                        ->first();
+            if ($legacy) {
+                $has_attended_today = true;
+                if ($legacy->arrived_at && !$legacy->left_at) {
+                    $is_working_now = true;
+                }
+                if ($legacy->arrived_at && $startWorkTime) {
+                    $startTimeStr = $today . ' ' . $startWorkTime;
+                    $startTime = Carbon::parse($startTimeStr);
+                    $firstScanTime = Carbon::parse($legacy->arrived_at);
+                    if ($firstScanTime->lessThanOrEqualTo($startTime->addMinutes(15))) {
+                        $is_came_on_time = true;
+                    }
+                }
+            }
+        }
+
+        return [
+            'has_attended_today' => $has_attended_today,
+            'is_working_now' => $is_working_now,
+            'is_came_on_time' => $is_came_on_time,
+        ];
     }
 
 private function getEmployeeFinancialData($employeeId)
