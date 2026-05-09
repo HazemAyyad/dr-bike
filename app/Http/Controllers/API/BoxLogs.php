@@ -14,13 +14,14 @@ use Illuminate\Validation\ValidationException;
 class BoxLogs extends Controller
 {
 
-    static public function createTransferLog(Box $fromBox , Box $toBox ,$description, $value){
+    static public function createTransferLog(Box $fromBox , Box $toBox ,$description, $value, ?string $note = null){
 
 
         BoxLog::create([
             'from_box_id' => $fromBox->id,
             'to_box_id' => $toBox->id,
             'description' => $description,
+            'note' => $note,
             'value' => $value,
             'type' => 'transfer',
         ]);
@@ -29,12 +30,13 @@ class BoxLogs extends Controller
 }
 
 
-    static public function createBoxLog(Box $box ,$description, $type,$value){
+    static public function createBoxLog(Box $box ,$description, $type,$value, ?string $note = null){
 
 
         BoxLog::create([
             'box_id' => $box->id,
             'description' => $description,
+            'note' => $note,
             'value' => $value,
 
             'type' => $type,

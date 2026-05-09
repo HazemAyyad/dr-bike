@@ -198,18 +198,20 @@ class Boxes extends Controller
         $request->validate([
             'box_id' => 'required|exists:boxes,id',
             'total' => 'required|numeric',
+            'note' => 'nullable|string|max:2000',
         ]);
 
         $box = Box::findOrFail($request->box_id);
         $box->update(['total' => $box->total + $request->total]);
         $msg = 'added';
+        $note = $request->filled('note') ? (string) $request->note : null;
         if($request->total >0){
 
-                 BoxLogs::createBoxLog($box,'تم اضافة رصيد للصندوق','add',$request->total);
+                 BoxLogs::createBoxLog($box,'تم اضافة رصيد للصندوق','add',$request->total, $note);
                  $msg = 'added';
                 }
         elseif($request->total<0){
-                BoxLogs::createBoxLog($box,'تم سحب رصيد من الصندوق','minus',$request->total);
+                BoxLogs::createBoxLog($box,'تم سحب رصيد من الصندوق','minus',$request->total, $note);
                 $msg = 'deduct';
 
         }

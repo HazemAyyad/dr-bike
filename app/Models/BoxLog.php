@@ -13,6 +13,7 @@ class BoxLog extends Model
         'from_box_id',
         'to_box_id',
         'description',
+        'note',
         'value',
         'box_id',
         'type',
