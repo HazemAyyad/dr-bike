@@ -142,7 +142,7 @@ class EmployeeDetails extends Controller
             $firstScanIn = $scans->where('direction', 'in')->first();
             
             $lastScan = $scans->last();
-            if ($lastScan && $lastScan->direction === 'in') {
+            if ($lastScan && strtolower(trim($lastScan->direction)) === 'in') {
                 $is_working_now = true;
             }
 
@@ -161,7 +161,7 @@ class EmployeeDetails extends Controller
                         ->first();
             if ($legacy) {
                 $has_attended_today = true;
-                if ($legacy->arrived_at && !$legacy->left_at) {
+                if ($legacy->arrived_at && ($legacy->left_at === null || $legacy->left_at === '00:00:00' || trim($legacy->left_at) === '')) {
                     $is_working_now = true;
                 }
                 if ($legacy->arrived_at && $startWorkTime) {
