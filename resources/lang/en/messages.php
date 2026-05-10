@@ -365,4 +365,10 @@ return [
     
     //updated debts
     'currency_shekel'=>'Box currency must be shekel',
+
+    // employee points & rewards
+    'created_successfully' => 'Created successfully',
+    'updated_successfully' => 'Updated successfully',
+    'deleted_successfully' => 'Deleted successfully',
+    'not_found' => 'Resource not found',
 ];

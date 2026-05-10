@@ -376,5 +376,11 @@ return [
     //updated checks
     'check_cashed_from_box'=>'تم صرف الشيك من الصندوق بنجاح',
     //updated debts
-    'currency_shekel'=>'عملة الصندوق يجب ان تكون شيكل'
+    'currency_shekel'=>'عملة الصندوق يجب ان تكون شيكل',
+
+    // employee points & rewards
+    'created_successfully' => 'تم الإنشاء بنجاح',
+    'updated_successfully' => 'تم التحديث بنجاح',
+    'deleted_successfully' => 'تم الحذف بنجاح',
+    'not_found' => 'العنصر غير موجود',
 ];

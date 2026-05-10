@@ -175,7 +175,9 @@ class AttendanceSalaryService
         EmployeeDetail $employee,
         Carbon $periodStart,
         Carbon $periodEnd,
-        int $workedMinutes
+        int $workedMinutes,
+        ?int $rewardMonth = null,
+        ?int $rewardYear = null
     ): array {
         $requiredDays = $this->countEmployeeWorkingDaysBetween($employee, $periodStart, $periodEnd);
         $hoursPerDay = (float) ($employee->number_of_work_hours ?? 0);
@@ -201,6 +203,28 @@ class AttendanceSalaryService
         $debtsRaw = $employee->debts;
         $debts = is_numeric($debtsRaw) ? (float) $debtsRaw : 0.0;
 
+        // Resolve points-based monthly reward; falls back to zero when no rule matches.
+        $month = $rewardMonth ?? (int) $periodStart->month;
+        $year = $rewardYear ?? (int) $periodStart->year;
+
+        $pointsSummary = [
+            'earned_points' => 0,
+            'deducted_points' => 0,
+            'net_points' => 0,
+            'reward_amount' => 0.0,
+            'matched_rule_id' => null,
+        ];
+        try {
+            /** @var \App\Services\EmployeePointsService $pointsService */
+            $pointsService = app(\App\Services\EmployeePointsService::class);
+            $pointsSummary = $pointsService->getMonthlySummary((int) $employee->id, $year, $month);
+        } catch (\Throwable $e) {
+            // Keep defaults; rewards are optional.
+        }
+
+        $rewardAmount = (float) ($pointsSummary['reward_amount'] ?? 0.0);
+        $finalSalary = (float) $salary['total_salary'] + $rewardAmount;
+
         return [
             'employee_id' => (int) $employee->id,
             'employee_name' => (string) ($employee->user?->name ?? ''),
@@ -216,6 +240,17 @@ class AttendanceSalaryService
             'overtime_salary' => number_format((float) $salary['overtime_salary'], 2, '.', ''),
             'total_salary' => number_format((float) $salary['total_salary'], 2, '.', ''),
             'employee_debts' => number_format($debts, 2, '.', ''),
+            'points_summary' => [
+                'earned_points' => (int) ($pointsSummary['earned_points'] ?? 0),
+                'deducted_points' => (int) ($pointsSummary['deducted_points'] ?? 0),
+                'net_points' => (int) ($pointsSummary['net_points'] ?? 0),
+                'reward_amount' => number_format($rewardAmount, 2, '.', ''),
+                'matched_rule_id' => $pointsSummary['matched_rule_id'] ?? null,
+                'month' => $month,
+                'year' => $year,
+            ],
+            'reward_amount' => number_format($rewardAmount, 2, '.', ''),
+            'final_salary' => number_format($finalSalary, 2, '.', ''),
         ];
     }
 

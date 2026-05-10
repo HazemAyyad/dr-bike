@@ -65,7 +65,9 @@ class EmployeeAttendanceReportController extends Controller
                 $employee,
                 $periodStart,
                 $periodEnd,
-                $worked
+                $worked,
+                $month,
+                $year
             );
         }
 

@@ -16,6 +16,8 @@ use App\Http\Controllers\API\Draws;
 use App\Http\Controllers\API\EmployeeAttendanceReportController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeOrders;
+use App\Http\Controllers\API\EmployeePointsController;
+use App\Http\Controllers\API\EmployeeRewardRuleController;
 use App\Http\Controllers\API\Employees\EmployeeData;
 use App\Http\Controllers\API\Employees\EmployeeOwnTasks;
 use App\Http\Controllers\API\Employees\OrdersAPI;
@@ -165,6 +167,25 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
     Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs']);
     Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory']);
     Route::get('/employee-attendance/reports', [EmployeeAttendanceReportController::class, 'index']);
+
+    // Employee points and rewards (manual management)
+    Route::get('/employees/points/categories', [EmployeePointsController::class, 'categories']);
+    Route::post('/employees/{employee}/points/add', [EmployeePointsController::class, 'add'])
+        ->whereNumber('employee');
+    Route::post('/employees/{employee}/points/deduct', [EmployeePointsController::class, 'deduct'])
+        ->whereNumber('employee');
+    Route::get('/employees/{employee}/points/logs', [EmployeePointsController::class, 'logs'])
+        ->whereNumber('employee');
+    Route::get('/employees/{employee}/points/monthly-summary', [EmployeePointsController::class, 'monthlySummary'])
+        ->whereNumber('employee');
+
+    // Reward rules CRUD
+    Route::get('/employee-reward-rules', [EmployeeRewardRuleController::class, 'index']);
+    Route::post('/employee-reward-rules', [EmployeeRewardRuleController::class, 'store']);
+    Route::put('/employee-reward-rules/{id}', [EmployeeRewardRuleController::class, 'update'])
+        ->whereNumber('id');
+    Route::delete('/employee-reward-rules/{id}', [EmployeeRewardRuleController::class, 'destroy'])
+        ->whereNumber('id');
 
 
        // employee orders
