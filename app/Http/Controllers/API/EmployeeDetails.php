@@ -915,7 +915,22 @@ private function getEmployeeFinancialData($employeeId)
                 $onTime = $firstCheckIn->lte($scheduledStart);
             }
 
-            $overtimeMinutes = max(0, $workedMinutes - $expectedMinutes);
+            // ── حساب الأوفر تايم بشكل صحيح ──
+            // الأوفر تايم = الوقت الذي بقي فيه الموظف بعد وقت انتهاء الدوام المقرر
+            $overtimeMinutes = 0;
+            $scheduledEnd = Carbon::parse($dateStr . ' ' . $employee->end_work_time);
+
+            // آخر نقطة زمنية للموظف في هذا اليوم (آخر خروج، أو الوقت الحالي إذا لا يزال داخل)
+            $lastMoment = null;
+            if ($currentlyIn) {
+                $lastMoment = Carbon::now();
+            } elseif ($lastCheckOut) {
+                $lastMoment = Carbon::parse($lastCheckOut);
+            }
+
+            if ($lastMoment && $lastMoment->gt($scheduledEnd)) {
+                $overtimeMinutes = (int) $scheduledEnd->diffInMinutes($lastMoment);
+            }
 
             $days[] = [
                 'date' => $dateStr,
