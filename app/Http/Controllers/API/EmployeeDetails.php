@@ -1081,6 +1081,12 @@ private function getEmployeeFinancialData($employeeId)
                 'name' => $employee->user?->name,
                 'start_work_time' => $employee->start_work_time,
                 'number_of_work_hours' => $employee->number_of_work_hours,
+                'weekly_days_off' => collect(is_array($employee->weekly_days_off) ? $employee->weekly_days_off : [])
+                    ->filter(fn ($v) => is_string($v))
+                    ->map(fn ($v) => strtolower(trim($v)))
+                    ->unique()
+                    ->values()
+                    ->all(),
             ],
             'monthly_summary' => array_merge([
                 'month' => $summaryMonth->format('Y-m'),

@@ -27,6 +27,13 @@ class EmployeeDetailResource extends JsonResource
             'start_work_time' => $this->start_work_time,
             'end_work_time' => $this->end_work_time,
 
+            'weekly_days_off' => collect(is_array($this->weekly_days_off) ? $this->weekly_days_off : [])
+                ->filter(fn ($v) => is_string($v))
+                ->map(fn ($v) => strtolower(trim($v)))
+                ->unique()
+                ->values()
+                ->all(),
+
             'employee_img' => $this->employee_img
                 ? collect($this->employee_img)->map(fn($img) => 'public/EmployeeImages/'.$img)->toArray()
                 : 'no images',
