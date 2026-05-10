@@ -130,7 +130,7 @@ class EmployeeDetails extends Controller
         $today = Carbon::now()->toDateString();
         $scans = EmployeeAttendanceScan::where('employee_id', $employeeId)
                     ->whereDate('work_date', $today)
-                    ->orderBy('scanned_at', 'asc')
+                    ->orderBy('id', 'asc')   // ترتيب حسب ID لضمان الترتيب الصحيح
                     ->get();
         
         $has_attended_today = false;
