@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeeDetail;
 use Carbon\Carbon;
+use Carbon\CarbonPeriod;
 
 class AttendanceSalaryService
 {
@@ -17,6 +19,219 @@ class AttendanceSalaryService
         'saturday',
         'sunday',
     ];
+
+    /**
+     * Weekly days off applied for required-day math and reporting when DB is empty.
+     *
+     * @return list<string>
+     */
+    public function effectiveWeeklyDaysOff(?EmployeeDetail $employeeDetail): array
+    {
+        if (! $employeeDetail) {
+            return ['saturday', 'sunday'];
+        }
+
+        $weeklyDaysOff = [];
+        $off = $employeeDetail->weekly_days_off;
+        if (is_array($off) && ! empty($off)) {
+            foreach ($off as $d) {
+                if (is_string($d)) {
+                    $dd = strtolower(trim($d));
+                    if (in_array($dd, self::DAY_NAMES, true)) {
+                        $weeklyDaysOff[] = $dd;
+                    }
+                }
+            }
+            $weeklyDaysOff = array_values(array_unique($weeklyDaysOff));
+        }
+
+        if (empty($weeklyDaysOff)) {
+            $fallback = config('attendance.default_weekly_days_off');
+            if (is_array($fallback) && ! empty($fallback)) {
+                foreach ($fallback as $d) {
+                    if (is_string($d)) {
+                        $dd = strtolower(trim($d));
+                        if (in_array($dd, self::DAY_NAMES, true)) {
+                            $weeklyDaysOff[] = $dd;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (empty($weeklyDaysOff)) {
+            return ['saturday', 'sunday'];
+        }
+
+        return $weeklyDaysOff;
+    }
+
+    /**
+     * Count contractual working days in [from, to] (inclusive), excluding weekly days off.
+     */
+    public function countEmployeeWorkingDaysBetween(?EmployeeDetail $employeeDetail, Carbon $from, Carbon $to): int
+    {
+        if (! $employeeDetail) {
+            return 0;
+        }
+
+        $offs = $this->effectiveWeeklyDaysOff($employeeDetail);
+        $start = $from->copy()->startOfDay();
+        $end = $to->copy()->startOfDay();
+
+        if ($end->lt($start)) {
+            return 0;
+        }
+
+        $count = 0;
+        foreach (CarbonPeriod::create($start->toDateString(), $end->toDateString()) as $date) {
+            $dayName = strtolower($date->format('l'));
+            if (! in_array($dayName, $offs, true)) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Worked minutes for one employee in [from, to] (inclusive), preferring scan-based totals;
+     * legacy {@see EmployeeAttendance} rows are used only on days without scans.
+     */
+    public function sumWorkedMinutesBetween(int $employeeId, Carbon $from, Carbon $to): int
+    {
+        $map = $this->sumWorkedMinutesForEmployeesBetween([$employeeId], $from, $to);
+
+        return (int) ($map[$employeeId] ?? 0);
+    }
+
+    /**
+     * Bulk worked minutes keyed by employee_id.
+     *
+     * @param  array<int,int>  $employeeIds
+     * @return array<int,int>
+     */
+    public function sumWorkedMinutesForEmployeesBetween(array $employeeIds, Carbon $from, Carbon $to): array
+    {
+        $employeeIds = array_values(array_unique(array_map('intval', array_filter($employeeIds))));
+        if ($employeeIds === []) {
+            return [];
+        }
+
+        $fromStr = $from->copy()->startOfDay()->toDateString();
+        $toStr = $to->copy()->startOfDay()->toDateString();
+
+        $minutesByEmployee = [];
+        foreach ($employeeIds as $id) {
+            $minutesByEmployee[$id] = 0;
+        }
+
+        /** @phpstan-ignore-next-line */
+        $scans = EmployeeAttendanceScan::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('work_date', [$fromStr, $toStr])
+            ->orderBy('employee_id')
+            ->orderBy('work_date')
+            ->orderBy('id')
+            ->get();
+
+        $scannedDatesByEmployee = [];
+        foreach ($scans->groupBy('employee_id') as $eid => $group) {
+            $eid = (int) $eid;
+            $byDate = $group->groupBy(function ($s) {
+                $wd = $s->work_date;
+
+                return $wd instanceof Carbon ? $wd->format('Y-m-d') : Carbon::parse($wd)->format('Y-m-d');
+            });
+            foreach ($byDate as $dateStr => $dayScans) {
+                $scannedDatesByEmployee[$eid][$dateStr] = true;
+                $minutesByEmployee[$eid] += EmployeeAttendanceScan::computeWorkedMinutes($dayScans);
+            }
+        }
+
+        /** @phpstan-ignore-next-line */
+        $legacyRows = EmployeeAttendance::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->whereBetween('date', [$fromStr, $toStr])
+            ->get();
+
+        foreach ($legacyRows as $legacy) {
+            $eid = (int) $legacy->employee_id;
+            $dateCarbon = $legacy->date instanceof Carbon ? $legacy->date : Carbon::parse($legacy->date);
+            $dateStr = $dateCarbon->format('Y-m-d');
+            if (! empty($scannedDatesByEmployee[$eid][$dateStr] ?? false)) {
+                continue;
+            }
+            $minutesByEmployee[$eid] = ($minutesByEmployee[$eid] ?? 0) + (int) ($legacy->worked_minutes ?? 0);
+        }
+
+        return $minutesByEmployee;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildAttendanceReportRow(
+        EmployeeDetail $employee,
+        Carbon $periodStart,
+        Carbon $periodEnd,
+        int $workedMinutes
+    ): array {
+        $requiredDays = $this->countEmployeeWorkingDaysBetween($employee, $periodStart, $periodEnd);
+        $hoursPerDay = (float) ($employee->number_of_work_hours ?? 0);
+        $dailyRequiredMinutes = (int) round($hoursPerDay * 60);
+        $requiredMinutes = (int) ($requiredDays * $dailyRequiredMinutes);
+
+        $workedMinutes = max(0, $workedMinutes);
+        $normalMinutes = min($workedMinutes, $requiredMinutes);
+        $overtimeMinutes = max(0, $workedMinutes - $requiredMinutes);
+
+        $salary = $this->calculateSalary($employee, $normalMinutes, $overtimeMinutes);
+
+        $weeklyOffForDisplay = $this->weeklyDaysOffStoredOrEffective($employee);
+
+        return [
+            'employee_id' => (int) $employee->id,
+            'employee_name' => (string) ($employee->user?->name ?? ''),
+            'weekly_days_off' => $weeklyOffForDisplay,
+            'required_working_days' => $requiredDays,
+            'required_hours' => $this->formatHours($requiredMinutes),
+            'worked_hours' => $this->formatHours($workedMinutes),
+            'normal_hours' => $this->formatHours($normalMinutes),
+            'overtime_hours' => $this->formatHours($overtimeMinutes),
+            'normal_salary' => number_format((float) $salary['normal_salary'], 2, '.', ''),
+            'overtime_salary' => number_format((float) $salary['overtime_salary'], 2, '.', ''),
+            'total_salary' => number_format((float) $salary['total_salary'], 2, '.', ''),
+        ];
+    }
+
+    /**
+     * Raw stored days if any; otherwise same list used for calculations (config / weekend fallback).
+     *
+     * @return list<string>
+     */
+    public function weeklyDaysOffStoredOrEffective(EmployeeDetail $employeeDetail): array
+    {
+        $off = $employeeDetail->weekly_days_off;
+        $weeklyDaysOff = [];
+        if (is_array($off) && ! empty($off)) {
+            foreach ($off as $d) {
+                if (is_string($d)) {
+                    $dd = strtolower(trim($d));
+                    if (in_array($dd, self::DAY_NAMES, true)) {
+                        $weeklyDaysOff[] = $dd;
+                    }
+                }
+            }
+            $weeklyDaysOff = array_values(array_unique($weeklyDaysOff));
+        }
+
+        if (! empty($weeklyDaysOff)) {
+            return $weeklyDaysOff;
+        }
+
+        return $this->effectiveWeeklyDaysOff($employeeDetail);
+    }
 
     /**
      * @return array{required_minutes:int, normal_minutes:int, overtime_minutes:int}
@@ -56,7 +271,11 @@ class AttendanceSalaryService
             ->whereBetween('date', [$monthStart, $monthEnd])
             ->sum('worked_minutes');
 
-        $requiredWorkDaysInMonth = $requiredWorkDaysInMonth ?? $this->countEmployeeWorkingDaysInMonth($employeeDetail, $month);
+        $requiredWorkDaysInMonth = $requiredWorkDaysInMonth ?? $this->countEmployeeWorkingDaysBetween(
+            $employeeDetail,
+            $month->copy()->startOfMonth()->startOfDay(),
+            $month->copy()->endOfMonth()->startOfDay()
+        );
 
         $hoursPerDay = (float) ($employeeDetail->number_of_work_hours ?? 0);
         $monthlyRequiredMinutes = (int) round(($hoursPerDay * $requiredWorkDaysInMonth) * 60);
@@ -99,58 +318,4 @@ class AttendanceSalaryService
     {
         return number_format(max(0, $minutes) / 60, 2, '.', '');
     }
-
-    /**
-     * Count working days in a month based on employee weekly days off.
-     * Backward-compat fallback: if employee has no configuration, use config('attendance.default_weekly_days_off'),
-     * and finally default to Sat/Sun.
-     */
-    private function countEmployeeWorkingDaysInMonth(EmployeeDetail $employeeDetail, Carbon $month): int
-    {
-        $off = $employeeDetail->weekly_days_off;
-        $weeklyDaysOff = [];
-        if (is_array($off) && ! empty($off)) {
-            foreach ($off as $d) {
-                if (is_string($d)) {
-                    $dd = strtolower(trim($d));
-                    if (in_array($dd, self::DAY_NAMES, true)) {
-                        $weeklyDaysOff[] = $dd;
-                    }
-                }
-            }
-            $weeklyDaysOff = array_values(array_unique($weeklyDaysOff));
-        }
-
-        if (empty($weeklyDaysOff)) {
-            $fallback = config('attendance.default_weekly_days_off');
-            if (is_array($fallback) && ! empty($fallback)) {
-                foreach ($fallback as $d) {
-                    if (is_string($d)) {
-                        $dd = strtolower(trim($d));
-                        if (in_array($dd, self::DAY_NAMES, true)) {
-                            $weeklyDaysOff[] = $dd;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (empty($weeklyDaysOff)) {
-            $weeklyDaysOff = ['saturday', 'sunday'];
-        }
-
-        $start = $month->copy()->startOfMonth();
-        $end = $month->copy()->endOfMonth();
-
-        $count = 0;
-        for ($d = $start->copy(); $d->lte($end); $d->addDay()) {
-            $dayName = strtolower($d->format('l')); // Monday..Sunday
-            if (! in_array($dayName, $weeklyDaysOff, true)) {
-                $count++;
-            }
-        }
-
-        return $count;
-    }
 }
-

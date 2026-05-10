@@ -13,6 +13,7 @@ use App\Http\Controllers\API\Debts;
 use App\Http\Controllers\API\Deposits;
 use App\Http\Controllers\API\Destructions;
 use App\Http\Controllers\API\Draws;
+use App\Http\Controllers\API\EmployeeAttendanceReportController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeOrders;
 use App\Http\Controllers\API\Employees\EmployeeData;
@@ -163,6 +164,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
 
     Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs']);
     Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory']);
+    Route::get('/employee-attendance/reports', [EmployeeAttendanceReportController::class, 'index']);
 
 
        // employee orders
