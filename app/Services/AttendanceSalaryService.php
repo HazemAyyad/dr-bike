@@ -190,10 +190,23 @@ class AttendanceSalaryService
 
         $weeklyOffForDisplay = $this->weeklyDaysOffStoredOrEffective($employee);
 
+        $hourPriceRaw = $employee->hour_work_price;
+        $overtimeRaw = $employee->overtime_work_price;
+        $hourPrice = is_numeric($hourPriceRaw) ? (float) $hourPriceRaw : 0.0;
+        $overtimePrice = is_numeric($overtimeRaw) ? (float) $overtimeRaw : 0.0;
+        if ($overtimeRaw === null || $overtimePrice <= 0.0) {
+            $overtimePrice = $hourPrice;
+        }
+
+        $debtsRaw = $employee->debts;
+        $debts = is_numeric($debtsRaw) ? (float) $debtsRaw : 0.0;
+
         return [
             'employee_id' => (int) $employee->id,
             'employee_name' => (string) ($employee->user?->name ?? ''),
             'weekly_days_off' => $weeklyOffForDisplay,
+            'hour_work_price' => number_format($hourPrice, 2, '.', ''),
+            'overtime_hour_price_effective' => number_format($overtimePrice, 2, '.', ''),
             'required_working_days' => $requiredDays,
             'required_hours' => $this->formatHours($requiredMinutes),
             'worked_hours' => $this->formatHours($workedMinutes),
@@ -202,6 +215,7 @@ class AttendanceSalaryService
             'normal_salary' => number_format((float) $salary['normal_salary'], 2, '.', ''),
             'overtime_salary' => number_format((float) $salary['overtime_salary'], 2, '.', ''),
             'total_salary' => number_format((float) $salary['total_salary'], 2, '.', ''),
+            'employee_debts' => number_format($debts, 2, '.', ''),
         ];
     }
 

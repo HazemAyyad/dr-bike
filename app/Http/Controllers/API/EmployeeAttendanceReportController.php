@@ -19,7 +19,7 @@ class EmployeeAttendanceReportController extends Controller
             'month' => ['required', 'integer', 'between:1,12'],
             'year' => ['required', 'integer', 'min:2000', 'max:2100'],
             'day' => ['nullable', 'integer', 'between:1,31'],
-            'week' => ['nullable', 'integer', 'between:1,6'],
+            'week' => ['nullable', 'integer', 'min:1', 'max:6'],
             'employee_ids' => ['nullable', 'array'],
             'employee_ids.*' => ['integer'],
         ]);
@@ -45,7 +45,10 @@ class EmployeeAttendanceReportController extends Controller
         /** @phpstan-ignore-next-line */
         $employees = EmployeeDetail::query()
             ->with('user')
-            ->when($employeeIds !== null, fn ($q) => $q->whereIn('id', $employeeIds))
+            ->when(
+                ($employeeIds !== null && count($employeeIds) > 0),
+                fn ($q) => $q->whereIn('id', $employeeIds),
+            )
             ->orderBy('id')
             ->get();
 
@@ -122,25 +125,40 @@ class EmployeeAttendanceReportController extends Controller
     }
 
     /**
-     * @return array<int>|null null = all employees
+     * @return array<int>|null null أو بعد التصفية فارغة ⇒ كل الموظفين (لا يُستعمل whereIn فارغ)
      */
     private function normalizeEmployeeIdsFromRequest(Request $request): ?array
     {
-        $raw = $request->query('employee_ids');
+        $raw = $request->input('employee_ids');
+
         if ($raw === null || $raw === '') {
             return null;
         }
+
+        $ids = [];
         if (is_string($raw)) {
             $parts = array_filter(array_map('trim', explode(',', $raw)), fn ($s) => $s !== '');
-            $ids = array_map('intval', $parts);
-
-            return array_values(array_unique(array_filter($ids, fn ($id) => $id > 0)));
-        }
-        if (! is_array($raw)) {
+            foreach ($parts as $p) {
+                if (is_numeric($p)) {
+                    $ids[] = (int) $p;
+                }
+            }
+        } elseif (is_array($raw)) {
+            foreach ($raw as $v) {
+                if (is_numeric($v)) {
+                    $ids[] = (int) $v;
+                }
+            }
+        } else {
             return null;
         }
-        $ids = array_values(array_unique(array_map('intval', $raw)));
 
-        return array_values(array_filter($ids, fn ($id) => $id > 0));
+        $ids = array_values(array_unique(array_filter($ids, fn ($id) => $id > 0)));
+
+        if ($ids === []) {
+            return null;
+        }
+
+        return $ids;
     }
 }
