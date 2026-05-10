@@ -7,6 +7,7 @@ use App\Models\AttendaceQr;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceScan;
+use App\Services\AttendanceSalaryService;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -134,6 +135,7 @@ class AttendanceController extends Controller
             $employee_id = $user->employee->id;
             $employee = EmployeeDetail::findOrFail($employee_id);
             $today = now()->toDateString();
+            $salaryService = app(AttendanceSalaryService::class);
 
             $scans = EmployeeAttendanceScan::query()
                 ->where('employee_id', $employee_id)
@@ -167,13 +169,32 @@ class AttendanceController extends Controller
                         ->orderBy('id')
                         ->get()
                 );
+                $daily = $salaryService->calculateDailyOvertime($employee, (int) ($attendance->worked_minutes ?? 0));
+                $attendance->required_minutes = $daily['required_minutes'];
+                $attendance->normal_minutes = $daily['normal_minutes'];
+                $attendance->overtime_minutes = $daily['overtime_minutes'];
                 $attendance->save();
+
+                $salary = $salaryService->calculateSalary(
+                    $employee,
+                    (int) ($attendance->normal_minutes ?? 0),
+                    (int) ($attendance->overtime_minutes ?? 0)
+                );
 
                 return response()->json([
                     'status' => 'success',
                     'message' => __('messages.arrival_time'),
                     'scan' => 'in',
                     'day_worked_minutes' => $attendance->worked_minutes,
+
+                    // Helpful projections (stored row may still be incomplete while mid-shift)
+                    'worked_hours' => $salaryService->formatHours((int) ($attendance->worked_minutes ?? 0)),
+                    'required_hours' => $salaryService->formatHours((int) ($attendance->required_minutes ?? 0)),
+                    'normal_hours' => $salaryService->formatHours((int) ($attendance->normal_minutes ?? 0)),
+                    'overtime_hours' => $salaryService->formatHours((int) ($attendance->overtime_minutes ?? 0)),
+                    'normal_salary' => number_format((float) $salary['normal_salary'], 2, '.', ''),
+                    'overtime_salary' => number_format((float) $salary['overtime_salary'], 2, '.', ''),
+                    'total_salary' => number_format((float) $salary['total_salary'], 2, '.', ''),
                 ], 200);
             }
 
@@ -203,12 +224,17 @@ class AttendanceController extends Controller
             $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
             $attendance->worked_minutes = $totalWorked;
             $attendance->left_at = now()->toTimeString();
+            $daily = $salaryService->calculateDailyOvertime($employee, (int) $totalWorked);
+            $attendance->required_minutes = $daily['required_minutes'];
+            $attendance->normal_minutes = $daily['normal_minutes'];
+            $attendance->overtime_minutes = $daily['overtime_minutes'];
             $attendance->save();
 
-            $hours = $segmentMinutes / 60;
-            $employee->total_work_hours = (float) $employee->total_work_hours + $hours;
-            $employee->salary = (float) $employee->salary + ($hours * (float) $employee->hour_work_price);
-            $employee->save();
+            $salary = $salaryService->calculateSalary(
+                $employee,
+                (int) ($attendance->normal_minutes ?? 0),
+                (int) ($attendance->overtime_minutes ?? 0)
+            );
 
             return response()->json([
                 'status' => 'success',
@@ -216,7 +242,17 @@ class AttendanceController extends Controller
                 'scan' => 'out',
                 'segment_minutes' => $segmentMinutes,
                 'day_worked_minutes' => $totalWorked,
+                // Backward-compatible key (salary is no longer mutated here)
                 'updated_salary' => $employee->salary,
+
+                // New overtime + salary fields (safe strings / numbers)
+                'worked_hours' => $salaryService->formatHours((int) ($attendance->worked_minutes ?? 0)),
+                'required_hours' => $salaryService->formatHours((int) ($attendance->required_minutes ?? 0)),
+                'normal_hours' => $salaryService->formatHours((int) ($attendance->normal_minutes ?? 0)),
+                'overtime_hours' => $salaryService->formatHours((int) ($attendance->overtime_minutes ?? 0)),
+                'normal_salary' => number_format((float) $salary['normal_salary'], 2, '.', ''),
+                'overtime_salary' => number_format((float) $salary['overtime_salary'], 2, '.', ''),
+                'total_salary' => number_format((float) $salary['total_salary'], 2, '.', ''),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([

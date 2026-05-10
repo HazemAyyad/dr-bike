@@ -12,6 +12,7 @@ use App\Models\EmployeePermission;
 use App\Models\Permission;
 use App\Models\Reward;
 use App\Models\User;
+use App\Services\AttendanceSalaryService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -26,6 +27,55 @@ use Illuminate\Validation\ValidationException;
 
 class EmployeeDetails extends Controller
 {
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildAttendanceDayFinancialFields(?EmployeeAttendance $legacyAttendance, EmployeeDetail $employee, ?int $overriddenWorkedMinutes = null): array
+    {
+        /** @var AttendanceSalaryService $salaryService */
+        $salaryService = app(AttendanceSalaryService::class);
+
+        $contractRequiredMinutes = ($salaryService->calculateDailyOvertime($employee, 0))['required_minutes'];
+
+        $workedMinutes = 0;
+        if ($legacyAttendance !== null) {
+            $workedMinutes = (int) ($legacyAttendance->worked_minutes ?? 0);
+        }
+        if ($overriddenWorkedMinutes !== null) {
+            $workedMinutes = max(0, (int) $overriddenWorkedMinutes);
+        }
+
+        $requiredMinutes = $contractRequiredMinutes;
+        $normalMinutes = 0;
+        $overtimeMinutes = 0;
+
+        // Prefer persisted snapshots when present; otherwise synthesize split from scans/totals live.
+        if ($legacyAttendance && $legacyAttendance->normal_minutes !== null && $legacyAttendance->overtime_minutes !== null) {
+            if ($legacyAttendance->required_minutes !== null && $legacyAttendance->required_minutes > 0) {
+                $requiredMinutes = (int) $legacyAttendance->required_minutes;
+            }
+            $normalMinutes = (int) ($legacyAttendance->normal_minutes ?? 0);
+            $overtimeMinutes = (int) ($legacyAttendance->overtime_minutes ?? 0);
+        } else {
+            $derived = $salaryService->calculateDailyOvertime($employee, (int) $workedMinutes);
+            $requiredMinutes = (int) $derived['required_minutes'];
+            $normalMinutes = (int) $derived['normal_minutes'];
+            $overtimeMinutes = (int) $derived['overtime_minutes'];
+        }
+
+        $salary = $salaryService->calculateSalary($employee, (int) $normalMinutes, (int) $overtimeMinutes);
+
+        return [
+            'worked_hours' => $salaryService->formatHours((int) $workedMinutes),
+            'required_hours' => $salaryService->formatHours((int) $requiredMinutes),
+            'normal_hours' => $salaryService->formatHours((int) $normalMinutes),
+            'overtime_hours' => $salaryService->formatHours((int) $overtimeMinutes),
+            'normal_salary' => number_format((float) $salary['normal_salary'], 2, '.', ''),
+            'overtime_salary' => number_format((float) $salary['overtime_salary'], 2, '.', ''),
+            'total_salary' => number_format((float) $salary['total_salary'], 2, '.', ''),
+        ];
+    }
+
 
     
 
@@ -823,7 +873,9 @@ private function getEmployeeFinancialData($employeeId)
 
         $allDates = $scanDates->merge($attDates)->unique()->sort()->values();
 
-        $expectedMinutes = (int) round(((float) $employee->number_of_work_hours) * 60);
+        /** @var AttendanceSalaryService $salaryService */
+        $salaryService = app(AttendanceSalaryService::class);
+        $expectedMinutes = (int) (($salaryService->calculateDailyOvertime($employee, 0))['required_minutes']);
 
         $days = [];
         foreach ($allDates as $dateStr) {
@@ -915,24 +967,30 @@ private function getEmployeeFinancialData($employeeId)
                 $onTime = $firstCheckIn->lte($scheduledStart);
             }
 
-            // ── حساب الأوفر تايم بشكل صحيح ──
-            // الأوفر تايم = الوقت الذي بقي فيه الموظف بعد وقت انتهاء الدوام المقرر
-            $overtimeMinutes = 0;
-            $scheduledEnd = Carbon::parse($dateStr . ' ' . $employee->end_work_time);
+            $financialBaseAttendance = $legacy;
+            // If scans exist but the daily row isn't flushed yet (should be rare),
+            // still compute projections from live totals.
+            $financial = $this->buildAttendanceDayFinancialFields($financialBaseAttendance, $employee, (int) $workedMinutes);
 
-            // آخر نقطة زمنية للموظف في هذا اليوم (آخر خروج، أو الوقت الحالي إذا لا يزال داخل)
-            $lastMoment = null;
-            if ($currentlyIn) {
-                $lastMoment = Carbon::now();
-            } elseif ($lastCheckOut) {
-                $lastMoment = Carbon::parse($lastCheckOut);
+            // ── حساب الأوفر تايم بشكل صحيح ── (legacy KPI: minutes after scheduled end)
+            // Kept as an extra field so old dashboards don't lose context.
+            $scheduleOvertimeMinutes = 0;
+            if ($employee->end_work_time) {
+                $scheduledEnd = Carbon::parse($dateStr.' '.$employee->end_work_time);
+
+                $lastMoment = null;
+                if ($currentlyIn) {
+                    $lastMoment = Carbon::now();
+                } elseif ($lastCheckOut) {
+                    $lastMoment = Carbon::parse($lastCheckOut);
+                }
+
+                if ($lastMoment && $lastMoment->gt($scheduledEnd)) {
+                    $scheduleOvertimeMinutes = (int) $scheduledEnd->diffInMinutes($lastMoment);
+                }
             }
 
-            if ($lastMoment && $lastMoment->gt($scheduledEnd)) {
-                $overtimeMinutes = (int) $scheduledEnd->diffInMinutes($lastMoment);
-            }
-
-            $days[] = [
+            $days[] = array_merge([
                 'date' => $dateStr,
                 'first_check_in' => $firstCheckIn?->toIso8601String(),
                 'last_check_out' => $lastCheckOut?->toIso8601String(),
@@ -941,11 +999,43 @@ private function getEmployeeFinancialData($employeeId)
                 'away_minutes' => $awayMinutes,
                 'expected_work_minutes' => $expectedMinutes,
                 'on_time' => $onTime,
-                'overtime_minutes' => $overtimeMinutes,
+                // Back-compat: old meaning (after scheduled end). New contract-based overtime is in *_hours fields.
+                'overtime_minutes' => $scheduleOvertimeMinutes,
+                'contract_overtime_minutes' => (int) round(((float) ($financial['overtime_hours'] ?? 0)) * 60),
                 'segments' => $segments,
                 'scans' => $scansOut,
-            ];
+            ], $financial);
         }
+
+        $summaryMonth = $to->month === $from->month && $to->year === $from->year
+            ? $from->copy()
+            : $to->copy();
+
+        $periodMonthly = $salaryService->calculateMonthlyOvertime(
+            $employee,
+            $summaryMonth->copy()->startOfMonth(),
+            null
+        );
+
+        // If the filtered range doesn't cover the full calendar month used for `monthly_*`, prorate required minutes for `range_*`.
+        $monthDays = max(1, (int) $summaryMonth->daysInMonth);
+        $overlapStart = max($summaryMonth->copy()->startOfMonth()->startOfDay(), $from->copy()->startOfDay());
+        $overlapEnd = min($summaryMonth->copy()->endOfMonth()->startOfDay(), $to->copy()->startOfDay());
+        $overlapDays = ($overlapEnd->lt($overlapStart)) ? 0 : ((int) $overlapStart->diffInDays($overlapEnd) + 1);
+        $proration = $monthDays > 0 ? min(1, $overlapDays / $monthDays) : 1;
+
+        $monthlyWorkedInRange = (int) EmployeeAttendance::query()
+            ->where('employee_id', $employee->id)
+            ->whereBetween('date', [$fromStr, $toStr])
+            ->sum('worked_minutes');
+        $monthlyRequiredProrated = (int) round($periodMonthly['monthly_required_minutes'] * $proration);
+        $monthlyOvertimeProrated = max(0, $monthlyWorkedInRange - $monthlyRequiredProrated);
+
+        $monthlySalary = $salaryService->calculateSalary(
+            $employee,
+            max(0, min($monthlyWorkedInRange, $monthlyRequiredProrated)),
+            max(0, $monthlyOvertimeProrated)
+        );
 
         return [
             'employee' => [
@@ -954,6 +1044,36 @@ private function getEmployeeFinancialData($employeeId)
                 'start_work_time' => $employee->start_work_time,
                 'number_of_work_hours' => $employee->number_of_work_hours,
             ],
+            'monthly_summary' => array_merge([
+                'month' => $summaryMonth->format('Y-m'),
+                'month_start' => $summaryMonth->copy()->startOfMonth()->toDateString(),
+                'month_end' => $summaryMonth->copy()->endOfMonth()->toDateString(),
+                'required_work_days_in_month' => $periodMonthly['required_work_days_in_month'],
+                'monthly_worked_minutes' => $periodMonthly['monthly_worked_minutes'],
+                'monthly_required_minutes' => $periodMonthly['monthly_required_minutes'],
+                'monthly_overtime_minutes' => $periodMonthly['monthly_overtime_minutes'],
+                // Range-aware projections (helps when filtering partial months without breaking callers)
+                'range_from' => $fromStr,
+                'range_to' => $toStr,
+                'range_worked_minutes' => max(0, $monthlyWorkedInRange),
+                'range_required_minutes' => max(0, $monthlyRequiredProrated),
+                'range_overtime_minutes' => max(0, (int) $monthlyOvertimeProrated),
+                'range_worked_hours' => $salaryService->formatHours(max(0, $monthlyWorkedInRange)),
+                'range_required_hours' => $salaryService->formatHours(max(0, $monthlyRequiredProrated)),
+                'range_normal_hours' => $salaryService->formatHours(max(0, min($monthlyWorkedInRange, $monthlyRequiredProrated))),
+                'range_overtime_hours' => $salaryService->formatHours(max(0, (int) $monthlyOvertimeProrated)),
+                'range_normal_salary' => number_format((float) $monthlySalary['normal_salary'], 2, '.', ''),
+                'range_overtime_salary' => number_format((float) $monthlySalary['overtime_salary'], 2, '.', ''),
+                'range_total_salary' => number_format((float) $monthlySalary['total_salary'], 2, '.', ''),
+            ], [
+                'monthly_worked_hours' => $salaryService->formatHours((int) $periodMonthly['monthly_worked_minutes']),
+                'monthly_required_hours' => $salaryService->formatHours((int) $periodMonthly['monthly_required_minutes']),
+                'monthly_normal_hours' => $salaryService->formatHours(min(
+                    (int) $periodMonthly['monthly_worked_minutes'],
+                    (int) $periodMonthly['monthly_required_minutes']
+                )),
+                'monthly_overtime_hours' => $salaryService->formatHours((int) $periodMonthly['monthly_overtime_minutes']),
+            ]),
             'days' => $days,
         ];
     }
