@@ -3,32 +3,37 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Http\Resources\EmployeeRewardRuleResource;
-use App\Models\EmployeeRewardRule;
+use App\Http\Resources\EmployeePointCategoryResource;
+use App\Models\EmployeePointCategory;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
-class EmployeeRewardRuleController extends Controller
+class EmployeePointCategoryController extends Controller
 {
     public function index(Request $request)
     {
         try {
             $validated = $request->validate([
+                'operation_type' => ['nullable', Rule::in([EmployeePointCategory::OPERATION_ADD, EmployeePointCategory::OPERATION_DEDUCT])],
                 'is_active' => ['nullable', 'boolean'],
             ]);
 
             /** @phpstan-ignore-next-line */
-            $query = EmployeeRewardRule::query()->orderBy('min_points');
+            $query = EmployeePointCategory::query()->ordered();
+            if (! empty($validated['operation_type'])) {
+                $query->where('operation_type', $validated['operation_type']);
+            }
             if (array_key_exists('is_active', $validated) && $validated['is_active'] !== null) {
                 $query->where('is_active', (bool) $validated['is_active']);
             }
 
-            $rules = $query->get();
+            $categories = $query->get();
 
             return response()->json([
                 'status' => 'success',
-                'rules' => EmployeeRewardRuleResource::collection($rules),
+                'categories' => EmployeePointCategoryResource::collection($categories),
             ]);
         } catch (ValidationException $e) {
             return response()->json([
@@ -47,13 +52,13 @@ class EmployeeRewardRuleController extends Controller
     public function store(Request $request)
     {
         try {
-            $data = $this->validateRule($request);
-            $rule = EmployeeRewardRule::create($data);
+            $data = $this->validateCategory($request);
+            $category = EmployeePointCategory::create($data);
 
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.created_successfully'),
-                'rule' => new EmployeeRewardRuleResource($rule),
+                'category' => new EmployeePointCategoryResource($category),
             ]);
         } catch (ValidationException $e) {
             return response()->json([
@@ -72,15 +77,15 @@ class EmployeeRewardRuleController extends Controller
     public function update(Request $request, int $id)
     {
         try {
-            /** @var EmployeeRewardRule $rule */
-            $rule = EmployeeRewardRule::findOrFail($id);
-            $data = $this->validateRule($request, true);
-            $rule->update($data);
+            /** @var EmployeePointCategory $category */
+            $category = EmployeePointCategory::findOrFail($id);
+            $data = $this->validateCategory($request, $category->id);
+            $category->update($data);
 
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.updated_successfully'),
-                'rule' => new EmployeeRewardRuleResource($rule->fresh()),
+                'category' => new EmployeePointCategoryResource($category->fresh()),
             ]);
         } catch (ValidationException $e) {
             return response()->json([
@@ -104,9 +109,9 @@ class EmployeeRewardRuleController extends Controller
     public function destroy(int $id)
     {
         try {
-            /** @var EmployeeRewardRule $rule */
-            $rule = EmployeeRewardRule::findOrFail($id);
-            $rule->delete();
+            /** @var EmployeePointCategory $category */
+            $category = EmployeePointCategory::findOrFail($id);
+            $category->delete();
 
             return response()->json([
                 'status' => 'success',
@@ -128,29 +133,24 @@ class EmployeeRewardRuleController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function validateRule(Request $request, bool $isUpdate = false): array
+    private function validateCategory(Request $request, ?int $existingId = null): array
     {
-        $rules = [
-            'min_points' => [$isUpdate ? 'sometimes' : 'required', 'integer'],
-            'max_points' => ['nullable', 'integer'],
-            'reward_amount' => [$isUpdate ? 'sometimes' : 'required', 'numeric', 'min:0'],
-            'status_label' => ['nullable', 'string', 'max:120'],
-            'status_color' => ['nullable', 'string', 'max:16'],
-            'is_active' => ['nullable', 'boolean'],
-        ];
-
-        $validated = $request->validate($rules);
-
-        $minPoints = (int) ($validated['min_points'] ?? 0);
-        $maxPoints = $validated['max_points'] ?? null;
-        if ($maxPoints !== null) {
-            if ((int) $maxPoints < $minPoints) {
-                throw ValidationException::withMessages([
-                    'max_points' => __('The max points must be greater than or equal to min points.'),
-                ]);
-            }
-            $validated['max_points'] = (int) $maxPoints;
+        $codeRule = ['required', 'string', 'max:64'];
+        if ($existingId !== null) {
+            $codeRule[] = Rule::unique('employee_point_categories', 'code')->ignore($existingId);
+        } else {
+            $codeRule[] = Rule::unique('employee_point_categories', 'code');
         }
+
+        $validated = $request->validate([
+            'name_ar' => ['required', 'string', 'max:120'],
+            'name_en' => ['nullable', 'string', 'max:120'],
+            'code' => $codeRule,
+            'operation_type' => ['required', Rule::in([EmployeePointCategory::OPERATION_ADD, EmployeePointCategory::OPERATION_DEDUCT])],
+            'default_points' => ['required', 'integer', 'min:1'],
+            'is_active' => ['nullable', 'boolean'],
+            'sort_order' => ['nullable', 'integer'],
+        ]);
 
         if (array_key_exists('is_active', $validated) && $validated['is_active'] !== null) {
             $validated['is_active'] = (bool) $validated['is_active'];

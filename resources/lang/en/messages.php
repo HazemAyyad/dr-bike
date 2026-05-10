@@ -371,4 +371,11 @@ return [
     'updated_successfully' => 'Updated successfully',
     'deleted_successfully' => 'Deleted successfully',
     'not_found' => 'Resource not found',
+    'reward_status_negative' => 'Negative net points',
+    'reward_status_none' => 'No points',
+    'reward_status_no_match' => 'No reward match',
+    'reward_status_matched' => 'Reward eligible',
+    'reward_status_top' => 'Top tier',
+    'category_mismatch' => 'Operation type does not match the selected category',
+    'category_inactive' => 'Category is not active',
 ];

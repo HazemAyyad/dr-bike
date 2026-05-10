@@ -5,7 +5,7 @@ namespace App\Http\Resources;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
-class EmployeeRewardRuleResource extends JsonResource
+class EmployeePointCategoryResource extends JsonResource
 {
     /**
      * @return array<string, mixed>
@@ -14,12 +14,13 @@ class EmployeeRewardRuleResource extends JsonResource
     {
         return [
             'id' => (int) $this->id,
-            'min_points' => (int) $this->min_points,
-            'max_points' => $this->max_points !== null ? (int) $this->max_points : null,
-            'reward_amount' => number_format((float) $this->reward_amount, 2, '.', ''),
-            'status_label' => $this->status_label,
-            'status_color' => $this->status_color,
+            'name_ar' => (string) $this->name_ar,
+            'name_en' => $this->name_en,
+            'code' => (string) $this->code,
+            'operation_type' => (string) $this->operation_type,
+            'default_points' => (int) $this->default_points,
             'is_active' => (bool) $this->is_active,
+            'sort_order' => (int) $this->sort_order,
             'created_at' => optional($this->created_at)->toIso8601String(),
             'updated_at' => optional($this->updated_at)->toIso8601String(),
         ];

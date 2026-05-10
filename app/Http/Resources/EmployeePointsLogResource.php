@@ -12,12 +12,21 @@ class EmployeePointsLogResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        $categoryRelation = $this->whenLoaded('categoryRelation');
+
         return [
             'id' => (int) $this->id,
             'employee_id' => (int) $this->employee_id,
             'points' => (int) $this->points,
             'operation_type' => (string) $this->operation_type,
             'category' => (string) $this->category,
+            'category_id' => $this->category_id ? (int) $this->category_id : null,
+            'category_name_ar' => $categoryRelation && is_object($categoryRelation)
+                ? $categoryRelation->name_ar
+                : null,
+            'category_name_en' => $categoryRelation && is_object($categoryRelation)
+                ? $categoryRelation->name_en
+                : null,
             'source' => (string) $this->source,
             'reason' => $this->reason,
             'notes' => $this->notes,

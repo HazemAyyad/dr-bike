@@ -383,4 +383,11 @@ return [
     'updated_successfully' => 'تم التحديث بنجاح',
     'deleted_successfully' => 'تم الحذف بنجاح',
     'not_found' => 'العنصر غير موجود',
+    'reward_status_negative' => 'صافي نقاط سلبي',
+    'reward_status_none' => 'لا توجد نقاط',
+    'reward_status_no_match' => 'لا تنطبق مكافأة',
+    'reward_status_matched' => 'مؤهل للمكافأة',
+    'reward_status_top' => 'تميّز',
+    'category_mismatch' => 'نوع العملية لا يطابق التصنيف المحدد',
+    'category_inactive' => 'التصنيف غير مفعّل',
 ];

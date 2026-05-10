@@ -15,6 +15,8 @@ class EmployeeRewardRule extends Model
         'min_points',
         'max_points',
         'reward_amount',
+        'status_label',
+        'status_color',
         'is_active',
     ];
 

@@ -16,6 +16,7 @@ use App\Http\Controllers\API\Draws;
 use App\Http\Controllers\API\EmployeeAttendanceReportController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeOrders;
+use App\Http\Controllers\API\EmployeePointCategoryController;
 use App\Http\Controllers\API\EmployeePointsController;
 use App\Http\Controllers\API\EmployeeRewardRuleController;
 use App\Http\Controllers\API\Employees\EmployeeData;
@@ -179,12 +180,24 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
     Route::get('/employees/{employee}/points/monthly-summary', [EmployeePointsController::class, 'monthlySummary'])
         ->whereNumber('employee');
 
+    // Global points (admin only manages all employees in one place)
+    Route::get('/employee-points/employees', [EmployeePointsController::class, 'globalEmployees']);
+    Route::get('/employee-points/reports', [EmployeePointsController::class, 'globalReport']);
+
     // Reward rules CRUD
     Route::get('/employee-reward-rules', [EmployeeRewardRuleController::class, 'index']);
     Route::post('/employee-reward-rules', [EmployeeRewardRuleController::class, 'store']);
     Route::put('/employee-reward-rules/{id}', [EmployeeRewardRuleController::class, 'update'])
         ->whereNumber('id');
     Route::delete('/employee-reward-rules/{id}', [EmployeeRewardRuleController::class, 'destroy'])
+        ->whereNumber('id');
+
+    // Point categories CRUD (admin defines the value of each behavior)
+    Route::get('/employee-point-categories', [EmployeePointCategoryController::class, 'index']);
+    Route::post('/employee-point-categories', [EmployeePointCategoryController::class, 'store']);
+    Route::put('/employee-point-categories/{id}', [EmployeePointCategoryController::class, 'update'])
+        ->whereNumber('id');
+    Route::delete('/employee-point-categories/{id}', [EmployeePointCategoryController::class, 'destroy'])
         ->whereNumber('id');
 
 

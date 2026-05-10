@@ -13,6 +13,7 @@ use App\Models\Permission;
 use App\Models\Reward;
 use App\Models\User;
 use App\Services\AttendanceSalaryService;
+use App\Services\EmployeePointsService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -110,13 +111,40 @@ class EmployeeDetails extends Controller
                 ->orderBy('created_at', 'desc')
                 ->get(['id', 'hour_work_price', 'points', 'user_id','employee_img', 'start_work_time']);
 
-            $formatted = $employees->map(function ($employee) {
+            $now = Carbon::now();
+            $pointsService = app(EmployeePointsService::class);
+            $summaries = $pointsService->getMonthlySummaryMany(
+                $employees->pluck('id')->all(),
+                (int) $now->year,
+                (int) $now->month,
+            );
+
+            $formatted = $employees->map(function ($employee) use ($summaries) {
                 $statuses = $this->getAttendanceStatuses($employee->id, $employee->start_work_time);
+                $summary = $summaries[$employee->id] ?? [
+                    'earned_points' => 0,
+                    'deducted_points' => 0,
+                    'net_points' => 0,
+                    'reward_amount' => 0.0,
+                    'reward_rule_id' => null,
+                    'reward_status_label' => null,
+                    'reward_status_color' => null,
+                ];
+
                 return [
                     'id' => $employee->id,
                     'employee_name' => $employee->user?->name,
                     'hour_work_price' => $employee->hour_work_price,
                     'points' => $employee->points,
+                    'points_summary' => [
+                        'earned_points' => (int) $summary['earned_points'],
+                        'deducted_points' => (int) $summary['deducted_points'],
+                        'net_points' => (int) $summary['net_points'],
+                        'reward_amount' => number_format((float) $summary['reward_amount'], 2, '.', ''),
+                        'reward_rule_id' => $summary['reward_rule_id'],
+                        'reward_status_label' => $summary['reward_status_label'],
+                        'reward_status_color' => $summary['reward_status_color'],
+                    ],
                     'employee_img' => $employee->employee_img? 'public/EmployeeImages/'.$employee->employee_img[0] : 'no images',
                     'has_attended_today' => $statuses['has_attended_today'],
                     'is_working_now' => $statuses['is_working_now'],

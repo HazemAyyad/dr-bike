@@ -25,6 +25,7 @@ class EmployeePointsLog extends Model
         'points',
         'operation_type',
         'category',
+        'category_id',
         'source',
         'reason',
         'notes',
@@ -45,6 +46,11 @@ class EmployeePointsLog extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function categoryRelation()
+    {
+        return $this->belongsTo(EmployeePointCategory::class, 'category_id');
     }
 
     public function scopeForEmployee($query, int $employeeId)
