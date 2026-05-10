@@ -8,6 +8,16 @@ use Carbon\Carbon;
 
 class AttendanceSalaryService
 {
+    private const DAY_NAMES = [
+        'monday',
+        'tuesday',
+        'wednesday',
+        'thursday',
+        'friday',
+        'saturday',
+        'sunday',
+    ];
+
     /**
      * @return array{required_minutes:int, normal_minutes:int, overtime_minutes:int}
      */
@@ -46,12 +56,7 @@ class AttendanceSalaryService
             ->whereBetween('date', [$monthStart, $monthEnd])
             ->sum('worked_minutes');
 
-        $configuredDays = config('attendance.required_work_days_in_month');
-        $requiredWorkDaysInMonth = $requiredWorkDaysInMonth ?? (is_numeric($configuredDays) ? (int) $configuredDays : 0);
-
-        if ($requiredWorkDaysInMonth <= 0) {
-            $requiredWorkDaysInMonth = $this->countConfiguredWorkdaysInMonth($month);
-        }
+        $requiredWorkDaysInMonth = $requiredWorkDaysInMonth ?? $this->countEmployeeWorkingDaysInMonth($employeeDetail, $month);
 
         $hoursPerDay = (float) ($employeeDetail->number_of_work_hours ?? 0);
         $monthlyRequiredMinutes = (int) round(($hoursPerDay * $requiredWorkDaysInMonth) * 60);
@@ -95,12 +100,43 @@ class AttendanceSalaryService
         return number_format(max(0, $minutes) / 60, 2, '.', '');
     }
 
-    private function countConfiguredWorkdaysInMonth(Carbon $month): int
+    /**
+     * Count working days in a month based on employee weekly days off.
+     * Backward-compat fallback: if employee has no configuration, use config('attendance.default_weekly_days_off'),
+     * and finally default to Sat/Sun.
+     */
+    private function countEmployeeWorkingDaysInMonth(EmployeeDetail $employeeDetail, Carbon $month): int
     {
-        $workdays = config('attendance.workdays');
-        if (! is_array($workdays) || empty($workdays)) {
-            // Default: Mon-Fri (Carbon: 1..5)
-            $workdays = [Carbon::MONDAY, Carbon::TUESDAY, Carbon::WEDNESDAY, Carbon::THURSDAY, Carbon::FRIDAY];
+        $off = $employeeDetail->weekly_days_off;
+        $weeklyDaysOff = [];
+        if (is_array($off) && ! empty($off)) {
+            foreach ($off as $d) {
+                if (is_string($d)) {
+                    $dd = strtolower(trim($d));
+                    if (in_array($dd, self::DAY_NAMES, true)) {
+                        $weeklyDaysOff[] = $dd;
+                    }
+                }
+            }
+            $weeklyDaysOff = array_values(array_unique($weeklyDaysOff));
+        }
+
+        if (empty($weeklyDaysOff)) {
+            $fallback = config('attendance.default_weekly_days_off');
+            if (is_array($fallback) && ! empty($fallback)) {
+                foreach ($fallback as $d) {
+                    if (is_string($d)) {
+                        $dd = strtolower(trim($d));
+                        if (in_array($dd, self::DAY_NAMES, true)) {
+                            $weeklyDaysOff[] = $dd;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (empty($weeklyDaysOff)) {
+            $weeklyDaysOff = ['saturday', 'sunday'];
         }
 
         $start = $month->copy()->startOfMonth();
@@ -108,7 +144,8 @@ class AttendanceSalaryService
 
         $count = 0;
         for ($d = $start->copy(); $d->lte($end); $d->addDay()) {
-            if (in_array($d->dayOfWeek, $workdays, true)) {
+            $dayName = strtolower($d->format('l')); // Monday..Sunday
+            if (! in_array($dayName, $weeklyDaysOff, true)) {
                 $count++;
             }
         }

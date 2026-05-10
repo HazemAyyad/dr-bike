@@ -18,6 +18,7 @@ class EmployeeDetail extends Model
         'number_of_work_hours',
         'start_work_time',
         'end_work_time',
+        'weekly_days_off',
         'job_title',
         'salary',
         'debts',
@@ -30,6 +31,7 @@ class EmployeeDetail extends Model
     protected $casts = [
         'employee_img'=>'array',
         'document_img' => 'array',
+        'weekly_days_off' => 'array',
     ];
 
 

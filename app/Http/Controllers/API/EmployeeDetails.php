@@ -28,6 +28,30 @@ use Illuminate\Validation\ValidationException;
 class EmployeeDetails extends Controller
 {
     /**
+     * @return string[]
+     */
+    private function normalizeWeeklyDaysOff($value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $allowed = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+        $out = [];
+        foreach ($value as $v) {
+            if (! is_string($v)) {
+                continue;
+            }
+            $day = strtolower(trim($v));
+            if (in_array($day, $allowed, true)) {
+                $out[] = $day;
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function buildAttendanceDayFinancialFields(?EmployeeAttendance $legacyAttendance, EmployeeDetail $employee, ?int $overriddenWorkedMinutes = null): array
@@ -368,6 +392,9 @@ private function getEmployeeFinancialData($employeeId)
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['integer', 'exists:permissions,id'],
 
+            'weekly_days_off' => ['nullable', 'array'],
+            'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
+
 
         ]);
 
@@ -397,6 +424,7 @@ private function getEmployeeFinancialData($employeeId)
             'number_of_work_hours' => $data['number_of_work_hours'],
             'start_work_time' => $data['start_work_time'],
             'end_work_time' => $endTime,
+            'weekly_days_off' => $this->normalizeWeeklyDaysOff($data['weekly_days_off'] ?? null),
             'employee_img' => $employeeImage,
             'document_img' => $documentImage,
 
@@ -482,6 +510,9 @@ private function getEmployeeFinancialData($employeeId)
 
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['integer', 'exists:permissions,id'],
+
+            'weekly_days_off' => ['nullable', 'array'],
+            'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
         ]);
     
         $employee = EmployeeDetail::findOrFail($request['employee_id']);
@@ -493,6 +524,9 @@ private function getEmployeeFinancialData($employeeId)
         $start = Carbon::createFromFormat('H:i', $updateData['start_work_time']);
         $end = $start->copy()->addHours($updateData['number_of_work_hours']);
         $updateData['end_work_time'] = $end->format('H:i'); 
+        if (array_key_exists('weekly_days_off', $updateData)) {
+            $updateData['weekly_days_off'] = $this->normalizeWeeklyDaysOff($updateData['weekly_days_off']);
+        }
 
         $finalEmployeeImages = CommonUse::handleImageUpdate(
             $request,
@@ -1037,6 +1071,10 @@ private function getEmployeeFinancialData($employeeId)
             max(0, $monthlyOvertimeProrated)
         );
 
+        $monthlyNormalMinutes = max(0, min((int) $periodMonthly['monthly_worked_minutes'], (int) $periodMonthly['monthly_required_minutes']));
+        $monthlyOverMinutes = max(0, (int) $periodMonthly['monthly_overtime_minutes']);
+        $monthlySalaryFull = $salaryService->calculateSalary($employee, $monthlyNormalMinutes, $monthlyOverMinutes);
+
         return [
             'employee' => [
                 'id' => $employee->id,
@@ -1048,7 +1086,9 @@ private function getEmployeeFinancialData($employeeId)
                 'month' => $summaryMonth->format('Y-m'),
                 'month_start' => $summaryMonth->copy()->startOfMonth()->toDateString(),
                 'month_end' => $summaryMonth->copy()->endOfMonth()->toDateString(),
+                'weekly_days_off' => is_array($employee->weekly_days_off) ? array_values($employee->weekly_days_off) : [],
                 'required_work_days_in_month' => $periodMonthly['required_work_days_in_month'],
+                'monthly_working_days_count' => $periodMonthly['required_work_days_in_month'],
                 'monthly_worked_minutes' => $periodMonthly['monthly_worked_minutes'],
                 'monthly_required_minutes' => $periodMonthly['monthly_required_minutes'],
                 'monthly_overtime_minutes' => $periodMonthly['monthly_overtime_minutes'],
@@ -1073,6 +1113,9 @@ private function getEmployeeFinancialData($employeeId)
                     (int) $periodMonthly['monthly_required_minutes']
                 )),
                 'monthly_overtime_hours' => $salaryService->formatHours((int) $periodMonthly['monthly_overtime_minutes']),
+                'normal_salary' => number_format((float) $monthlySalaryFull['normal_salary'], 2, '.', ''),
+                'overtime_salary' => number_format((float) $monthlySalaryFull['overtime_salary'], 2, '.', ''),
+                'total_salary' => number_format((float) $monthlySalaryFull['total_salary'], 2, '.', ''),
             ]),
             'days' => $days,
         ];

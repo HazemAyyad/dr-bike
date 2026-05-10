@@ -27,5 +27,18 @@ return [
         Carbon::THURSDAY,
         Carbon::FRIDAY,
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Backward-compatible weekly days off
+    |--------------------------------------------------------------------------
+    |
+    | If an employee does not have weekly_days_off configured (null/empty),
+    | we assume these days are off to preserve previous behavior.
+    |
+    */
+    'default_weekly_days_off' => [
+        'friday',
+    ],
 ];
 
