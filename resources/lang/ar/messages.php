@@ -390,4 +390,9 @@ return [
     'reward_status_top' => 'تميّز',
     'category_mismatch' => 'نوع العملية لا يطابق التصنيف المحدد',
     'category_inactive' => 'التصنيف غير مفعّل',
+
+    // employee delete
+    'employee_deleted_successfully' => 'تم حذف الموظف بنجاح',
+    'employee_not_found' => 'الموظف غير موجود',
+    'failed_to_delete_employee' => 'فشل حذف الموظف، الرجاء المحاولة لاحقًا',
 ];

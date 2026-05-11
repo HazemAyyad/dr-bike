@@ -378,4 +378,9 @@ return [
     'reward_status_top' => 'Top tier',
     'category_mismatch' => 'Operation type does not match the selected category',
     'category_inactive' => 'Category is not active',
+
+    // employee delete
+    'employee_deleted_successfully' => 'Employee deleted successfully',
+    'employee_not_found' => 'Employee not found',
+    'failed_to_delete_employee' => 'Failed to delete the employee, please try again later',
 ];

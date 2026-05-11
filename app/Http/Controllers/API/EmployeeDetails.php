@@ -20,6 +20,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Mail;
@@ -623,6 +624,64 @@ private function getEmployeeFinancialData($employeeId)
              'message' => __('messages.update_data_error')], 200);
         } catch (\Exception $e) {
             return response(['status' => 'error', 'message' => __('messages.failed_to_update_employee')], 200);
+        }
+    }
+
+
+    /**
+     * Soft delete an employee (and their linked user account). All
+     * related records — attendance, points logs, tasks, orders, etc. —
+     * stay intact in the database so historical reports keep working.
+     * The employee simply disappears from active listings.
+     */
+    public function deleteEmployee(Request $request)
+    {
+        try {
+            $request->validate([
+                'employee_id' => ['required', 'integer', 'exists:employee_details,id'],
+            ]);
+
+            $employee = EmployeeDetail::with('user')->findOrFail($request->employee_id);
+            $employeeName = $employee->user?->name ?? '—';
+
+            DB::transaction(function () use ($employee) {
+                if ($employee->user) {
+                    $employee->user->delete();
+                }
+                $employee->delete();
+            });
+
+            Logs::createLog(
+                'حذف موظف',
+                'تم حذف الموظف '.$employeeName,
+                'employees',
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.employee_deleted_successfully'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.employee_not_found'),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_delete_employee'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_delete_employee'),
+            ], 200);
         }
     }
 

@@ -155,6 +155,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
     Route::get('/working/times' , [EmployeeDetails::class,'workingTimes']);
     Route::get('/financial/dues' , [EmployeeDetails::class,'financialDues']);
     Route::post('/edit/employee' , [EmployeeDetails::class,'editEmployee']);
+    Route::post('/delete/employee' , [EmployeeDetails::class,'deleteEmployee']);
     Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions']);
     Route::post('/employee/permissions' , [EmployeeDetails::class,'getEmployeePermissions']);
 
