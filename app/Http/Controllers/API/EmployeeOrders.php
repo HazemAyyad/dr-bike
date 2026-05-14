@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -11,6 +13,59 @@ use Illuminate\Validation\ValidationException;
 
 class EmployeeOrders extends Controller
 {
+    public function employeeAdvancesByMonth(Request $request, EmployeeDetail $employee)
+    {
+        try {
+            $request->validate([
+                'month' => ['required', 'date_format:Y-m'],
+            ]);
+
+            $month = Carbon::createFromFormat('Y-m', $request->month)->startOfMonth();
+            $orders = EmployeeOrder::query()
+                ->where('employee_id', $employee->id)
+                ->where('type', 'loan')
+                ->whereBetween('created_at', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            $advances = $orders->map(function (EmployeeOrder $order) {
+                $created = Carbon::parse($order->created_at);
+
+                return [
+                    'id' => $order->id,
+                    'status' => $order->status,
+                    'amount' => (float) ($order->loan_value ?? 0),
+                    'day' => $created->format('l'),
+                    'date' => $created->toDateString(),
+                    'time' => $created->format('h:i A'),
+                ];
+            })->values();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'employee' => [
+                        'id' => $employee->id,
+                        'name' => $employee->user?->name,
+                    ],
+                    'month' => $month->format('Y-m'),
+                    'advances' => $advances,
+                    'total' => (float) $orders->sum(fn ($order) => (float) ($order->loan_value ?? 0)),
+                ],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
 
 
 

@@ -8,6 +8,7 @@ use App\Mail\NewEmployeeAccountMail;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeOrder;
 use App\Models\EmployeePermission;
 use App\Models\Permission;
 use App\Models\Reward;
@@ -304,15 +305,155 @@ private function getEmployeeFinancialData($employeeId)
     ];
 }
 
+private function getEmployeeAdvancesData(EmployeeDetail $employee, Carbon $month): array
+{
+    $start = $month->copy()->startOfMonth();
+    $end = $month->copy()->endOfMonth();
+
+    $orders = EmployeeOrder::query()
+        ->where('employee_id', $employee->id)
+        ->where('type', 'loan')
+        ->whereBetween('created_at', [$start, $end])
+        ->orderBy('created_at', 'desc')
+        ->get();
+
+    $advances = $orders->map(function (EmployeeOrder $order) {
+        $created = Carbon::parse($order->created_at);
+
+        return [
+            'id' => $order->id,
+            'status' => $order->status,
+            'amount' => (float) ($order->loan_value ?? 0),
+            'day' => $created->format('l'),
+            'date' => $created->toDateString(),
+            'time' => $created->format('h:i A'),
+        ];
+    })->values();
+
+    $approvedTotal = $orders
+        ->filter(fn ($order) => in_array($order->status, ['approved', 'paid'], true))
+        ->sum(fn ($order) => (float) ($order->loan_value ?? 0));
+
+    return [
+        'employee' => [
+            'id' => $employee->id,
+            'name' => $employee->user?->name,
+        ],
+        'month' => $month->format('Y-m'),
+        'advances' => $advances,
+        'total' => (float) $orders->sum(fn ($order) => (float) ($order->loan_value ?? 0)),
+        'approved_total' => (float) $approvedTotal,
+    ];
+}
+
+private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValue = null): array
+{
+    $employee = EmployeeDetail::with('user:id,name')->findOrFail($employeeId);
+    $month = $monthValue
+        ? Carbon::createFromFormat('Y-m', $monthValue)->startOfMonth()
+        : Carbon::now()->startOfMonth();
+
+    /** @var AttendanceSalaryService $salaryService */
+    $salaryService = app(AttendanceSalaryService::class);
+
+    $start = $month->copy()->startOfMonth();
+    $end = $month->copy()->endOfMonth();
+    $workedMinutes = $salaryService->sumWorkedMinutesBetween($employee->id, $start, $end);
+    $salaryRow = $salaryService->buildAttendanceReportRow(
+        $employee,
+        $start,
+        $end,
+        $workedMinutes,
+        (int) $month->month,
+        (int) $month->year
+    );
+
+    $scanDates = EmployeeAttendanceScan::query()
+        ->where('employee_id', $employee->id)
+        ->whereBetween('work_date', [$start->toDateString(), $end->toDateString()])
+        ->distinct()
+        ->pluck('work_date')
+        ->map(fn ($date) => $date instanceof Carbon ? $date->toDateString() : Carbon::parse($date)->toDateString());
+
+    $legacyDates = EmployeeAttendance::query()
+        ->where('employee_id', $employee->id)
+        ->whereBetween('date', [$start->toDateString(), $end->toDateString()])
+        ->where('worked_minutes', '>', 0)
+        ->pluck('date')
+        ->map(fn ($date) => $date instanceof Carbon ? $date->toDateString() : Carbon::parse($date)->toDateString());
+
+    $attendanceDates = $scanDates->merge($legacyDates)->unique()->values();
+    $lateDays = 0;
+    $delayMinutes = 0;
+
+    foreach ($attendanceDates as $dateStr) {
+        $firstScan = EmployeeAttendanceScan::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('work_date', $dateStr)
+            ->where('direction', 'in')
+            ->orderBy('scanned_at')
+            ->first();
+
+        $firstCheckIn = $firstScan?->scanned_at;
+        if (! $firstCheckIn) {
+            $legacy = EmployeeAttendance::query()
+                ->where('employee_id', $employee->id)
+                ->whereDate('date', $dateStr)
+                ->first();
+            if ($legacy?->arrived_at) {
+                $firstCheckIn = Carbon::parse($dateStr.' '.$legacy->arrived_at);
+            }
+        }
+
+        if ($employee->start_work_time && $firstCheckIn) {
+            $allowedStart = Carbon::parse($dateStr.' '.$employee->start_work_time)->addMinutes(15);
+            if (Carbon::parse($firstCheckIn)->gt($allowedStart)) {
+                $lateDays++;
+                $delayMinutes += $allowedStart->diffInMinutes(Carbon::parse($firstCheckIn));
+            }
+        }
+    }
+
+    $advancesData = $this->getEmployeeAdvancesData($employee, $month);
+    $advancesTotal = (float) $advancesData['approved_total'];
+    $rewardAmount = (float) ($salaryRow['reward_amount'] ?? 0);
+    $grossEntitlement = (float) ($salaryRow['total_salary'] ?? 0) + $rewardAmount;
+    $finalNet = $grossEntitlement - $advancesTotal;
+
+    return array_merge($this->getEmployeeFinancialData($employeeId), [
+        'month' => $month->format('Y-m'),
+        'selected_month' => $month->format('F Y'),
+        'base_salary' => $employee->salary !== null ? number_format((float) $employee->salary, 2, '.', '') : null,
+        'attendance_days' => $attendanceDates->count(),
+        'absent_days' => max(0, (int) $salaryRow['required_working_days'] - $attendanceDates->count()),
+        'late_days' => $lateDays,
+        'delay_minutes' => $delayMinutes,
+        'delay_hours' => $salaryService->formatHours((int) $delayMinutes),
+        'overtime_hours' => $salaryRow['overtime_hours'] ?? '0.00',
+        'overtime_salary' => $salaryRow['overtime_salary'] ?? '0.00',
+        'normal_salary' => $salaryRow['normal_salary'] ?? '0.00',
+        'period_salary' => $salaryRow['total_salary'] ?? '0.00',
+        'deductions' => number_format($advancesTotal, 2, '.', ''),
+        'bonuses' => number_format($rewardAmount, 2, '.', ''),
+        'additions' => number_format($rewardAmount, 2, '.', ''),
+        'advances' => number_format($advancesTotal, 2, '.', ''),
+        'gross_entitlement' => number_format($grossEntitlement, 2, '.', ''),
+        'final_net_entitlement' => number_format($finalNet, 2, '.', ''),
+        'total' => number_format($finalNet, 2, '.', ''),
+        'attendance_summary' => $salaryRow,
+    ]);
+}
+
 
     public function showFinancialDetails(Request $request)
 {
     try {
         $request->validate([
             'employee_id' => 'required|exists:employee_details,id',
+            'month' => ['nullable', 'date_format:Y-m'],
         ]);
 
-        $data = $this->getEmployeeFinancialData($request->employee_id);
+        $data = $this->getEmployeeMonthlyFinancialData($request->employee_id, $request->month);
         $employee = EmployeeDetail::findOrFail($request->employee_id);
         return response()->json([
             'status'=>'success',
@@ -832,22 +973,29 @@ private function getEmployeeFinancialData($employeeId)
                 'to_date' => 'required|date',
 
             ]);
-            $employee = EmployeeDetail::findOrFail($request->employee_id);
+            $employee = EmployeeDetail::with('user:id,name')->findOrFail($request->employee_id);
+            $month = Carbon::parse($request->from_date)->startOfMonth();
             $attendances = $employee->attendances()
-                // ->when($request->from_date, function ($q) use ($request) {
-                //     $q->whereDate('created_at', '>=', $request->from_date);
-                // })
-                // ->when($request->to_date, function ($q) use ($request) {
-                //     $q->whereDate('created_at', '<=', $request->to_date);
-                // })
+                ->whereBetween('date', [
+                    Carbon::parse($request->from_date)->toDateString(),
+                    Carbon::parse($request->to_date)->toDateString(),
+                ])
                 ->get();
-        $rewards = $employee->rewards()->get();
-            $financialData = $this->getEmployeeFinancialData($employee->id);
+        $rewards = $employee->rewards()
+            ->whereBetween('created_at', [
+                Carbon::parse($request->from_date)->startOfDay(),
+                Carbon::parse($request->to_date)->endOfDay(),
+            ])
+            ->get();
+            $financialData = $this->getEmployeeMonthlyFinancialData($employee->id, $month->format('Y-m'));
+            $advancesData = $this->getEmployeeAdvancesData($employee, $month);
        // 🔹 First render HTML from the Blade
         $reportHtml = view('pdf.employee-report', [
             'attendances' => $attendances,
             'financialData' => $financialData,
             'rewards'=>$rewards,
+            'advancesData' => $advancesData,
+            'month' => $month->format('F Y'),
 
         ])->render();
 

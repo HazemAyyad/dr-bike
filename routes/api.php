@@ -205,6 +205,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
        // employee orders
       Route::get('/employee/loan/orders' , [EmployeeOrders::class,'employeeLoanOrders']);
       Route::get('/employee/overtime/orders' , [EmployeeOrders::class,'employeeOvertimeOrders']);
+      Route::get('/employees/{employee}/advances' , [EmployeeOrders::class,'employeeAdvancesByMonth'])
+          ->whereNumber('employee');
 
       Route::post('/approve/employee/loan/order' , [EmployeeOrders::class,'approveLoanRequest']);
       Route::post('/reject/employee/order' , [EmployeeOrders::class,'reject']);
