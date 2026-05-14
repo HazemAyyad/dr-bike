@@ -346,18 +346,34 @@ private function getEmployeeAdvancesData(EmployeeDetail $employee, Carbon $month
     ];
 }
 
-private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValue = null): array
+private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValue = null, ?string $dateValue = null): array
 {
     $employee = EmployeeDetail::with('user:id,name')->findOrFail($employeeId);
-    $month = $monthValue
-        ? Carbon::createFromFormat('Y-m', $monthValue)->startOfMonth()
-        : Carbon::now()->startOfMonth();
 
     /** @var AttendanceSalaryService $salaryService */
     $salaryService = app(AttendanceSalaryService::class);
 
-    $start = $month->copy()->startOfMonth();
-    $end = $month->copy()->endOfMonth();
+    $selectedDate = null;
+    if ($dateValue) {
+        $selectedDate = Carbon::createFromFormat('Y-m-d', $dateValue)->startOfDay();
+    }
+
+    $month = $selectedDate
+        ? $selectedDate->copy()->startOfMonth()
+        : ($monthValue
+            ? Carbon::createFromFormat('Y-m', $monthValue)->startOfMonth()
+            : Carbon::now()->startOfMonth());
+
+    $isDayView = $selectedDate !== null;
+
+    if ($isDayView) {
+        $start = $selectedDate->copy()->startOfDay();
+        $end = $selectedDate->copy()->endOfDay();
+    } else {
+        $start = $month->copy()->startOfMonth();
+        $end = $month->copy()->endOfMonth();
+    }
+
     $workedMinutes = $salaryService->sumWorkedMinutesBetween($employee->id, $start, $end);
     $salaryRow = $salaryService->buildAttendanceReportRow(
         $employee,
@@ -414,15 +430,27 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         }
     }
 
-    $advancesData = $this->getEmployeeAdvancesData($employee, $month);
-    $advancesTotal = (float) $advancesData['approved_total'];
     $rewardAmount = (float) ($salaryRow['reward_amount'] ?? 0);
+
+    if ($isDayView) {
+        $advancesTotal = 0.0;
+    } else {
+        $advancesData = $this->getEmployeeAdvancesData($employee, $month);
+        $advancesTotal = (float) $advancesData['approved_total'];
+    }
+
     $grossEntitlement = (float) ($salaryRow['total_salary'] ?? 0) + $rewardAmount;
     $finalNet = $grossEntitlement - $advancesTotal;
 
+    $selectedMonthLabel = $isDayView
+        ? $selectedDate->format('l, F j, Y')
+        : $month->format('F Y');
+
     return array_merge($this->getEmployeeFinancialData($employeeId), [
+        'view' => $isDayView ? 'day' : 'month',
         'month' => $month->format('Y-m'),
-        'selected_month' => $month->format('F Y'),
+        'selected_date' => $isDayView ? $selectedDate->toDateString() : null,
+        'selected_month' => $selectedMonthLabel,
         'base_salary' => $employee->salary !== null ? number_format((float) $employee->salary, 2, '.', '') : null,
         'attendance_days' => $attendanceDates->count(),
         'absent_days' => max(0, (int) $salaryRow['required_working_days'] - $attendanceDates->count()),
@@ -451,9 +479,14 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         $request->validate([
             'employee_id' => 'required|exists:employee_details,id',
             'month' => ['nullable', 'date_format:Y-m'],
+            'date' => ['nullable', 'date_format:Y-m-d'],
         ]);
 
-        $data = $this->getEmployeeMonthlyFinancialData($request->employee_id, $request->month);
+        $data = $this->getEmployeeMonthlyFinancialData(
+            $request->employee_id,
+            $request->month,
+            $request->date
+        );
         $employee = EmployeeDetail::findOrFail($request->employee_id);
         return response()->json([
             'status'=>'success',
