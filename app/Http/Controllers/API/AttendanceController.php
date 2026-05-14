@@ -175,6 +175,13 @@ class AttendanceController extends Controller
                 $attendance->overtime_minutes = $daily['overtime_minutes'];
                 $attendance->save();
 
+                try {
+                    $attendance->refresh();
+                    app(\App\Services\AdminNotificationService::class)->notifyEmployeeLogin($employee, (int) $attendance->id);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::error('Admin notification (employee login): '.$e->getMessage());
+                }
+
                 $salary = $salaryService->calculateSalary(
                     $employee,
                     (int) ($attendance->normal_minutes ?? 0),
@@ -229,6 +236,18 @@ class AttendanceController extends Controller
             $attendance->normal_minutes = $daily['normal_minutes'];
             $attendance->overtime_minutes = $daily['overtime_minutes'];
             $attendance->save();
+
+            try {
+                $pending = \App\Support\EmployeePendingTasksForToday::forEmployee($employee_id);
+                app(\App\Services\AdminNotificationService::class)->notifyEmployeeLogoutWithPendingTasks(
+                    $employee,
+                    (int) $attendance->id,
+                    $pending,
+                    now()->toIso8601String()
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Admin notification (checkout pending tasks): '.$e->getMessage());
+            }
 
             $salary = $salaryService->calculateSalary(
                 $employee,

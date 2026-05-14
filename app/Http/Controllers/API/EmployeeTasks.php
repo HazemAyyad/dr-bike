@@ -1054,6 +1054,12 @@ public function updateEmployeeTask(Request $request)
         .' '.'التابعة للموظف'.' '.$task->employee->user->name, 
         'employee_tasks');
 
+        try {
+            app(\App\Services\AdminNotificationService::class)->notifyTaskCompleted($employee, $task);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Admin notification (task completed): '.$e->getMessage());
+        }
+
         return response()->json([
             'status' => 'success',
             'message' => __('messages.task_completed'),
@@ -1135,6 +1141,12 @@ public function updateEmployeeTask(Request $request)
             $pointsToAdd = $employeeTask->points + $employee->points;
 
             $employeeTask->employee->update(['points'=> $pointsToAdd]);
+
+            try {
+                app(\App\Services\AdminNotificationService::class)->notifyTaskCompleted($employee, $employeeTask);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Admin notification (task completed via subtask): '.$e->getMessage());
+            }
         }
 
         else{

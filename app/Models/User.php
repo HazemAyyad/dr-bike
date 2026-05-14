@@ -57,6 +57,11 @@ class User extends Authenticatable
     public function employee(){
         return $this->hasOne(EmployeeDetail::class);
     }
+
+    public function adminDeviceTokens()
+    {
+        return $this->hasMany(AdminDeviceToken::class);
+    }
     
 
 

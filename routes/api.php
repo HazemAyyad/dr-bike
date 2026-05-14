@@ -4,6 +4,7 @@ use App\Http\Controllers\API\AssetLogs;
 use App\Http\Controllers\API\CategoryController;
 use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
+use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\Authentication;
 use App\Http\Controllers\API\Bills;
 use App\Http\Controllers\API\Boxes;
@@ -682,6 +683,14 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
       Route::post('/cancel/log' , [Logs::class,'cancelLog']);
       Route::post('/show/log' , [Logs::class,'showLog']);
       Route::get('/admin/home/page/data' , [Logs::class,'homeData']);
+
+    Route::get('/admin/notifications', [AdminNotificationCenterController::class, 'index']);
+    Route::get('/admin/notifications/unread-count', [AdminNotificationCenterController::class, 'unreadCount']);
+    Route::post('/admin/notifications/mark-all-read', [AdminNotificationCenterController::class, 'markAllRead']);
+    Route::post('/admin/notifications/{id}/read', [AdminNotificationCenterController::class, 'markRead']);
+    Route::delete('/admin/notifications/{id}', [AdminNotificationCenterController::class, 'destroy']);
+    Route::post('/admin/device-token', [AdminNotificationCenterController::class, 'storeDeviceToken']);
+    Route::delete('/admin/device-token', [AdminNotificationCenterController::class, 'destroyDeviceToken']);
 
 
 

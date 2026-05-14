@@ -5,11 +5,14 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Mail\ResetPasswordMail;
 use App\Mail\VerifyTokenMail;
+use App\Models\EmployeeAttendance;
 use App\Models\EmployeeDetail;
 use App\Models\PasswordResetCode;
 use App\Models\User;
 use App\Models\UserSession;
 use App\Models\VerifyToken;
+use App\Services\AdminNotificationService;
+use App\Support\EmployeePendingTasksForToday;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -289,6 +292,25 @@ class Authentication extends Controller
                     'status' => 'error',
                     'message' => __('messages.logout_failed'),
                 ], 401);
+            }
+
+            if ($user->type === 'employee' && $user->employee) {
+                try {
+                    $emp = $user->employee;
+                    $pending = EmployeePendingTasksForToday::forEmployee((int) $emp->id);
+                    $attendance = EmployeeAttendance::query()
+                        ->where('employee_id', $emp->id)
+                        ->whereDate('date', now()->toDateString())
+                        ->first();
+                    app(AdminNotificationService::class)->notifyEmployeeLogoutWithPendingTasks(
+                        $emp,
+                        $attendance !== null ? (int) $attendance->id : null,
+                        $pending,
+                        now()->toIso8601String()
+                    );
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::error('Admin notification (employee app logout): '.$e->getMessage());
+                }
             }
 
             $token = $user->currentAccessToken();
