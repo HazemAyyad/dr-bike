@@ -31,6 +31,8 @@ Route::get('/', function () {
 /** إرسال إشعار تجريبي للأدمن (قاعدة البيانات + FCM) */
 Route::get('/test/admin-notify', [AdminNotificationWebController::class, 'show'])->name('test.admin-notify');
 Route::post('/test/admin-notify', [AdminNotificationWebController::class, 'send'])->name('test.admin-notify.send');
+Route::get('/test/admin-notify/fcm-test', [AdminNotificationWebController::class, 'fcmTest'])->name('test.admin-notify.fcm-test');
+Route::post('/test/admin-notify/fcm-test', [AdminNotificationWebController::class, 'fcmTestWithToken'])->name('test.admin-notify.fcm-test.post');
 
 Route::get('/test/store-sync', [StoreSyncTestController::class, 'show'])->name('test.store-sync');
 Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('test.store-sync.run');

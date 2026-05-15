@@ -91,6 +91,58 @@ class FirebaseService
     /**
      * @return mixed FCM HTTP response (message name / array) from Kreait
      */
+    /**
+     * Same payload as `php artisan admin:fcm-test` (diagnostics).
+     *
+     * @return array{ok: bool, message: string, firebase_response?: string, firebase_project_id?: string|null, channel_id: string, token_prefix: string, device_token_id?: int|null, used_latest: bool}
+     */
+    public function sendAdminFcmTest(string $fcmToken, bool $usedLatest = false, ?int $deviceTokenId = null): array
+    {
+        $data = [
+            'type' => 'admin_manual',
+            'notification_id' => '0',
+            'related_type' => '',
+            'related_id' => '',
+            'employee_id' => '',
+            'task_id' => '',
+            'check_id' => '',
+            'source' => 'admin_fcm_test',
+        ];
+
+        $base = [
+            'channel_id' => self::ADMIN_CHANNEL_ID,
+            'token_prefix' => substr($fcmToken, 0, 20).'…',
+            'firebase_project_id' => $this->serviceAccountProjectId(),
+            'used_latest' => $usedLatest,
+            'device_token_id' => $deviceTokenId,
+        ];
+
+        try {
+            $response = $this->sendNotification(
+                $fcmToken,
+                'DoctorBike Test',
+                'FCM visible notification test',
+                $data
+            );
+
+            return array_merge($base, [
+                'ok' => true,
+                'message' => 'تم إرسال FCM بنجاح (DoctorBike Test).',
+                'firebase_response' => $this->formatResponseForLog($response),
+            ]);
+        } catch (Throwable $e) {
+            Log::error('Admin FCM test failed', [
+                'token_prefix' => $base['token_prefix'],
+                'error' => $e->getMessage(),
+            ]);
+
+            return array_merge($base, [
+                'ok' => false,
+                'message' => 'فشل إرسال FCM: '.$e->getMessage(),
+            ]);
+        }
+    }
+
     public function sendNotification(string $token, string $title, string $body, array $data = []): mixed
     {
         $messaging = $this->messaging();

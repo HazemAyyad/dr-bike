@@ -5,7 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\AdminDeviceToken;
 use App\Models\AdminNotification;
 use App\Services\AdminNotificationService;
+use App\Services\FirebaseService;
 use Illuminate\Http\Request;
+use Illuminate\Http\RedirectResponse;
 
 /**
  * صفحة ويب بسيطة لإرسال إشعارات للأدمن (قاعدة البيانات + FCM).
@@ -35,6 +37,9 @@ class AdminNotificationWebController extends Controller
     {
         $this->authorizeRequest($request);
 
+        $latestDevice = AdminDeviceToken::query()->orderByDesc('id')->first();
+        $authQuery = $this->authQueryParams($request);
+
         return view('admin-notify-test', [
             'token' => $request->query('token', ''),
             'tokenRequired' => $this->expectedToken() !== '',
@@ -42,7 +47,107 @@ class AdminNotificationWebController extends Controller
             'unreadCount' => AdminNotification::query()->where('is_read', false)->count(),
             'types' => $this->notificationTypes(),
             'result' => session('result'),
+            'latestDevice' => $latestDevice,
+            'fcmTestLatestUrl' => route('test.admin-notify.fcm-test', $authQuery),
+            'fcmTestUrls' => $this->fcmTestUrlExamples($request, $latestDevice),
         ]);
+    }
+
+    /**
+     * GET — same as `php artisan admin:fcm-test` (latest device).
+     */
+    public function fcmTest(Request $request, FirebaseService $firebaseService): RedirectResponse
+    {
+        $this->authorizeRequest($request);
+
+        $fcmToken = trim((string) $request->query('fcm_token', ''));
+
+        return $this->runFcmTestAndRedirect(
+            $request,
+            $firebaseService,
+            $fcmToken !== '' ? $fcmToken : null
+        );
+    }
+
+    /**
+     * POST — same as `php artisan admin:fcm-test {token}`.
+     */
+    public function fcmTestWithToken(Request $request, FirebaseService $firebaseService): RedirectResponse
+    {
+        $this->authorizeRequest($request);
+
+        $validated = $request->validate([
+            'fcm_token' => ['required', 'string', 'max:512'],
+        ]);
+
+        return $this->runFcmTestAndRedirect($request, $firebaseService, $validated['fcm_token']);
+    }
+
+    protected function runFcmTestAndRedirect(
+        Request $request,
+        FirebaseService $firebaseService,
+        ?string $fcmToken
+    ): RedirectResponse {
+        $usedLatest = false;
+        $deviceTokenId = null;
+
+        if ($fcmToken === null || $fcmToken === '') {
+            $row = AdminDeviceToken::query()->orderByDesc('id')->first();
+            if ($row === null) {
+                return redirect()
+                    ->route('test.admin-notify', $this->authQueryParams($request))
+                    ->with('result', [
+                        'ok' => false,
+                        'message' => 'لا يوجد جهاز أدمن مسجّل. سجّل دخول أدمن من التطبيق أولاً.',
+                    ]);
+            }
+            $fcmToken = $row->fcm_token;
+            $usedLatest = true;
+            $deviceTokenId = $row->id;
+        }
+
+        $result = $firebaseService->sendAdminFcmTest($fcmToken, $usedLatest, $deviceTokenId);
+
+        return redirect()
+            ->route('test.admin-notify', $this->authQueryParams($request))
+            ->with('result', array_merge($result, [
+                'mode' => 'fcm_test',
+            ]));
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    protected function authQueryParams(Request $request): array
+    {
+        $webToken = (string) $request->query('token', $request->input('token', ''));
+
+        return $webToken !== '' ? ['token' => $webToken] : [];
+    }
+
+    /**
+     * @return array<int, array{label: string, url: string}>
+     */
+    protected function fcmTestUrlExamples(Request $request, ?AdminDeviceToken $latestDevice): array
+    {
+        $auth = $this->authQueryParams($request);
+        $examples = [
+            [
+                'label' => 'أحدث جهاز (مثل: php artisan admin:fcm-test)',
+                'url' => route('test.admin-notify.fcm-test', $auth),
+            ],
+        ];
+
+        if ($latestDevice !== null) {
+            $examples[] = [
+                'label' => 'أحدث جهاز + عرض fcm_token في الرابط (للنسخ)',
+                'url' => route('test.admin-notify.fcm-test', array_merge($auth, [
+                    'fcm_token' => $latestDevice->fcm_token,
+                ])),
+            ];
+        }
+
+        return $examples;
     }
 
     public function send(Request $request, AdminNotificationService $adminNotificationService)
