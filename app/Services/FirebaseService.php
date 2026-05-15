@@ -32,6 +32,34 @@ class FirebaseService
         return is_file($legacy) ? $legacy : null;
     }
 
+    public function credentialsPathForDiagnostics(): ?string
+    {
+        $path = $this->credentialsPath();
+        if ($path === null) {
+            return null;
+        }
+
+        return is_readable($path) ? $path : null;
+    }
+
+    public function serviceAccountProjectId(): ?string
+    {
+        $path = $this->credentialsPathForDiagnostics();
+        if ($path === null) {
+            return null;
+        }
+
+        try {
+            $json = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
+
+            return isset($json['project_id']) ? (string) $json['project_id'] : null;
+        } catch (Throwable $e) {
+            Log::warning('Could not read Firebase service account project_id: '.$e->getMessage());
+
+            return null;
+        }
+    }
+
     public function messaging(): ?Messaging
     {
         if ($this->messaging !== null) {
@@ -60,7 +88,10 @@ class FirebaseService
     /**
      * @param  array<string, string>  $data  FCM data keys/values must be strings
      */
-    public function sendNotification(string $token, string $title, string $body, array $data = []): bool
+    /**
+     * @return mixed FCM HTTP response (message name / array) from Kreait
+     */
+    public function sendNotification(string $token, string $title, string $body, array $data = []): mixed
     {
         $messaging = $this->messaging();
         if ($messaging === null) {
@@ -75,13 +106,16 @@ class FirebaseService
      *
      * @param  array<string, string>  $data
      */
-    public function sendToTokenQuietly(string $token, string $title, string $body, array $data = []): bool
+    /**
+     * @return mixed|null Kreait response on success; null on failure
+     */
+    public function sendToTokenQuietly(string $token, string $title, string $body, array $data = []): mixed
     {
         $messaging = $this->messaging();
         if ($messaging === null) {
             Log::warning('FCM skipped: messaging not initialized');
 
-            return false;
+            return null;
         }
 
         return $this->sendToTokenInternal($messaging, $token, $title, $body, $data, false);
@@ -90,6 +124,9 @@ class FirebaseService
     /**
      * @param  array<string, string>  $data
      */
+    /**
+     * @return mixed|null Kreait send() return value on success; null on quiet failure
+     */
     protected function sendToTokenInternal(
         Messaging $messaging,
         string $token,
@@ -97,13 +134,14 @@ class FirebaseService
         string $body,
         array $data,
         bool $throwOnFailure
-    ): bool {
+    ): mixed {
         $dataWithText = array_merge($data, [
             'title' => $title,
             'body' => $body,
         ]);
 
         Log::info('FCM send start', [
+            'firebase_project_id' => $this->serviceAccountProjectId(),
             'token_prefix' => substr($token, 0, 12).'…',
             'title' => $title,
             'body' => mb_substr($body, 0, 80),
@@ -144,14 +182,17 @@ class FirebaseService
                     ])
                 );
 
-            $messaging->send($message);
+            $response = $messaging->send($message);
 
             Log::info('FCM send success', [
                 'token_prefix' => substr($token, 0, 12).'…',
                 'channel_id' => self::ADMIN_CHANNEL_ID,
+                'firebase_project_id' => $this->serviceAccountProjectId(),
+                'response' => $this->formatResponseForLog($response),
+                'response_type' => is_object($response) ? get_class($response) : gettype($response),
             ]);
 
-            return true;
+            return $response;
         } catch (FirebaseException $e) {
             Log::error('FCM send failed (FirebaseException)', [
                 'token_prefix' => substr($token, 0, 12).'…',
@@ -169,7 +210,28 @@ class FirebaseService
             }
         }
 
-        return false;
+        return null;
+    }
+
+    /**
+     * @param  mixed  $response
+     */
+    protected function formatResponseForLog(mixed $response): string
+    {
+        if ($response === null) {
+            return '(null)';
+        }
+        if (is_scalar($response)) {
+            return (string) $response;
+        }
+        if (is_array($response)) {
+            return json_encode($response, JSON_UNESCAPED_UNICODE) ?: '(array)';
+        }
+        if (is_object($response) && method_exists($response, '__toString')) {
+            return (string) $response;
+        }
+
+        return json_encode($response, JSON_UNESCAPED_UNICODE) ?: get_debug_type($response);
     }
 
     protected function handleMessagingFailure(string $token, Throwable $e, bool $throwOnFailure): void

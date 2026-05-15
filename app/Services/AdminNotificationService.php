@@ -235,13 +235,13 @@ class AdminNotificationService
 
         foreach ($tokens as $token) {
             try {
-                $ok = $this->firebaseService->sendToTokenQuietly(
+                $response = $this->firebaseService->sendToTokenQuietly(
                     $token,
                     $notification->title,
                     $notification->body,
                     $data
                 );
-                if ($ok) {
+                if ($response !== null) {
                     $sent++;
                 } else {
                     $failed++;
