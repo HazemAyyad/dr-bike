@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AdminNotificationWebController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeTasks;
 use App\Http\Controllers\API\Products;
@@ -27,6 +28,10 @@ Route::get('/', function () {
 });
 
 /** اختبار مزامنة المخزون مع متجر .NET — راجع الصفحة والتحذير داخلها */
+/** إرسال إشعار تجريبي للأدمن (قاعدة البيانات + FCM) */
+Route::get('/test/admin-notify', [AdminNotificationWebController::class, 'show'])->name('test.admin-notify');
+Route::post('/test/admin-notify', [AdminNotificationWebController::class, 'send'])->name('test.admin-notify.send');
+
 Route::get('/test/store-sync', [StoreSyncTestController::class, 'show'])->name('test.store-sync');
 Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('test.store-sync.run');
 
