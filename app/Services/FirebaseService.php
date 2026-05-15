@@ -315,7 +315,7 @@ class FirebaseService
 
         try {
             $message = CloudMessage::new()
-                ->withToken($token)
+                ->toToken($token)
                 ->withNotification(Notification::create($title, $body))
                 ->withData($dataWithText)
                 ->withAndroidConfig(
