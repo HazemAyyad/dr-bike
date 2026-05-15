@@ -213,24 +213,55 @@ class AdminNotificationService
     public function pushToAdminDevices(AdminNotification $notification): void
     {
         $tokens = AdminDeviceToken::query()->pluck('fcm_token')->all();
+        $tokenCount = count($tokens);
+
+        Log::info('Admin FCM broadcast start', [
+            'notification_id' => $notification->id,
+            'type' => $notification->type,
+            'title' => $notification->title,
+            'token_count' => $tokenCount,
+            'channel_id' => FirebaseService::ADMIN_CHANNEL_ID,
+        ]);
+
         if ($tokens === []) {
+            Log::warning('Admin FCM broadcast skipped: no device tokens');
+
             return;
         }
 
         $data = $this->buildFcmDataPayload($notification);
+        $sent = 0;
+        $failed = 0;
 
         foreach ($tokens as $token) {
             try {
-                $this->firebaseService->sendToTokenQuietly(
+                $ok = $this->firebaseService->sendToTokenQuietly(
                     $token,
                     $notification->title,
                     $notification->body,
                     $data
                 );
+                if ($ok) {
+                    $sent++;
+                } else {
+                    $failed++;
+                }
             } catch (\Throwable $e) {
-                Log::error('Admin FCM broadcast token failure: '.$e->getMessage());
+                $failed++;
+                Log::error('Admin FCM broadcast token failure', [
+                    'notification_id' => $notification->id,
+                    'token_prefix' => substr($token, 0, 12).'…',
+                    'error' => $e->getMessage(),
+                ]);
             }
         }
+
+        Log::info('Admin FCM broadcast finished', [
+            'notification_id' => $notification->id,
+            'sent' => $sent,
+            'failed' => $failed,
+            'token_count' => $tokenCount,
+        ]);
     }
 
     /**

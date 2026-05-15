@@ -6,12 +6,18 @@ use App\Models\AdminDeviceToken;
 use Kreait\Firebase\Contract\Messaging;
 use Kreait\Firebase\Exception\FirebaseException;
 use Kreait\Firebase\Factory;
+use Kreait\Firebase\Messaging\AndroidConfig;
+use Kreait\Firebase\Messaging\ApnsConfig;
 use Kreait\Firebase\Messaging\CloudMessage;
+use Kreait\Firebase\Messaging\Notification;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class FirebaseService
 {
+    /** Must match Flutter [kDrBikeAdminNotificationChannelId] and AndroidManifest. */
+    public const ADMIN_CHANNEL_ID = 'dr_bike_admin_notifications';
+
     protected ?Messaging $messaging = null;
 
     protected function credentialsPath(): ?string
@@ -92,22 +98,72 @@ class FirebaseService
         array $data,
         bool $throwOnFailure
     ): bool {
+        $dataWithText = array_merge($data, [
+            'title' => $title,
+            'body' => $body,
+        ]);
+
+        Log::info('FCM send start', [
+            'token_prefix' => substr($token, 0, 12).'…',
+            'title' => $title,
+            'body' => mb_substr($body, 0, 80),
+            'channel_id' => self::ADMIN_CHANNEL_ID,
+            'data_keys' => array_keys($dataWithText),
+        ]);
+
         try {
-            $message = CloudMessage::fromArray([
-                'token' => $token,
-                'notification' => [
-                    'title' => $title,
-                    'body' => $body,
-                ],
-                'data' => $data,
-            ]);
+            $message = CloudMessage::new()
+                ->withToken($token)
+                ->withNotification(Notification::create($title, $body))
+                ->withData($dataWithText)
+                ->withAndroidConfig(
+                    AndroidConfig::fromArray([
+                        'priority' => 'high',
+                        'notification' => [
+                            'channel_id' => self::ADMIN_CHANNEL_ID,
+                            'sound' => 'default',
+                            'icon' => 'ic_notification',
+                            'color' => '#6B65BD',
+                        ],
+                    ])
+                )
+                ->withApnsConfig(
+                    ApnsConfig::fromArray([
+                        'headers' => [
+                            'apns-priority' => '10',
+                        ],
+                        'payload' => [
+                            'aps' => [
+                                'alert' => [
+                                    'title' => $title,
+                                    'body' => $body,
+                                ],
+                                'sound' => 'default',
+                            ],
+                        ],
+                    ])
+                );
+
             $messaging->send($message);
+
+            Log::info('FCM send success', [
+                'token_prefix' => substr($token, 0, 12).'…',
+                'channel_id' => self::ADMIN_CHANNEL_ID,
+            ]);
 
             return true;
         } catch (FirebaseException $e) {
+            Log::error('FCM send failed (FirebaseException)', [
+                'token_prefix' => substr($token, 0, 12).'…',
+                'message' => $e->getMessage(),
+                'class' => get_class($e),
+            ]);
             $this->handleMessagingFailure($token, $e, $throwOnFailure);
         } catch (Throwable $e) {
-            Log::error('Unexpected error while sending Firebase notification: '.$e->getMessage());
+            Log::error('FCM send failed (unexpected)', [
+                'token_prefix' => substr($token, 0, 12).'…',
+                'message' => $e->getMessage(),
+            ]);
             if ($throwOnFailure) {
                 throw new \RuntimeException(__('messages.firebaseUnknownError'));
             }
@@ -118,10 +174,11 @@ class FirebaseService
 
     protected function handleMessagingFailure(string $token, Throwable $e, bool $throwOnFailure): void
     {
-        Log::error('Firebase notification failed: '.$e->getMessage());
-
         if ($this->isInvalidTokenError($e)) {
             AdminDeviceToken::query()->where('fcm_token', $token)->delete();
+            Log::warning('FCM removed invalid admin device token', [
+                'token_prefix' => substr($token, 0, 12).'…',
+            ]);
         }
 
         if ($throwOnFailure) {
