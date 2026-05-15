@@ -20,35 +20,136 @@ class FirebaseService
 
     protected ?Messaging $messaging = null;
 
-    protected function credentialsPath(): ?string
+    protected ?string $lastInitError = null;
+
+    protected ?string $resolvedCredentialsPath = null;
+
+    /**
+     * @return array{
+     *     env_path: string|null,
+     *     resolved_path: string|null,
+     *     project_id: string|null,
+     *     readable: bool,
+     *     messaging_ready: bool,
+     *     last_error: string|null
+     * }
+     */
+    public function credentialsDiagnostics(): array
+    {
+        $resolved = $this->resolveCredentialsFile();
+        $readable = $resolved !== null && is_readable($resolved);
+
+        return [
+            'env_path' => $this->envCredentialsPath(),
+            'resolved_path' => $resolved,
+            'project_id' => $readable ? $this->readProjectIdFromFile($resolved) : null,
+            'readable' => $readable,
+            'messaging_ready' => $this->messaging() !== null,
+            'last_error' => $this->lastInitError,
+        ];
+    }
+
+    protected function envCredentialsPath(): ?string
     {
         $path = env('FIREBASE_CREDENTIALS');
-        if ($path && is_string($path) && $path !== '') {
-            return $path;
+
+        if (! is_string($path)) {
+            return null;
         }
 
-        $legacy = storage_path('doctorbike-c4078-firebase-adminsdk-fbsvc-e68cb873ed.json');
+        $path = trim($path);
 
-        return is_file($legacy) ? $legacy : null;
+        return $path !== '' ? $path : null;
+    }
+
+    /**
+     * Resolve Firebase Admin SDK JSON (absolute path).
+     */
+    public function resolveCredentialsFile(): ?string
+    {
+        if ($this->resolvedCredentialsPath !== null) {
+            return $this->resolvedCredentialsPath;
+        }
+
+        $candidates = [];
+
+        $envPath = $this->envCredentialsPath();
+        if ($envPath !== null) {
+            $candidates[] = $envPath;
+        }
+
+        $candidates[] = storage_path('doctorbike-c4078-firebase-adminsdk-fbsvc-e68cb873ed.json');
+        $candidates[] = storage_path('app/firebase-credentials.json');
+        $candidates[] = base_path('firebase-credentials.json');
+
+        foreach ($candidates as $candidate) {
+            $resolved = $this->resolvePath($candidate);
+            if ($resolved !== null) {
+                $this->resolvedCredentialsPath = $resolved;
+
+                return $resolved;
+            }
+        }
+
+        return null;
+    }
+
+    protected function resolvePath(string $path): ?string
+    {
+        $path = trim($path);
+        if ($path === '') {
+            return null;
+        }
+
+        $try = [$path];
+        if (! $this->isAbsolutePath($path)) {
+            $try[] = base_path($path);
+            $try[] = storage_path($path);
+            $try[] = storage_path('app/'.$path);
+        }
+
+        foreach ($try as $p) {
+            if (is_file($p) && is_readable($p)) {
+                $real = realpath($p);
+
+                return $real !== false ? $real : $p;
+            }
+        }
+
+        return null;
+    }
+
+    protected function isAbsolutePath(string $path): bool
+    {
+        if (str_starts_with($path, '/') || str_starts_with($path, '\\')) {
+            return true;
+        }
+
+        return (bool) preg_match('#^[A-Za-z]:[\\\\/]#', $path);
+    }
+
+    protected function credentialsPath(): ?string
+    {
+        return $this->resolveCredentialsFile();
     }
 
     public function credentialsPathForDiagnostics(): ?string
     {
-        $path = $this->credentialsPath();
-        if ($path === null) {
-            return null;
-        }
-
-        return is_readable($path) ? $path : null;
+        return $this->resolveCredentialsFile();
     }
 
     public function serviceAccountProjectId(): ?string
     {
-        $path = $this->credentialsPathForDiagnostics();
+        $path = $this->resolveCredentialsFile();
         if ($path === null) {
             return null;
         }
 
+        return $this->readProjectIdFromFile($path);
+    }
+
+    protected function readProjectIdFromFile(string $path): ?string
+    {
         try {
             $json = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
 
@@ -60,15 +161,27 @@ class FirebaseService
         }
     }
 
+    public function getLastInitError(): ?string
+    {
+        return $this->lastInitError;
+    }
+
     public function messaging(): ?Messaging
     {
         if ($this->messaging !== null) {
             return $this->messaging;
         }
 
-        $path = $this->credentialsPath();
-        if ($path === null || ! is_readable($path)) {
-            Log::warning('Firebase credentials not configured or unreadable. Set FIREBASE_CREDENTIALS in .env');
+        $path = $this->resolveCredentialsFile();
+        if ($path === null) {
+            $env = $this->envCredentialsPath();
+            if ($env !== null) {
+                $this->lastInitError = "ملف Firebase غير موجود أو غير قابل للقراءة: {$env} — تحقق من FIREBASE_CREDENTIALS في .env";
+            } else {
+                $this->lastInitError = 'ملف Firebase غير موجود. اضبط FIREBASE_CREDENTIALS في .env (مسار ملف Admin SDK JSON) '
+                    .'أو ضع الملف في: storage/doctorbike-c4078-firebase-adminsdk-fbsvc-e68cb873ed.json';
+            }
+            Log::warning('Firebase credentials not configured', ['last_error' => $this->lastInitError]);
 
             return null;
         }
@@ -76,25 +189,21 @@ class FirebaseService
         try {
             $factory = (new Factory)->withServiceAccount($path);
             $this->messaging = $factory->createMessaging();
+            $this->lastInitError = null;
 
             return $this->messaging;
         } catch (Throwable $e) {
-            Log::error('Firebase initialization failed: '.$e->getMessage());
+            $this->lastInitError = 'Firebase init failed: '.$e->getMessage();
+            Log::error($this->lastInitError, ['path' => $path]);
 
             return null;
         }
     }
 
     /**
-     * @param  array<string, string>  $data  FCM data keys/values must be strings
-     */
-    /**
-     * @return mixed FCM HTTP response (message name / array) from Kreait
-     */
-    /**
      * Same payload as `php artisan admin:fcm-test` (diagnostics).
      *
-     * @return array{ok: bool, message: string, firebase_response?: string, firebase_project_id?: string|null, channel_id: string, token_prefix: string, device_token_id?: int|null, used_latest: bool}
+     * @return array{ok: bool, message: string, firebase_response?: string, firebase_project_id?: string|null, channel_id: string, token_prefix: string, device_token_id?: int|null, used_latest: bool, credentials_diagnostics?: array}
      */
     public function sendAdminFcmTest(string $fcmToken, bool $usedLatest = false, ?int $deviceTokenId = null): array
     {
@@ -115,6 +224,7 @@ class FirebaseService
             'firebase_project_id' => $this->serviceAccountProjectId(),
             'used_latest' => $usedLatest,
             'device_token_id' => $deviceTokenId,
+            'credentials_diagnostics' => $this->credentialsDiagnostics(),
         ];
 
         try {
@@ -129,6 +239,7 @@ class FirebaseService
                 'ok' => true,
                 'message' => 'تم إرسال FCM بنجاح (DoctorBike Test).',
                 'firebase_response' => $this->formatResponseForLog($response),
+                'firebase_project_id' => $this->serviceAccountProjectId(),
             ]);
         } catch (Throwable $e) {
             Log::error('Admin FCM test failed', [
@@ -139,25 +250,26 @@ class FirebaseService
             return array_merge($base, [
                 'ok' => false,
                 'message' => 'فشل إرسال FCM: '.$e->getMessage(),
+                'credentials_diagnostics' => $this->credentialsDiagnostics(),
             ]);
         }
     }
 
+    /**
+     * @return mixed Kreait send() return value on success
+     */
     public function sendNotification(string $token, string $title, string $body, array $data = []): mixed
     {
         $messaging = $this->messaging();
         if ($messaging === null) {
-            throw new \RuntimeException(__('messages.firebaseInitError'));
+            throw new \RuntimeException(
+                $this->lastInitError ?? __('messages.firebaseInitError')
+            );
         }
 
         return $this->sendToTokenInternal($messaging, $token, $title, $body, $data, true);
     }
 
-    /**
-     * Send without throwing; used by admin broadcast. Removes invalid tokens from admin_device_tokens.
-     *
-     * @param  array<string, string>  $data
-     */
     /**
      * @return mixed|null Kreait response on success; null on failure
      */
@@ -165,7 +277,9 @@ class FirebaseService
     {
         $messaging = $this->messaging();
         if ($messaging === null) {
-            Log::warning('FCM skipped: messaging not initialized');
+            Log::warning('FCM skipped: messaging not initialized', [
+                'last_error' => $this->lastInitError,
+            ]);
 
             return null;
         }
@@ -173,9 +287,6 @@ class FirebaseService
         return $this->sendToTokenInternal($messaging, $token, $title, $body, $data, false);
     }
 
-    /**
-     * @param  array<string, string>  $data
-     */
     /**
      * @return mixed|null Kreait send() return value on success; null on quiet failure
      */
@@ -194,6 +305,7 @@ class FirebaseService
 
         Log::info('FCM send start', [
             'firebase_project_id' => $this->serviceAccountProjectId(),
+            'credentials_path' => $this->resolveCredentialsFile(),
             'token_prefix' => substr($token, 0, 12).'…',
             'title' => $title,
             'body' => mb_substr($body, 0, 80),
@@ -258,7 +370,7 @@ class FirebaseService
                 'message' => $e->getMessage(),
             ]);
             if ($throwOnFailure) {
-                throw new \RuntimeException(__('messages.firebaseUnknownError'));
+                throw new \RuntimeException(__('messages.firebaseUnknownError').' '.$e->getMessage());
             }
         }
 
@@ -296,7 +408,7 @@ class FirebaseService
         }
 
         if ($throwOnFailure) {
-            throw new \RuntimeException(__('messages.firebaseSendError'));
+            throw new \RuntimeException(__('messages.firebaseSendError').' '.$e->getMessage());
         }
     }
 

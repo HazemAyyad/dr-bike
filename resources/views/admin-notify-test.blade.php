@@ -70,6 +70,39 @@
         @endif
     </div>
 
+    @php
+        $fb = $firebaseDiagnostics ?? [];
+        $fbReady = !empty($fb['messaging_ready']);
+        $fbProject = $fb['project_id'] ?? null;
+        $flutterProject = $flutterExpectedProjectId ?? 'drbike-7fa3a';
+        $projectMismatch = $fbProject && $fbProject !== $flutterProject;
+    @endphp
+
+    <div class="{{ $fbReady ? 'ok-box' : 'fail-box' }}" style="margin-bottom:1rem">
+        <strong>حالة Firebase على السيرفر</strong>
+        @if($fbReady)
+            <br>جاهز — project_id: <code>{{ $fbProject }}</code>
+        @else
+            <br><span style="color:#b91c1c">{{ $fb['last_error'] ?? 'غير مهيأ' }}</span>
+        @endif
+        <div class="meta">
+            @if(!empty($fb['env_path']))
+                <br>FIREBASE_CREDENTIALS: <code>{{ $fb['env_path'] }}</code>
+            @else
+                <br>FIREBASE_CREDENTIALS: غير مضبوط في .env
+            @endif
+            @if(!empty($fb['resolved_path']))
+                <br>ملف credentials: <code>{{ $fb['resolved_path'] }}</code>
+            @else
+                <br>لا يوجد ملف Admin SDK JSON على السيرفر
+            @endif
+            <br>مشروع التطبيق: <code>{{ $flutterProject }}</code>
+            @if($projectMismatch)
+                <br><strong style="color:#b45309">تحذير: مشروع Laravel ≠ التطبيق</strong>
+            @endif
+        </div>
+    </div>
+
     <div class="stats">
         <div class="stat">
             <strong>{{ $deviceCount }}</strong>
@@ -106,6 +139,12 @@
                     @endif
                     @if(!empty(session('result.firebase_response')))
                         <br>استجابة Firebase: <code>{{ session('result.firebase_response') }}</code>
+                    @endif
+                    @if(!empty(session('result.credentials_diagnostics.last_error')))
+                        <br>تفاصيل Firebase: <code>{{ session('result.credentials_diagnostics.last_error') }}</code>
+                    @endif
+                    @if(!empty(session('result.credentials_diagnostics.resolved_path')))
+                        <br>ملف credentials: <code>{{ session('result.credentials_diagnostics.resolved_path') }}</code>
                     @endif
                 </div>
             @endif

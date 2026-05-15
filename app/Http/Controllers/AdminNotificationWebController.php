@@ -33,12 +33,14 @@ class AdminNotificationWebController extends Controller
         }
     }
 
-    public function show(Request $request)
+    public function show(Request $request, FirebaseService $firebaseService)
     {
         $this->authorizeRequest($request);
 
         $latestDevice = AdminDeviceToken::query()->orderByDesc('id')->first();
         $authQuery = $this->authQueryParams($request);
+
+        $firebaseDiagnostics = $firebaseService->credentialsDiagnostics();
 
         return view('admin-notify-test', [
             'token' => $request->query('token', ''),
@@ -50,6 +52,8 @@ class AdminNotificationWebController extends Controller
             'latestDevice' => $latestDevice,
             'fcmTestLatestUrl' => route('test.admin-notify.fcm-test', $authQuery),
             'fcmTestUrls' => $this->fcmTestUrlExamples($request, $latestDevice),
+            'firebaseDiagnostics' => $firebaseDiagnostics,
+            'flutterExpectedProjectId' => 'drbike-7fa3a',
         ]);
     }
 
