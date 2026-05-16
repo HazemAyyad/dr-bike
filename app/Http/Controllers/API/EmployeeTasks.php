@@ -14,7 +14,14 @@ use Illuminate\Validation\ValidationException;
 
 class EmployeeTasks extends Controller
 {
+    private function employeeProfilePhoto($employee): string
+    {
+        if (! $employee || ! $employee->employee_img) {
+            return 'no images';
+        }
 
+        return 'public/EmployeeImages/'.$employee->employee_img[0];
+    }
 
 //     private function getTasks($status){
 //    try {
@@ -132,6 +139,7 @@ private function getTasks($status)
                 'task_name' => $task->name,
                 'employee_id' => $task->employee_id,
                 'employee_name' => $task->employee->user->name ?? 'unknown',
+                'employee_photo' => $this->employeeProfilePhoto($task->employee),
                 'start_time' => $task->start_time,
                 'end_time' => $task->end_time,
                 'is_canceled' => $task->is_canceled,
@@ -229,6 +237,7 @@ private function getTasks($status)
                 'task_name' => $task->name,
                 'employee_id' => $task->employee_id,
                 'employee_name' => $task->employee->user->name ?? 'unknown',
+                'employee_photo' => $this->employeeProfilePhoto($task->employee),
                 'start_time' => $task->start_time,
                 'end_time' => $task->end_time,
                 'is_canceled' => $task->is_canceled,
@@ -726,7 +735,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         $request->validate(['employee_task_id'=>['required','exists:employee_tasks,id']]);
 
         $employeeTask = EmployeeTask
-        ::with('subTasks')->findOrFail($request->employee_task_id);
+        ::with(['subTasks', 'employee'])->findOrFail($request->employee_task_id);
     
         $employeeTask->subTasks->transform(function ($subTask) {
         if ($subTask->admin_img) {
@@ -747,6 +756,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             $employeeTask->makeHidden(['admin_img','employee_img','audio']);
             $taskData = $employeeTask->toArray(); // all fields of the task
             $taskData['employee_name'] = $employeeTask->employee->user->name; // add only employee name
+            $taskData['employee_photo'] = $this->employeeProfilePhoto($employeeTask->employee);
             $taskData['admin_img'] =
                 $employeeTask->admin_img
                 ? collect($employeeTask->admin_img)->map(fn($img) => 'public/AdminEmployeeTasksImages/'.$img)->toArray()
