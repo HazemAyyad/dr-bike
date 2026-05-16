@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\InstantSale;
 use App\Models\Product;
+use App\Models\Project;
 use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -28,12 +29,114 @@ class InstantSales extends Controller
         return $image ? ApiImageUrl::normalize($image->imageUrl) : 'no image';
     }
 
+    private const TRADER_CUSTOMER_TYPES = [
+        'trader', 'merchant', 'wholesale', 'تاجر', 'جملة', 'تاجر جملة',
+    ];
+
+    private function buyerTypeLabelAr(string $type): string
+    {
+        return match ($type) {
+            'trader' => 'تاجر',
+            'customer' => 'زبون',
+            default => 'غير محدد',
+        };
+    }
+
+    private function inferBuyerTypeFromCustomer(Customer $customer): string
+    {
+        $customerType = strtolower(trim((string) ($customer->type ?? '')));
+
+        return in_array($customerType, self::TRADER_CUSTOMER_TYPES, true)
+            ? 'trader'
+            : 'customer';
+    }
+
+    /**
+     * @return array{buyer_type: string, buyer_id: int|null, buyer_name: string, buyer_phone: ?string, buyer_address: ?string}
+     */
+    private function buyerSnapshotArray(string $type, ?Customer $customer = null): array
+    {
+        if (! $customer instanceof Customer) {
+            return [
+                'buyer_type' => $type,
+                'buyer_id' => null,
+                'buyer_name' => '-',
+                'buyer_phone' => null,
+                'buyer_address' => null,
+            ];
+        }
+
+        return [
+            'buyer_type' => $type,
+            'buyer_id' => $customer->id,
+            'buyer_name' => $customer->name ?: '-',
+            'buyer_phone' => $customer->phone,
+            'buyer_address' => $customer->address,
+        ];
+    }
+
+    /**
+     * Resolve buyer fields to persist on instant_sales (snapshot at sale time).
+     *
+     * @return array{buyer_type: string, buyer_id: int|null, buyer_name: string, buyer_phone: ?string, buyer_address: ?string}
+     */
+    private function resolveBuyerForStorage(Request $request, ?int $projectId = null, ?string $saleType = null): array
+    {
+        $requestedType = $request->input('buyer_type');
+        $buyerId = $request->input('buyer_id');
+
+        if ($buyerId) {
+            $customer = Customer::find($buyerId);
+            if ($customer instanceof Customer) {
+                $type = in_array($requestedType, ['trader', 'customer'], true)
+                    ? $requestedType
+                    : $this->inferBuyerTypeFromCustomer($customer);
+
+                return $this->buyerSnapshotArray($type, $customer);
+            }
+        }
+
+        $manualName = trim((string) $request->input('buyer_name', ''));
+        if ($manualName !== '' || $request->filled('buyer_phone') || $request->filled('buyer_address')) {
+            $type = in_array($requestedType, ['trader', 'customer', 'unknown'], true)
+                ? $requestedType
+                : 'unknown';
+
+            return [
+                'buyer_type' => $type,
+                'buyer_id' => null,
+                'buyer_name' => $manualName !== '' ? $manualName : '-',
+                'buyer_phone' => $request->input('buyer_phone'),
+                'buyer_address' => $request->input('buyer_address'),
+            ];
+        }
+
+        if ($projectId) {
+            $project = Project::with('partnership.customer')->find($projectId);
+            $customer = $project?->partnership?->customer;
+            if ($customer instanceof Customer) {
+                $type = ($saleType === 'project')
+                    ? 'trader'
+                    : (in_array($requestedType, ['trader', 'customer'], true)
+                        ? $requestedType
+                        : $this->inferBuyerTypeFromCustomer($customer));
+
+                return $this->buyerSnapshotArray($type, $customer);
+            }
+        }
+
+        if (in_array($requestedType, ['trader', 'customer', 'unknown'], true)) {
+            return $this->buyerSnapshotArray($requestedType);
+        }
+
+        return $this->buyerSnapshotArray('unknown');
+    }
+
     /**
      * @return array{type: string, type_label_ar: string, name: string, phone: ?string, address: ?string, id: int|null}
      */
     private function resolveInvoiceBuyer(InstantSale $sale): array
     {
-        $customer = $sale->project?->partnership?->customer;
         $unknown = [
             'type' => 'unknown',
             'type_label_ar' => 'غير محدد',
@@ -42,6 +145,21 @@ class InstantSales extends Controller
             'address' => null,
             'id' => null,
         ];
+
+        // A) Persisted snapshot on instant_sales
+        if (! empty($sale->buyer_type)) {
+            return [
+                'type' => $sale->buyer_type,
+                'type_label_ar' => $this->buyerTypeLabelAr($sale->buyer_type),
+                'name' => $sale->buyer_name ?: '-',
+                'phone' => $sale->buyer_phone,
+                'address' => $sale->buyer_address,
+                'id' => $sale->buyer_id,
+            ];
+        }
+
+        // B) Legacy: project -> partnership -> customer
+        $customer = $sale->project?->partnership?->customer;
 
         if ($sale->type === 'project' || $sale->project_id) {
             if ($customer instanceof Customer) {
@@ -68,9 +186,7 @@ class InstantSales extends Controller
         }
 
         if ($customer instanceof Customer) {
-            $customerType = strtolower(trim((string) ($customer->type ?? '')));
-            $traderTypes = ['trader', 'merchant', 'wholesale', 'تاجر', 'جملة', 'تاجر جملة'];
-            $isTrader = in_array($customerType, $traderTypes, true);
+            $isTrader = $this->inferBuyerTypeFromCustomer($customer) === 'trader';
 
             return [
                 'type' => $isTrader ? 'trader' : 'customer',
@@ -109,14 +225,30 @@ public function store(Request $request)
         'other_products.*.type' => 'required|string|in:normal,project',
         'other_products.*.project_id' => 'nullable|exists:projects,id',
 
+        'buyer_type' => 'nullable|string|in:trader,customer,unknown',
+        'buyer_id' => 'nullable|integer|exists:customers,id',
+        'buyer_name' => 'nullable|string|max:255',
+        'buyer_phone' => 'nullable|string|max:50',
+        'buyer_address' => 'nullable|string|max:500',
+
     ]);
 
 
         $otherNames = [];
 
 
+        $projectId = isset($data['project_id']) ? (int) $data['project_id'] : null;
+        $buyerPayload = $this->resolveBuyerForStorage(
+            $request,
+            $projectId,
+            $data['type'] ?? null
+        );
+
         // Save main instant sale
-        $mainData = collect($data)->except('other_products')->toArray();
+        $mainData = collect($data)
+            ->except(['other_products', 'buyer_type', 'buyer_id', 'buyer_name', 'buyer_phone', 'buyer_address'])
+            ->merge($buyerPayload)
+            ->toArray();
 
         $mainProduct = Product::findOrFail($mainData['product_id']);
 
@@ -179,14 +311,16 @@ public function store(Request $request)
                         'message'=>__('messages.cant_be_project_type'),
                     ],200);
                 }        
-                InstantSale::create([
+                $subProjectId = isset($product['project_id']) ? (int) $product['project_id'] : null;
+
+                InstantSale::create(array_merge([
                     'product_id' => $product['product_id'],
                     'cost' => $product['cost'],
                     'quantity' => $product['quantity'],
                     'parent_id' => $mainInstantSale->id,
                     'type' => $product['type'],
-                    'project_id' => $product['project_id']?? null,
-                ]);
+                    'project_id' => $product['project_id'] ?? null,
+                ], $buyerPayload));
 
                 $subProduct->stock -= $product['quantity'];
                 $subProduct->save();
@@ -374,43 +508,98 @@ public function store(Request $request)
             ], 200);
         }
 }
-   public function getInstantSales()
-{
-    try {
-        $instantSales = InstantSale::whereNull('parent_id')
-            ->with([
-                'product:id,nameAr',
-                'subProducts.product:id,nameAr',
-            ])
-            ->latest()
-            ->get();
+    public function getInstantSales(Request $request)
+    {
+        try {
+            $request->validate([
+                'search' => 'nullable|string|max:255',
+                'sort_direction' => 'nullable|string|in:asc,desc',
+            ]);
 
-        $formatted = $instantSales->map(function ($sale) {
-            return [
-                'id' => $sale->id,
-                'product' => optional($sale->product)->nameAr ?? 'منتج محذوف',
-                'cost' => $sale->cost,
-                'total_cost' => $sale->total_cost,
-                'quantity' => $sale->quantity,
-                'notes' => $sale->notes,
-                'date' => optional($sale->created_at)->format('Y-m-d'),
-                'sub_products' => $sale->subProducts->map(function ($sub) {
-                    return [
-                        'id' => $sub->id,
-                        'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
-                        'cost' => $sub->cost,
-                        'quantity' => $sub->quantity,
-                    ];
-                }),
-            ];
-        });
+            $search = trim((string) $request->input('search', ''));
+            $sortDirection = strtolower((string) $request->input('sort_direction', 'desc')) === 'asc'
+                ? 'asc'
+                : 'desc';
 
-        return response()->json([
-            'status' => 'success',
-            'instant_sales' => $formatted,
-        ], 200);
+            $query = InstantSale::query()
+                ->whereNull('parent_id')
+                ->with([
+                    'product:id,nameAr',
+                    'project:id,name',
+                    'subProducts.product:id,nameAr',
+                ]);
 
-    } catch (\Throwable $e) {
+            if ($search !== '') {
+                $term = '%'.$search.'%';
+                $query->where(function ($q) use ($term, $search) {
+                    $q->where('buyer_name', 'like', $term)
+                        ->orWhere('buyer_phone', 'like', $term)
+                        ->orWhere('buyer_address', 'like', $term)
+                        ->orWhere('notes', 'like', $term)
+                        ->orWhereHas('product', function ($productQuery) use ($term) {
+                            $productQuery->where('nameAr', 'like', $term);
+                        })
+                        ->orWhereHas('project', function ($projectQuery) use ($term) {
+                            $projectQuery->where('name', 'like', $term);
+                        })
+                        ->orWhereHas('subProducts.product', function ($subProductQuery) use ($term) {
+                            $subProductQuery->where('nameAr', 'like', $term);
+                        });
+
+                    if (ctype_digit($search)) {
+                        $q->orWhere('id', (int) $search);
+                    }
+                });
+            }
+
+            $instantSales = $query
+                ->orderBy('created_at', $sortDirection)
+                ->orderBy('id', $sortDirection)
+                ->get();
+
+            $formatted = $instantSales->map(function ($sale) {
+                $buyerLabel = $this->buyerTypeLabelAr($sale->buyer_type ?? 'unknown');
+
+                return [
+                    'id' => $sale->id,
+                    'product' => optional($sale->product)->nameAr ?? 'منتج محذوف',
+                    'cost' => $sale->cost,
+                    'total_cost' => $sale->total_cost,
+                    'quantity' => $sale->quantity,
+                    'notes' => $sale->notes,
+                    'date' => optional($sale->created_at)->format('Y-m-d'),
+                    'created_at' => optional($sale->created_at)->format('Y-m-d H:i:s'),
+                    'buyer_type' => $sale->buyer_type,
+                    'buyer_type_label_ar' => $buyerLabel,
+                    'buyer_id' => $sale->buyer_id,
+                    'buyer_name' => $sale->buyer_name,
+                    'buyer_phone' => $sale->buyer_phone,
+                    'buyer_address' => $sale->buyer_address,
+                    'project_name' => $sale->project?->name,
+                    'sub_products' => $sale->subProducts->map(function ($sub) {
+                        return [
+                            'id' => $sub->id,
+                            'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
+                            'cost' => $sub->cost,
+                            'quantity' => $sub->quantity,
+                        ];
+                    }),
+                ];
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'instant_sales' => $formatted,
+                'sort_direction' => $sortDirection,
+            ], 200);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
         \Log::error('getInstantSales error', [
             'message' => $e->getMessage(),
             'file' => $e->getFile(),
