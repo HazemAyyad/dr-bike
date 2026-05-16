@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\InstantSale;
 use App\Models\Product;
+use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -14,7 +15,17 @@ use function PHPUnit\Framework\isEmpty;
 
 class InstantSales extends Controller
 {
+    private function invoiceProductImage(?Product $product): string
+    {
+        if ($product === null) {
+            return 'no image';
+        }
 
+        $image = $product->viewImages->first()
+            ?? $product->normalImages->first();
+
+        return $image ? ApiImageUrl::normalize($image->imageUrl) : 'no image';
+    }
 
 
 
@@ -442,45 +453,66 @@ public function store(Request $request)
 
     }
 
-    public function invoiceDetails(Request $request){
-        try{
+    public function invoiceDetails(Request $request)
+    {
+        try {
+            $request->validate(['instant_sale_id' => 'required|integer|exists:instant_sales,id']);
 
-            $request->validate(['instant_sale_id'=>'required|integer|exists:instant_sales,id']);
+            $sale = InstantSale::query()
+                ->with([
+                    'product.viewImages',
+                    'product.normalImages',
+                    'subProducts.product.viewImages',
+                    'subProducts.product.normalImages',
+                    'project.partnership.customer',
+                ])
+                ->findOrFail($request->instant_sale_id);
 
-            $sale = InstantSale::
-            with('product:id,nameAr')->
-            findOrFail($request->instant_sale_id);
+            $customer = $sale->project?->partnership?->customer;
+            $subtotalBeforeDiscount = (float) $sale->cost * (float) $sale->quantity;
+            $discount = (float) ($sale->discount ?? 0);
+            $totalCost = (float) $sale->total_cost;
 
-            $mainProImage = $sale->product->viewImages->first();
             $formatted = [
                 'id' => $sale->id,
-                'product' => $sale->product->nameAr,
-                'product_image' => $mainProImage ? env('STORE_DOMAIN').$mainProImage->imageUrl : 'no image',
-
+                'invoice_number' => (string) $sale->id,
+                'invoice_date' => optional($sale->created_at)->format('Y-m-d H:i:s'),
+                'product' => $sale->product?->nameAr ?? '-',
+                'product_image' => $this->invoiceProductImage($sale->product),
                 'cost' => $sale->cost,
-                'quantity'=> $sale->quantity,
-
-                'total_cost' => $sale->total_cost,
-                'discount'=> $sale->discount??0,
-
+                'quantity' => $sale->quantity,
+                'subtotal' => $subtotalBeforeDiscount,
+                'total_cost' => $totalCost,
+                'discount' => $discount,
+                'tax' => 0,
+                'paid_amount' => $totalCost,
+                'remaining_amount' => 0,
+                'sale_status' => $sale->type ?? 'normal',
+                'payment_method' => $sale->project?->payment_method,
+                'notes' => $sale->notes,
+                'trader_name' => $customer?->name ?? ($sale->project?->name ?? null),
+                'customer_name' => $customer?->name,
+                'phone' => $customer?->phone,
+                'address' => $customer?->address,
+                'project_name' => $sale->project?->name,
                 'sub_products' => $sale->subProducts->map(function ($sub) {
-                    $img = $sub->product->viewImages->first();
+                    $lineSubtotal = (float) $sub->cost * (float) $sub->quantity;
 
                     return [
                         'id' => $sub->id,
-                        'product_name' => $sub->product->nameAr,
-                        'product_image' => $img ? env('STORE_DOMAIN').$img->imageUrl : 'no image',
-
+                        'product_name' => $sub->product?->nameAr ?? '-',
+                        'product_image' => $this->invoiceProductImage($sub->product),
                         'cost' => $sub->cost,
-                        'quantity'=> $sub->quantity, ];
-            ;
-        }),
-             ];
+                        'quantity' => $sub->quantity,
+                        'subtotal' => $lineSubtotal,
+                    ];
+                })->values(),
+            ];
 
-             return response()->json([
-                'status'=>'success',
-                'instant_sale_invoice'=>$formatted,
-             ],200);
+            return response()->json([
+                'status' => 'success',
+                'instant_sale_invoice' => $formatted,
+            ], 200);
         }
          catch (ValidationException $e) {
             return response()->json([

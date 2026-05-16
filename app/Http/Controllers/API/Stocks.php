@@ -16,6 +16,7 @@ use App\Models\WholesaleProduct;
 use App\Services\ProductFormService;
 use App\Services\ProductTagService;
 use App\Services\StoreManageItemService;
+use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -29,47 +30,72 @@ class Stocks extends Controller
      */
     private function publicImagePath(?string $imageUrl): string
     {
-        if ($imageUrl === null || $imageUrl === '') {
-            return 'no image';
-        }
-
-        return ltrim($imageUrl, '/');
+        return ApiImageUrl::normalize($imageUrl);
     }
 
-    public function allProducts()
+    public function allProducts(Request $request)
     {
-
         try {
-            ini_set('max_execution_time', 2000); // 0 = unlimited
+            ini_set('max_execution_time', 2000);
 
-            $products = Product::with(['viewImages', 'normalImages', 'tags' => function ($q) {
-                $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
-            }])
-                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id')
-                ->paginate(15);
+            $perPage = min(max((int) $request->input('per_page', 15), 1), 100);
+            $sortBy = $request->input('sort_by', 'created_at');
+            $sortDirection = strtolower((string) $request->input('sort_direction', 'desc')) === 'asc' ? 'asc' : 'desc';
 
-            $formatted = $products->map(function ($product) {
-                $image = $product->viewImages->first()
-                    ?? $product->normalImages->first();
+            $sortColumn = match ($sortBy) {
+                'name' => 'nameAr',
+                'updated_at' => 'updated_at',
+                default => 'created_at',
+            };
 
-                return [
-                    'product_id' => $product->id,
-                    'category_id' => $product->category_id !== null ? (int) $product->category_id : null,
-                    'product_name' => $product->nameAr,
-                    'product_stock' => $product->stock,
-                    'product_code' => $product->product_code,
-                    'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
-                    'tags' => $product->tags->map(fn ($t) => [
-                        'id' => $t->id,
-                        'name' => $t->name,
-                        'color' => $t->color,
-                    ])->values(),
-                ];
-            });
+            $query = Product::query()
+                ->with(['viewImages', 'normalImages', 'tags' => function ($q) {
+                    $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+                }])
+                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'created_at', 'updated_at');
+
+            if ($request->filled('search')) {
+                $term = '%'.$request->string('search').'%';
+                $query->where(function ($q) use ($term) {
+                    $q->where('nameAr', 'like', $term)
+                        ->orWhere('product_code', 'like', $term);
+                });
+            }
+
+            if ($request->filled('category_id')) {
+                $query->where('category_id', (int) $request->input('category_id'));
+            }
+
+            $subCategoryId = $request->input('sub_category_id', $request->input('subcategory_id'));
+            if ($subCategoryId !== null && $subCategoryId !== '') {
+                $query->whereHas('subCategories', function ($q) use ($subCategoryId) {
+                    $q->where('sub_category_id', (int) $subCategoryId);
+                });
+            }
+
+            if ($request->filled('tag_id')) {
+                $query->whereHas('tags', function ($q) use ($request) {
+                    $q->where('product_tags.id', (int) $request->input('tag_id'));
+                });
+            }
+
+            if ($request->filled('date_from')) {
+                $query->whereDate('created_at', '>=', $request->date('date_from'));
+            }
+
+            if ($request->filled('date_to')) {
+                $query->whereDate('created_at', '<=', $request->date('date_to'));
+            }
+
+            $products = $query
+                ->orderBy($sortColumn, $sortDirection)
+                ->paginate($perPage);
+
+            $formatted = $products->getCollection()->map(fn ($product) => $this->formatProductListItem($product));
 
             return response()->json([
                 'status' => 'success',
-                'products' => $formatted,
+                'products' => $formatted->values(),
                 'pagination' => [
                     'current_page' => $products->currentPage(),
                     'last_page' => $products->lastPage(),
@@ -79,7 +105,6 @@ class Stocks extends Controller
                     'prev_page_url' => $products->previousPageUrl(),
                 ],
             ], 200);
-
         } catch (QueryException $e) {
             return response([
                 'status' => 'error',
@@ -91,7 +116,26 @@ class Stocks extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
 
+    private function formatProductListItem(Product $product): array
+    {
+        $image = $product->viewImages->first()
+            ?? $product->normalImages->first();
+
+        return [
+            'product_id' => $product->id,
+            'category_id' => $product->category_id !== null ? (int) $product->category_id : null,
+            'product_name' => $product->nameAr,
+            'product_stock' => $product->stock,
+            'product_code' => $product->product_code,
+            'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
+            'tags' => $product->tags->map(fn ($t) => [
+                'id' => $t->id,
+                'name' => $t->name,
+                'color' => $t->color,
+            ])->values(),
+        ];
     }
 
     public function showProduct(Request $request)

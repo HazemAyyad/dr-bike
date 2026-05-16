@@ -7,7 +7,9 @@ use App\Http\Controllers\API\Products;
 use App\Http\Controllers\API\Stocks;
 use App\Http\Controllers\API\Test;
 use App\Http\Controllers\ProductEditTestController;
+use App\Http\Controllers\CronJobWebController;
 use App\Http\Controllers\StoreSyncTestController;
+use App\Http\Controllers\UserSessionsWebController;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -36,6 +38,18 @@ Route::post('/test/admin-notify/fcm-test', [AdminNotificationWebController::clas
 
 Route::get('/test/store-sync', [StoreSyncTestController::class, 'show'])->name('test.store-sync');
 Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('test.store-sync.run');
+
+/** تشغيل أوامر الكرون يدوياً وعرض السجلات */
+Route::get('/test/cron-jobs', [CronJobWebController::class, 'index'])->name('test.cron-jobs');
+Route::post('/test/cron-jobs/run', [CronJobWebController::class, 'run'])->name('test.cron-jobs.run');
+Route::get('/test/cron-jobs/log/{id}', [CronJobWebController::class, 'showLog'])->name('test.cron-jobs.log');
+
+/** إدارة جلسات الموظفين والمدراء */
+Route::get('/test/user-sessions', [UserSessionsWebController::class, 'index'])->name('test.user-sessions');
+Route::get('/test/user-sessions/{user}', [UserSessionsWebController::class, 'show'])->name('test.user-sessions.show');
+Route::post('/test/user-sessions/{user}/logout-all', [UserSessionsWebController::class, 'logoutAll'])->name('test.user-sessions.logout-all');
+Route::post('/test/user-sessions/tokens/{token}/revoke', [UserSessionsWebController::class, 'revokeToken'])->name('test.user-sessions.revoke');
+Route::post('/test/user-sessions/{user}/password', [UserSessionsWebController::class, 'changePassword'])->name('test.user-sessions.password');
 
 /** إضافة منتج جديد (محلي ثم متجر عبر syncNewProductToStore) */
 Route::get('/test/product-create', [ProductEditTestController::class, 'create'])->name('test.product-create');

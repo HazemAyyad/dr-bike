@@ -1,0 +1,45 @@
+<?php
+
+return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Web cron manager (local / staging only unless explicitly enabled)
+    |--------------------------------------------------------------------------
+    */
+    'web_enabled' => env('CRON_MANAGER_WEB_ENABLED', env('APP_ENV') === 'local'),
+
+    'commands' => [
+        'checks:send-due-reminders' => [
+            'label' => 'تذكير الشيكات المستحقة',
+            'description' => 'إشعارات الأدمن + FCM للشيكات المستحقة بعد يومين (وارد / صادر).',
+            'scheduled' => true,
+            'schedule_human' => 'كل دقيقة (schedule)',
+        ],
+        'sync:store' => [
+            'label' => 'مزامنة المتجر',
+            'description' => 'مزامنة التصنيفات والمنتجات (حالياً معطّلة داخل الأمر).',
+            'scheduled' => false,
+            'schedule_human' => 'يدوي',
+        ],
+        'images:generate-legacy-thumbs' => [
+            'label' => 'إنشاء صور مصغرة (أرشيف)',
+            'description' => 'توليد thumbnails لصور Images/Items القديمة.',
+            'scheduled' => false,
+            'schedule_human' => 'يدوي',
+        ],
+        'admin:fcm-test' => [
+            'label' => 'اختبار FCM للأدمن',
+            'description' => 'إرسال إشعار تجريبي لآخر توكن أدمن أو لتوكن تدخله.',
+            'scheduled' => false,
+            'schedule_human' => 'يدوي',
+            'arguments' => [
+                'token' => [
+                    'label' => 'FCM token (اختياري)',
+                    'placeholder' => 'اتركه فارغاً لاستخدام آخر توكن مسجّل',
+                    'required' => false,
+                ],
+            ],
+        ],
+    ],
+];

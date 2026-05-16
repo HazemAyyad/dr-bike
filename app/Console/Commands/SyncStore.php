@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Services\CronJobLogger;
 use Illuminate\Console\Command;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
@@ -20,12 +21,13 @@ class SyncStore extends Command
     protected $signature = 'sync:store';
     protected $description = 'Fully sync categories, subcategories, and products from remote store';
 
-    public function handle()
+    public function handle(CronJobLogger $cronJobLogger)
     {
-        // مزامنة المتجر الخارجي معطّلة — لا طلبات HTTP ولا تعديل على البيانات.
-        $this->warn('Store sync is disabled — no remote calls or DB updates will run.');
+        return $cronJobLogger->run('sync:store', function () {
+            $this->warn('Store sync is disabled — no remote calls or DB updates will run.');
 
-        return self::SUCCESS;
+            return self::SUCCESS;
+        }, 'sync:store');
     }
 
     // -------------------------------

@@ -692,6 +692,9 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/device-token', [AdminNotificationCenterController::class, 'storeDeviceToken']);
     Route::delete('/admin/device-token', [AdminNotificationCenterController::class, 'destroyDeviceToken']);
 
+    Route::get('/admin/cron-job-logs', [\App\Http\Controllers\API\CronJobLogController::class, 'index']);
+    Route::get('/admin/cron-job-logs/{id}', [\App\Http\Controllers\API\CronJobLogController::class, 'show']);
+
 
 
 });
