@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Bank;
+use App\Support\BankShortcut;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -39,7 +40,7 @@ class BanksController extends Controller
 
             $bank = Bank::create([
                 'name' => $data['name'],
-                'shortcut' => $data['shortcut'] ?? null,
+                'shortcut' => $data['shortcut'] ?? BankShortcut::infer($data['name']),
                 'sort_order' => $data['sort_order'] ?? 0,
             ]);
 
@@ -67,6 +68,9 @@ class BanksController extends Controller
                 'sort_order' => ['nullable', 'integer', 'min:0'],
             ]);
 
+            if (! array_key_exists('shortcut', $data) || $data['shortcut'] === null) {
+                $data['shortcut'] = BankShortcut::infer($data['name']);
+            }
             $bank->update($data);
 
             return response()->json([
@@ -109,7 +113,7 @@ class BanksController extends Controller
         if (! $bank) {
             $bank = Bank::create([
                 'name' => $name,
-                'shortcut' => null,
+                'shortcut' => BankShortcut::infer($name),
                 'sort_order' => (int) Bank::max('sort_order') + 1,
             ]);
         }

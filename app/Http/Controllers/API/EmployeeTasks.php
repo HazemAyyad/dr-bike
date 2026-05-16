@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Support\Facades\Schema;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use Carbon\Carbon;
@@ -626,7 +627,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             'sub_employee_tasks.*.description' => ['nullable', 'string'],
             'sub_employee_tasks.*.is_forced_to_upload_img' => ['boolean','in:0,1'],
             'sub_employee_tasks.*.admin_subtask__img' => ['nullable', 'array'],
-            'sub_employee_tasks.*.admin_subtask__img.*' => ['required', 'image'],
+            'sub_employee_tasks.*.admin_subtask__img.*' => ['nullable'],
 
 
 
@@ -684,14 +685,17 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                                    }
                         }
 
-                        EmployeeSubTask::create([
+                        $subCreate = [
                             'name' => $subTask['name'],
                             'description' => $subTask['description'] ?? null,
                             'employee_task_id' => $employeeTask->id,
                             'is_forced_to_upload_img' => $subTask['is_forced_to_upload_img'] ?? 0,
                             'admin_img' => $subImagesNames,
-                            'sort_order' => $index,
-                        ]);
+                        ];
+                        if (Schema::hasColumn('sub_employee_tasks', 'sort_order')) {
+                            $subCreate['sort_order'] = $index;
+                        }
+                        EmployeeSubTask::create($subCreate);
                     }
         }
 
@@ -837,9 +841,9 @@ public function updateEmployeeTask(Request $request)
             'sub_employee_tasks.*.id' => ['nullable', 'exists:sub_employee_tasks,id'],
             'sub_employee_tasks.*.name' => ['nullable', 'string', 'max:255'],
             'sub_employee_tasks.*.description' => ['nullable', 'string'],
-            'sub_employee_tasks.*.is_forced_to_upload_img' => ['nullable','boolean','in:0,1'],
+            'sub_employee_tasks.*.is_forced_to_upload_img' => ['nullable', 'in:0,1,true,false'],
             'sub_employee_tasks.*.admin_subtask__img' => ['nullable', 'array'],
-            'sub_employee_tasks.*.admin_subtask__img.*' => ['required', 'image'],
+            'sub_employee_tasks.*.admin_subtask__img.*' => ['nullable'],
  
             'audio' => 'nullable',
 
@@ -912,9 +916,10 @@ public function updateEmployeeTask(Request $request)
                     if (isset($subTaskData['id'])) {
                         $subTask = EmployeeSubTask::find($subTaskData['id']);
                         if ($subTask && (int) $subTask->employee_task_id === (int) $empT->id) {
-                            $updatePayload = [
-                                'sort_order' => $index,
-                            ];
+                            $updatePayload = [];
+                            if (Schema::hasColumn('sub_employee_tasks', 'sort_order')) {
+                                $updatePayload['sort_order'] = $index;
+                            }
                             if (isset($subTaskData['name'])) {
                                 $updatePayload['name'] = $subTaskData['name'];
                             }
@@ -948,15 +953,17 @@ public function updateEmployeeTask(Request $request)
                             }
                         }
                         // New subtask → create
-                        $newSubTask = EmployeeSubTask::create([
+                        $newSubPayload = [
                             'employee_task_id' => $empT->id,
                             'name' => $subTaskData['name'],
                             'description' => $subTaskData['description'] ?? null,
                             'is_forced_to_upload_img' => $subTaskData['is_forced_to_upload_img'],
                             'admin_img' => $subImagesNames,
-                            'sort_order' => $index,
-
-                        ]);
+                        ];
+                        if (Schema::hasColumn('sub_employee_tasks', 'sort_order')) {
+                            $newSubPayload['sort_order'] = $index;
+                        }
+                        $newSubTask = EmployeeSubTask::create($newSubPayload);
                         $keepIds[] = $newSubTask->id;
                     }
                 }
