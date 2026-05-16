@@ -13,6 +13,7 @@ use App\Models\OutgoingCheck;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PaymentAndRecieve extends Controller
@@ -47,6 +48,13 @@ class PaymentAndRecieve extends Controller
 
         $type = $request->type;
 
+        if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.must_select_customer_or_seller'),
+            ], 200);
+        }
+
         // Ensure either customer OR seller is provided
         if ($request->filled('customer_id') && $request->filled('seller_id')) {
             return response()->json([
@@ -64,22 +72,21 @@ class PaymentAndRecieve extends Controller
                     ], 200);
                 }
             $box = Box::findOrFail($request->box_id);
+            $boxValue = (float) $request->box_value;
+            $currentTotal = (float) ($box->total ?? 0);
 
             if ($type === 'payment') {
-                if ($box->total < $request->box_value) {
+                if ($currentTotal < $boxValue) {
                     return response()->json([
-                        'status'  => 'error',
-                        'message' => __('messages.box_out_of_money')
+                        'status' => 'error',
+                        'message' => __('messages.box_out_of_money'),
                     ], 200);
                 }
-                $box->total -= $request->box_value;
-                 BoxLogs::createBoxLog($box,'تم الدفع عن طريق الصندوق','minus',-$request->box_value);
-    
+                $box->total = $currentTotal - $boxValue;
+                BoxLogs::createBoxLog($box, 'تم الدفع عن طريق الصندوق', 'minus', -$boxValue);
             } else { // receive
-                $box->total += $request->box_value;
-
-                 BoxLogs::createBoxLog($box,'تم القبض عن طريق الصندوق','add',$request->box_value);
-
+                $box->total = $currentTotal + $boxValue;
+                BoxLogs::createBoxLog($box, 'تم القبض عن طريق الصندوق', 'add', $boxValue);
             }
 
             $box->save();
@@ -240,16 +247,16 @@ class PaymentAndRecieve extends Controller
                     'type'        => $type === 'receive' ? 'we owe' : 'owed to us',
                 ]);
 
-                if($debt->type==='we owe'){
+                if ($debt->type === 'we owe') {
                             $box->update([
-                                'total' => $box->total+ $debt->total,
+                                'total' => (float) ($box->total ?? 0) + (float) $debt->total,
                             ]);
                             BoxLogs::createBoxLog($box,'تم اخذ دين من الشخص '.' '.($debt->customer_id? $debt->customer->name:$debt->seller->name).' '.'من الصندوق'
                             ,'add',$debt->total);
                     }
-                else{
+                } else {
                             $box->update([
-                                'total' => $box->total- $debt->total,
+                                'total' => (float) ($box->total ?? 0) - (float) $debt->total,
                             ]);
                             BoxLogs::createBoxLog($box,'تم اعطاء دين  للشخص '.' '.($debt->customer_id? $debt->customer->name:$debt->seller->name).' '.'لصالح الصندوق'
                             ,'minus',$debt->total);       
@@ -273,15 +280,33 @@ class PaymentAndRecieve extends Controller
 
     } catch (ValidationException $e) {
         return response()->json([
-            'status'  => 'error',
+            'status' => 'error',
             'message' => __('messages.validation_failed'),
-            'errors'  => $e->errors()
+            'errors' => $e->errors(),
         ], 200);
 
-    } catch (\Exception $e) {
+    } catch (QueryException $e) {
+        Log::error('handlePayment QueryException', [
+            'message' => $e->getMessage(),
+            'sql' => $e->getSql(),
+        ]);
+
         return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
+            'status' => 'error',
+            'message' => __('messages.create_data_error'),
+        ], 200);
+
+    } catch (\Throwable $e) {
+        Log::error('handlePayment error', [
+            'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+        ]);
+
+        return response()->json([
+            'status' => 'error',
+            'message' => __('messages.something_wrong'),
+            'debug' => config('app.debug') ? $e->getMessage() : null,
         ], 200);
     }
 }
