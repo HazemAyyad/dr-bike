@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
 use App\Models\InstantSale;
 use App\Models\Product;
 use App\Support\ApiImageUrl;
@@ -25,6 +26,63 @@ class InstantSales extends Controller
             ?? $product->normalImages->first();
 
         return $image ? ApiImageUrl::normalize($image->imageUrl) : 'no image';
+    }
+
+    /**
+     * @return array{type: string, type_label_ar: string, name: string, phone: ?string, address: ?string, id: int|null}
+     */
+    private function resolveInvoiceBuyer(InstantSale $sale): array
+    {
+        $customer = $sale->project?->partnership?->customer;
+        $unknown = [
+            'type' => 'unknown',
+            'type_label_ar' => 'غير محدد',
+            'name' => '-',
+            'phone' => null,
+            'address' => null,
+            'id' => null,
+        ];
+
+        if ($sale->type === 'project' || $sale->project_id) {
+            if ($customer instanceof Customer) {
+                return [
+                    'type' => 'trader',
+                    'type_label_ar' => 'تاجر',
+                    'name' => $customer->name ?: '-',
+                    'phone' => $customer->phone,
+                    'address' => $customer->address,
+                    'id' => $customer->id,
+                ];
+            }
+
+            if ($sale->project) {
+                return [
+                    'type' => 'trader',
+                    'type_label_ar' => 'تاجر',
+                    'name' => $sale->project->name ?: '-',
+                    'phone' => null,
+                    'address' => null,
+                    'id' => $sale->project_id,
+                ];
+            }
+        }
+
+        if ($customer instanceof Customer) {
+            $customerType = strtolower(trim((string) ($customer->type ?? '')));
+            $traderTypes = ['trader', 'merchant', 'wholesale', 'تاجر', 'جملة', 'تاجر جملة'];
+            $isTrader = in_array($customerType, $traderTypes, true);
+
+            return [
+                'type' => $isTrader ? 'trader' : 'customer',
+                'type_label_ar' => $isTrader ? 'تاجر' : 'زبون',
+                'name' => $customer->name ?: '-',
+                'phone' => $customer->phone,
+                'address' => $customer->address,
+                'id' => $customer->id,
+            ];
+        }
+
+        return $unknown;
     }
 
 
@@ -468,7 +526,7 @@ public function store(Request $request)
                 ])
                 ->findOrFail($request->instant_sale_id);
 
-            $customer = $sale->project?->partnership?->customer;
+            $buyer = $this->resolveInvoiceBuyer($sale);
             $subtotalBeforeDiscount = (float) $sale->cost * (float) $sale->quantity;
             $discount = (float) ($sale->discount ?? 0);
             $totalCost = (float) $sale->total_cost;
@@ -490,10 +548,11 @@ public function store(Request $request)
                 'sale_status' => $sale->type ?? 'normal',
                 'payment_method' => $sale->project?->payment_method,
                 'notes' => $sale->notes,
-                'trader_name' => $customer?->name ?? ($sale->project?->name ?? null),
-                'customer_name' => $customer?->name,
-                'phone' => $customer?->phone,
-                'address' => $customer?->address,
+                'buyer' => $buyer,
+                'trader_name' => $buyer['type'] === 'trader' ? $buyer['name'] : null,
+                'customer_name' => $buyer['type'] === 'customer' ? $buyer['name'] : ($sale->project?->partnership?->customer?->name),
+                'phone' => $buyer['phone'],
+                'address' => $buyer['address'],
                 'project_name' => $sale->project?->name,
                 'sub_products' => $sale->subProducts->map(function ($sub) {
                     $lineSubtotal = (float) $sub->cost * (float) $sub->quantity;
