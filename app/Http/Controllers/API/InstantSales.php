@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Box;
 use App\Models\Customer;
 use App\Models\InstantSale;
 use App\Models\Product;
@@ -11,6 +12,7 @@ use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -132,6 +134,51 @@ class InstantSales extends Controller
         }
 
         return $this->buyerSnapshotArray('unknown');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function resolvePaymentBoxForStorage(Request $request): array
+    {
+        if (! $request->filled('payment_box_id')) {
+            return ['status' => 'active'];
+        }
+
+        $box = Box::find($request->input('payment_box_id'));
+        $name = trim((string) $request->input('payment_box_name', ''));
+        if ($name === '' && $box) {
+            $name = (string) ($box->name ?? '');
+        }
+
+        $payload = [
+            'payment_box_id' => (int) $request->input('payment_box_id'),
+            'payment_box_name' => $name !== '' ? $name : null,
+            'status' => 'active',
+        ];
+
+        if ($request->filled('payment_box_value')) {
+            $payload['payment_box_value'] = (float) $request->input('payment_box_value');
+        }
+
+        return $payload;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function paymentBoxInvoiceFields(InstantSale $sale): array
+    {
+        $boxName = $sale->payment_box_name;
+        if (($boxName === null || $boxName === '') && $sale->relationLoaded('paymentBox') && $sale->paymentBox) {
+            $boxName = $sale->paymentBox->name;
+        }
+
+        return [
+            'payment_box_id' => $sale->payment_box_id,
+            'payment_box_name' => $boxName,
+            'payment_box_value' => $sale->payment_box_value,
+        ];
     }
 
     /**
@@ -261,6 +308,10 @@ public function store(Request $request)
         'buyer_phone' => 'nullable|string|max:50',
         'buyer_address' => 'nullable|string|max:500',
 
+        'payment_box_id' => 'nullable|integer|exists:boxes,id',
+        'payment_box_name' => 'nullable|string|max:255',
+        'payment_box_value' => 'nullable|numeric|min:0',
+
     ]);
 
 
@@ -273,12 +324,24 @@ public function store(Request $request)
             $projectId,
             $data['type'] ?? null
         );
+        $paymentBoxPayload = $this->resolvePaymentBoxForStorage($request);
 
         // Save main instant sale
         $mainData = $this->sanitizeInstantSaleAttributes(
             collect($data)
-                ->except(['other_products', 'buyer_type', 'buyer_id', 'buyer_name', 'buyer_phone', 'buyer_address'])
+                ->except([
+                    'other_products',
+                    'buyer_type',
+                    'buyer_id',
+                    'buyer_name',
+                    'buyer_phone',
+                    'buyer_address',
+                    'payment_box_id',
+                    'payment_box_name',
+                    'payment_box_value',
+                ])
                 ->merge($buyerPayload)
+                ->merge($paymentBoxPayload)
                 ->toArray()
         );
 
@@ -624,6 +687,11 @@ public function store(Request $request)
                     'buyer_phone' => $sale->buyer_phone,
                     'buyer_address' => $sale->buyer_address,
                     'project_name' => $sale->project?->name,
+                    'status' => $sale->status ?? 'active',
+                    'cancelled_at' => optional($sale->cancelled_at)->format('Y-m-d H:i:s'),
+                    'payment_box_id' => $sale->payment_box_id,
+                    'payment_box_name' => $sale->payment_box_name,
+                    'payment_box_value' => $sale->payment_box_value,
                     'sub_products' => $sale->subProducts->map(function ($sub) {
                         return [
                             'id' => $sub->id,
@@ -701,51 +769,207 @@ public function store(Request $request)
         }
 }
 
-    public function edit(Request $request){
-        try{
-        $data =  $request->validate([
-            'instant_sale_id'=>'required|exists:instant_sales,id',
-            'cost' => 'required|numeric|min:0',
-            'quantity' => 'required|numeric|min:0',
-            'total_cost' => 'required|numeric|min:0',
-            'notes' => 'nullable|string',
+    public function edit(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'instant_sale_id' => 'required|exists:instant_sales,id',
+                'cost' => 'required|numeric|min:0',
+                'quantity' => 'required|numeric|min:1',
+                'total_cost' => 'required|numeric|min:0',
+                'notes' => 'nullable|string',
+            ]);
 
-        ]);
+            DB::transaction(function () use ($request, $data) {
+                $instantSale = InstantSale::query()
+                    ->whereNull('parent_id')
+                    ->with(['product', 'subProducts.product'])
+                    ->lockForUpdate()
+                    ->findOrFail($request->instant_sale_id);
 
-        $instantSale = InstantSale::findOrFail($request->instant_sale_id);
-        $instantSale->update($data);
-        Logs::createLog('تعديل بيع فوري ','تم تعديل بيع فوري ','instant_sales');
+                if ($instantSale->isCancelled()) {
+                    throw ValidationException::withMessages([
+                        'instant_sale_id' => [__('messages.instant_sale_already_cancelled')],
+                    ]);
+                }
 
+                $oldQuantity = (float) $instantSale->quantity;
+                $newQuantity = (float) $data['quantity'];
+                $quantityDelta = $newQuantity - $oldQuantity;
 
-    }
-        catch (ValidationException $e) {
+                if ($quantityDelta > 0) {
+                    $product = $instantSale->product ?? Product::findOrFail($instantSale->product_id);
+                    if ($product->stock < $quantityDelta) {
+                        throw ValidationException::withMessages([
+                            'quantity' => [__('messages.cant_sale')],
+                        ]);
+                    }
+                    $product->stock -= $quantityDelta;
+                    $product->save();
+                } elseif ($quantityDelta < 0) {
+                    $product = $instantSale->product ?? Product::findOrFail($instantSale->product_id);
+                    $product->stock += abs($quantityDelta);
+                    $product->save();
+                }
+
+                $oldTotal = (float) $instantSale->total_cost;
+                $newTotal = (float) $data['total_cost'];
+                $totalDelta = $newTotal - $oldTotal;
+
+                if (abs($totalDelta) > 0.0001 && $instantSale->payment_box_id) {
+                    $box = Box::lockForUpdate()->findOrFail($instantSale->payment_box_id);
+
+                    if ($totalDelta < 0 && (float) $box->total < abs($totalDelta)) {
+                        throw ValidationException::withMessages([
+                            'total_cost' => [__('messages.box_out_of_money')],
+                        ]);
+                    }
+
+                    $box->total = (float) $box->total + $totalDelta;
+                    $box->save();
+                    BoxLogs::createBoxLog(
+                        $box,
+                        'تعديل بيع فوري #'.$instantSale->id,
+                        $totalDelta >= 0 ? 'add' : 'minus',
+                        $totalDelta
+                    );
+                    $data['payment_box_value'] = max(
+                        0,
+                        (float) ($instantSale->payment_box_value ?? 0) + $totalDelta
+                    );
+                }
+
+                $instantSale->update(collect($data)->except(['instant_sale_id'])->toArray());
+                Logs::createLog('تعديل بيع فوري', 'تم تعديل بيع فوري #'.$instantSale->id, 'instant_sales');
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.instant_sale_updated_successfully'),
+            ], 200);
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
-                'errors' => $e->errors()
-
+                'errors' => $e->errors(),
             ], 200);
-        }
-        catch (ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.retrieve_data_error')
+                'message' => __('messages.retrieve_data_error'),
             ], 200);
-        }
-
-    
-        catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.retrieve_data_error')
+                'message' => __('messages.retrieve_data_error'),
             ], 200);
         } catch (\Exception $e) {
+            Log::error('InstantSales::edit error', ['message' => $e->getMessage()]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
 
+    public function cancel(Request $request)
+    {
+        try {
+            $request->validate([
+                'instant_sale_id' => 'required|integer|exists:instant_sales,id',
+            ]);
+
+            DB::transaction(function () use ($request) {
+                $sale = InstantSale::query()
+                    ->whereNull('parent_id')
+                    ->with(['product', 'subProducts.product'])
+                    ->lockForUpdate()
+                    ->findOrFail($request->instant_sale_id);
+
+                if ($sale->isCancelled()) {
+                    throw ValidationException::withMessages([
+                        'instant_sale_id' => [__('messages.instant_sale_already_cancelled')],
+                    ]);
+                }
+
+                $mainProduct = $sale->product ?? Product::findOrFail($sale->product_id);
+                $mainProduct->stock += (float) $sale->quantity;
+                $mainProduct->save();
+
+                foreach ($sale->subProducts as $sub) {
+                    if ($sub->isCancelled()) {
+                        continue;
+                    }
+                    $subProduct = $sub->product ?? Product::find($sub->product_id);
+                    if ($subProduct) {
+                        $subProduct->stock += (float) $sub->quantity;
+                        $subProduct->save();
+                    }
+                    $sub->update([
+                        'status' => 'cancelled',
+                        'cancelled_at' => now(),
+                    ]);
+                }
+
+                if ($sale->payment_box_id && $sale->payment_box_value > 0) {
+                    $box = Box::lockForUpdate()->findOrFail($sale->payment_box_id);
+                    $amount = (float) $sale->payment_box_value;
+                    if ((float) $box->total < $amount) {
+                        throw ValidationException::withMessages([
+                            'instant_sale_id' => [__('messages.box_out_of_money')],
+                        ]);
+                    }
+                    $box->total = (float) $box->total - $amount;
+                    $box->save();
+                    BoxLogs::createBoxLog(
+                        $box,
+                        'إلغاء بيع فوري #'.$sale->id,
+                        'minus',
+                        -$amount
+                    );
+                }
+
+                $sale->update([
+                    'status' => 'cancelled',
+                    'cancelled_at' => now(),
+                ]);
+
+                Logs::createLog(
+                    'إلغاء بيع فوري',
+                    'تم إلغاء بيع فوري #'.$sale->id.' واسترجاع المخزون',
+                    'instant_sales'
+                );
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.instant_sale_cancelled_successfully'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('InstantSales::cancel error', ['message' => $e->getMessage()]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 
     public function invoiceDetails(Request $request)
@@ -760,6 +984,7 @@ public function store(Request $request)
                     'subProducts.product.viewImages',
                     'subProducts.product.normalImages',
                     'project.partnership.customer',
+                    'paymentBox:id,name',
                 ])
                 ->findOrFail($request->instant_sale_id);
 
@@ -791,6 +1016,9 @@ public function store(Request $request)
                 'phone' => $buyer['phone'],
                 'address' => $buyer['address'],
                 'project_name' => $sale->project?->name,
+                'status' => $sale->status ?? 'active',
+                'cancelled_at' => optional($sale->cancelled_at)->format('Y-m-d H:i:s'),
+                ...$this->paymentBoxInvoiceFields($sale),
                 'sub_products' => $sale->subProducts->map(function ($sub) {
                     $lineSubtotal = (float) $sub->cost * (float) $sub->quantity;
 

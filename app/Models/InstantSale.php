@@ -26,6 +26,16 @@ class InstantSale extends Model
         'buyer_name',
         'buyer_phone',
         'buyer_address',
+        'payment_box_id',
+        'payment_box_name',
+        'payment_box_value',
+        'status',
+        'cancelled_at',
+    ];
+
+    protected $casts = [
+        'payment_box_value' => 'float',
+        'cancelled_at' => 'datetime',
     ];
 
     public function product()
@@ -47,5 +57,15 @@ class InstantSale extends Model
     public function buyerCustomer()
     {
         return $this->belongsTo(Customer::class, 'buyer_id');
+    }
+
+    public function paymentBox()
+    {
+        return $this->belongsTo(Box::class, 'payment_box_id');
+    }
+
+    public function isCancelled(): bool
+    {
+        return $this->status === 'cancelled';
     }
 }

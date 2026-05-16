@@ -221,6 +221,9 @@ return [
 
     //instant sales
     'instant_sale_created_successfully' => 'instant sale was created successfully',
+    'instant_sale_updated_successfully' => 'Instant sale updated successfully',
+    'instant_sale_cancelled_successfully' => 'Instant sale cancelled and stock restored',
+    'instant_sale_already_cancelled' => 'This sale is already cancelled',
     'sale_attached' => 'sale was attached to project successfully',
     'cant_be_project_type'=>'Product is not attached in any project yet',
     //outgoing_checks

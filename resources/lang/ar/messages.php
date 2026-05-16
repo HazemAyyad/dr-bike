@@ -230,6 +230,9 @@ return [
 
     //instant sales
     'instant_sale_created_successfully' => 'تم انشاء بيع فوري جديد',
+    'instant_sale_updated_successfully' => 'تم تعديل البيع الفوري بنجاح',
+    'instant_sale_cancelled_successfully' => 'تم إلغاء البيع الفوري واسترجاع المخزون',
+    'instant_sale_already_cancelled' => 'هذا البيع ملغى مسبقاً',
     'sale_attached' => 'تم ربط البيع الفوري بمشروع الشراكة بنجاح',
     'cant_be_project_type'=>'المنتج غير مرتبط في أي مشروع بعد',
 

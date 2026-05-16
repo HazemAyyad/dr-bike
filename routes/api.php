@@ -290,7 +290,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/show/instant/sale' , [InstantSales::class,'showInstantSale']);
       Route::post('/create/instant/sale' , [InstantSales::class,'store']);
       Route::post('/edit/instant/sale' , [InstantSales::class,'edit']);
-    
+      Route::post('/cancel/instant/sale' , [InstantSales::class,'cancel']);
+
       Route::post('/get/product/projects' , [InstantSales::class,'getProjectsOfProduct']);
       Route::post('/get/subsales' , [InstantSales::class,'getSubSales']);
       Route::post('/get/instant/sale/invoice' , [InstantSales::class,'invoiceDetails']);
