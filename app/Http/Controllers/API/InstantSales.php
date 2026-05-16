@@ -11,6 +11,8 @@ use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 use function PHPUnit\Framework\isEmpty;
@@ -133,6 +135,30 @@ class InstantSales extends Controller
     }
 
     /**
+     * Keep only attributes that exist on instant_sales (safe if migrations pending).
+     */
+    private function sanitizeInstantSaleAttributes(array $data): array
+    {
+        $fillable = (new InstantSale)->getFillable();
+        $sanitized = [];
+
+        foreach ($data as $key => $value) {
+            if (! in_array($key, $fillable, true)) {
+                continue;
+            }
+            if (! Schema::hasColumn('instant_sales', $key)) {
+                if ($key === 'cost' && Schema::hasColumn('instant_sales', 'maintenance_cost')) {
+                    $sanitized['maintenance_cost'] = $value;
+                }
+                continue;
+            }
+            $sanitized[$key] = $value;
+        }
+
+        return $sanitized;
+    }
+
+    /**
      * @return array{type: string, type_label_ar: string, name: string, phone: ?string, address: ?string, id: int|null}
      */
     private function resolveInvoiceBuyer(InstantSale $sale): array
@@ -206,6 +232,10 @@ class InstantSales extends Controller
 public function store(Request $request)
  {
     try{
+    if ($request->input('project_id') === '' || $request->input('project_id') === '0') {
+        $request->merge(['project_id' => null]);
+    }
+
     $data = $request->validate([
         'product_id' => 'required|exists:products,id',
         'quantity' => 'required|numeric|min:1',
@@ -245,10 +275,12 @@ public function store(Request $request)
         );
 
         // Save main instant sale
-        $mainData = collect($data)
-            ->except(['other_products', 'buyer_type', 'buyer_id', 'buyer_name', 'buyer_phone', 'buyer_address'])
-            ->merge($buyerPayload)
-            ->toArray();
+        $mainData = $this->sanitizeInstantSaleAttributes(
+            collect($data)
+                ->except(['other_products', 'buyer_type', 'buyer_id', 'buyer_name', 'buyer_phone', 'buyer_address'])
+                ->merge($buyerPayload)
+                ->toArray()
+        );
 
         $mainProduct = Product::findOrFail($mainData['product_id']);
 
@@ -313,14 +345,16 @@ public function store(Request $request)
                 }        
                 $subProjectId = isset($product['project_id']) ? (int) $product['project_id'] : null;
 
-                InstantSale::create(array_merge([
+                InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                     'product_id' => $product['product_id'],
                     'cost' => $product['cost'],
                     'quantity' => $product['quantity'],
+                    'discount' => 0,
+                    'total_cost' => (float) $product['cost'] * (float) $product['quantity'],
                     'parent_id' => $mainInstantSale->id,
                     'type' => $product['type'],
                     'project_id' => $product['project_id'] ?? null,
-                ], $buyerPayload));
+                ], $buyerPayload)));
 
                 $subProduct->stock -= $product['quantity'];
                 $subProduct->save();
@@ -359,15 +393,29 @@ public function store(Request $request)
             ], 200);
         }
             catch (QueryException $e) {
+            Log::error('InstantSales::store QueryException', [
+                'message' => $e->getMessage(),
+                'sql' => $e->getSql(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.create_data_error')
+                'message' => config('app.debug')
+                    ? $e->getMessage()
+                    : __('messages.create_data_error'),
             ], 200);
         }
         catch (\Exception $e) {
+            Log::error('InstantSales::store error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
+                'debug' => config('app.debug') ? $e->getMessage() : null,
             ], 200);
         }
 
