@@ -289,11 +289,17 @@ class PaymentAndRecieve extends Controller
         Log::error('handlePayment QueryException', [
             'message' => $e->getMessage(),
             'sql' => $e->getSql(),
+            'bindings' => $e->getBindings(),
         ]);
+
+        $userMessage = __('messages.create_data_error');
+        if (config('app.debug')) {
+            $userMessage = $e->getMessage();
+        }
 
         return response()->json([
             'status' => 'error',
-            'message' => __('messages.create_data_error'),
+            'message' => $userMessage,
         ], 200);
 
     } catch (\Throwable $e) {

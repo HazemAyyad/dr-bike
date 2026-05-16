@@ -9,6 +9,7 @@ use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Doctrine\DBAL\Query\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class BoxLogs extends Controller
@@ -30,20 +31,31 @@ class BoxLogs extends Controller
 }
 
 
-    static public function createBoxLog(Box $box ,$description, $type,$value, ?string $note = null){
-
-
-        BoxLog::create([
+    static public function createBoxLog(Box $box, $description, $type, $value, ?string $note = null)
+    {
+        $payload = [
             'box_id' => $box->id,
             'description' => $description,
             'note' => $note,
-            'value' => $value,
+        ];
 
-            'type' => $type,
-        ]);
-    
+        $numericValue = (float) $value;
 
-}
+        if (Schema::hasColumn('box_logs', 'value')) {
+            $payload['value'] = $numericValue;
+        }
+
+        if (Schema::hasColumn('box_logs', 'type')) {
+            $payload['type'] = $type;
+        }
+
+        // Legacy column from original migration
+        if (Schema::hasColumn('box_logs', 'transfered_balance')) {
+            $payload['transfered_balance'] = abs($numericValue);
+        }
+
+        BoxLog::create($payload);
+    }
 
     public function allBoxLogs(){
         try{
