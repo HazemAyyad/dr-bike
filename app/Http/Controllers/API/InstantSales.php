@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Box;
+use App\Models\BoxLog;
 use App\Models\Closeout;
 use App\Models\Customer;
 use App\Models\InstantSale;
@@ -182,14 +183,49 @@ class InstantSales extends Controller
         ];
     }
 
-    private function restoreProductStock(int $productId, float $quantity): void
+  /**
+     * @return \Illuminate\Support\Collection<int, InstantSale>
+     */
+    private function stockLinesForSale(InstantSale $mainSale)
     {
+        $lines = collect([$mainSale]);
+
+        foreach ($mainSale->subProducts as $sub) {
+            if (! $sub->isCancelled()) {
+                $lines->push($sub);
+            }
+        }
+
+        return $lines;
+    }
+
+    private function saleLineQuantity(InstantSale $line): int
+    {
+        return max(0, (int) round((float) ($line->quantity ?? 0)));
+    }
+
+  /**
+     * Restore stock for one invoice line only once (exact line quantity).
+     */
+    private function restoreStockForSaleLine(InstantSale $line): void
+    {
+        if ($this->saleLineStockAlreadyRestored($line)) {
+            return;
+        }
+
+        $quantity = $this->saleLineQuantity($line);
+        $productId = (int) $line->product_id;
+
         if ($productId <= 0 || $quantity <= 0) {
+            $this->markSaleLineStockRestored($line);
+
             return;
         }
 
         $product = Product::withTrashed()->lockForUpdate()->find($productId);
         if (! $product instanceof Product) {
+            $this->markSaleLineStockRestored($line);
+
             return;
         }
 
@@ -205,26 +241,128 @@ class InstantSales extends Controller
                 $closeout->update(['status' => 'ongoing']);
             }
         }
+
+        $this->markSaleLineStockRestored($line);
+    }
+
+    private function saleLineStockAlreadyRestored(InstantSale $line): bool
+    {
+        if (Schema::hasColumn('instant_sales', 'stock_restored') && $line->stock_restored) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private function markSaleLineStockRestored(InstantSale $line): void
+    {
+        if (! Schema::hasColumn('instant_sales', 'stock_restored')) {
+            return;
+        }
+
+        $line->update(['stock_restored' => true]);
+    }
+
+    private function formatQtyNumber(float $qty): string
+    {
+        return rtrim(rtrim(number_format($qty, 2, '.', ''), '0'), '.');
+    }
+
+    private function formatMoneyNumber(float $amount): string
+    {
+        return rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.');
+    }
+
+    private function instantSaleInvoiceLinesSummary(InstantSale $mainSale): string
+    {
+        $mainSale->loadMissing(['product', 'subProducts.product']);
+        $parts = [];
+
+        $mainName = $mainSale->product?->nameAr ?? 'منتج';
+        $parts[] = $mainName.' × '.$this->saleLineQuantity($mainSale);
+
+        foreach ($mainSale->subProducts as $sub) {
+            if ($sub->isCancelled()) {
+                continue;
+            }
+            $subName = $sub->product?->nameAr ?? 'منتج';
+            $parts[] = $subName.' × '.$this->saleLineQuantity($sub);
+        }
+
+        return implode(' | ', $parts);
     }
 
     private function instantSaleBoxLogNote(InstantSale $sale, string $action): string
     {
-        $productName = $sale->product?->nameAr ?? 'منتج';
-        $qty = (float) $sale->quantity;
-        $amount = (float) ($sale->payment_box_value ?? $sale->total_cost ?? 0);
+        $root = $sale->parent_id
+            ? (InstantSale::with(['product', 'subProducts.product'])->find($sale->parent_id) ?? $sale)
+            : $sale;
+
+        $linesSummary = $this->instantSaleInvoiceLinesSummary($root);
+        $amount = (float) ($root->payment_box_value ?? 0);
+        $amountLabel = $this->formatMoneyNumber(
+            $amount > 0 ? $amount : (float) ($root->total_cost ?? 0)
+        );
 
         return match ($action) {
-            'cancel' => sprintf(
-                'عكس قبض — إلغاء بيع فوري #%d | %s | كمية: %s | مبلغ: %s',
-                $sale->id,
-                $productName,
-                rtrim(rtrim(number_format($qty, 2, '.', ''), '0'), '.'),
-                rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.')
+            'receive' => sprintf(
+                'قبض — بيع فوري #%d | %s | مبلغ: %s',
+                $root->id,
+                $linesSummary,
+                $amountLabel
             ),
-            'edit_add' => sprintf('تعديل بيع فوري #%d — زيادة مبلغ في الصندوق', $sale->id),
-            'edit_minus' => sprintf('تعديل بيع فوري #%d — تخفيض مبلغ من الصندوق', $sale->id),
-            default => sprintf('بيع فوري #%d', $sale->id),
+            'cancel' => sprintf(
+                'عكس قبض — إلغاء بيع فوري #%d | %s | مبلغ: %s',
+                $root->id,
+                $linesSummary,
+                $amountLabel
+            ),
+            'edit_add' => sprintf('تعديل بيع فوري #%d — زيادة مبلغ في الصندوق', $root->id),
+            'edit_minus' => sprintf('تعديل بيع فوري #%d — تخفيض مبلغ من الصندوق', $root->id),
+            default => sprintf('بيع فوري #%d | %s', $root->id, $linesSummary),
         };
+    }
+
+    /**
+     * After sale is saved, enrich the payment box log created during receive step.
+     */
+    private function linkPaymentBoxLogToInstantSale(InstantSale $sale): void
+    {
+        if (! $sale->payment_box_id) {
+            return;
+        }
+
+        $amount = (float) ($sale->payment_box_value ?? 0);
+        if ($amount <= 0) {
+            return;
+        }
+
+        $note = $this->instantSaleBoxLogNote($sale, 'receive');
+        $description = 'قبض — بيع فوري #'.$sale->id;
+
+        $query = BoxLog::query()
+            ->where('box_id', $sale->payment_box_id)
+            ->where('created_at', '>=', now()->subMinutes(10));
+
+        if (Schema::hasColumn('box_logs', 'type')) {
+            $query->where('type', 'add');
+        }
+
+        if (Schema::hasColumn('box_logs', 'value')) {
+            $query->where(function ($q) use ($amount) {
+                $q->where('value', $amount)
+                    ->orWhere('value', (string) $amount);
+            });
+        }
+
+        $log = $query->orderByDesc('id')->first();
+
+        if ($log) {
+            $log->update([
+                'description' => $description,
+                'note' => $note,
+            ]);
+        }
     }
 
     private function reverseBoxForCancelledSale(InstantSale $sale): void
@@ -234,10 +372,8 @@ class InstantSales extends Controller
             $boxId = Box::where('name', $sale->payment_box_name)->value('id');
         }
 
+        // Reverse only the amount recorded on the invoice — never total_cost fallback.
         $amount = (float) ($sale->payment_box_value ?? 0);
-        if ($amount <= 0) {
-            $amount = (float) ($sale->total_cost ?? 0);
-        }
 
         if (! $boxId || $amount <= 0) {
             return;
@@ -473,6 +609,10 @@ public function store(Request $request)
         }
 
         $mainInstantSale = InstantSale::create($mainData);
+
+        $this->linkPaymentBoxLogToInstantSale(
+            $mainInstantSale->fresh(['product', 'subProducts.product'])
+        );
 
         $mainProduct->stock -= $mainInstantSale->quantity;
         $mainProduct->save();
@@ -712,8 +852,8 @@ public function store(Request $request)
         }
 }
     public function getInstantSales(Request $request)
-    {
-        try {
+{
+    try {
             $request->validate([
                 'search' => 'nullable|string|max:255',
                 'sort_direction' => 'nullable|string|in:asc,desc',
@@ -726,10 +866,10 @@ public function store(Request $request)
 
             $query = InstantSale::query()
                 ->whereNull('parent_id')
-                ->with([
-                    'product:id,nameAr',
+            ->with([
+                'product:id,nameAr',
                     'project:id,name',
-                    'subProducts.product:id,nameAr',
+                'subProducts.product:id,nameAr',
                 ]);
 
             if ($search !== '') {
@@ -758,19 +898,19 @@ public function store(Request $request)
             $instantSales = $query
                 ->orderBy('created_at', $sortDirection)
                 ->orderBy('id', $sortDirection)
-                ->get();
+            ->get();
 
-            $formatted = $instantSales->map(function ($sale) {
+        $formatted = $instantSales->map(function ($sale) {
                 $buyerLabel = $this->buyerTypeLabelAr($sale->buyer_type ?? 'unknown');
 
-                return [
-                    'id' => $sale->id,
-                    'product' => optional($sale->product)->nameAr ?? 'منتج محذوف',
-                    'cost' => $sale->cost,
-                    'total_cost' => $sale->total_cost,
-                    'quantity' => $sale->quantity,
-                    'notes' => $sale->notes,
-                    'date' => optional($sale->created_at)->format('Y-m-d'),
+            return [
+                'id' => $sale->id,
+                'product' => optional($sale->product)->nameAr ?? 'منتج محذوف',
+                'cost' => $sale->cost,
+                'total_cost' => $sale->total_cost,
+                'quantity' => $sale->quantity,
+                'notes' => $sale->notes,
+                'date' => optional($sale->created_at)->format('Y-m-d'),
                     'created_at' => optional($sale->created_at)->format('Y-m-d H:i:s'),
                     'buyer_type' => $sale->buyer_type,
                     'buyer_type_label_ar' => $buyerLabel,
@@ -784,22 +924,22 @@ public function store(Request $request)
                     'payment_box_id' => $sale->payment_box_id,
                     'payment_box_name' => $sale->payment_box_name,
                     'payment_box_value' => $sale->payment_box_value,
-                    'sub_products' => $sale->subProducts->map(function ($sub) {
-                        return [
-                            'id' => $sub->id,
-                            'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
-                            'cost' => $sub->cost,
-                            'quantity' => $sub->quantity,
-                        ];
-                    }),
-                ];
-            });
+                'sub_products' => $sale->subProducts->map(function ($sub) {
+                    return [
+                        'id' => $sub->id,
+                        'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
+                        'cost' => $sub->cost,
+                        'quantity' => $sub->quantity,
+                    ];
+                }),
+            ];
+        });
 
-            return response()->json([
-                'status' => 'success',
-                'instant_sales' => $formatted,
+        return response()->json([
+            'status' => 'success',
+            'instant_sales' => $formatted,
                 'sort_direction' => $sortDirection,
-            ], 200);
+        ], 200);
 
         } catch (ValidationException $e) {
             return response()->json([
@@ -807,7 +947,7 @@ public function store(Request $request)
                 'message' => __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
-        } catch (\Throwable $e) {
+    } catch (\Throwable $e) {
         \Log::error('getInstantSales error', [
             'message' => $e->getMessage(),
             'file' => $e->getFile(),
@@ -866,10 +1006,10 @@ public function store(Request $request)
         try {
             $data = $request->validate([
                 'instant_sale_id' => 'required|exists:instant_sales,id',
-                'cost' => 'required|numeric|min:0',
+            'cost' => 'required|numeric|min:0',
                 'quantity' => 'required|numeric|min:1',
-                'total_cost' => 'required|numeric|min:0',
-                'notes' => 'nullable|string',
+            'total_cost' => 'required|numeric|min:0',
+            'notes' => 'nullable|string',
             ]);
 
             DB::transaction(function () use ($request, $data) {
@@ -987,20 +1127,14 @@ public function store(Request $request)
                     ]);
                 }
 
-                $this->restoreProductStock(
-                    (int) $sale->product_id,
-                    (float) $sale->quantity
-                );
+                foreach ($this->stockLinesForSale($sale) as $line) {
+                    $this->restoreStockForSaleLine($line);
+                }
 
                 foreach ($sale->subProducts as $sub) {
-                    if ($sub->isCancelled()) {
-                        continue;
+                    if (! $sub->isCancelled()) {
+                        $this->markInstantSaleCancelled($sub);
                     }
-                    $this->restoreProductStock(
-                        (int) $sub->product_id,
-                        (float) $sub->quantity
-                    );
-                    $this->markInstantSaleCancelled($sub);
                 }
 
                 $this->reverseBoxForCancelledSale($sale);
@@ -1102,9 +1236,9 @@ public function store(Request $request)
                         'subtotal' => $lineSubtotal,
                     ];
                 })->values(),
-            ];
+             ];
 
-            return response()->json([
+             return response()->json([
                 'status' => 'success',
                 'instant_sale_invoice' => $formatted,
             ], 200);

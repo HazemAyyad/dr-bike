@@ -31,11 +31,13 @@ class InstantSale extends Model
         'payment_box_value',
         'status',
         'cancelled_at',
+        'stock_restored',
     ];
 
     protected $casts = [
         'payment_box_value' => 'float',
         'cancelled_at' => 'datetime',
+        'stock_restored' => 'boolean',
     ];
 
     public function product()

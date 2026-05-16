@@ -29,6 +29,7 @@ class PaymentAndRecieve extends Controller
             'seller_id'   => 'nullable|integer|exists:sellers,id',
             'box_id'      => 'nullable|integer|exists:boxes,id',
             'box_value'   => 'nullable|numeric|min:0',
+            'box_log_note' => 'nullable|string|max:500',
 
             'checks' => 'nullable|array',
             'checks.*.check_value'    => 'required|numeric|min:1',
@@ -92,12 +93,16 @@ class PaymentAndRecieve extends Controller
                 );
             } else { // receive
                 $box->total = $currentTotal + $boxValue;
+                $receiveNote = trim((string) $request->input('box_log_note', ''));
+                if ($receiveNote === '') {
+                    $receiveNote = 'قبض نقدي في الصندوق بقيمة '.number_format($boxValue, 2, '.', '');
+                }
                 BoxLogs::createBoxLog(
                     $box,
-                    'إضافة — قبض في الصندوق',
+                    'قبض — بيع فوري / قبض نقدي',
                     'add',
                     $boxValue,
-                    'قبض نقدي في الصندوق بقيمة '.number_format($boxValue, 2, '.', '')
+                    $receiveNote
                 );
             }
 
