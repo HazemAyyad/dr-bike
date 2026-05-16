@@ -248,19 +248,26 @@ class PaymentAndRecieve extends Controller
                 ]);
 
                 if ($debt->type === 'we owe') {
-                            $box->update([
-                                'total' => (float) ($box->total ?? 0) + (float) $debt->total,
-                            ]);
-                            BoxLogs::createBoxLog($box,'تم اخذ دين من الشخص '.' '.($debt->customer_id? $debt->customer->name:$debt->seller->name).' '.'من الصندوق'
-                            ,'add',$debt->total);
-                    }
+                    $box->update([
+                        'total' => (float) ($box->total ?? 0) + (float) $debt->total,
+                    ]);
+                    BoxLogs::createBoxLog(
+                        $box,
+                        'تم اخذ دين من الشخص '.' '.($debt->customer_id ? $debt->customer->name : $debt->seller->name).' '.'من الصندوق',
+                        'add',
+                        $debt->total
+                    );
                 } else {
-                            $box->update([
-                                'total' => (float) ($box->total ?? 0) - (float) $debt->total,
-                            ]);
-                            BoxLogs::createBoxLog($box,'تم اعطاء دين  للشخص '.' '.($debt->customer_id? $debt->customer->name:$debt->seller->name).' '.'لصالح الصندوق'
-                            ,'minus',$debt->total);       
-                    }
+                    $box->update([
+                        'total' => (float) ($box->total ?? 0) - (float) $debt->total,
+                    ]);
+                    BoxLogs::createBoxLog(
+                        $box,
+                        'تم اعطاء دين  للشخص '.' '.($debt->customer_id ? $debt->customer->name : $debt->seller->name).' '.'لصالح الصندوق',
+                        'minus',
+                        $debt->total
+                    );
+                }
                 Logs::createLog(
                     $type === 'payment' ? 'انشاء دين علينا' : 'انشاء دين لنا',
                     ($type === 'payment'
