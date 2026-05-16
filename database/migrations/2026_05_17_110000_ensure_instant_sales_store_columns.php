@@ -17,19 +17,35 @@ return new class extends Migration
                 $table->float('cost')->default(0)->after('product_id');
             }
             if (! Schema::hasColumn('instant_sales', 'buyer_type')) {
-                $table->string('buyer_type', 20)->nullable()->after('type');
+                $table->string('buyer_type', 20)
+                    ->nullable()
+                    ->charset('utf8mb4')
+                    ->collation('utf8mb4_unicode_ci')
+                    ->after('type');
             }
             if (! Schema::hasColumn('instant_sales', 'buyer_id')) {
                 $table->unsignedBigInteger('buyer_id')->nullable()->after('buyer_type');
             }
             if (! Schema::hasColumn('instant_sales', 'buyer_name')) {
-                $table->string('buyer_name')->nullable()->after('buyer_id');
+                $table->string('buyer_name')
+                    ->nullable()
+                    ->charset('utf8mb4')
+                    ->collation('utf8mb4_unicode_ci')
+                    ->after('buyer_id');
             }
             if (! Schema::hasColumn('instant_sales', 'buyer_phone')) {
-                $table->string('buyer_phone', 50)->nullable()->after('buyer_name');
+                $table->string('buyer_phone', 50)
+                    ->nullable()
+                    ->charset('utf8mb4')
+                    ->collation('utf8mb4_unicode_ci')
+                    ->after('buyer_name');
             }
             if (! Schema::hasColumn('instant_sales', 'buyer_address')) {
-                $table->text('buyer_address')->nullable()->after('buyer_phone');
+                $table->text('buyer_address')
+                    ->nullable()
+                    ->charset('utf8mb4')
+                    ->collation('utf8mb4_unicode_ci')
+                    ->after('buyer_phone');
             }
         });
     }
