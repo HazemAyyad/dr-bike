@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Box;
+use App\Models\Closeout;
 use App\Models\Customer;
 use App\Models\InstantSale;
 use App\Models\Product;
@@ -179,6 +180,97 @@ class InstantSales extends Controller
             'payment_box_name' => $boxName,
             'payment_box_value' => $sale->payment_box_value,
         ];
+    }
+
+    private function restoreProductStock(int $productId, float $quantity): void
+    {
+        if ($productId <= 0 || $quantity <= 0) {
+            return;
+        }
+
+        $product = Product::withTrashed()->lockForUpdate()->find($productId);
+        if (! $product instanceof Product) {
+            return;
+        }
+
+        Product::withTrashed()
+            ->where('id', $productId)
+            ->increment('stock', $quantity);
+
+        $product->refresh();
+
+        if ((float) $product->stock > 0) {
+            $closeout = Closeout::where('product_id', $productId)->first();
+            if ($closeout && $closeout->status === 'archived') {
+                $closeout->update(['status' => 'ongoing']);
+            }
+        }
+    }
+
+    private function instantSaleBoxLogNote(InstantSale $sale, string $action): string
+    {
+        $productName = $sale->product?->nameAr ?? 'منتج';
+        $qty = (float) $sale->quantity;
+        $amount = (float) ($sale->payment_box_value ?? $sale->total_cost ?? 0);
+
+        return match ($action) {
+            'cancel' => sprintf(
+                'عكس قبض — إلغاء بيع فوري #%d | %s | كمية: %s | مبلغ: %s',
+                $sale->id,
+                $productName,
+                rtrim(rtrim(number_format($qty, 2, '.', ''), '0'), '.'),
+                rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.')
+            ),
+            'edit_add' => sprintf('تعديل بيع فوري #%d — زيادة مبلغ في الصندوق', $sale->id),
+            'edit_minus' => sprintf('تعديل بيع فوري #%d — تخفيض مبلغ من الصندوق', $sale->id),
+            default => sprintf('بيع فوري #%d', $sale->id),
+        };
+    }
+
+    private function reverseBoxForCancelledSale(InstantSale $sale): void
+    {
+        $boxId = $sale->payment_box_id;
+        if (! $boxId && ! empty($sale->payment_box_name)) {
+            $boxId = Box::where('name', $sale->payment_box_name)->value('id');
+        }
+
+        $amount = (float) ($sale->payment_box_value ?? 0);
+        if ($amount <= 0) {
+            $amount = (float) ($sale->total_cost ?? 0);
+        }
+
+        if (! $boxId || $amount <= 0) {
+            return;
+        }
+
+        $box = Box::lockForUpdate()->findOrFail($boxId);
+        $note = $this->instantSaleBoxLogNote($sale, 'cancel');
+
+        if ((float) $box->total < $amount) {
+            throw ValidationException::withMessages([
+                'instant_sale_id' => [__('messages.box_out_of_money')],
+            ]);
+        }
+
+        $box->total = (float) $box->total - $amount;
+        $box->save();
+
+        BoxLogs::createBoxLog(
+            $box,
+            'سحب — عكس قبض بيع فوري',
+            'minus',
+            -$amount,
+            $note
+        );
+    }
+
+    private function markInstantSaleCancelled(InstantSale $sale): void
+    {
+        $payload = ['cancelled_at' => now()];
+        if (Schema::hasColumn('instant_sales', 'status')) {
+            $payload['status'] = 'cancelled';
+        }
+        $sale->update($payload);
     }
 
     /**
@@ -827,11 +919,13 @@ public function store(Request $request)
 
                     $box->total = (float) $box->total + $totalDelta;
                     $box->save();
+                    $editAction = $totalDelta >= 0 ? 'edit_add' : 'edit_minus';
                     BoxLogs::createBoxLog(
                         $box,
-                        'تعديل بيع فوري #'.$instantSale->id,
+                        $totalDelta >= 0 ? 'إضافة — تعديل بيع فوري' : 'سحب — تعديل بيع فوري',
                         $totalDelta >= 0 ? 'add' : 'minus',
-                        $totalDelta
+                        $totalDelta,
+                        $this->instantSaleBoxLogNote($instantSale, $editAction)
                     );
                     $data['payment_box_value'] = max(
                         0,
@@ -893,47 +987,24 @@ public function store(Request $request)
                     ]);
                 }
 
-                $mainProduct = $sale->product ?? Product::findOrFail($sale->product_id);
-                $mainProduct->stock += (float) $sale->quantity;
-                $mainProduct->save();
+                $this->restoreProductStock(
+                    (int) $sale->product_id,
+                    (float) $sale->quantity
+                );
 
                 foreach ($sale->subProducts as $sub) {
                     if ($sub->isCancelled()) {
                         continue;
                     }
-                    $subProduct = $sub->product ?? Product::find($sub->product_id);
-                    if ($subProduct) {
-                        $subProduct->stock += (float) $sub->quantity;
-                        $subProduct->save();
-                    }
-                    $sub->update([
-                        'status' => 'cancelled',
-                        'cancelled_at' => now(),
-                    ]);
-                }
-
-                if ($sale->payment_box_id && $sale->payment_box_value > 0) {
-                    $box = Box::lockForUpdate()->findOrFail($sale->payment_box_id);
-                    $amount = (float) $sale->payment_box_value;
-                    if ((float) $box->total < $amount) {
-                        throw ValidationException::withMessages([
-                            'instant_sale_id' => [__('messages.box_out_of_money')],
-                        ]);
-                    }
-                    $box->total = (float) $box->total - $amount;
-                    $box->save();
-                    BoxLogs::createBoxLog(
-                        $box,
-                        'إلغاء بيع فوري #'.$sale->id,
-                        'minus',
-                        -$amount
+                    $this->restoreProductStock(
+                        (int) $sub->product_id,
+                        (float) $sub->quantity
                     );
+                    $this->markInstantSaleCancelled($sub);
                 }
 
-                $sale->update([
-                    'status' => 'cancelled',
-                    'cancelled_at' => now(),
-                ]);
+                $this->reverseBoxForCancelledSale($sale);
+                $this->markInstantSaleCancelled($sale);
 
                 Logs::createLog(
                     'إلغاء بيع فوري',

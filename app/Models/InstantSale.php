@@ -66,6 +66,10 @@ class InstantSale extends Model
 
     public function isCancelled(): bool
     {
-        return $this->status === 'cancelled';
+        if ($this->status === 'cancelled') {
+            return true;
+        }
+
+        return $this->cancelled_at !== null;
     }
 }

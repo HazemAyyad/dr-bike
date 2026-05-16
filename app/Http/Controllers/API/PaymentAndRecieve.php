@@ -83,10 +83,22 @@ class PaymentAndRecieve extends Controller
                     ], 200);
                 }
                 $box->total = $currentTotal - $boxValue;
-                BoxLogs::createBoxLog($box, 'تم الدفع عن طريق الصندوق', 'minus', -$boxValue);
+                BoxLogs::createBoxLog(
+                    $box,
+                    'سحب — دفع من الصندوق',
+                    'minus',
+                    -$boxValue,
+                    'دفع نقدي من الصندوق بقيمة '.number_format($boxValue, 2, '.', '')
+                );
             } else { // receive
                 $box->total = $currentTotal + $boxValue;
-                BoxLogs::createBoxLog($box, 'تم القبض عن طريق الصندوق', 'add', $boxValue);
+                BoxLogs::createBoxLog(
+                    $box,
+                    'إضافة — قبض في الصندوق',
+                    'add',
+                    $boxValue,
+                    'قبض نقدي في الصندوق بقيمة '.number_format($boxValue, 2, '.', '')
+                );
             }
 
             $box->save();
