@@ -690,6 +690,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                             'employee_task_id' => $employeeTask->id,
                             'is_forced_to_upload_img' => $subTask['is_forced_to_upload_img'] ?? 0,
                             'admin_img' => $subImagesNames,
+                            'sort_order' => $index,
                         ]);
                     }
         }
@@ -735,7 +736,8 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         $request->validate(['employee_task_id'=>['required','exists:employee_tasks,id']]);
 
         $employeeTask = EmployeeTask
-        ::with(['subTasks', 'employee'])->findOrFail($request->employee_task_id);
+        ::with(['subTasks' => fn ($q) => $q->orderBy('sort_order'), 'employee'])
+            ->findOrFail($request->employee_task_id);
     
         $employeeTask->subTasks->transform(function ($subTask) {
         if ($subTask->admin_img) {
@@ -908,11 +910,35 @@ public function updateEmployeeTask(Request $request)
 
                 foreach ($sentSubTasks as $index => $subTaskData) {
                     if (isset($subTaskData['id'])) {
-                        // Existing subtask 
+                        $subTask = EmployeeSubTask::find($subTaskData['id']);
+                        if ($subTask && (int) $subTask->employee_task_id === (int) $empT->id) {
+                            $updatePayload = [
+                                'sort_order' => $index,
+                            ];
+                            if (isset($subTaskData['name'])) {
+                                $updatePayload['name'] = $subTaskData['name'];
+                            }
+                            if (array_key_exists('description', $subTaskData)) {
+                                $updatePayload['description'] = $subTaskData['description'];
+                            }
+                            if (isset($subTaskData['is_forced_to_upload_img'])) {
+                                $updatePayload['is_forced_to_upload_img'] = $subTaskData['is_forced_to_upload_img'];
+                            }
 
-                            $keepIds[] = $subTaskData['id'];
+                            $subImagesNames = $subTask->admin_img ?? [];
+                            if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
+                                foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
+                                    $fullName = $file->getClientOriginalName();
+                                    $file->move(public_path('EmployeeSubTasks/AdminImages/'), $fullName);
+                                    $subImagesNames[] = $fullName;
+                                }
+                                $updatePayload['admin_img'] = $subImagesNames;
+                            }
+
+                            $subTask->update($updatePayload);
+                            $keepIds[] = $subTask->id;
                         }
-                    else {
+                    } else {
                         $subImagesNames = [];
                         if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
                             foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
@@ -928,6 +954,7 @@ public function updateEmployeeTask(Request $request)
                             'description' => $subTaskData['description'] ?? null,
                             'is_forced_to_upload_img' => $subTaskData['is_forced_to_upload_img'],
                             'admin_img' => $subImagesNames,
+                            'sort_order' => $index,
 
                         ]);
                         $keepIds[] = $newSubTask->id;

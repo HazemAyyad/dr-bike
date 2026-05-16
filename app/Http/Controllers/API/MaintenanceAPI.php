@@ -12,13 +12,29 @@ use Illuminate\Validation\ValidationException;
 
 class MaintenanceAPI extends Controller
 {
+    private function resolveContactPhone($maintenance): ?string
+    {
+        $phone = null;
+        if ($maintenance->seller_id && $maintenance->seller) {
+            $phone = $maintenance->seller->phone;
+        } elseif ($maintenance->customer_id && $maintenance->customer) {
+            $phone = $maintenance->customer->phone;
+        }
+
+        if ($phone === null || $phone === '') {
+            return null;
+        }
+
+        return trim((string) $phone);
+    }
+
     // get all maintenance details
     private function maintenances($status){
 
       try{
         $maintenances = Maintenance::where('status',$status)
-        ->with('customer:id,name')
-        ->with('seller:id,name')
+        ->with('customer:id,name,phone')
+        ->with('seller:id,name,phone')
         ->get();
         $formatted = $maintenances->map(function($maintenance){
 
@@ -47,6 +63,9 @@ class MaintenanceAPI extends Controller
                 'id'=> $maintenance->id,
                 "customer_name"=> $maintenance->customer_id?  $maintenance->customer->name:null,
                 "seller_name"=> $maintenance->seller_id? $maintenance->seller->name :null,
+                "contact_phone"=> $this->resolveContactPhone($maintenance),
+                "customer_id"=> $maintenance->customer_id,
+                "seller_id"=> $maintenance->seller_id,
 
                 "receipt_date"=> $maintenance->receipt_date??null,
                 "receipt_time"=> $maintenance->receipt_time??null,

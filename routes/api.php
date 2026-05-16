@@ -6,6 +6,7 @@ use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\Authentication;
+use App\Http\Controllers\API\BanksController;
 use App\Http\Controllers\API\Bills;
 use App\Http\Controllers\API\Boxes;
 use App\Http\Controllers\API\BoxLogs;
@@ -201,6 +202,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
         ->whereNumber('id');
     Route::delete('/employee-point-categories/{id}', [EmployeePointCategoryController::class, 'destroy'])
         ->whereNumber('id');
+
+    // Banks (checks)
+    Route::get('/banks', [BanksController::class, 'index']);
+    Route::post('/banks', [BanksController::class, 'store']);
+    Route::post('/banks/find-or-create', [BanksController::class, 'findOrCreate']);
+    Route::put('/banks/{id}', [BanksController::class, 'update'])->whereNumber('id');
+    Route::delete('/banks/{id}', [BanksController::class, 'destroy'])->whereNumber('id');
 
 
        // employee orders

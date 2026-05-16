@@ -18,6 +18,7 @@ class EmployeeSubTask extends Model
         'admin_img',
         'status',
         'employee_img',
+        'sort_order',
 
     ];
 
