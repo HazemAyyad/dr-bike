@@ -45,18 +45,42 @@ class OfferPackageService
         return $this->maxSellableQuantity($package) < 1;
     }
 
-    /** Max complete packages sellable now (stock assembly vs definition qty remaining). */
+    /** Max complete packages sellable now (product stock vs remaining package_quantity). */
     public function maxSellableQuantity(OfferPackage $package): int
     {
         $fromStock = $this->availableQuantity($package);
-        $packageQty = max(1, (int) ($package->package_quantity ?? 1));
-        $remaining = max(0, $packageQty - $this->packagesSoldQuantity($package));
+        $remaining = max(0, (int) ($package->package_quantity ?? 0));
 
         if ($fromStock <= 0 || $remaining <= 0) {
             return 0;
         }
 
         return min($fromStock, $remaining);
+    }
+
+    /** Decrease live package count after an instant package sale. */
+    public function decrementPackageQuantity(OfferPackage $package, int $packagesSold): void
+    {
+        if ($packagesSold < 1) {
+            return;
+        }
+
+        $package->package_quantity = max(
+            0,
+            (int) ($package->package_quantity ?? 0) - $packagesSold
+        );
+        $package->save();
+    }
+
+    /** Restore package count when a package instant sale is cancelled. */
+    public function restorePackageQuantity(OfferPackage $package, int $packagesSold): void
+    {
+        if ($packagesSold < 1) {
+            return;
+        }
+
+        $package->package_quantity = max(0, (int) ($package->package_quantity ?? 0)) + $packagesSold;
+        $package->save();
     }
 
     /**
@@ -113,7 +137,7 @@ class OfferPackageService
             'available_quantity' => $available,
             'packages_sold' => $this->packagesSoldQuantity($package),
             'sales_count' => $this->packageSalesCount($package),
-            'remaining_quantity' => max(0, $packageQty - $this->packagesSoldQuantity($package)),
+            'remaining_quantity' => max(0, (int) ($package->package_quantity ?? 0)),
             'max_sellable_quantity' => $this->maxSellableQuantity($package),
             'needs_adjustment' => $this->maxSellableQuantity($package) < 1,
         ];

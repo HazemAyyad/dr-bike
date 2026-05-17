@@ -745,84 +745,89 @@ public function store(Request $request)
     ) {
         $offerPackageService = app(OfferPackageService::class);
 
-        $package = OfferPackage::query()
-            ->where('is_active', true)
-            ->with(['items.product'])
-            ->findOrFail((int) $data['offer_package_id']);
+        return DB::transaction(function () use ($data, $buyerPayload, $paymentBoxPayload, $offerPackageService) {
+            $package = OfferPackage::query()
+                ->where('is_active', true)
+                ->with(['items.product'])
+                ->lockForUpdate()
+                ->findOrFail((int) $data['offer_package_id']);
 
-        $packagesSold = max(1, (int) round((float) $data['quantity']));
+            $packagesSold = max(1, (int) round((float) $data['quantity']));
 
-        $maxSellable = $offerPackageService->maxSellableQuantity($package);
-        if ($packagesSold > $maxSellable) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.cant_sale'),
-            ], 200);
-        }
+            $maxSellable = $offerPackageService->maxSellableQuantity($package);
+            if ($packagesSold > $maxSellable) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.cant_sale'),
+                ], 200);
+            }
 
-        $stockCheck = $offerPackageService->validateStockForSale($package, $packagesSold);
-        if (! $stockCheck['ok']) {
-            return response()->json([
-                'status' => 'error',
-                'message' => $stockCheck['message'] ?? __('messages.cant_sale'),
-            ], 200);
-        }
+            $stockCheck = $offerPackageService->validateStockForSale($package, $packagesSold);
+            if (! $stockCheck['ok']) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $stockCheck['message'] ?? __('messages.cant_sale'),
+                ], 200);
+            }
 
-        $unitPrice = (float) $package->price;
-        $mainData = $this->sanitizeInstantSaleAttributes(array_merge([
-            'offer_package_id' => $package->id,
-            'product_id' => null,
-            'quantity' => $packagesSold,
-            'cost' => $unitPrice,
-            'discount' => (float) ($data['discount'] ?? 0),
-            'total_cost' => (float) $data['total_cost'],
-            'notes' => $data['notes'] ?? null,
-            'type' => $data['type'],
-            'project_id' => $data['project_id'] ?? null,
-        ], $buyerPayload, $paymentBoxPayload));
-
-        $mainInstantSale = InstantSale::create($mainData);
-
-        $this->linkPaymentBoxLogToInstantSale(
-            $mainInstantSale->fresh(['offerPackage', 'subProducts.product'])
-        );
-
-        foreach ($package->items as $item) {
-            $lineQty = (int) $item->quantity * $packagesSold;
-            $subProduct = Product::findOrFail($item->product_id);
-
-            InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
-                'product_id' => $item->product_id,
-                'cost' => 0,
-                'quantity' => $lineQty,
-                'discount' => 0,
-                'total_cost' => 0,
-                'parent_id' => $mainInstantSale->id,
+            $unitPrice = (float) $package->price;
+            $mainData = $this->sanitizeInstantSaleAttributes(array_merge([
+                'offer_package_id' => $package->id,
+                'product_id' => null,
+                'quantity' => $packagesSold,
+                'cost' => $unitPrice,
+                'discount' => (float) ($data['discount'] ?? 0),
+                'total_cost' => (float) $data['total_cost'],
+                'notes' => $data['notes'] ?? null,
                 'type' => $data['type'],
                 'project_id' => $data['project_id'] ?? null,
-            ], $buyerPayload)));
+            ], $buyerPayload, $paymentBoxPayload));
 
-            $subProduct->stock -= $lineQty;
-            $subProduct->save();
+            $mainInstantSale = InstantSale::create($mainData);
 
-            if ((float) $subProduct->stock === 0.0) {
-                $closeout = $subProduct->closeout;
-                if ($closeout) {
-                    $closeout->status = 'archived';
-                    $closeout->save();
+            $this->linkPaymentBoxLogToInstantSale(
+                $mainInstantSale->fresh(['offerPackage', 'subProducts.product'])
+            );
+
+            foreach ($package->items as $item) {
+                $lineQty = (int) $item->quantity * $packagesSold;
+                $subProduct = Product::findOrFail($item->product_id);
+
+                InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
+                    'product_id' => $item->product_id,
+                    'cost' => 0,
+                    'quantity' => $lineQty,
+                    'discount' => 0,
+                    'total_cost' => 0,
+                    'parent_id' => $mainInstantSale->id,
+                    'type' => $data['type'],
+                    'project_id' => $data['project_id'] ?? null,
+                ], $buyerPayload)));
+
+                $subProduct->stock -= $lineQty;
+                $subProduct->save();
+
+                if ((float) $subProduct->stock === 0.0) {
+                    $closeout = $subProduct->closeout;
+                    if ($closeout) {
+                        $closeout->status = 'archived';
+                        $closeout->save();
+                    }
                 }
             }
-        }
 
-        $logDescription = 'اضافة بيع فوري لباكيج عرض: '.$package->name
-            .' (×'.$packagesSold.') بإجمالي تكلفة: '.($mainInstantSale->total_cost ?? 0);
+            $offerPackageService->decrementPackageQuantity($package, $packagesSold);
 
-        Logs::createLog('اضافة بيع فوري جديد', $logDescription, 'instant_sales');
+            $logDescription = 'اضافة بيع فوري لباكيج عرض: '.$package->name
+                .' (×'.$packagesSold.') بإجمالي تكلفة: '.($mainInstantSale->total_cost ?? 0);
 
-        return response()->json([
-            'status' => 'success',
-            'message' => __('messages.instant_sale_created_successfully'),
-        ], 200);
+            Logs::createLog('اضافة بيع فوري جديد', $logDescription, 'instant_sales');
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.instant_sale_created_successfully'),
+            ], 200);
+        });
     }
 
     // get the projects of a product for chosing that product in the instant sale
@@ -1249,6 +1254,18 @@ public function store(Request $request)
 
                 foreach ($this->stockLinesForSale($sale) as $line) {
                     $this->restoreStockForSaleLine($line);
+                }
+
+                if ($sale->offer_package_id) {
+                    $package = OfferPackage::query()
+                        ->lockForUpdate()
+                        ->find($sale->offer_package_id);
+                    if ($package) {
+                        app(OfferPackageService::class)->restorePackageQuantity(
+                            $package,
+                            $this->saleLineQuantity($sale)
+                        );
+                    }
                 }
 
                 foreach ($sale->subProducts as $sub) {
