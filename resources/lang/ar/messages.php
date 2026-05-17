@@ -328,6 +328,11 @@ return [
     // combinations
     'combination_created'=>'تم تركيب المنتجات بنجاح',
 
+    // offer packages
+    'offer_package_created' => 'تم إنشاء باكيج العرض بنجاح',
+    'offer_package_updated' => 'تم تحديث باكيج العرض بنجاح',
+    'offer_package_deleted' => 'تم حذف باكيج العرض بنجاح',
+
     // bills and returns
 'bill_added' => 'تمت إضافة الفاتورة بنجاح',
 'bill_quantity_added' => 'تمت إضافة كمية الفاتورة بنجاح',

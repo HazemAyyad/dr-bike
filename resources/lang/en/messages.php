@@ -315,6 +315,11 @@ return [
     // combinations
     'combination_created'=>'Combination was created successfully',
 
+    // offer packages
+    'offer_package_created' => 'Offer package created successfully',
+    'offer_package_updated' => 'Offer package updated successfully',
+    'offer_package_deleted' => 'Offer package deleted successfully',
+
     //bills and returns
     'bill_added'=>'Bill was added successfully',
     'bill_quantity_added'=>'Bill Quantity was added successfully',

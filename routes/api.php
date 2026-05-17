@@ -38,6 +38,7 @@ use App\Http\Controllers\API\LegacyStoreImageController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\Notifications;
+use App\Http\Controllers\API\OfferPackageController;
 use App\Http\Controllers\API\Orders;
 use App\Http\Controllers\API\OutgoingChecks;
 use App\Http\Controllers\API\Papers;
@@ -298,6 +299,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/all/instant/sales' , [InstantSales::class,'getInstantSales']);
       Route::get('/show/instant/sale' , [InstantSales::class,'showInstantSale']);
       Route::post('/create/instant/sale' , [InstantSales::class,'store']);
+      Route::get('/offer/packages/for-sale' , [OfferPackageController::class,'forSale']);
       Route::post('/edit/instant/sale' , [InstantSales::class,'edit']);
       Route::post('/cancel/instant/sale' , [InstantSales::class,'cancel']);
 
@@ -586,6 +588,12 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
 
     Route::post('/add/combination' , [Stocks::class,'addCombination']);
     Route::get('/get/all/combinations' , [Stocks::class,'getCombinations']);
+
+    Route::get('/offer/packages' , [OfferPackageController::class,'index']);
+    Route::get('/offer/packages/show' , [OfferPackageController::class,'show']);
+    Route::post('/offer/packages' , [OfferPackageController::class,'store']);
+    Route::post('/offer/packages/update' , [OfferPackageController::class,'update']);
+    Route::post('/offer/packages/delete' , [OfferPackageController::class,'destroy']);
 
 
     Route::post('/search/products/by/name' , [Stocks::class,'searchProduct']);
