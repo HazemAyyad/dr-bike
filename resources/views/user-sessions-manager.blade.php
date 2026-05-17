@@ -26,13 +26,27 @@
         .btn-primary { background: var(--primary); color: #fff; }
         .btn-primary:hover { background: var(--primary-hover); }
         .btn-outline { background: #fff; color: var(--primary); border: 1px solid var(--border); }
-        .btn-danger { background: var(--danger); color: #fff; }
+        .btn-danger { background: var(--danger); color: #fff; font-weight: 700; }
+        .btn-danger-lg {
+            width: 100%; padding: 0.85rem 1rem; font-size: 1rem; margin-top: 0.5rem;
+            background: var(--danger); color: #fff; border: 2px solid #b91c1c; border-radius: 8px;
+            cursor: pointer; font-weight: 700;
+        }
+        .btn-danger-lg:hover { background: #b91c1c; }
+        .danger-zone {
+            border: 2px solid #dc2626; background: #fef2f2; border-radius: 12px;
+            padding: 1rem 1.25rem; margin-bottom: 1.25rem;
+        }
+        .danger-zone h2 { margin: 0 0 0.35rem; font-size: 1.1rem; color: #991b1b; }
         table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
         th, td { padding: 0.55rem 0.4rem; text-align: right; border-bottom: 1px solid var(--border); }
         th { color: var(--muted); font-size: 0.78rem; font-weight: 600; }
         .badge { display: inline-block; padding: 0.12rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
         .badge-admin { background: #dbeafe; color: #1e40af; }
         .badge-employee { background: #dcfce7; color: #166534; }
+        .badge-fcm-yes { background: #dcfce7; color: #166534; }
+        .badge-fcm-no { background: #f1f5f9; color: #64748b; }
+        .fcm-preview { font-size: 0.72rem; color: var(--muted); font-family: ui-monospace, monospace; display: block; margin-top: 0.15rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .count-active { font-weight: 700; color: var(--primary); }
         .count-zero { color: var(--muted); }
         .nav-links { margin-bottom: 1rem; font-size: 0.9rem; }
@@ -43,15 +57,32 @@
 <div class="wrap">
     <div class="nav-links">
         <a href="{{ route('test.cron-jobs') }}">مهام الكرون</a>
-        <a href="{{ route('test.user-sessions') }}">جلسات المستخدمين</a>
+        <a href="{{ route('test.admin-notify') }}">إشعارات الأدمن</a>
+        <a href="{{ route('test.employee-notify') }}">إشعارات الموظفين</a>
     </div>
 
     <h1>إدارة جلسات الموظفين والمدراء</h1>
     <p class="subtitle">عرض الجلسات النشطة (رموز Sanctum)، تسجيل خروج قسري، وتغيير كلمات المرور.</p>
 
+    <div class="danger-zone" id="logout-all-staff">
+        <h2>⚠ مسح كل جلسات الدخول (مدراء + موظفون)</h2>
+        <p style="margin:0;font-size:0.9rem;color:#7f1d1d;line-height:1.5">
+            يحذف <strong>جميع</strong> رموز تسجيل الدخول ويمسح <code>fcm_token</code> للجميع.
+            بعدها يفتح كل شخص التطبيق ويسجّل دخولاً من جديد.
+            <br><small style="color:#64748b">زر «إلغاء الفلتر» أسفل الصفحة يمسح البحث فقط — ليس هذا الزر.</small>
+        </p>
+        <form method="post" action="{{ route('test.user-sessions.logout-all-staff') }}"
+              onsubmit="return confirm('تأكيد: تسجيل خروج كل المدراء والموظفين من كل الأجهزة ومسح توكنات FCM؟');">
+            @csrf
+            <button type="submit" class="btn-danger-lg">
+                مسح كل الجلسات — إعادة تسجيل الدخول للجميع
+            </button>
+        </form>
+    </div>
+
     <div class="warn">
-        للاستخدام الإداري المحلي. على الإنتاج عطّل عبر <code>USER_SESSIONS_WEB_ENABLED=false</code> في <code>.env</code>.
-        تسجيل الخروج يحذف جميع رموز الوصول — يجب على المستخدم تسجيل الدخول من التطبيق مرة أخرى.
+        للاستخدام الإداري. على الإنتاج: <code>USER_SESSIONS_WEB_ENABLED=false</code> يعطّل الصفحة بالكامل.
+        خروج مستخدم واحد من زر «إدارة» بجانب اسمه.
     </div>
 
     @if(!empty($flash))
@@ -75,7 +106,7 @@
                 <input type="text" name="search" value="{{ $search }}" placeholder="بحث...">
             </div>
             <button type="submit" class="btn btn-primary">تطبيق</button>
-            <a href="{{ route('test.user-sessions') }}" class="btn btn-outline">مسح</a>
+            <a href="{{ route('test.user-sessions') }}" class="btn btn-outline">إلغاء الفلتر</a>
         </form>
 
         @if($users->isEmpty())
@@ -90,11 +121,13 @@
                         <th>النوع</th>
                         <th>جلسات نشطة</th>
                         <th>إجمالي الرموز</th>
+                        <th>FCM</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
                     @foreach($users as $u)
+                        @php $fcm = app(\App\Services\UserSessionManager::class)->fcmStatusForUser($u); @endphp
                         <tr>
                             <td>{{ $u->id }}</td>
                             <td>{{ $u->name }}</td>
@@ -110,6 +143,14 @@
                                 </span>
                             </td>
                             <td>{{ $u->total_tokens_count }}</td>
+                            <td>
+                                <span class="badge {{ $fcm['has_fcm'] ? 'badge-fcm-yes' : 'badge-fcm-no' }}">
+                                    {{ $fcm['label'] }}
+                                </span>
+                                @if($fcm['token_preview'])
+                                    <span class="fcm-preview" title="{{ $u->fcm_token }}">{{ $fcm['token_preview'] }}</span>
+                                @endif
+                            </td>
                             <td>
                                 <a class="btn btn-outline" href="{{ route('test.user-sessions.show', $u->id) }}">إدارة</a>
                             </td>

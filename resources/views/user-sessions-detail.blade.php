@@ -40,6 +40,30 @@
     <h1>{{ $user->name }}</h1>
     <p class="meta">{{ $user->email }} — {{ $user->type === 'admin' ? 'مدير' : 'موظف' }} — #{{ $user->id }}</p>
 
+    <div class="card">
+        <h2 style="margin-top:0;font-size:1rem;">FCM (إشعارات الجوال)</h2>
+        <p style="margin:0.35rem 0">
+            <span class="badge {{ $fcmStatus['has_fcm'] ? 'badge-ok' : 'badge-expired' }}">
+                {{ $fcmStatus['label'] }}
+            </span>
+        </p>
+        @if($fcmStatus['has_user_token'])
+            <p class="meta" style="margin:0.5rem 0 0;word-break:break-all">
+                <strong>users.fcm_token:</strong><br>
+                <code style="font-size:0.8rem">{{ $user->fcm_token }}</code>
+            </p>
+        @elseif($fcmStatus['admin_devices'] > 0)
+            <p class="meta" style="margin:0.5rem 0 0">
+                مسجّل عبر <code>admin_device_tokens</code> — {{ $fcmStatus['admin_devices'] }} جهاز.
+                (قد يكون <code>users.fcm_token</code> فارغاً والإشعار يصل عبر جدول الأجهزة.)
+            </p>
+        @else
+            <p class="meta" style="margin:0.5rem 0 0;color:#b45309">
+                لا يوجد توكن — اطلب من المستخدم تسجيل الدخول من التطبيق على الجوال مع تفعيل الإشعارات.
+            </p>
+        @endif
+    </div>
+
     @if(!empty($flash))
         <div class="flash success">{{ $flash['message'] ?? '' }}</div>
     @endif

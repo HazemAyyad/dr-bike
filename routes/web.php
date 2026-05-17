@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminNotificationWebController;
+use App\Http\Controllers\EmployeeNotificationWebController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeTasks;
 use App\Http\Controllers\API\Products;
@@ -36,6 +37,12 @@ Route::post('/test/admin-notify', [AdminNotificationWebController::class, 'send'
 Route::get('/test/admin-notify/fcm-test', [AdminNotificationWebController::class, 'fcmTest'])->name('test.admin-notify.fcm-test');
 Route::post('/test/admin-notify/fcm-test', [AdminNotificationWebController::class, 'fcmTestWithToken'])->name('test.admin-notify.fcm-test.post');
 
+/** إرسال إشعار تجريبي للموظفين (قاعدة البيانات + FCM) */
+Route::get('/test/employee-notify', [EmployeeNotificationWebController::class, 'show'])->name('test.employee-notify');
+Route::post('/test/employee-notify', [EmployeeNotificationWebController::class, 'send'])->name('test.employee-notify.send');
+Route::get('/test/employee-notify/fcm-test', [EmployeeNotificationWebController::class, 'fcmTest'])->name('test.employee-notify.fcm-test');
+Route::post('/test/employee-notify/fcm-test', [EmployeeNotificationWebController::class, 'fcmTestWithToken'])->name('test.employee-notify.fcm-test.post');
+
 Route::get('/test/store-sync', [StoreSyncTestController::class, 'show'])->name('test.store-sync');
 Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('test.store-sync.run');
 
@@ -46,6 +53,7 @@ Route::get('/test/cron-jobs/log/{id}', [CronJobWebController::class, 'showLog'])
 
 /** إدارة جلسات الموظفين والمدراء */
 Route::get('/test/user-sessions', [UserSessionsWebController::class, 'index'])->name('test.user-sessions');
+Route::post('/test/user-sessions/logout-all-staff', [UserSessionsWebController::class, 'logoutAllStaff'])->name('test.user-sessions.logout-all-staff');
 Route::get('/test/user-sessions/{user}', [UserSessionsWebController::class, 'show'])->name('test.user-sessions.show');
 Route::post('/test/user-sessions/{user}/logout-all', [UserSessionsWebController::class, 'logoutAll'])->name('test.user-sessions.logout-all');
 Route::post('/test/user-sessions/tokens/{token}/revoke', [UserSessionsWebController::class, 'revokeToken'])->name('test.user-sessions.revoke');

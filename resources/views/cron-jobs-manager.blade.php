@@ -126,6 +126,10 @@
 <div class="wrap">
     <p style="margin-bottom:1rem;font-size:0.9rem;">
         <a href="{{ route('test.user-sessions') }}" style="color:#2563eb;">جلسات المستخدمين</a>
+        ·
+        <a href="{{ route('test.admin-notify') }}" style="color:#2563eb;">إشعارات الأدمن</a>
+        ·
+        <a href="{{ route('test.employee-notify') }}" style="color:#2563eb;">إشعارات الموظفين</a>
     </p>
     <h1>إدارة مهام الكرون (Scheduler)</h1>
     <p class="subtitle">

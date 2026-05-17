@@ -30,6 +30,7 @@ class UserSessionManager
             ->withCount([
                 'tokens as active_sessions_count' => $this->activeTokensQuery(),
                 'tokens as total_tokens_count',
+                'adminDeviceTokens as admin_fcm_devices_count',
             ])
             ->orderBy('type')
             ->orderBy('name');
@@ -55,7 +56,10 @@ class UserSessionManager
      */
     public function userWithSessions(int $userId): array
     {
-        $user = $this->findStaffUser($userId);
+        $user = User::query()
+            ->whereIn('type', config('user_sessions_manager.types', ['admin', 'employee']))
+            ->withCount('adminDeviceTokens as admin_fcm_devices_count')
+            ->findOrFail($userId);
         $tokens = $user->tokens()
             ->orderByDesc('last_used_at')
             ->orderByDesc('created_at')
@@ -71,6 +75,25 @@ class UserSessionManager
         return User::query()
             ->whereIn('type', $allowed)
             ->findOrFail($userId);
+    }
+
+    /**
+     * @return array{users: int, tokens: int}
+     */
+    public function revokeAllStaffSessions(): array
+    {
+        $allowed = config('user_sessions_manager.types', ['admin', 'employee']);
+        $users = User::query()->whereIn('type', $allowed)->get();
+        $totalTokens = 0;
+
+        foreach ($users as $user) {
+            $totalTokens += $this->revokeAllSessions($user);
+        }
+
+        return [
+            'users' => $users->count(),
+            'tokens' => $totalTokens,
+        ];
     }
 
     public function revokeAllSessions(User $user): int
@@ -115,5 +138,39 @@ class UserSessionManager
             'employee' => 'موظف',
             default => $type,
         };
+    }
+
+    /**
+     * @return array{has_fcm: bool, has_user_token: bool, admin_devices: int, token_preview: ?string, label: string}
+     */
+    public function fcmStatusForUser(User $user): array
+    {
+        $userToken = trim((string) ($user->fcm_token ?? ''));
+        $hasUserToken = $userToken !== '' && $userToken !== 'no_token';
+
+        $adminDevices = 0;
+        if ($user->type === 'admin') {
+            $adminDevices = (int) ($user->admin_fcm_devices_count
+                ?? $user->adminDeviceTokens()->count());
+        }
+
+        $hasFcm = $hasUserToken || $adminDevices > 0;
+
+        $tokenPreview = $hasUserToken ? \Illuminate\Support\Str::limit($userToken, 32) : null;
+
+        $label = match (true) {
+            $hasUserToken && $user->type === 'employee' => 'FCM ✓ (موظف)',
+            $hasUserToken && $user->type === 'admin' => 'FCM ✓ (users.fcm_token)',
+            ! $hasUserToken && $adminDevices > 0 => "FCM ✓ ({$adminDevices} جهاز أدمن)",
+            default => 'بدون FCM',
+        };
+
+        return [
+            'has_fcm' => $hasFcm,
+            'has_user_token' => $hasUserToken,
+            'admin_devices' => $adminDevices,
+            'token_preview' => $tokenPreview,
+            'label' => $label,
+        ];
     }
 }

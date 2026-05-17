@@ -723,6 +723,12 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/employee/my/attendance/history', [EmployeeDetails::class, 'employeeMyAttendanceHistory']);
     Route::get('/get/attendance/details', [EmployeeData::class, 'attendanceReport']);
 
+    Route::get('/employee/notifications', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'index']);
+    Route::get('/employee/notifications/unread-count', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'unreadCount']);
+    Route::post('/employee/notifications/mark-all-read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markAllRead']);
+    Route::post('/employee/notifications/{id}/read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markRead']);
+    Route::delete('/employee/notifications/{id}', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'destroy']);
+
     // employee tasks
     Route::post('/employee/edit/employee/task/images', [EmployeeOwnTasks::class, 'editEmployeeTasksImages']);
     Route::post('/employee/edit/employee/sub/task/images', [EmployeeOwnTasks::class, 'editEmployeeSubTasksImages']);

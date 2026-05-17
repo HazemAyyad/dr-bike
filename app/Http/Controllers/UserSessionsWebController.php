@@ -51,6 +51,7 @@ class UserSessionsWebController extends Controller
         return view('user-sessions-detail', [
             'user' => $data['user'],
             'tokens' => $data['tokens'],
+            'fcmStatus' => $this->sessions->fcmStatusForUser($data['user']),
             'flash' => session('flash'),
         ]);
     }
@@ -84,6 +85,20 @@ class UserSessionsWebController extends Controller
             ->with('flash', [
                 'type' => 'success',
                 'message' => 'تم إنهاء الجلسة المحددة.',
+            ]);
+    }
+
+    public function logoutAllStaff()
+    {
+        $this->ensureEnabled();
+
+        $stats = $this->sessions->revokeAllStaffSessions();
+
+        return redirect()
+            ->route('test.user-sessions')
+            ->with('flash', [
+                'type' => 'success',
+                'message' => "تم إنهاء جميع جلسات الدخول ({$stats['users']} مستخدم، {$stats['tokens']} رمز وصول). يجب على الجميع تسجيل الدخول من جديد لتحديث توكن FCM.",
             ]);
     }
 

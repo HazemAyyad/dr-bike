@@ -205,6 +205,57 @@ class FirebaseService
      *
      * @return array{ok: bool, message: string, firebase_response?: string, firebase_project_id?: string|null, channel_id: string, token_prefix: string, device_token_id?: int|null, used_latest: bool, credentials_diagnostics?: array}
      */
+    /**
+     * @return array{ok: bool, message: string, firebase_response?: string, firebase_project_id?: string|null, channel_id: string, token_prefix: string, user_id?: int|null, used_latest: bool, credentials_diagnostics?: array}
+     */
+    public function sendEmployeeFcmTest(string $fcmToken, bool $usedLatest = false, ?int $userId = null): array
+    {
+        $data = [
+            'type' => 'employee_daily_tasks',
+            'notification_id' => '0',
+            'related_type' => '',
+            'related_id' => '',
+            'employee_id' => '',
+            'source' => 'employee_fcm_test',
+        ];
+
+        $base = [
+            'channel_id' => self::ADMIN_CHANNEL_ID,
+            'token_prefix' => substr($fcmToken, 0, 20).'…',
+            'firebase_project_id' => $this->serviceAccountProjectId(),
+            'used_latest' => $usedLatest,
+            'user_id' => $userId,
+            'credentials_diagnostics' => $this->credentialsDiagnostics(),
+        ];
+
+        try {
+            $response = $this->sendNotification(
+                $fcmToken,
+                'DoctorBike Test (موظف)',
+                'اختبار إشعار الموظف — FCM',
+                $data
+            );
+
+            return array_merge($base, [
+                'ok' => true,
+                'message' => 'تم إرسال FCM للموظف بنجاح.',
+                'firebase_response' => $this->formatResponseForLog($response),
+                'firebase_project_id' => $this->serviceAccountProjectId(),
+            ]);
+        } catch (Throwable $e) {
+            Log::error('Employee FCM test failed', [
+                'token_prefix' => $base['token_prefix'],
+                'error' => $e->getMessage(),
+            ]);
+
+            return array_merge($base, [
+                'ok' => false,
+                'message' => 'فشل إرسال FCM: '.$e->getMessage(),
+                'credentials_diagnostics' => $this->credentialsDiagnostics(),
+            ]);
+        }
+    }
+
     public function sendAdminFcmTest(string $fcmToken, bool $usedLatest = false, ?int $deviceTokenId = null): array
     {
         $data = [
