@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Closeout;
+use App\Models\InstantSale;
 use App\Models\OfferPackage;
 use App\Models\Product;
 use App\Support\ApiImageUrl;
@@ -45,6 +46,32 @@ class OfferPackageService
     }
 
     /**
+     * Active (non-cancelled) parent instant sales for this package.
+     */
+    private function activePackageSalesQuery(int $offerPackageId)
+    {
+        return InstantSale::query()
+            ->where('offer_package_id', $offerPackageId)
+            ->whereNull('parent_id')
+            ->where(function ($q) {
+                $q->where('status', '!=', 'cancelled')->orWhereNull('status');
+            })
+            ->whereNull('cancelled_at');
+    }
+
+    /** Total package units sold via instant sale (sum of sale quantity). */
+    public function packagesSoldQuantity(OfferPackage $package): int
+    {
+        return (int) $this->activePackageSalesQuery($package->id)->sum('quantity');
+    }
+
+    /** Number of instant-sale invoices for this package. */
+    public function packageSalesCount(OfferPackage $package): int
+    {
+        return (int) $this->activePackageSalesQuery($package->id)->count();
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function formatPackage(OfferPackage $package, bool $withItems = true): array
@@ -70,6 +97,8 @@ class OfferPackageService
             'image' => $this->imagePublicPath($package->image_path),
             'is_active' => (bool) $package->is_active,
             'available_quantity' => $available,
+            'packages_sold' => $this->packagesSoldQuantity($package),
+            'sales_count' => $this->packageSalesCount($package),
             'needs_adjustment' => $available < 1,
         ];
 
