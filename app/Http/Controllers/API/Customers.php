@@ -183,12 +183,12 @@ public function getIncompletePersons()
 
         'license_image'      => 'nullable|array',
         'license_image.*'      => 'required|file|image',
-        'type' => 'required|string',
+        'type' => 'nullable|string',
 
 
     ]);
 
-
+    $data['type'] = $this->normalizePersonCategory($request->input('type'));
 
     // Handle image uploads
     $idImageNames = [];
@@ -441,9 +441,12 @@ public function getIncompletePersons()
 
             'license_image'      => 'nullable|array',
             'license_image.*'      => 'nullable',
-            'type' => 'required|string',
+            'type' => 'nullable|string',
                 
     ]);
+
+            $data['type'] = $this->normalizePersonCategory($request->input('type'));
+
           if (!$request->filled('customer_id') && !$request->filled('seller_id')) {
             return response()->json([
                 'status'  => 'error',
@@ -670,5 +673,24 @@ public function getIncompletePersons()
                 'message' => __('messages.something_wrong')
             ], 200);
         }       
+    }
+
+    /**
+     * نوع الزبون في الواجهة: retail (مفرق) أو wholesale (جملة).
+     * يقبل القيم القديمة customer/seller ويحوّلها.
+     */
+    private function normalizePersonCategory(?string $type): string
+    {
+        $value = strtolower(trim((string) $type));
+
+        if (in_array($value, ['wholesale', 'retail'], true)) {
+            return $value;
+        }
+
+        if ($value === 'seller') {
+            return 'wholesale';
+        }
+
+        return 'retail';
     }
 }
