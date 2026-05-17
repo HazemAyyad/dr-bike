@@ -57,7 +57,9 @@ class CronJobLogger
         $buffer = new BufferedOutput();
 
         try {
-            $result = $callback($buffer);
+            $result = (new \ReflectionFunction($callback))->getNumberOfParameters() >= 2
+                ? $callback($buffer, $log)
+                : $callback($buffer);
             $this->finishSuccess($log, trim($buffer->fetch()) ?: null);
 
             return $result;

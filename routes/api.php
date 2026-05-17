@@ -108,6 +108,7 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::post('/change/password' , [Authentication::class,'changePassword']);
     Route::post('/update/profile' , [Profile::class,'updatePersonalInformation']);
     Route::post('/me' , [Authentication::class,'me']);
+    Route::post('/update/fcm-token' , [Authentication::class,'updateFcmToken']);
 
     // only for customers
     // orders

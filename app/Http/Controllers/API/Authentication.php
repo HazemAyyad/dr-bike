@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Mail\ResetPasswordMail;
 use App\Mail\VerifyTokenMail;
+use App\Models\AdminDeviceToken;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeDetail;
 use App\Models\PasswordResetCode;
@@ -241,7 +242,10 @@ class Authentication extends Controller
             }
 
             $user = User::where('email', $request->email)->first();
-            $user->forceFill(['fcm_token' => $request->fcm_token])->save();
+            $fcm = trim((string) $request->fcm_token);
+            if ($fcm !== '' && $fcm !== 'no_token') {
+                $user->forceFill(['fcm_token' => $fcm])->save();
+            }
             $token = $user->createToken('myapptoken', ['*'], now()->addWeek())->plainTextToken;
 
             $response = [
@@ -278,6 +282,58 @@ class Authentication extends Controller
                 'status' => 'error',
 
                 'message' => __('messages.login_error'),
+            ], 200);
+        }
+    }
+
+    /**
+     * تحديث توكن FCM بعد تسجيل الدخول (مثلاً أول تشغيل قبل جاهزية التوكن).
+     */
+    public function updateFcmToken(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'fcm_token' => 'required|string|max:512',
+                'platform' => 'nullable|string|max:32',
+                'device_name' => 'nullable|string|max:255',
+            ]);
+
+            $fcm = trim($data['fcm_token']);
+            if ($fcm === '' || $fcm === 'no_token') {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'skipped',
+                ], 200);
+            }
+
+            $user = $request->user();
+            $user->forceFill(['fcm_token' => $fcm])->save();
+
+            if ($user->type === 'admin') {
+                AdminDeviceToken::query()->updateOrCreate(
+                    ['fcm_token' => $fcm],
+                    [
+                        'user_id' => $user->id,
+                        'platform' => $data['platform'] ?? null,
+                        'device_name' => $data['device_name'] ?? null,
+                        'last_seen_at' => now(),
+                    ]
+                );
+            }
+
+            return response()->json([
+                'status' => 'success',
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }

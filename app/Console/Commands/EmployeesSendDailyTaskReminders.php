@@ -20,19 +20,18 @@ class EmployeesSendDailyTaskReminders extends Command
 
         return $cronJobLogger->run(
             'employees:send-daily-task-reminders',
-            function () use ($employeeNotificationService, $force) {
+            function ($buffer, $log) use ($employeeNotificationService, $force) {
                 $stats = $employeeNotificationService->sendDailyTaskReminders($force);
+                $formatted = $employeeNotificationService->formatDailyReminderReport($stats, $force);
 
-                $message = sprintf(
-                    'Employees: %d | Notified: %d | Skipped (no tasks/already sent): %d | No FCM token: %d | Failed: %d',
-                    $stats['employees'],
-                    $stats['notified'],
-                    $stats['skipped'],
-                    $stats['no_token'],
-                    $stats['failed'],
-                );
+                $log->update([
+                    'payload' => array_merge($log->payload ?? [], [
+                        'force' => $force,
+                        'report' => $formatted['report'],
+                    ]),
+                ]);
 
-                $this->info($message);
+                $this->info($formatted['text']);
 
                 return self::SUCCESS;
             },

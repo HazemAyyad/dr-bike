@@ -18,13 +18,14 @@ return [
         ],
         'employees:send-daily-task-reminders' => [
             'label' => 'تذكير مهام الموظفين اليومية',
-            'description' => 'إشعار FCM لكل موظف لديه مهام غير مكتملة لليوم (حسب التكرار).',
+            'description' => 'إشعار FCM لكل موظف لديه مهام غير مكتملة لليوم. يُسجَّل من وصل FCM فعلاً. بدون «force» لا يُعاد الإرسال لنفس الموظف في نفس اليوم.',
             'scheduled' => true,
             'schedule_human' => 'يومياً 10:00 (Asia/Hebron)',
             'arguments' => [
                 'force' => [
-                    'label' => 'إرسال حتى لو أُرسل اليوم (للاختبار)',
+                    'label' => 'إرسال حتى لو أُرسل اليوم (إعادة اختبار — مهم!)',
                     'type' => 'checkbox',
+                    'option' => '--force',
                 ],
             ],
         ],

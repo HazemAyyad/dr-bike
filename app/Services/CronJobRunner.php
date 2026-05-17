@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Models\CronJobLog;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Artisan;
 use InvalidArgumentException;
 use Throwable;
@@ -31,14 +30,12 @@ class CronJobRunner
         }
 
         $meta = $this->availableCommands()[$signature];
-        $allowedArgs = array_keys($meta['arguments'] ?? []);
-        $filtered = Arr::only($arguments, $allowedArgs);
-        $filtered = array_filter($filtered, static fn ($v) => $v !== null && $v !== '');
+        $artisanArgs = $this->buildArtisanArguments($meta['arguments'] ?? [], $arguments);
 
         $logBeforeId = CronJobLog::query()->max('id') ?? 0;
 
         try {
-            $exitCode = Artisan::call($signature, $filtered);
+            $exitCode = Artisan::call($signature, $artisanArgs);
             $output = trim(Artisan::output());
         } catch (Throwable $e) {
             $log = $this->resolveLog($signature, $logBeforeId);
@@ -54,16 +51,20 @@ class CronJobRunner
         }
 
         $log = $this->resolveLog($signature, $logBeforeId);
+        $log?->refresh();
 
         if ($log && $output !== '' && empty($log->output)) {
             $log->update(['output' => $output]);
             $log->refresh();
         }
 
+        $report = $log?->payload['report'] ?? null;
+
         return [
             'command' => $signature,
             'exit_code' => (int) $exitCode,
             'output' => $output,
+            'report' => is_array($report) ? $report : null,
             'log' => $log,
             'success' => $exitCode === 0 && ($log === null || $log->status !== 'failed'),
         ];
@@ -86,5 +87,38 @@ class CronJobRunner
                 })
                 ->orderByDesc('id')
                 ->first();
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $argumentMeta
+     * @param  array<string, mixed>  $input
+     * @return array<string, mixed>
+     */
+    private function buildArtisanArguments(array $argumentMeta, array $input): array
+    {
+        $artisanArgs = [];
+
+        foreach ($argumentMeta as $argName => $argMeta) {
+            $option = $argMeta['option'] ?? '--'.str_replace('_', '-', $argName);
+            $type = $argMeta['type'] ?? 'text';
+
+            if ($type === 'checkbox') {
+                $enabled = ! empty($input[$argName])
+                    || ! empty($input[$option])
+                    || ! empty($input[ltrim($option, '-')]);
+                if ($enabled) {
+                    $artisanArgs[$option] = true;
+                }
+
+                continue;
+            }
+
+            $value = $input[$argName] ?? $input[$option] ?? null;
+            if ($value !== null && $value !== '') {
+                $artisanArgs[$option] = $value;
+            }
+        }
+
+        return $artisanArgs;
     }
 }

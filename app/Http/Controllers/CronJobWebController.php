@@ -54,8 +54,7 @@ class CronJobWebController extends Controller
         foreach ($meta['arguments'] ?? [] as $argName => $argMeta) {
             if (($argMeta['type'] ?? 'text') === 'checkbox') {
                 if ($request->boolean($argName)) {
-                    $option = $argMeta['option'] ?? '--'.str_replace('_', '-', $argName);
-                    $arguments[$option] = true;
+                    $arguments[$argName] = true;
                 }
             } elseif ($request->filled($argName)) {
                 $arguments[$argName] = $request->input($argName);

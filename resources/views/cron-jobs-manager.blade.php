@@ -120,6 +120,50 @@
         a.link:hover { text-decoration: underline; }
         .meta { font-size: 0.8rem; color: var(--muted); }
         .detail-block { margin-top: 0.75rem; }
+        .cron-report { margin-top: 1rem; }
+        .cron-report h3 { font-size: 1rem; margin: 0 0 0.5rem; }
+        .cron-report-block {
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 0.85rem 1rem;
+            margin-bottom: 0.75rem;
+        }
+        .cron-report-head { margin: 0 0 0.75rem; }
+        .badge-warn { background: #fef3c7; color: #92400e; }
+        .summary-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+        .chip {
+            background: #e2e8f0;
+            padding: 0.25rem 0.55rem;
+            border-radius: 6px;
+            font-size: 0.82rem;
+        }
+        .chip-ok { background: #dcfce7; color: #166534; }
+        .chip-warn { background: #fef3c7; color: #92400e; }
+        .chip-muted { background: #f1f5f9; color: var(--muted); }
+        .report-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+        .report-table th {
+            width: 28%;
+            text-align: right;
+            padding: 0.35rem 0.5rem;
+            color: var(--muted);
+            vertical-align: top;
+        }
+        .report-table td { padding: 0.35rem 0.5rem; }
+        .report-table-wide th, .report-table-wide td {
+            border-bottom: 1px solid var(--border);
+            padding: 0.5rem 0.4rem;
+        }
+        .report-table-wide thead th {
+            font-size: 0.78rem;
+            color: var(--muted);
+            background: #f1f5f9;
+        }
+        .body-cell { max-width: 220px; line-height: 1.4; }
+        .result-fcm_sent { color: var(--success); font-weight: 600; }
+        .result-fcm_failed { color: var(--danger); font-weight: 600; }
+        .result-in_app_only_no_token { color: #ca8a04; font-weight: 600; }
+        .result-muted { color: var(--muted); }
     </style>
 </head>
 <body>
@@ -142,6 +186,7 @@
         <code>CRON_MANAGER_WEB_ENABLED=false</code> في <code>.env</code>.
         المجدول: <code>checks:send-due-reminders</code> يومياً 00:00،
         <code>employees:send-daily-task-reminders</code> يومياً 10:00 بتوقيت فلسطين.
+        عند إعادة الاختبار يدوياً فعّل <strong>«إرسال حتى لو أُرسل اليوم»</strong> وإلا يُتخطى من أُرسل لهم FCM بنجاح اليوم.
     </div>
 
     @if(session('run_result'))
@@ -158,8 +203,14 @@
             @if(!empty($r['error']))
                 <p class="meta" style="color:var(--danger);">{{ $r['error'] }}</p>
             @endif
+            @if(!empty($r['report']) && ($r['report']['type'] ?? '') === 'employee_daily_task_reminders')
+                @include('partials.cron-daily-reminder-report', ['report' => $r['report']])
+            @endif
             @if(!empty($r['output']))
-                <div class="log-box">{{ $r['output'] }}</div>
+                <details class="detail-block" style="margin-top:0.75rem;">
+                    <summary class="meta" style="cursor:pointer;">النص الكامل للتقرير</summary>
+                    <div class="log-box" style="margin-top:0.5rem;">{{ $r['output'] }}</div>
+                </details>
             @endif
             @if(!empty($r['log_id']))
                 <p class="meta detail-block">
@@ -265,12 +316,18 @@
             @if($selectedLog->error_message)
                 <p style="color:var(--danger);"><strong>خطأ:</strong> {{ $selectedLog->error_message }}</p>
             @endif
-            @if($selectedLog->output)
-                <strong>المخرجات:</strong>
-                <div class="log-box">{{ $selectedLog->output }}</div>
+            @php $logReport = $selectedLog->payload['report'] ?? null; @endphp
+            @if(is_array($logReport) && ($logReport['type'] ?? '') === 'employee_daily_task_reminders')
+                @include('partials.cron-daily-reminder-report', ['report' => $logReport])
             @endif
-            @if($selectedLog->payload)
-                <p class="meta" style="margin-top:0.75rem;"><strong>payload:</strong></p>
+            @if($selectedLog->output)
+                <details class="detail-block" style="margin-top:0.75rem;">
+                    <summary class="meta" style="cursor:pointer;">المخرجات النصية</summary>
+                    <div class="log-box" style="margin-top:0.5rem;">{{ $selectedLog->output }}</div>
+                </details>
+            @endif
+            @if($selectedLog->payload && !is_array($logReport))
+                <p class="meta" style="margin-top:0.75rem;"><strong>بيانات إضافية:</strong></p>
                 <div class="log-box">{{ json_encode($selectedLog->payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) }}</div>
             @endif
         </div>
