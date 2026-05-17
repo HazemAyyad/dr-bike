@@ -14,7 +14,19 @@ return [
             'label' => 'تذكير الشيكات المستحقة',
             'description' => 'إشعارات الأدمن + FCM للشيكات المستحقة بعد يومين (وارد / صادر).',
             'scheduled' => true,
-            'schedule_human' => 'كل دقيقة (schedule)',
+            'schedule_human' => 'يومياً 00:00',
+        ],
+        'employees:send-daily-task-reminders' => [
+            'label' => 'تذكير مهام الموظفين اليومية',
+            'description' => 'إشعار FCM لكل موظف لديه مهام غير مكتملة لليوم (حسب التكرار).',
+            'scheduled' => true,
+            'schedule_human' => 'يومياً 10:00 (Asia/Hebron)',
+            'arguments' => [
+                'force' => [
+                    'label' => 'إرسال حتى لو أُرسل اليوم (للاختبار)',
+                    'type' => 'checkbox',
+                ],
+            ],
         ],
         'sync:store' => [
             'label' => 'مزامنة المتجر',

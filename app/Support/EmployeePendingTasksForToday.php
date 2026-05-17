@@ -23,6 +23,27 @@ class EmployeePendingTasksForToday
         return $tasks->filter(fn (EmployeeTask $task) => self::appliesToday($task))->values();
     }
 
+    /** مهام اليوم التي يراها الموظف في التطبيق (نفس منطق EmployeeData). */
+    public static function visibleForEmployee(int $employeeId): Collection
+    {
+        return self::forEmployee($employeeId)
+            ->filter(fn (EmployeeTask $task) => self::isVisibleToEmployee($task))
+            ->values();
+    }
+
+    public static function isVisibleToEmployee(EmployeeTask $task): bool
+    {
+        if (! (bool) $task->not_shown_for_employee) {
+            return true;
+        }
+
+        if (empty($task->start_time)) {
+            return false;
+        }
+
+        return Carbon::parse($task->start_time)->startOfDay()->lte(now()->startOfDay());
+    }
+
     public static function appliesToday(EmployeeTask $task): bool
     {
         $today = Carbon::now();

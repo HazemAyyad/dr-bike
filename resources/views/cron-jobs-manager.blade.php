@@ -136,7 +136,8 @@
     <div class="warn">
         للاستخدام المحلي/الإداري. على الإنتاج عطّل الصفحة عبر
         <code>CRON_MANAGER_WEB_ENABLED=false</code> في <code>.env</code>.
-        المجدول في Kernel يشغّل <code>checks:send-due-reminders</code> كل دقيقة تلقائياً.
+        المجدول: <code>checks:send-due-reminders</code> يومياً 00:00،
+        <code>employees:send-daily-task-reminders</code> يومياً 10:00 بتوقيت فلسطين.
     </div>
 
     @if(session('run_result'))
@@ -182,15 +183,22 @@
                     <form method="post" action="{{ route('test.cron-jobs.run') }}">
                         @csrf
                         <input type="hidden" name="command" value="{{ $signature }}">
-                        @if(!empty($meta['arguments']['token']))
-                            <label for="token_{{ md5($signature) }}">{{ $meta['arguments']['token']['label'] }}</label>
-                            <input
-                                type="text"
-                                id="token_{{ md5($signature) }}"
-                                name="token"
-                                placeholder="{{ $meta['arguments']['token']['placeholder'] ?? '' }}"
-                            >
-                        @endif
+                        @foreach($meta['arguments'] ?? [] as $argName => $argMeta)
+                            @if(($argMeta['type'] ?? 'text') === 'checkbox')
+                                <label style="display:flex;align-items:center;gap:0.5rem;margin:0.5rem 0;font-size:0.9rem;">
+                                    <input type="checkbox" name="{{ $argName }}" value="1">
+                                    {{ $argMeta['label'] ?? $argName }}
+                                </label>
+                            @else
+                                <label for="{{ $argName }}_{{ md5($signature) }}">{{ $argMeta['label'] ?? $argName }}</label>
+                                <input
+                                    type="text"
+                                    id="{{ $argName }}_{{ md5($signature) }}"
+                                    name="{{ $argName }}"
+                                    placeholder="{{ $argMeta['placeholder'] ?? '' }}"
+                                >
+                            @endif
+                        @endforeach
                         <button type="submit" class="run">تشغيل الآن</button>
                     </form>
                 </div>

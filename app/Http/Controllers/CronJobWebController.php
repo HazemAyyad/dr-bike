@@ -49,9 +49,17 @@ class CronJobWebController extends Controller
             'token' => ['nullable', 'string', 'max:500'],
         ]);
 
+        $meta = config('cron_jobs.commands')[$validated['command']] ?? [];
         $arguments = [];
-        if (! empty($validated['token'])) {
-            $arguments['token'] = $validated['token'];
+        foreach ($meta['arguments'] ?? [] as $argName => $argMeta) {
+            if (($argMeta['type'] ?? 'text') === 'checkbox') {
+                if ($request->boolean($argName)) {
+                    $option = $argMeta['option'] ?? '--'.str_replace('_', '-', $argName);
+                    $arguments[$option] = true;
+                }
+            } elseif ($request->filled($argName)) {
+                $arguments[$argName] = $request->input($argName);
+            }
         }
 
         try {
