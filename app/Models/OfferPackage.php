@@ -10,12 +10,14 @@ class OfferPackage extends Model
     protected $fillable = [
         'name',
         'price',
+        'package_quantity',
         'image_path',
         'is_active',
     ];
 
     protected $casts = [
         'price' => 'float',
+        'package_quantity' => 'integer',
         'is_active' => 'boolean',
     ];
 

@@ -121,6 +121,7 @@ class OfferPackageController extends Controller
             $data = $request->validate([
                 'name' => ['required', 'string', 'max:255'],
                 'price' => ['required', 'numeric', 'min:0'],
+                'package_quantity' => ['nullable', 'integer', 'min:1'],
                 'image' => ['nullable', 'image', 'max:5120'],
                 'items' => ['required', 'array', 'min:1'],
                 'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
@@ -135,6 +136,7 @@ class OfferPackageController extends Controller
             $package = OfferPackage::query()->create([
                 'name' => $data['name'],
                 'price' => $data['price'],
+                'package_quantity' => max(1, (int) ($data['package_quantity'] ?? 1)),
                 'image_path' => $imagePath,
                 'is_active' => true,
             ]);
@@ -159,14 +161,26 @@ class OfferPackageController extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (QueryException $e) {
+            \Illuminate\Support\Facades\Log::error('OfferPackageController::store', [
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.create_data_error'),
+                'message' => config('app.debug')
+                    ? $e->getMessage()
+                    : __('messages.create_data_error'),
             ], 200);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('OfferPackageController::store', [
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => config('app.debug')
+                    ? $e->getMessage()
+                    : __('messages.something_wrong'),
             ], 200);
         }
     }
@@ -180,6 +194,7 @@ class OfferPackageController extends Controller
                 'offer_package_id' => ['required', 'integer', 'exists:offer_packages,id'],
                 'name' => ['sometimes', 'required', 'string', 'max:255'],
                 'price' => ['sometimes', 'required', 'numeric', 'min:0'],
+                'package_quantity' => ['sometimes', 'integer', 'min:1'],
                 'image' => ['nullable', 'image', 'max:5120'],
                 'remove_image' => ['nullable', 'boolean'],
                 'items' => ['sometimes', 'required', 'array', 'min:1'],
@@ -195,6 +210,9 @@ class OfferPackageController extends Controller
             }
             if (array_key_exists('price', $data)) {
                 $updates['price'] = $data['price'];
+            }
+            if (array_key_exists('package_quantity', $data)) {
+                $updates['package_quantity'] = (int) $data['package_quantity'];
             }
 
             if ($request->boolean('remove_image') && $package->image_path) {

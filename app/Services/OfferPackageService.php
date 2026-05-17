@@ -51,10 +51,15 @@ class OfferPackageService
     {
         $available = $this->availableQuantity($package);
 
+        $unitPrice = (float) $package->price;
+        $packageQty = max(1, (int) ($package->package_quantity ?? 1));
+
         $data = [
             'id' => $package->id,
             'name' => $package->name,
-            'price' => (float) $package->price,
+            'price' => $unitPrice,
+            'package_quantity' => $packageQty,
+            'effective_price' => round($unitPrice * $packageQty, 2),
             'image' => $this->imagePublicPath($package->image_path),
             'is_active' => (bool) $package->is_active,
             'available_quantity' => $available,
