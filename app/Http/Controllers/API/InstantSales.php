@@ -976,6 +976,7 @@ public function store(Request $request)
                 ->whereNull('parent_id')
             ->with([
                 'product:id,nameAr',
+                    'offerPackage:id,name',
                     'project:id,name',
                 'subProducts.product:id,nameAr',
                 ]);
@@ -995,6 +996,9 @@ public function store(Request $request)
                         })
                         ->orWhereHas('subProducts.product', function ($subProductQuery) use ($term) {
                             $subProductQuery->where('nameAr', 'like', $term);
+                        })
+                        ->orWhereHas('offerPackage', function ($packageQuery) use ($term) {
+                            $packageQuery->where('name', 'like', $term);
                         });
 
                     if (ctype_digit($search)) {
@@ -1010,10 +1014,18 @@ public function store(Request $request)
 
         $formatted = $instantSales->map(function ($sale) {
                 $buyerLabel = $this->buyerTypeLabelAr($sale->buyer_type ?? 'unknown');
+                $isPackageSale = $sale->offer_package_id !== null;
+                $packageName = $sale->offerPackage?->name;
 
             return [
                 'id' => $sale->id,
-                'product' => optional($sale->product)->nameAr ?? 'منتج محذوف',
+                'sale_type' => $isPackageSale ? 'package' : 'product',
+                'is_package_sale' => $isPackageSale,
+                'offer_package_id' => $sale->offer_package_id,
+                'package_name' => $packageName,
+                'product' => $isPackageSale
+                    ? ($packageName ?? 'باكيج محذوف')
+                    : (optional($sale->product)->nameAr ?? 'منتج محذوف'),
                 'cost' => $sale->cost,
                 'total_cost' => $sale->total_cost,
                 'quantity' => $sale->quantity,
@@ -1294,6 +1306,7 @@ public function store(Request $request)
                 ->with([
                     'product.viewImages',
                     'product.normalImages',
+                    'offerPackage',
                     'subProducts.product.viewImages',
                     'subProducts.product.normalImages',
                     'project.partnership.customer',
@@ -1305,13 +1318,22 @@ public function store(Request $request)
             $subtotalBeforeDiscount = (float) $sale->cost * (float) $sale->quantity;
             $discount = (float) ($sale->discount ?? 0);
             $totalCost = (float) $sale->total_cost;
+            $isPackageSale = $sale->offer_package_id !== null;
+            $displayName = $isPackageSale
+                ? ($sale->offerPackage?->name ?? 'باكيج محذوف')
+                : ($sale->product?->nameAr ?? '-');
 
             $formatted = [
                 'id' => $sale->id,
                 'invoice_number' => (string) $sale->id,
                 'invoice_date' => optional($sale->created_at)->format('Y-m-d H:i:s'),
-                'product' => $sale->product?->nameAr ?? '-',
-                'product_image' => $this->invoiceProductImage($sale->product),
+                'sale_type' => $isPackageSale ? 'package' : 'product',
+                'is_package_sale' => $isPackageSale,
+                'package_name' => $sale->offerPackage?->name,
+                'product' => $displayName,
+                'product_image' => $isPackageSale
+                    ? 'no image'
+                    : $this->invoiceProductImage($sale->product),
                 'cost' => $sale->cost,
                 'quantity' => $sale->quantity,
                 'subtotal' => $subtotalBeforeDiscount,
