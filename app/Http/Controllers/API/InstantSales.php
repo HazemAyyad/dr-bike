@@ -1349,7 +1349,7 @@ public function store(Request $request)
                 'package_name' => $sale->offerPackage?->name,
                 'product' => $displayName,
                 'product_image' => $isPackageSale
-                    ? 'no image'
+                    ? app(OfferPackageService::class)->imagePublicPath($sale->offerPackage?->image_path)
                     : $this->invoiceProductImage($sale->product),
                 'cost' => $sale->cost,
                 'quantity' => $sale->quantity,
@@ -1371,7 +1371,7 @@ public function store(Request $request)
                 'status' => $sale->status ?? 'active',
                 'cancelled_at' => optional($sale->cancelled_at)->format('Y-m-d H:i:s'),
                 ...$this->paymentBoxInvoiceFields($sale),
-                'sub_products' => $sale->subProducts->map(function ($sub) {
+                'sub_products' => $sale->subProducts->map(function ($sub) use ($isPackageSale) {
                     $lineSubtotal = (float) $sub->cost * (float) $sub->quantity;
 
                     return [
@@ -1381,6 +1381,7 @@ public function store(Request $request)
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,
                         'subtotal' => $lineSubtotal,
+                        'is_package_component' => $isPackageSale,
                     ];
                 })->values(),
              ];
