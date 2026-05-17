@@ -120,7 +120,7 @@ class OfferPackageController extends Controller
             $data = $request->validate([
                 'name' => ['required', 'string', 'max:255'],
                 'price' => ['required', 'numeric', 'min:0'],
-                'package_quantity' => ['nullable', 'integer', 'min:1'],
+                'package_quantity' => ['required', 'integer', 'min:1'],
                 'image' => ['nullable', 'image', 'max:5120'],
                 'items' => ['required', 'array', 'min:1'],
                 'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
@@ -193,7 +193,7 @@ class OfferPackageController extends Controller
                 'offer_package_id' => ['required', 'integer', 'exists:offer_packages,id'],
                 'name' => ['sometimes', 'required', 'string', 'max:255'],
                 'price' => ['sometimes', 'required', 'numeric', 'min:0'],
-                'package_quantity' => ['sometimes', 'integer', 'min:1'],
+                'package_quantity' => ['sometimes', 'required', 'integer', 'min:1'],
                 'image' => ['nullable', 'image', 'max:5120'],
                 'remove_image' => ['nullable', 'boolean'],
                 'items' => ['sometimes', 'required', 'array', 'min:1'],

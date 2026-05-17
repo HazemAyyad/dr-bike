@@ -99,6 +99,7 @@ class OfferPackageService
             'available_quantity' => $available,
             'packages_sold' => $this->packagesSoldQuantity($package),
             'sales_count' => $this->packageSalesCount($package),
+            'remaining_quantity' => max(0, $packageQty - $this->packagesSoldQuantity($package)),
             'needs_adjustment' => $available < 1,
         ];
 
