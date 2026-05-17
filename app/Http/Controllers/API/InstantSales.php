@@ -752,6 +752,14 @@ public function store(Request $request)
 
         $packagesSold = max(1, (int) round((float) $data['quantity']));
 
+        $maxSellable = $offerPackageService->maxSellableQuantity($package);
+        if ($packagesSold > $maxSellable) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.cant_sale'),
+            ], 200);
+        }
+
         $stockCheck = $offerPackageService->validateStockForSale($package, $packagesSold);
         if (! $stockCheck['ok']) {
             return response()->json([

@@ -42,7 +42,21 @@ class OfferPackageService
 
     public function needsAdjustment(OfferPackage $package): bool
     {
-        return $this->availableQuantity($package) < 1;
+        return $this->maxSellableQuantity($package) < 1;
+    }
+
+    /** Max complete packages sellable now (stock assembly vs definition qty remaining). */
+    public function maxSellableQuantity(OfferPackage $package): int
+    {
+        $fromStock = $this->availableQuantity($package);
+        $packageQty = max(1, (int) ($package->package_quantity ?? 1));
+        $remaining = max(0, $packageQty - $this->packagesSoldQuantity($package));
+
+        if ($fromStock <= 0 || $remaining <= 0) {
+            return 0;
+        }
+
+        return min($fromStock, $remaining);
     }
 
     /**
@@ -100,7 +114,8 @@ class OfferPackageService
             'packages_sold' => $this->packagesSoldQuantity($package),
             'sales_count' => $this->packageSalesCount($package),
             'remaining_quantity' => max(0, $packageQty - $this->packagesSoldQuantity($package)),
-            'needs_adjustment' => $available < 1,
+            'max_sellable_quantity' => $this->maxSellableQuantity($package),
+            'needs_adjustment' => $this->maxSellableQuantity($package) < 1,
         ];
 
         if ($withItems) {
