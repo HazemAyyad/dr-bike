@@ -142,6 +142,8 @@ class AdminNotificationCenterController extends Controller
                 ]
             );
 
+            $request->user()->forceFill(['fcm_token' => $data['fcm_token']])->save();
+
             return response()->json([
                 'status' => 'success',
             ], 200);

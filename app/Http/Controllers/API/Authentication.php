@@ -241,8 +241,7 @@ class Authentication extends Controller
             }
 
             $user = User::where('email', $request->email)->first();
-            $user->fcm_token = $request->fcm_token;
-            $user->save();
+            $user->forceFill(['fcm_token' => $request->fcm_token])->save();
             $token = $user->createToken('myapptoken', ['*'], now()->addWeek())->plainTextToken;
 
             $response = [

@@ -10,14 +10,6 @@ use Laravel\Sanctum\PersonalAccessToken;
 
 class UserSessionManager
 {
-    public function activeTokensQuery()
-    {
-        return fn ($query) => $query->where(function ($q) {
-            $q->whereNull('expires_at')
-                ->orWhere('expires_at', '>', now());
-        });
-    }
-
     /**
      * @return Collection<int, User>
      */
@@ -28,10 +20,11 @@ class UserSessionManager
         $query = User::query()
             ->whereIn('type', $allowed)
             ->withCount([
-                'tokens as active_sessions_count' => $this->activeTokensQuery(),
+                'activeSanctumTokens as active_sessions_count',
                 'tokens as total_tokens_count',
                 'adminDeviceTokens as admin_fcm_devices_count',
             ])
+            ->withMax('tokens as latest_token_at', 'created_at')
             ->orderBy('type')
             ->orderBy('name');
 
@@ -146,7 +139,8 @@ class UserSessionManager
     public function fcmStatusForUser(User $user): array
     {
         $userToken = trim((string) ($user->fcm_token ?? ''));
-        $hasUserToken = $userToken !== '' && $userToken !== 'no_token';
+        $isNoTokenPlaceholder = $userToken === 'no_token';
+        $hasUserToken = $userToken !== '' && ! $isNoTokenPlaceholder;
 
         $adminDevices = 0;
         if ($user->type === 'admin') {
@@ -162,12 +156,14 @@ class UserSessionManager
             $hasUserToken && $user->type === 'employee' => 'FCM ✓ (موظف)',
             $hasUserToken && $user->type === 'admin' => 'FCM ✓ (users.fcm_token)',
             ! $hasUserToken && $adminDevices > 0 => "FCM ✓ ({$adminDevices} جهاز أدمن)",
+            $isNoTokenPlaceholder => 'no_token (بدون إشعارات حقيقية)',
             default => 'بدون FCM',
         };
 
         return [
             'has_fcm' => $hasFcm,
             'has_user_token' => $hasUserToken,
+            'is_no_token_placeholder' => $isNoTokenPlaceholder,
             'admin_devices' => $adminDevices,
             'token_preview' => $tokenPreview,
             'label' => $label,

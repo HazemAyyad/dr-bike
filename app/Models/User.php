@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Laravel\Sanctum\PersonalAccessToken;
 use App\Notifications\ResetPasswordNotification as CustomResetPasswordNotification;
 
 
@@ -61,6 +62,16 @@ class User extends Authenticatable
     public function adminDeviceTokens()
     {
         return $this->hasMany(AdminDeviceToken::class);
+    }
+
+    /** رموز Sanctum غير منتهية (للعرض في إدارة الجلسات). */
+    public function activeSanctumTokens()
+    {
+        return $this->morphMany(PersonalAccessToken::class, 'tokenable')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            });
     }
     
 

@@ -46,6 +46,7 @@
         .badge-employee { background: #dcfce7; color: #166534; }
         .badge-fcm-yes { background: #dcfce7; color: #166534; }
         .badge-fcm-no { background: #f1f5f9; color: #64748b; }
+        .badge-fcm-warn { background: #fff7ed; color: #9a3412; }
         .fcm-preview { font-size: 0.72rem; color: var(--muted); font-family: ui-monospace, monospace; display: block; margin-top: 0.15rem; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .count-active { font-weight: 700; color: var(--primary); }
         .count-zero { color: var(--muted); }
@@ -68,7 +69,7 @@
         <h2>⚠ مسح كل جلسات الدخول (مدراء + موظفون)</h2>
         <p style="margin:0;font-size:0.9rem;color:#7f1d1d;line-height:1.5">
             يحذف <strong>جميع</strong> رموز تسجيل الدخول ويمسح <code>fcm_token</code> للجميع.
-            بعدها يفتح كل شخص التطبيق ويسجّل دخولاً من جديد.
+            بعدها يجب تسجيل الدخول <strong>بكلمة المرور</strong> من التطبيق (ليس البصمة فقط) حتى تظهر جلسة جديدة هنا.
             <br><small style="color:#64748b">زر «إلغاء الفلتر» أسفل الصفحة يمسح البحث فقط — ليس هذا الزر.</small>
         </p>
         <form method="post" action="{{ route('test.user-sessions.logout-all-staff') }}"
@@ -120,6 +121,7 @@
                         <th>البريد</th>
                         <th>النوع</th>
                         <th>جلسات نشطة</th>
+                        <th>آخر جلسة</th>
                         <th>إجمالي الرموز</th>
                         <th>FCM</th>
                         <th></th>
@@ -142,9 +144,21 @@
                                     {{ $u->active_sessions_count }}
                                 </span>
                             </td>
+                            <td class="{{ $u->latest_token_at ? '' : 'count-zero' }}" style="font-size:0.82rem">
+                                @if($u->latest_token_at)
+                                    {{ \Illuminate\Support\Carbon::parse($u->latest_token_at)->timezone(config('app.timezone'))->format('Y-m-d H:i') }}
+                                @else
+                                    —
+                                @endif
+                            </td>
                             <td>{{ $u->total_tokens_count }}</td>
                             <td>
-                                <span class="badge {{ $fcm['has_fcm'] ? 'badge-fcm-yes' : 'badge-fcm-no' }}">
+                                @php
+                                    $fcmBadge = $fcm['has_fcm']
+                                        ? 'badge-fcm-yes'
+                                        : (($fcm['is_no_token_placeholder'] ?? false) ? 'badge-fcm-warn' : 'badge-fcm-no');
+                                @endphp
+                                <span class="badge {{ $fcmBadge }}">
                                     {{ $fcm['label'] }}
                                 </span>
                                 @if($fcm['token_preview'])
