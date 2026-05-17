@@ -1072,7 +1072,7 @@ class Stocks extends Controller
                         $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                     },
                 ])
-                ->get(['id', 'nameAr', 'stock', 'product_code']);
+                ->get(['id', 'nameAr', 'stock', 'product_code', 'normailPrice']);
 
             $formatted = $products->map(function ($product) {
                 $image = $product->viewImages->first();
@@ -1081,6 +1081,7 @@ class Stocks extends Controller
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
                     'product_stock' => $product->stock,
+                    'product_normail_price' => (float) ($product->normailPrice ?? 0),
                     'product_code' => $product->product_code,
                     'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
                     'tags' => $product->tags->map(fn ($t) => [

@@ -53,13 +53,20 @@ class OfferPackageService
 
         $unitPrice = (float) $package->price;
         $packageQty = max(1, (int) ($package->package_quantity ?? 1));
+        $package->loadMissing(['items.product']);
+        $partsTotal = $package->items->sum(function ($item) {
+            $productPrice = (float) ($item->product->normailPrice ?? 0);
+
+            return $productPrice * max(1, (int) $item->quantity);
+        });
 
         $data = [
             'id' => $package->id,
             'name' => $package->name,
             'price' => $unitPrice,
             'package_quantity' => $packageQty,
-            'effective_price' => round($unitPrice * $packageQty, 2),
+            'parts_total_price' => round((float) $partsTotal, 2),
+            'effective_price' => round((float) $partsTotal, 2),
             'image' => $this->imagePublicPath($package->image_path),
             'is_active' => (bool) $package->is_active,
             'available_quantity' => $available,
@@ -77,6 +84,7 @@ class OfferPackageService
                     'product_id' => $item->product_id,
                     'product_name' => $product?->nameAr ?? '-',
                     'quantity' => (int) $item->quantity,
+                    'unit_price' => (float) ($product?->normailPrice ?? 0),
                     'stock' => (float) ($product?->stock ?? 0),
                     'product_image' => $image
                         ? ApiImageUrl::normalize($image->imageUrl)
