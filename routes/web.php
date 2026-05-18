@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AdminNotificationWebController;
+use App\Http\Controllers\DebtLedgerShareWebController;
 use App\Http\Controllers\EmployeeNotificationWebController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeTasks;
@@ -29,6 +30,9 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return view('welcome');
 });
+
+Route::get('/debt-ledger/share/{token}', [DebtLedgerShareWebController::class, 'show'])
+    ->name('debt-ledger.public-share');
 
 /** اختبار مزامنة المخزون مع متجر .NET — راجع الصفحة والتحذير داخلها */
 /** إرسال إشعار تجريبي للأدمن (قاعدة البيانات + FCM) */

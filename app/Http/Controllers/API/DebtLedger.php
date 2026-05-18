@@ -5,6 +5,8 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\DebtTransaction;
 use App\Services\DebtLedgerService;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -351,6 +353,41 @@ class DebtLedger extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.ledger_transaction_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function createPersonShareLink(Request $request)
+    {
+        try {
+            $request->validate([
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
+            ]);
+
+            if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
+                return response()->json(['status' => 'error', 'message' => $error], 200);
+            }
+
+            $token = Str::uuid()->toString();
+            Cache::put('debt_ledger_share:' . $token, [
+                'customer_id' => $request->customer_id,
+                'seller_id' => $request->seller_id,
+            ], now()->addDays(90));
+
+            return response()->json([
+                'status' => 'success',
+                'share_url' => url('debt-ledger/share/' . $token),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
