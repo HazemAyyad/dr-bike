@@ -6,6 +6,7 @@ use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\DebtTransaction;
+use App\Models\InstantSale;
 use App\Models\Seller;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -128,6 +129,16 @@ class DebtLedgerService
         ];
     }
 
+    public function balanceBefore(DebtTransaction $transaction): float
+    {
+        $amount = (float) $transaction->amount;
+        $after = (float) $transaction->balance_after;
+
+        return $transaction->type === 'taken'
+            ? $after - $amount
+            : $after + $amount;
+    }
+
     public function formatTransaction(DebtTransaction $transaction): array
     {
         return [
@@ -135,6 +146,7 @@ class DebtLedgerService
             'type' => $transaction->type,
             'type_label' => $transaction->type === 'taken' ? 'أخذت' : 'أعطيت',
             'amount' => (float) $transaction->amount,
+            'balance_before' => $this->balanceBefore($transaction),
             'balance_after' => (float) $transaction->balance_after,
             'note' => $transaction->note,
             'receipt_images' => $transaction->receipt_images
@@ -148,9 +160,9 @@ class DebtLedgerService
         ];
     }
 
-    public function createTransaction(array $data, ?int $userId = null): DebtTransaction
+    public function createTransaction(array $data, ?int $userId = null, bool $applyBox = true): DebtTransaction
     {
-        return DB::transaction(function () use ($data, $userId) {
+        return DB::transaction(function () use ($data, $userId, $applyBox) {
             $previousBalance = $this->getPreviousBalance($data['customer_id'] ?? null, $data['seller_id'] ?? null);
             $amount = (float) $data['amount'];
 
@@ -173,12 +185,116 @@ class DebtLedgerService
                 'created_by' => $userId,
             ]);
 
-            if (!empty($data['box_id'])) {
+            if ($applyBox && !empty($data['box_id'])) {
                 $this->applyBoxMovement($transaction, (int) $data['box_id']);
             }
 
             return $transaction->fresh(['customer', 'seller']);
         });
+    }
+
+    /**
+     * Record instant sale on the person's ledger (بيع فوري = أخذت).
+     */
+    public function syncInstantSaleToLedger(InstantSale $sale): ?DebtTransaction
+    {
+        if ($sale->parent_id || $sale->isCancelled()) {
+            return null;
+        }
+
+        if (DebtTransaction::query()
+            ->where('source', 'instant_sale')
+            ->where('source_id', $sale->id)
+            ->whereNull('archived_at')
+            ->exists()) {
+            return null;
+        }
+
+        $amount = (float) $sale->total_cost;
+        if ($amount <= 0) {
+            return null;
+        }
+
+        [$customerId, $sellerId] = $this->resolveInstantSalePersonIds($sale);
+        if (!$customerId && !$sellerId) {
+            return null;
+        }
+
+        $productName = $sale->product?->nameAr ?? $sale->offerPackage?->name ?? 'منتج';
+        $note = trim('بيع فوري #'.$sale->id.' — '.$productName.($sale->notes ? ' — '.$sale->notes : ''));
+
+        return $this->createTransaction([
+            'customer_id' => $customerId,
+            'seller_id' => $sellerId,
+            'type' => 'taken',
+            'amount' => $amount,
+            'transaction_date' => $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            'note' => $note,
+            'box_id' => null,
+            'source' => 'instant_sale',
+            'source_id' => $sale->id,
+        ], auth()->id(), applyBox: false);
+    }
+
+    public function archiveInstantSaleLedger(InstantSale $sale): void
+    {
+        $transactions = DebtTransaction::query()
+            ->active()
+            ->where('source', 'instant_sale')
+            ->where('source_id', $sale->id)
+            ->get();
+
+        foreach ($transactions as $transaction) {
+            $this->archiveTransaction($transaction);
+        }
+    }
+
+    /**
+     * @return array{0: ?int, 1: ?int} [customer_id, seller_id]
+     */
+    private function resolveInstantSalePersonIds(InstantSale $sale): array
+    {
+        if ($sale->seller_id) {
+            return [null, (int) $sale->seller_id];
+        }
+
+        if (in_array($sale->buyer_type, ['seller'], true) && $sale->buyer_id) {
+            return [null, (int) $sale->buyer_id];
+        }
+
+        if ($sale->buyer_type === 'customer' && $sale->buyer_id) {
+            return [(int) $sale->buyer_id, null];
+        }
+
+        if (in_array($sale->buyer_type, ['trader', 'seller'], true)) {
+            $seller = Seller::query()
+                ->when($sale->buyer_phone, fn ($q) => $q->where('phone', $sale->buyer_phone))
+                ->where('name', $sale->buyer_name)
+                ->first();
+            if ($seller) {
+                return [null, $seller->id];
+            }
+        }
+
+        if ($sale->buyer_id) {
+            $customer = Customer::find($sale->buyer_id);
+            if ($customer) {
+                $type = strtolower(trim((string) ($customer->type ?? '')));
+                $traderTypes = ['trader', 'تاجر', 'seller', 'مورد', 'supplier'];
+                if (in_array($type, $traderTypes, true)) {
+                    $seller = Seller::query()
+                        ->when($customer->phone, fn ($q) => $q->where('phone', $customer->phone))
+                        ->where('name', $customer->name)
+                        ->first();
+
+                    return [null, $seller?->id];
+                }
+
+                return [(int) $sale->buyer_id, null];
+            }
+        }
+
+        return [null, null];
     }
 
     public function applyBoxMovement(DebtTransaction $transaction, int $boxId): void
@@ -307,5 +423,54 @@ class DebtLedgerService
         });
 
         return $result;
+    }
+
+    public function recalculateBalances(?int $customerId, ?int $sellerId): void
+    {
+        $transactions = $this->baseQuery($customerId, $sellerId)
+            ->orderBy('transaction_date')
+            ->orderBy('id')
+            ->get();
+
+        $running = 0.0;
+
+        foreach ($transactions as $transaction) {
+            $amount = (float) $transaction->amount;
+            $running = $transaction->type === 'taken'
+                ? $running + $amount
+                : $running - $amount;
+
+            if ((float) $transaction->balance_after !== $running) {
+                $transaction->update(['balance_after' => $running]);
+            }
+        }
+    }
+
+    public function archiveTransaction(DebtTransaction $transaction): void
+    {
+        DB::transaction(function () use ($transaction) {
+            $transaction->update(['archived_at' => now()]);
+            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+        });
+    }
+
+    public function updateTransaction(DebtTransaction $transaction, array $data): DebtTransaction
+    {
+        return DB::transaction(function () use ($transaction, $data) {
+            $transaction->update([
+                'type' => $data['type'],
+                'amount' => $data['amount'],
+                'transaction_date' => $data['transaction_date'],
+                'note' => $data['note'] ?? null,
+            ]);
+
+            if (array_key_exists('receipt_images', $data) && $data['receipt_images'] !== null) {
+                $transaction->update(['receipt_images' => $data['receipt_images']]);
+            }
+
+            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+
+            return $transaction->fresh();
+        });
     }
 }

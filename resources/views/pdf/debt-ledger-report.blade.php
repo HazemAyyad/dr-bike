@@ -107,7 +107,8 @@
                 <th>ملاحظة</th>
                 <th>أعطيت</th>
                 <th>أخذت</th>
-                <th>الرصيد</th>
+                <th>الرصيد السابق</th>
+                <th>الرصيد بعد</th>
             </tr>
         </thead>
         <tbody>
@@ -122,6 +123,12 @@
                     <td class="taken">
                         {{ $transaction->type === 'taken' ? number_format($transaction->amount, 2) : '—' }}
                     </td>
+                    @php
+                        $before = $transaction->type === 'taken'
+                            ? $transaction->balance_after - $transaction->amount
+                            : $transaction->balance_after + $transaction->amount;
+                    @endphp
+                    <td>{{ number_format($before, 2) }}</td>
                     <td class="{{ $transaction->balance_after >= 0 ? 'taken' : 'given' }}">
                         {{ number_format($transaction->balance_after, 2) }}
                     </td>

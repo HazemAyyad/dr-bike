@@ -11,6 +11,8 @@ use App\Models\InstantSale;
 use App\Models\OfferPackage;
 use App\Models\Product;
 use App\Models\Project;
+use App\Models\Seller;
+use App\Services\DebtLedgerService;
 use App\Services\OfferPackageService;
 use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -92,6 +94,21 @@ class InstantSales extends Controller
     {
         $requestedType = $request->input('buyer_type');
         $buyerId = $request->input('buyer_id');
+        $sellerId = $request->input('seller_id');
+
+        if ($sellerId) {
+            $seller = Seller::find($sellerId);
+            if ($seller instanceof Seller) {
+                return [
+                    'buyer_type' => 'seller',
+                    'buyer_id' => null,
+                    'seller_id' => $seller->id,
+                    'buyer_name' => $seller->name ?: '-',
+                    'buyer_phone' => $seller->phone,
+                    'buyer_address' => $seller->address,
+                ];
+            }
+        }
 
         if ($buyerId) {
             $customer = Customer::find($buyerId);
@@ -100,7 +117,10 @@ class InstantSales extends Controller
                     ? $requestedType
                     : $this->inferBuyerTypeFromCustomer($customer);
 
-                return $this->buyerSnapshotArray($type, $customer);
+                return array_merge(
+                    $this->buyerSnapshotArray($type, $customer),
+                    ['seller_id' => null]
+                );
             }
         }
 
@@ -546,6 +566,7 @@ public function store(Request $request)
         'payment_box_id' => 'nullable|integer|exists:boxes,id',
         'payment_box_name' => 'nullable|string|max:255',
         'payment_box_value' => 'nullable|numeric|min:0',
+        'seller_id' => 'nullable|integer|exists:sellers,id',
 
     ]);
 
@@ -583,6 +604,7 @@ public function store(Request $request)
                     'payment_box_id',
                     'payment_box_name',
                     'payment_box_value',
+                    'seller_id',
                 ])
                 ->merge($buyerPayload)
                 ->merge($paymentBoxPayload)
@@ -628,6 +650,10 @@ public function store(Request $request)
 
         $this->linkPaymentBoxLogToInstantSale(
             $mainInstantSale->fresh(['product', 'subProducts.product'])
+        );
+
+        app(DebtLedgerService::class)->syncInstantSaleToLedger(
+            $mainInstantSale->fresh(['product', 'offerPackage'])
         );
 
         $mainProduct->stock -= $mainInstantSale->quantity;
@@ -787,6 +813,10 @@ public function store(Request $request)
 
             $this->linkPaymentBoxLogToInstantSale(
                 $mainInstantSale->fresh(['offerPackage', 'subProducts.product'])
+            );
+
+            app(DebtLedgerService::class)->syncInstantSaleToLedger(
+                $mainInstantSale->fresh(['product', 'offerPackage'])
             );
 
             foreach ($package->items as $item) {
@@ -1276,6 +1306,7 @@ public function store(Request $request)
 
                 $this->reverseBoxForCancelledSale($sale);
                 $this->markInstantSaleCancelled($sale);
+                app(DebtLedgerService::class)->archiveInstantSaleLedger($sale);
 
                 Logs::createLog(
                     'إلغاء بيع فوري',

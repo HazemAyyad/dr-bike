@@ -134,7 +134,7 @@ class DebtLedger extends Controller
                 'amount' => 'required|numeric|min:0.01',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
-                'box_id' => 'nullable|integer|exists:boxes,id',
+                'box_id' => 'required|integer|exists:boxes,id',
                 'receipt_images' => 'nullable|array',
                 'receipt_images.*' => 'image',
             ]);
@@ -211,20 +211,123 @@ class DebtLedger extends Controller
         }
     }
 
-    public function archiveTransaction(int $id)
+    public function showTransaction(int $id)
     {
         try {
             $transaction = DebtTransaction::active()->findOrFail($id);
-            $transaction->update(['archived_at' => now()]);
+
+            return response()->json([
+                'status' => 'success',
+                'transaction' => $this->ledger->formatTransaction($transaction),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.ledger_transaction_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function updateTransaction(Request $request, int $id)
+    {
+        try {
+            $data = $request->validate([
+                'type' => 'required|in:taken,given',
+                'amount' => 'required|numeric|min:0.01',
+                'transaction_date' => 'required|date',
+                'note' => 'nullable|string',
+            ]);
+
+            $transaction = DebtTransaction::active()->findOrFail($id);
+
+            $imageNames = $transaction->receipt_images ?? [];
+            if ($request->hasFile('receipt_images')) {
+                $imageNames = [];
+                $uploadedFiles = $request->file('receipt_images');
+                if (!is_array($uploadedFiles)) {
+                    $uploadedFiles = [$uploadedFiles];
+                }
+                foreach ($uploadedFiles as $image) {
+                    if (!$image) {
+                        continue;
+                    }
+                    $imageName = time() . '_' . uniqid() . '_' . $image->getClientOriginalName();
+                    $image->move(public_path('DebtsReceipts'), $imageName);
+                    $imageNames[] = $imageName;
+                }
+            }
+
+            $updated = $this->ledger->updateTransaction($transaction, [
+                'type' => $data['type'],
+                'amount' => $data['amount'],
+                'transaction_date' => $data['transaction_date'],
+                'note' => $data['note'] ?? null,
+                'receipt_images' => $request->hasFile('receipt_images') ? $imageNames : null,
+            ]);
 
             $personTotals = $this->ledger->calculateTotals(
                 $transaction->customer_id,
                 $transaction->seller_id
             );
 
+            Logs::createLog(
+                'دفتر الديون',
+                'تعديل معاملة رقم ' . $id,
+                'debts'
+            );
+
             return response()->json([
                 'status' => 'success',
-                'message' => __('messages.ledger_transaction_archived'),
+                'message' => __('messages.ledger_transaction_updated'),
+                'transaction' => $this->ledger->formatTransaction($updated),
+                'total_taken' => $personTotals['total_taken'],
+                'total_given' => $personTotals['total_given'],
+                'balance' => $personTotals['balance'],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.ledger_transaction_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.ledger_transaction_failed'),
+            ], 200);
+        }
+    }
+
+    public function archiveTransaction(int $id)
+    {
+        try {
+            $transaction = DebtTransaction::active()->findOrFail($id);
+            $this->ledger->archiveTransaction($transaction);
+
+            $personTotals = $this->ledger->calculateTotals(
+                $transaction->customer_id,
+                $transaction->seller_id
+            );
+
+            Logs::createLog(
+                'دفتر الديون',
+                'حذف/أرشفة معاملة رقم ' . $id,
+                'debts'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.ledger_transaction_deleted'),
                 'total_taken' => $personTotals['total_taken'],
                 'total_given' => $personTotals['total_given'],
                 'balance' => $personTotals['balance'],

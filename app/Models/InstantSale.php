@@ -24,6 +24,7 @@ class InstantSale extends Model
         'type',
         'buyer_type',
         'buyer_id',
+        'seller_id',
         'buyer_name',
         'buyer_phone',
         'buyer_address',
@@ -65,6 +66,11 @@ class InstantSale extends Model
     public function buyerCustomer()
     {
         return $this->belongsTo(Customer::class, 'buyer_id');
+    }
+
+    public function seller()
+    {
+        return $this->belongsTo(Seller::class);
     }
 
     public function paymentBox()
