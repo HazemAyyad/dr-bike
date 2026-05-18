@@ -12,6 +12,7 @@ use App\Http\Controllers\API\Boxes;
 use App\Http\Controllers\API\BoxLogs;
 use App\Http\Controllers\API\Customers;
 use App\Http\Controllers\API\Debts;
+use App\Http\Controllers\API\DebtLedger;
 use App\Http\Controllers\API\Deposits;
 use App\Http\Controllers\API\Destructions;
 use App\Http\Controllers\API\Draws;
@@ -386,6 +387,14 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Debts','refresh.to
    Route::get('/get/debts/owed/to/us' , [Debts::class,'getDebtsOwedToUs']);
    Route::post('/person/debts' , [Debts::class,'customerDebts']);
    Route::post('/get/debts/reports' , [Debts::class,'debtReports']);
+
+   // debt ledger (Konnash-style account book)
+   Route::get('/debt-ledger/summary', [DebtLedger::class, 'summary']);
+   Route::get('/debt-ledger/people', [DebtLedger::class, 'people']);
+   Route::get('/debt-ledger/person', [DebtLedger::class, 'person']);
+   Route::post('/debt-ledger/transaction', [DebtLedger::class, 'storeTransaction']);
+   Route::post('/debt-ledger/transaction/{id}/archive', [DebtLedger::class, 'archiveTransaction']);
+   Route::post('/debt-ledger/person/report', [DebtLedger::class, 'personReport']);
 
 });
 

@@ -158,6 +158,11 @@ return [
     'failed_to_load_debt'         => 'فشل في تحميل تفاصيل الدين',
     'failed_to_load_debts'        => 'فشل في تحميل قائمة الديون',
     'debt_not_found'              => 'لم يتم العثور على الدين',
+    'ledger_transaction_created'  => 'تم حفظ المعاملة بنجاح',
+    'ledger_transaction_failed'   => 'فشل حفظ المعاملة',
+    'ledger_transaction_archived' => 'تم نقل المعاملة للأرشيف',
+    'ledger_transaction_not_found'=> 'المعاملة غير موجودة',
+    'ledger_report_failed'        => 'فشل إنشاء التقرير',
 
    //deposit
     'deposit_created_successfully' => 'تم انشاء الايداع بنجاح',

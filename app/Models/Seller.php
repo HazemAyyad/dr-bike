@@ -57,6 +57,10 @@ class Seller extends Model
     public function debts(){
         return $this->hasMany(Debt::class);
     }
+
+    public function debtTransactions(){
+        return $this->hasMany(DebtTransaction::class);
+    }
     public function returns(){
         return $this->hasMany(ReturnModel::class);
     }

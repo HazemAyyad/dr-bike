@@ -153,6 +153,11 @@ return [
     'failed_to_load_debt'       => 'Failed to load the debt details',
     'failed_to_load_debts'      => 'Failed to load debts',
     'debt_not_found'            => 'Debt not found',
+    'ledger_transaction_created'  => 'Transaction saved successfully',
+    'ledger_transaction_failed'   => 'Failed to save transaction',
+    'ledger_transaction_archived' => 'Transaction archived successfully',
+    'ledger_transaction_not_found'=> 'Transaction not found',
+    'ledger_report_failed'        => 'Failed to generate report',
 
     //deposit
     'deposit_created_successfully' => 'deposit created successfully',
