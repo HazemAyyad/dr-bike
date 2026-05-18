@@ -30,7 +30,7 @@ class EmployeeData extends Controller
                                                       ->whereDate('start_time', '<=', now()->toDateString());
                                             });
                                 })
-                ->select('id', 'employee_id', 'name', 'start_time', 'end_time', 'status', 'task_recurrence', 'task_recurrence_time');
+                ->select('id', 'employee_id', 'name', 'start_time', 'end_time', 'status', 'task_recurrence', 'task_recurrence_time', 'is_forced_to_upload_img');
                     }
                 ])  
               ->with(['permissions.permission:id,name'])
