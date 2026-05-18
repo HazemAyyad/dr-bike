@@ -144,9 +144,16 @@ class DebtLedger extends Controller
             }
 
             $imageNames = [];
-            if ($request->hasFile('receipt_images')) {
-                foreach ($request->file('receipt_images') as $image) {
-                    $imageName = $image->getClientOriginalName();
+            $uploadedFiles = $request->file('receipt_images');
+            if (!is_array($uploadedFiles) && $uploadedFiles) {
+                $uploadedFiles = [$uploadedFiles];
+            }
+            if (is_array($uploadedFiles)) {
+                foreach ($uploadedFiles as $image) {
+                    if (!$image) {
+                        continue;
+                    }
+                    $imageName = time() . '_' . uniqid() . '_' . $image->getClientOriginalName();
                     $image->move(public_path('DebtsReceipts'), $imageName);
                     $imageNames[] = $imageName;
                 }
