@@ -241,9 +241,18 @@ class DebtLedger extends Controller
                 'amount' => 'required|numeric|min:0.01',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
+                'box_id' => 'nullable|integer|exists:boxes,id',
             ]);
 
             $transaction = DebtTransaction::active()->findOrFail($id);
+
+            $source = $transaction->source ?? 'manual';
+            if (($source === 'manual' || $source === '') && empty($data['box_id']) && ! $transaction->box_id) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.must_select_box'),
+                ], 200);
+            }
 
             $imageNames = $transaction->receipt_images ?? [];
             if ($request->hasFile('receipt_images')) {
@@ -262,13 +271,19 @@ class DebtLedger extends Controller
                 }
             }
 
-            $updated = $this->ledger->updateTransaction($transaction, [
+            $updatePayload = [
                 'type' => $data['type'],
                 'amount' => $data['amount'],
                 'transaction_date' => $data['transaction_date'],
                 'note' => $data['note'] ?? null,
                 'receipt_images' => $request->hasFile('receipt_images') ? $imageNames : null,
-            ]);
+            ];
+
+            if ($request->filled('box_id')) {
+                $updatePayload['box_id'] = (int) $data['box_id'];
+            }
+
+            $updated = $this->ledger->updateTransaction($transaction, $updatePayload);
 
             $personTotals = $this->ledger->calculateTotals(
                 $transaction->customer_id,
@@ -336,6 +351,194 @@ class DebtLedger extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.ledger_transaction_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function updatePersonMeta(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
+                'notes' => 'nullable|string',
+                'collection_reminder_at' => 'nullable|date',
+                'clear_collection_reminder' => 'nullable|boolean',
+            ]);
+
+            if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
+                return response()->json(['status' => 'error', 'message' => $error], 200);
+            }
+
+            $touchNotes = $request->has('notes');
+            $touchReminder = $request->has('collection_reminder_at')
+                || $request->boolean('clear_collection_reminder');
+
+            $reminderDate = $request->boolean('clear_collection_reminder')
+                ? null
+                : ($data['collection_reminder_at'] ?? null);
+
+            $person = $this->ledger->updatePersonMeta(
+                $request->customer_id,
+                $request->seller_id,
+                $data['notes'] ?? null,
+                $reminderDate,
+                $touchNotes,
+                $touchReminder
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.ledger_person_updated'),
+                'person' => $person,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.customer_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function personArchive(Request $request)
+    {
+        try {
+            $request->validate([
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
+            ]);
+
+            if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
+                return response()->json(['status' => 'error', 'message' => $error], 200);
+            }
+
+            $transactions = $this->ledger->archivedQuery($request->customer_id, $request->seller_id)
+                ->orderByDesc('archived_at')
+                ->orderByDesc('id')
+                ->get();
+
+            $totals = $this->ledger->calculateArchivedTotals(
+                $request->customer_id,
+                $request->seller_id
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'person' => $this->ledger->getPersonInfo($request->customer_id, $request->seller_id),
+                'total_taken' => $totals['total_taken'],
+                'total_given' => $totals['total_given'],
+                'balance' => $totals['balance'],
+                'archived_transactions_count' => $transactions->count(),
+                'transactions' => $transactions->map(fn ($t) => $this->ledger->formatTransaction($t))->values(),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function archiveTransactionsBulk(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'transaction_ids' => 'required|array|min:1',
+                'transaction_ids.*' => 'integer|exists:debt_transactions,id',
+            ]);
+
+            $count = $this->ledger->archiveTransactions($data['transaction_ids']);
+
+            $first = DebtTransaction::find($data['transaction_ids'][0]);
+
+            $personTotals = ['total_taken' => 0, 'total_given' => 0, 'balance' => 0];
+            if ($first) {
+                $personTotals = $this->ledger->calculateTotals(
+                    $first->customer_id,
+                    $first->seller_id
+                );
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.ledger_transactions_archived'),
+                'archived_count' => $count,
+                'total_taken' => $personTotals['total_taken'],
+                'total_given' => $personTotals['total_given'],
+                'balance' => $personTotals['balance'],
+            ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function restoreTransactionsBulk(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'transaction_ids' => 'required|array|min:1',
+                'transaction_ids.*' => 'integer|exists:debt_transactions,id',
+            ]);
+
+            $count = $this->ledger->restoreTransactions($data['transaction_ids']);
+
+            $first = DebtTransaction::find($data['transaction_ids'][0]);
+            $personTotals = ['total_taken' => 0, 'total_given' => 0, 'balance' => 0];
+            $archiveTotals = ['total_taken' => 0, 'total_given' => 0, 'balance' => 0];
+
+            if ($first) {
+                $personTotals = $this->ledger->calculateTotals(
+                    $first->customer_id,
+                    $first->seller_id
+                );
+                $archiveTotals = $this->ledger->calculateArchivedTotals(
+                    $first->customer_id,
+                    $first->seller_id
+                );
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.ledger_transaction_restored'),
+                'restored_count' => $count,
+                'total_taken' => $personTotals['total_taken'],
+                'total_given' => $personTotals['total_given'],
+                'balance' => $personTotals['balance'],
+                'archive_balance' => $archiveTotals['balance'],
+            ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([

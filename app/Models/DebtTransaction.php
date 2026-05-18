@@ -56,6 +56,11 @@ class DebtTransaction extends Model
         return $query->whereNull('archived_at');
     }
 
+    public function scopeArchived($query)
+    {
+        return $query->whereNotNull('archived_at');
+    }
+
     public function scopeForCustomer($query, int $customerId)
     {
         return $query->where('customer_id', $customerId)->whereNull('seller_id');

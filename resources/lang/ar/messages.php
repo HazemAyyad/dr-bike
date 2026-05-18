@@ -163,6 +163,9 @@ return [
     'ledger_transaction_archived' => 'تم نقل المعاملة للأرشيف',
     'ledger_transaction_updated' => 'تم تعديل المعاملة بنجاح',
     'ledger_transaction_deleted' => 'تم حذف المعاملة بنجاح',
+    'ledger_transactions_archived' => 'تم أرشفة المعاملات بنجاح',
+    'ledger_transaction_restored' => 'تمت ارجاع المعاملة بنجاح',
+    'ledger_person_updated' => 'تم تحديث بيانات الحساب',
     'ledger_transaction_not_found'=> 'المعاملة غير موجودة',
     'ledger_report_failed'        => 'فشل إنشاء التقرير',
 

@@ -392,6 +392,10 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Debts','refresh.to
    Route::get('/debt-ledger/summary', [DebtLedger::class, 'summary']);
    Route::get('/debt-ledger/people', [DebtLedger::class, 'people']);
    Route::get('/debt-ledger/person', [DebtLedger::class, 'person']);
+   Route::post('/debt-ledger/person/meta', [DebtLedger::class, 'updatePersonMeta']);
+   Route::get('/debt-ledger/person/archive', [DebtLedger::class, 'personArchive']);
+   Route::post('/debt-ledger/transactions/archive', [DebtLedger::class, 'archiveTransactionsBulk']);
+   Route::post('/debt-ledger/transactions/restore', [DebtLedger::class, 'restoreTransactionsBulk']);
    Route::post('/debt-ledger/transaction', [DebtLedger::class, 'storeTransaction']);
    Route::get('/debt-ledger/transaction/{id}', [DebtLedger::class, 'showTransaction']);
    Route::post('/debt-ledger/transaction/{id}/update', [DebtLedger::class, 'updateTransaction']);

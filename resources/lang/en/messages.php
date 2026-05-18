@@ -158,6 +158,9 @@ return [
     'ledger_transaction_archived' => 'Transaction archived successfully',
     'ledger_transaction_updated' => 'Transaction updated successfully',
     'ledger_transaction_deleted' => 'Transaction deleted successfully',
+    'ledger_transactions_archived' => 'Transactions archived successfully',
+    'ledger_transaction_restored' => 'Transaction restored successfully',
+    'ledger_person_updated' => 'Account details updated',
     'ledger_transaction_not_found'=> 'Transaction not found',
     'ledger_report_failed'        => 'Failed to generate report',
 

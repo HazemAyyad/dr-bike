@@ -27,13 +27,17 @@ class Seller extends Model
         'relative_phone',
         'relative_job_title',
         'notes',
+        'collection_reminder_at',
         'is_canceled',
         'sub_phone',
 
     ];
 
-    protected $casts = ['ID_image'=>'array',
-    'license_image'=>'array'];
+    protected $casts = [
+        'collection_reminder_at' => 'date',
+        'ID_image' => 'array',
+        'license_image' => 'array',
+    ];
 
     public function outgoingChecks(){
         return $this->hasMany(OutgoingCheck::class);

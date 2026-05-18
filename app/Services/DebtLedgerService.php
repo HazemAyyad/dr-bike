@@ -40,6 +40,93 @@ class DebtLedgerService
         return $query;
     }
 
+    public function archivedQuery(?int $customerId = null, ?int $sellerId = null): Builder
+    {
+        $query = DebtTransaction::query()->archived();
+
+        if ($customerId) {
+            $query->forCustomer($customerId);
+        } elseif ($sellerId) {
+            $query->forSeller($sellerId);
+        }
+
+        return $query;
+    }
+
+    public function calculateArchivedTotals(?int $customerId, ?int $sellerId): array
+    {
+        $query = $this->archivedQuery($customerId, $sellerId);
+
+        $taken = (float) (clone $query)->where('type', 'taken')->sum('amount');
+        $given = (float) (clone $query)->where('type', 'given')->sum('amount');
+
+        return [
+            'total_taken' => $taken,
+            'total_given' => $given,
+            'balance' => $taken - $given,
+        ];
+    }
+
+    /**
+     * @param  array<int>  $transactionIds
+     */
+    public function archiveTransactions(array $transactionIds): int
+    {
+        $count = 0;
+
+        DB::transaction(function () use ($transactionIds, &$count) {
+            $transactions = DebtTransaction::query()
+                ->active()
+                ->whereIn('id', $transactionIds)
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($transactions as $transaction) {
+                $this->archiveTransaction($transaction);
+                $count++;
+            }
+        });
+
+        return $count;
+    }
+
+    /**
+     * @param  array<int>  $transactionIds
+     */
+    public function restoreTransactions(array $transactionIds): int
+    {
+        $count = 0;
+
+        DB::transaction(function () use ($transactionIds, &$count) {
+            $transactions = DebtTransaction::query()
+                ->archived()
+                ->whereIn('id', $transactionIds)
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($transactions as $transaction) {
+                $this->restoreTransaction($transaction);
+                $count++;
+            }
+        });
+
+        return $count;
+    }
+
+    public function restoreTransaction(DebtTransaction $transaction): void
+    {
+        DB::transaction(function () use ($transaction) {
+            $transaction->update(['archived_at' => null]);
+            $transaction = $transaction->fresh(['customer', 'seller']);
+
+            if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
+                $this->applyBoxMovement($transaction, (int) $transaction->box_id);
+            }
+
+            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+        });
+    }
+
     public function applyDateFilter(Builder $query, ?string $startDate, ?string $endDate): Builder
     {
         if ($startDate) {
@@ -309,10 +396,6 @@ class DebtLedgerService
             ? $transaction->customer?->name
             : $transaction->seller?->name;
 
-        if ($transaction->type === 'given' && $box->total < $transaction->amount) {
-            throw new \RuntimeException(__('messages.box_out_of_money'));
-        }
-
         if ($transaction->type === 'taken') {
             $box->update(['total' => $box->total + $transaction->amount]);
             BoxLogs::createBoxLog(
@@ -339,22 +422,61 @@ class DebtLedgerService
         if ($customerId) {
             $person = Customer::findOrFail($customerId);
 
-            return [
-                'id' => $person->id,
-                'name' => $person->name,
-                'phone' => $person->phone,
-                'person_type' => 'customer',
-            ];
+            return $this->formatPersonInfo($person, 'customer');
         }
 
         $person = Seller::findOrFail($sellerId);
 
+        return $this->formatPersonInfo($person, 'seller');
+    }
+
+    /**
+     * @param  Customer|Seller  $person
+     */
+    private function formatPersonInfo($person, string $personType): array
+    {
         return [
             'id' => $person->id,
             'name' => $person->name,
             'phone' => $person->phone,
-            'person_type' => 'seller',
+            'person_type' => $personType,
+            'notes' => $person->notes,
+            'collection_reminder_at' => $person->collection_reminder_at?->format('Y-m-d'),
         ];
+    }
+
+    public function updatePersonMeta(
+        ?int $customerId,
+        ?int $sellerId,
+        ?string $notes = null,
+        ?string $collectionReminderAt = null,
+        bool $touchNotes = false,
+        bool $touchReminder = false
+    ): array {
+        if ($customerId) {
+            $person = Customer::findOrFail($customerId);
+        } else {
+            $person = Seller::findOrFail($sellerId);
+        }
+
+        $payload = [];
+
+        if ($touchNotes) {
+            $payload['notes'] = $notes;
+        }
+
+        if ($touchReminder) {
+            $payload['collection_reminder_at'] = $collectionReminderAt;
+        }
+
+        if ($payload !== []) {
+            $person->update($payload);
+            $person = $person->fresh();
+        }
+
+        $type = $customerId ? 'customer' : 'seller';
+
+        return $this->formatPersonInfo($person, $type);
     }
 
     public function getPeopleList(string $type, ?string $search = null, ?string $startDate = null, ?string $endDate = null): array
@@ -449,6 +571,15 @@ class DebtLedgerService
     public function archiveTransaction(DebtTransaction $transaction): void
     {
         DB::transaction(function () use ($transaction) {
+            if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
+                $this->reverseBoxMovement(
+                    $transaction,
+                    (int) $transaction->box_id,
+                    $transaction->type,
+                    (float) $transaction->amount
+                );
+            }
+
             $transaction->update(['archived_at' => now()]);
             $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
         });
@@ -457,12 +588,27 @@ class DebtLedgerService
     public function updateTransaction(DebtTransaction $transaction, array $data): DebtTransaction
     {
         return DB::transaction(function () use ($transaction, $data) {
-            $transaction->update([
+            if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
+                $this->reverseBoxMovement(
+                    $transaction,
+                    (int) $transaction->box_id,
+                    $transaction->type,
+                    (float) $transaction->amount
+                );
+            }
+
+            $updatePayload = [
                 'type' => $data['type'],
                 'amount' => $data['amount'],
                 'transaction_date' => $data['transaction_date'],
                 'note' => $data['note'] ?? null,
-            ]);
+            ];
+
+            if (array_key_exists('box_id', $data)) {
+                $updatePayload['box_id'] = $data['box_id'];
+            }
+
+            $transaction->update($updatePayload);
 
             if (array_key_exists('receipt_images', $data) && $data['receipt_images'] !== null) {
                 $transaction->update(['receipt_images' => $data['receipt_images']]);
@@ -470,7 +616,58 @@ class DebtLedgerService
 
             $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
 
-            return $transaction->fresh();
+            $transaction = $transaction->fresh(['customer', 'seller']);
+
+            $newBoxId = $transaction->box_id;
+            if ($this->shouldSyncBox($transaction) && $newBoxId) {
+                $this->applyBoxMovement($transaction, (int) $newBoxId);
+            }
+
+            return $transaction->fresh(['customer', 'seller']);
         });
+    }
+
+    private function shouldSyncBox(DebtTransaction $transaction): bool
+    {
+        $source = $transaction->source ?? 'manual';
+
+        return $source === 'manual' || $source === '';
+    }
+
+    public function reverseBoxMovement(
+        DebtTransaction $transaction,
+        int $boxId,
+        string $type,
+        float $amount
+    ): void {
+        $box = Box::findOrFail($boxId);
+
+        if ($box->currency !== 'شيكل') {
+            throw new \RuntimeException(__('messages.currency_shekel'));
+        }
+
+        $personName = $transaction->customer_id
+            ? $transaction->customer?->name
+            : $transaction->seller?->name;
+
+        if ($type === 'taken') {
+            $box->update(['total' => $box->total - $amount]);
+            BoxLogs::createBoxLog(
+                $box,
+                'دفتر الديون - تعديل (إلغاء أخذت) ' . $personName,
+                'minus',
+                $amount,
+                $transaction->note
+            );
+        } else {
+            $box->update(['total' => $box->total + $amount]);
+            BoxLogs::createBoxLog(
+                $box,
+                'دفتر الديون - تعديل (إلغاء أعطيت) ' . $personName,
+                'add',
+                $amount,
+                $transaction->note
+            );
+        }
     }
 }

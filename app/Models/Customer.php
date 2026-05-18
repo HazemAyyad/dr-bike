@@ -27,13 +27,17 @@ class Customer extends Model
 
         'sub_phone',//
         'notes',
+        'collection_reminder_at',
         'is_canceled',
 
 
     ];
     
-    protected $casts = ['ID_image'=>'array',
-    'license_image'=>'array'];
+    protected $casts = [
+        'ID_image' => 'array',
+        'license_image' => 'array',
+        'collection_reminder_at' => 'date',
+    ];
 
     public function orders(){
         return $this->hasMany(Order::class);
