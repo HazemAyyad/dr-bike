@@ -26,6 +26,7 @@ use App\Http\Controllers\API\Employees\EmployeeData;
 use App\Http\Controllers\API\Employees\EmployeeOwnTasks;
 use App\Http\Controllers\API\Employees\OrdersAPI;
 use App\Http\Controllers\API\EmployeeTasks;
+use App\Http\Controllers\API\EmployeeTaskOperationsController;
 use App\Http\Controllers\API\ExpensesAPI;
 use App\Http\Controllers\API\FileBoxes;
 use App\Http\Controllers\API\Files;
@@ -249,6 +250,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
     Route::post('/restore/employee/task' , [EmployeeTasks::class,'restoreEmployeeTask']);
     Route::post('/cancel/employee/task/with/repetition' , [EmployeeTasks::class,'cancelEmployeeTaskWithRepetition']);
 
+    Route::post('/create/employee/task/v2', [EmployeeTaskOperationsController::class, 'createWithTemplate']);
+    Route::post('/employee/task/start', [EmployeeTaskOperationsController::class, 'startTask']);
+    Route::post('/employee/task/submit', [EmployeeTaskOperationsController::class, 'submitTask']);
+    Route::post('/employee/task/approve', [EmployeeTaskOperationsController::class, 'approveTask']);
+    Route::post('/employee/task/reject', [EmployeeTaskOperationsController::class, 'rejectTask']);
+    Route::post('/employee/task/timeline', [EmployeeTaskOperationsController::class, 'getTimeline']);
+    Route::get('/employee/task/performance', [EmployeeTaskOperationsController::class, 'getPerformance']);
 
 });
 
@@ -767,7 +775,9 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     //employee tasks // mw for checking if the subtask belongs to the employee requesting the route
     Route::post('/change/sub/employee/task/to/completed' ,
-     [EmployeeTasks::class,'changeSubTaskToCompleted'])
+     [EmployeeTasks::class,'changeSubTaskToCompleted']);
+    Route::post('/change/sub/employee/occurrence/task/to/completed',
+     [EmployeeTaskOperationsController::class, 'completeOccurrenceSubtask'])
     ;
 
 

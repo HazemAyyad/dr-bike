@@ -14,12 +14,13 @@ class EmployeeSubTask extends Model
         'name',
         'description',
         'employee_task_id',
+        'occurrence_id',
         'is_forced_to_upload_img',
+        'bonus_points',
         'admin_img',
         'status',
         'employee_img',
         'sort_order',
-
     ];
 
         protected $casts = [

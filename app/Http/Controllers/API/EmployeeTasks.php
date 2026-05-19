@@ -3,6 +3,10 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Enums\EmployeeTaskStatus;
+use App\Services\EmployeeTasks\EmployeeTaskListService;
+use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
+use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
 use Illuminate\Support\Facades\Schema;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
@@ -15,6 +19,12 @@ use Illuminate\Validation\ValidationException;
 
 class EmployeeTasks extends Controller
 {
+    public function __construct(
+        private readonly EmployeeTaskListService $listService,
+        private readonly EmployeeTaskWorkflowService $workflow,
+        private readonly EmployeeTaskTimelineService $timeline
+    ) {}
+
     private function employeeProfilePhoto($employee): string
     {
         if (! $employee || ! $employee->employee_img) {
@@ -172,107 +182,51 @@ private function getTasks($status)
 }
 
     public function completedTasks(){
-
-        $formatted = $this->getTasks('completed');
+        $formatted = $this->listService->getCompletedItems(
+            fn ($employee) => $this->employeeProfilePhoto($employee)
+        );
 
         return response([
             'status' => 'success',
-            'completed employee tasks'=>$formatted],200);       
+            'completed employee tasks' => $formatted,
+        ], 200);
     }
 
     public function ongoingTasks()
     {
+        $formatted = $this->listService->getOngoingItems(
+            fn ($employee) => $this->employeeProfilePhoto($employee)
+        );
 
-         $formatted = $this->getTasks('ongoing');
-
-
-            return response()->json([
+        return response()->json([
             'status' => 'success',
-            'ongoing employee tasks'=>$formatted],200); 
-
+            'ongoing employee tasks' => $formatted,
+        ], 200);
     } 
 
 
     public function canceledTasks()
     {
-       try{
-        $tasks = EmployeeTask::with('employee')
-        ->where('is_canceled',1)
-        ->get();
-
-       
-        // $today = now();
-        // $todayDayName = strtolower($today->format('l')); // e.g. "monday"
-        // $todayDayOfMonth = (int)$today->format('d'); // e.g. 15
-
-        // // Filter based on recurrence
-        // $filtered = $tasks->filter(function ($task) use ($todayDayName, $todayDayOfMonth) {
-        //     $recurrence = $task->task_recurrence;
-        //     $times = $task->task_recurrence_time ?? [];
-
-        //     if ($recurrence === 'noRepeat') {
-        //         // Non-recurring: show only if created today or as per your logic
-        //         return true;
-        //     }
-
-        //     if ($recurrence === 'daily') {
-        //         return true; // Every day
-        //     }
-
-        //     if ($recurrence === 'weekly') {
-        //         // Match today's day name
-        //         return in_array($todayDayName, $times);
-        //     }
-
-        //     if ($recurrence === 'monthly') {
-        //         // Match today's date (e.g., 15)
-        //         return in_array($todayDayOfMonth, array_map('intval', $times));
-        //     }
-
-        //     return false;
-        // });
-
-        $formatted = $tasks->map(function ($task) {
-            return [
-                'task_id' => $task->id,
-                'task_name' => $task->name,
-                'employee_id' => $task->employee_id,
-                'employee_name' => $task->employee->user->name ?? 'unknown',
-                'employee_photo' => $this->employeeProfilePhoto($task->employee),
-                'start_time' => $task->start_time,
-                'end_time' => $task->end_time,
-                'is_canceled' => $task->is_canceled,
-                'employee_img' => $task->employee_img
-                    ? 'public/EmployeeTasksImages/' . $task->employee_img[0]
-                    : 'no employee image',
-                'admin_img' => (is_array($task->admin_img) && count($task->admin_img) > 0)
-                    ? 'public/AdminEmployeeTasksImages/' . $task->admin_img[0]
-                    : 'no admin image',
-                'audio' => $task->audio
-                    ? 'public/employeeTasksAudio/' . $task->audio
-                    : 'no audio',
-                'parent_id' => $task->parent_id,
-            ];
-        });//->values();
+        try {
+            $formatted = $this->listService->getCanceledItems(
+                fn ($employee) => $this->employeeProfilePhoto($employee)
+            );
 
             return response([
-            'status' => 'success',
-            'canceled employee tasks'=>$formatted],200); 
-    
-
-    }
-
-    catch(QueryException $e){
-               return response([
-                'status'=>'error',
+                'status' => 'success',
+                'canceled employee tasks' => $formatted,
+            ], 200);
+        } catch (QueryException $e) {
+            return response([
+                'status' => 'error',
                 'message' => __('messages.retrieve_data_error'),
-            ],200);
-        }
-    catch (\Exception $e) {
-             return response()->json([
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
-            ], 200);        }
+            ], 200);
+        }
     }
 
     
@@ -669,7 +623,15 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                 ],200);
             }
         }
+        $data['status'] = EmployeeTaskStatus::Pending->value;
+        $data['priority'] = $request->input('priority', 'medium');
+
+        if ($request->boolean('use_v2_recurrence') && $request->task_recurrence !== 'noRepeat') {
+            return app(EmployeeTaskOperationsController::class)->createWithTemplate($request);
+        }
+
         $employeeTask = EmployeeTask::create($data);
+        $this->timeline->recordForTask($employeeTask, \App\Models\EmployeeTaskTimeline::EVENT_CREATED);
 
         if ($request->has('sub_employee_tasks')) {
                 foreach ($request->sub_employee_tasks as $index => $subTask) {
@@ -690,6 +652,8 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                             'description' => $subTask['description'] ?? null,
                             'employee_task_id' => $employeeTask->id,
                             'is_forced_to_upload_img' => $subTask['is_forced_to_upload_img'] ?? 0,
+                            'bonus_points' => (int) ($subTask['bonus_points'] ?? 0),
+                            'status' => 'pending',
                             'admin_img' => $subImagesNames,
                         ];
                         if (Schema::hasColumn('sub_employee_tasks', 'sort_order')) {
@@ -774,6 +738,17 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                 : 'no images';
             
             $taskData['audio'] = $employeeTask->audio? 'public/employeeTasksAudio/'.$employeeTask->audio : 'no audio';
+            $taskData['status'] = EmployeeTaskStatus::normalize($employeeTask->status)->value;
+            $taskData['priority'] = $employeeTask->priority ?? 'medium';
+            $taskData['rejection_notes'] = $employeeTask->rejection_notes;
+            $taskData['started_at'] = $employeeTask->started_at;
+            $taskData['submitted_at'] = $employeeTask->submitted_at;
+            $taskData['reviewed_at'] = $employeeTask->reviewed_at;
+
+            $subTotal = $employeeTask->subTasks->count();
+            $subDone = $employeeTask->subTasks->where('status', 'completed')->count();
+            $taskData['progress'] = $subTotal > 0 ? round(($subDone / $subTotal) * 100) : 0;
+            $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
 
             return response([
                 'status' => 'success',
@@ -1067,39 +1042,45 @@ public function updateEmployeeTask(Request $request)
         try{
         $request->validate([
             'employee_task_id'=>'required|exists:employee_tasks,id',
+            'employee_notes' => 'nullable|string',
         ]);
 
         $task = EmployeeTask::findOrFail($request->employee_task_id);
-        $hasIncomplete = $task->subTasks()
-            ->where('status', '!=', 'completed')
-            ->exists();
+        $user = auth()->user();
+        $isManager = $user && ! $user->employee;
 
-        if ($hasIncomplete) {
+        if ($task->status === EmployeeTaskStatus::WaitingReview->value && $isManager) {
+            $task = $this->workflow->approveTask($task);
+            try {
+                app(\App\Services\AdminNotificationService::class)->notifyTaskCompleted($task->employee, $task);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Admin notification: '.$e->getMessage());
+            }
+
+            return response()->json(['status' => 'success', 'message' => __('messages.task_completed')], 200);
+        }
+
+        if (! $isManager) {
+            if ($task->status === EmployeeTaskStatus::Pending->value || $task->status === EmployeeTaskStatus::Overdue->value) {
+                $this->workflow->startTask($task);
+                $task->refresh();
+            }
+            $this->workflow->submitTaskForReview($task, $request->employee_notes);
+            Logs::createLog('تسليم مهمة للمراجعة', 'تسليم مهمة باسم '.$task->name, 'employee_tasks');
+
             return response()->json([
-                'status' => 'error',
-                'message' => __('messages.can_not_complete_employee_task'),
+                'status' => 'success',
+                'message' => __('messages.task_submitted_for_review'),
             ], 200);
         }
-       
-        if($task->is_forced_to_upload_img && !$task->employee_img){
-                return response()->json([
-                'status' => 'error',
-                'message' => __('messages.employee_image_required'),
-            ], 200);
-            }
-        
-        $task->update(['status'=>'completed']);
-        $employee = $task->employee;
-        $pointsToAdd = $task->points + $employee->points;
 
-        $employee->update(['points'=> $pointsToAdd]);
+        $task = $this->workflow->approveTask($task);
         Logs::createLog('اكمال مهمة موظف','اكمال مهمة موظف باسم'.' '.$task->name
-        
-        .' '.'التابعة للموظف'.' '.$task->employee->user->name, 
+        .' '.'التابعة للموظف'.' '.$task->employee->user->name,
         'employee_tasks');
 
         try {
-            app(\App\Services\AdminNotificationService::class)->notifyTaskCompleted($employee, $task);
+            app(\App\Services\AdminNotificationService::class)->notifyTaskCompleted($task->employee, $task);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('Admin notification (task completed): '.$e->getMessage());
         }
@@ -1171,31 +1152,28 @@ public function updateEmployeeTask(Request $request)
 
         if(!$allSubTasks){
             $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id);
-                   
+
             if($employeeTask->is_forced_to_upload_img && !$employeeTask->employee_img){
                     return response()->json([
                     'status' => 'error',
                     'message' => __('messages.employee_image_required'),
                 ], 200);
             }
-            $subTask->update(['status'=>'completed']);
-            $employeeTask->update(['status'=>'completed']);
-           
-            $employee = $employeeTask->employee;
-            $pointsToAdd = $employeeTask->points + $employee->points;
 
-            $employeeTask->employee->update(['points'=> $pointsToAdd]);
+            $this->workflow->completeSubtask($subTask);
+
+            if ($employeeTask->status === EmployeeTaskStatus::Pending->value) {
+                $this->workflow->startTask($employeeTask);
+                $employeeTask->refresh();
+            }
 
             try {
-                app(\App\Services\AdminNotificationService::class)->notifyTaskCompleted($employee, $employeeTask);
+                $this->workflow->submitTaskForReview($employeeTask);
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::error('Admin notification (task completed via subtask): '.$e->getMessage());
+                return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
             }
-        }
-
-        else{
-          $subTask->update(['status'=>'completed']);
-
+        } else {
+          $this->workflow->completeSubtask($subTask);
         }
 
         Logs::createLog('اكمال مهمة موظف فرعية','اكمال مهمة موظف فرعية باسم'.' '.$subTask->name

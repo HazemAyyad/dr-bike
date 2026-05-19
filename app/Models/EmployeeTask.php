@@ -15,10 +15,15 @@ class EmployeeTask extends Model
         'description',
         'notes',
         'points',
+        'priority',
+        'rejection_notes',
         'not_shown_for_employee',
         'employee_id',
         'start_time',
         'end_time',
+        'started_at',
+        'submitted_at',
+        'reviewed_at',
         'status',
         'admin_img',
         'is_forced_to_upload_img',
@@ -28,6 +33,8 @@ class EmployeeTask extends Model
         'is_canceled',
         'audio',
         'parent_id',
+        'template_id',
+        'occurrence_id',
     ];
 
     protected $casts = [
