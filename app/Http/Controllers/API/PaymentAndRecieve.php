@@ -20,9 +20,34 @@ class PaymentAndRecieve extends Controller
 {
 
 
+    private function clampBoxLogNote(?string $note, int $max = 500): ?string
+    {
+        if ($note === null) {
+            return null;
+        }
+        $note = trim($note);
+        if ($note === '' || mb_strlen($note) <= $max) {
+            return $note === '' ? null : $note;
+        }
+
+        return mb_substr($note, 0, $max - 3).'...';
+    }
+
+    private function prepareBoxLogNoteInput(Request $request): void
+    {
+        if (! $request->has('box_log_note')) {
+            return;
+        }
+
+        $clamped = $this->clampBoxLogNote((string) $request->input('box_log_note'));
+        $request->merge(['box_log_note' => $clamped ?? '']);
+    }
+
     public function handlePayment(Request $request)
 {
     try {
+        $this->prepareBoxLogNoteInput($request);
+
         $request->validate([
             'type'        => 'required|string|in:payment,receive',
             'customer_id' => 'nullable|integer|exists:customers,id',
@@ -93,7 +118,9 @@ class PaymentAndRecieve extends Controller
                 );
             } else { // receive
                 $box->total = $currentTotal + $boxValue;
-                $receiveNote = trim((string) $request->input('box_log_note', ''));
+                $receiveNote = $this->clampBoxLogNote(
+                    (string) $request->input('box_log_note', '')
+                ) ?? '';
                 if ($receiveNote === '') {
                     $receiveNote = 'قبض نقدي في الصندوق بقيمة '.number_format($boxValue, 2, '.', '');
                 }

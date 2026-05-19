@@ -34,6 +34,8 @@ class InstantSale extends Model
         'status',
         'cancelled_at',
         'stock_restored',
+        'created_by',
+        'updated_by',
     ];
 
     protected $casts = [
@@ -76,6 +78,16 @@ class InstantSale extends Model
     public function paymentBox()
     {
         return $this->belongsTo(Box::class, 'payment_box_id');
+    }
+
+    public function createdByUser()
+    {
+        return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function updatedByUser()
+    {
+        return $this->belongsTo(User::class, 'updated_by');
     }
 
     public function isCancelled(): bool

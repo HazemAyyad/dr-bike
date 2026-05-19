@@ -299,13 +299,28 @@ class InstantSales extends Controller
         return rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.');
     }
 
+    private function clampBoxLogNote(string $note, int $max = 500): string
+    {
+        $note = trim($note);
+        if ($note === '' || mb_strlen($note) <= $max) {
+            return $note;
+        }
+
+        return mb_substr($note, 0, $max - 3).'...';
+    }
+
     private function instantSaleInvoiceLinesSummary(InstantSale $mainSale): string
     {
-        $mainSale->loadMissing(['product', 'subProducts.product']);
+        $mainSale->loadMissing(['product', 'subProducts.product', 'offerPackage']);
         $parts = [];
 
-        $mainName = $mainSale->product?->nameAr ?? 'منتج';
-        $parts[] = $mainName.' × '.$this->saleLineQuantity($mainSale);
+        if ($mainSale->offer_package_id) {
+            $packageName = $mainSale->offerPackage?->name ?? 'باكيج';
+            $parts[] = $packageName.' × '.$this->saleLineQuantity($mainSale);
+        } else {
+            $mainName = $mainSale->product?->nameAr ?? 'منتج';
+            $parts[] = $mainName.' × '.$this->saleLineQuantity($mainSale);
+        }
 
         foreach ($mainSale->subProducts as $sub) {
             if ($sub->isCancelled()) {
@@ -315,7 +330,20 @@ class InstantSales extends Controller
             $parts[] = $subName.' × '.$this->saleLineQuantity($sub);
         }
 
-        return implode(' | ', $parts);
+        if (count($parts) === 0) {
+            return 'منتج';
+        }
+
+        if (count($parts) > 4) {
+            return count($parts).' منتج';
+        }
+
+        $summary = implode(' | ', $parts);
+        if (mb_strlen($summary) > 220) {
+            return count($parts).' منتج';
+        }
+
+        return $summary;
     }
 
     private function instantSaleBoxLogNote(InstantSale $sale, string $action): string
@@ -330,7 +358,7 @@ class InstantSales extends Controller
             $amount > 0 ? $amount : (float) ($root->total_cost ?? 0)
         );
 
-        return match ($action) {
+        $note = match ($action) {
             'receive' => sprintf(
                 'قبض — بيع فوري #%d | %s | مبلغ: %s',
                 $root->id,
@@ -347,6 +375,8 @@ class InstantSales extends Controller
             'edit_minus' => sprintf('تعديل بيع فوري #%d — تخفيض مبلغ من الصندوق', $root->id),
             default => sprintf('بيع فوري #%d | %s', $root->id, $linesSummary),
         };
+
+        return $this->clampBoxLogNote($note);
     }
 
     /**
@@ -432,6 +462,49 @@ class InstantSales extends Controller
     /**
      * Keep only attributes that exist on instant_sales (safe if migrations pending).
      */
+    /**
+     * @return array<string, int>
+     */
+    private function auditFieldsForCreate(): array
+    {
+        $userId = auth()->id();
+        if (! $userId || ! Schema::hasColumn('instant_sales', 'created_by')) {
+            return [];
+        }
+
+        return ['created_by' => (int) $userId];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function auditFieldsForUpdate(): array
+    {
+        $userId = auth()->id();
+        if (! $userId || ! Schema::hasColumn('instant_sales', 'updated_by')) {
+            return [];
+        }
+
+        return ['updated_by' => (int) $userId];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatInstantSaleAuditFields(InstantSale $sale): array
+    {
+        if (! Schema::hasColumn('instant_sales', 'created_by')) {
+            return [];
+        }
+
+        return [
+            'created_by' => $sale->created_by,
+            'created_by_name' => $sale->createdByUser?->name,
+            'updated_by' => $sale->updated_by,
+            'updated_by_name' => $sale->updatedByUser?->name,
+        ];
+    }
+
     private function sanitizeInstantSaleAttributes(array $data): array
     {
         $fillable = (new InstantSale)->getFillable();
@@ -602,6 +675,7 @@ public function store(Request $request)
                 ])
                 ->merge($buyerPayload)
                 ->merge($paymentBoxPayload)
+                ->merge($this->auditFieldsForCreate())
                 ->toArray()
         );
 
@@ -801,7 +875,7 @@ public function store(Request $request)
                 'notes' => $data['notes'] ?? null,
                 'type' => $data['type'],
                 'project_id' => $data['project_id'] ?? null,
-            ], $buyerPayload, $paymentBoxPayload));
+            ], $buyerPayload, $paymentBoxPayload, $this->auditFieldsForCreate()));
 
             $mainInstantSale = InstantSale::create($mainData);
 
@@ -1008,6 +1082,8 @@ public function store(Request $request)
                     'offerPackage:id,name',
                     'project:id,name',
                 'subProducts.product:id,nameAr',
+                    'createdByUser:id,name',
+                    'updatedByUser:id,name',
                 ]);
 
             if ($search !== '') {
@@ -1081,6 +1157,7 @@ public function store(Request $request)
                         'quantity' => $sub->quantity,
                     ];
                 }),
+                ...$this->formatInstantSaleAuditFields($sale),
             ];
         });
 
@@ -1222,7 +1299,10 @@ public function store(Request $request)
                     );
                 }
 
-                $instantSale->update(collect($data)->except(['instant_sale_id'])->toArray());
+                $instantSale->update(array_merge(
+                    collect($data)->except(['instant_sale_id'])->toArray(),
+                    $this->auditFieldsForUpdate()
+                ));
                 Logs::createLog('تعديل بيع فوري', 'تم تعديل بيع فوري #'.$instantSale->id, 'instant_sales');
             });
 
@@ -1353,6 +1433,8 @@ public function store(Request $request)
                     'subProducts.product.normalImages',
                     'project.partnership.customer',
                     'paymentBox:id,name',
+                    'createdByUser:id,name',
+                    'updatedByUser:id,name',
                 ])
                 ->findOrFail($request->instant_sale_id);
 
@@ -1395,6 +1477,7 @@ public function store(Request $request)
                 'project_name' => $sale->project?->name,
                 'status' => $sale->status ?? 'active',
                 'cancelled_at' => optional($sale->cancelled_at)->format('Y-m-d H:i:s'),
+                ...$this->formatInstantSaleAuditFields($sale),
                 ...$this->paymentBoxInvoiceFields($sale),
                 'sub_products' => $sale->subProducts->map(function ($sub) use ($isPackageSale) {
                     $lineSubtotal = (float) $sub->cost * (float) $sub->quantity;
