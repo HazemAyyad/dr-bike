@@ -23,20 +23,37 @@ class Products extends Controller
 {
     public function allProducts(){
       try{
-        $products = Product::with('projects:product_id,project_id')
-        ->get(['id','nameAr','stock'])
-        ;
-        
-        $products->map(function ($product) {
-            $product['projects'] = $product->projects->pluck('project_id')->toArray();
-            $product->unsetRelation('projects');
-            return $product;
-        });
+        $products = Product::query()
+            ->with([
+                'projects:product_id,project_id',
+                'viewImages',
+                'normalImages',
+            ])
+            ->get(['id', 'nameAr', 'stock', 'normailPrice', 'price', 'min_sale_price']);
 
-        
+        $formatted = $products->map(function ($product) {
+            $image = $product->viewImages->first()
+                ?? $product->normalImages->first();
+            $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
+            if ($unitPrice <= 0) {
+                $unitPrice = (float) ($product->min_sale_price ?? 0);
+            }
+
+            return [
+                'id' => $product->id,
+                'nameAr' => $product->nameAr,
+                'stock' => $product->stock,
+                'normail_price' => $unitPrice,
+                'product_image' => $image
+                    ? \App\Support\ApiImageUrl::normalize($image->imageUrl)
+                    : 'no image',
+                'projects' => $product->projects->pluck('project_id')->toArray(),
+            ];
+        })->values();
+
             return response()->json([
                 'status' => 'success',
-                'products' => $products
+                'products' => $formatted,
             ], 200);
     }
           catch (QueryException $e) {
