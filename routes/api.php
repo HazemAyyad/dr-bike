@@ -395,12 +395,14 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Debts','refresh.to
    Route::post('/debt-ledger/person/meta', [DebtLedger::class, 'updatePersonMeta']);
    Route::post('/debt-ledger/person/share-link', [DebtLedger::class, 'createPersonShareLink']);
    Route::get('/debt-ledger/person/archive', [DebtLedger::class, 'personArchive']);
+   Route::get('/debt-ledger/person/deleted', [DebtLedger::class, 'personDeleted']);
    Route::post('/debt-ledger/transactions/archive', [DebtLedger::class, 'archiveTransactionsBulk']);
    Route::post('/debt-ledger/transactions/restore', [DebtLedger::class, 'restoreTransactionsBulk']);
    Route::post('/debt-ledger/transaction', [DebtLedger::class, 'storeTransaction']);
    Route::get('/debt-ledger/transaction/{id}', [DebtLedger::class, 'showTransaction']);
    Route::post('/debt-ledger/transaction/{id}/update', [DebtLedger::class, 'updateTransaction']);
    Route::post('/debt-ledger/transaction/{id}/archive', [DebtLedger::class, 'archiveTransaction']);
+   Route::post('/debt-ledger/transaction/{id}/delete', [DebtLedger::class, 'deleteTransaction']);
    Route::post('/debt-ledger/person/report', [DebtLedger::class, 'personReport']);
 
 });

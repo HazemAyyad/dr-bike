@@ -20,6 +20,7 @@ class DebtTransaction extends Model
         'source',
         'source_id',
         'archived_at',
+        'deleted_at',
         'created_by',
     ];
 
@@ -27,6 +28,7 @@ class DebtTransaction extends Model
         'receipt_images' => 'array',
         'transaction_date' => 'date',
         'archived_at' => 'datetime',
+        'deleted_at' => 'datetime',
         'amount' => 'decimal:2',
         'balance_after' => 'decimal:2',
     ];
@@ -53,12 +55,17 @@ class DebtTransaction extends Model
 
     public function scopeActive($query)
     {
-        return $query->whereNull('archived_at');
+        return $query->whereNull('archived_at')->whereNull('deleted_at');
     }
 
     public function scopeArchived($query)
     {
-        return $query->whereNotNull('archived_at');
+        return $query->whereNotNull('archived_at')->whereNull('deleted_at');
+    }
+
+    public function scopeDeleted($query)
+    {
+        return $query->whereNotNull('deleted_at');
     }
 
     public function scopeForCustomer($query, int $customerId)

@@ -330,13 +330,50 @@ class DebtLedger extends Controller
 
             Logs::createLog(
                 'دفتر الديون',
-                'حذف/أرشفة معاملة رقم ' . $id,
+                'أرشفة معاملة رقم ' . $id,
                 'debts'
             );
 
             return response()->json([
                 'status' => 'success',
-                'message' => __('messages.ledger_transaction_deleted'),
+                'message' => __('messages.ledger_transaction_archived'),
+                'total_taken' => $personTotals['total_taken'],
+                'total_given' => $personTotals['total_given'],
+                'balance' => $personTotals['balance'],
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.ledger_transaction_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function deleteTransaction(int $id)
+    {
+        try {
+            $transaction = DebtTransaction::active()->findOrFail($id);
+            $this->ledger->deleteTransaction($transaction);
+
+            $personTotals = $this->ledger->calculateTotals(
+                $transaction->customer_id,
+                $transaction->seller_id
+            );
+
+            Logs::createLog(
+                'دفتر الديون',
+                'حذف نهائي لمعاملة رقم ' . $id,
+                'debts'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.ledger_transaction_permanently_deleted'),
                 'total_taken' => $personTotals['total_taken'],
                 'total_given' => $personTotals['total_given'],
                 'balance' => $personTotals['balance'],
@@ -474,6 +511,50 @@ class DebtLedger extends Controller
                 'total_given' => $totals['total_given'],
                 'balance' => $totals['balance'],
                 'archived_transactions_count' => $transactions->count(),
+                'transactions' => $transactions->map(fn ($t) => $this->ledger->formatTransaction($t))->values(),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function personDeleted(Request $request)
+    {
+        try {
+            $request->validate([
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
+            ]);
+
+            if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
+                return response()->json(['status' => 'error', 'message' => $error], 200);
+            }
+
+            $transactions = $this->ledger->deletedQuery($request->customer_id, $request->seller_id)
+                ->orderByDesc('deleted_at')
+                ->orderByDesc('id')
+                ->get();
+
+            $totals = $this->ledger->calculateDeletedTotals(
+                $request->customer_id,
+                $request->seller_id
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'person' => $this->ledger->getPersonInfo($request->customer_id, $request->seller_id),
+                'total_taken' => $totals['total_taken'],
+                'total_given' => $totals['total_given'],
+                'balance' => $totals['balance'],
+                'deleted_transactions_count' => $transactions->count(),
                 'transactions' => $transactions->map(fn ($t) => $this->ledger->formatTransaction($t))->values(),
             ], 200);
         } catch (ValidationException $e) {

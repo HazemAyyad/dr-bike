@@ -1380,7 +1380,7 @@ public function store(Request $request)
 
                 $this->reverseBoxForCancelledSale($sale);
                 $this->markInstantSaleCancelled($sale);
-                app(DebtLedgerService::class)->archiveInstantSaleLedger($sale);
+                app(DebtLedgerService::class)->deleteInstantSaleLedger($sale);
 
                 Logs::createLog(
                     'إلغاء بيع فوري',

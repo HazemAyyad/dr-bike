@@ -53,9 +53,36 @@ class DebtLedgerService
         return $query;
     }
 
+    public function deletedQuery(?int $customerId = null, ?int $sellerId = null): Builder
+    {
+        $query = DebtTransaction::query()->deleted();
+
+        if ($customerId) {
+            $query->forCustomer($customerId);
+        } elseif ($sellerId) {
+            $query->forSeller($sellerId);
+        }
+
+        return $query;
+    }
+
     public function calculateArchivedTotals(?int $customerId, ?int $sellerId): array
     {
         $query = $this->archivedQuery($customerId, $sellerId);
+
+        $taken = (float) (clone $query)->where('type', 'taken')->sum('amount');
+        $given = (float) (clone $query)->where('type', 'given')->sum('amount');
+
+        return [
+            'total_taken' => $taken,
+            'total_given' => $given,
+            'balance' => $taken - $given,
+        ];
+    }
+
+    public function calculateDeletedTotals(?int $customerId, ?int $sellerId): array
+    {
+        $query = $this->deletedQuery($customerId, $sellerId);
 
         $taken = (float) (clone $query)->where('type', 'taken')->sum('amount');
         $given = (float) (clone $query)->where('type', 'given')->sum('amount');
@@ -115,6 +142,10 @@ class DebtLedgerService
 
     public function restoreTransaction(DebtTransaction $transaction): void
     {
+        if ($transaction->deleted_at) {
+            throw new \RuntimeException(__('messages.ledger_transaction_not_restorable'));
+        }
+
         DB::transaction(function () use ($transaction) {
             $transaction->update(['archived_at' => null]);
             $transaction = $transaction->fresh(['customer', 'seller']);
@@ -244,6 +275,7 @@ class DebtLedgerService
             'box_id' => $transaction->box_id,
             'source' => $transaction->source,
             'archived_at' => $transaction->archived_at?->format('Y-m-d H:i:s'),
+            'deleted_at' => $transaction->deleted_at?->format('Y-m-d H:i:s'),
         ];
     }
 
@@ -293,6 +325,7 @@ class DebtLedgerService
             ->where('source', 'instant_sale')
             ->where('source_id', $sale->id)
             ->whereNull('archived_at')
+            ->whereNull('deleted_at')
             ->exists()) {
             return null;
         }
@@ -323,7 +356,10 @@ class DebtLedgerService
         ], auth()->id(), applyBox: false);
     }
 
-    public function archiveInstantSaleLedger(InstantSale $sale): void
+    /**
+     * Move instant-sale ledger lines to "deleted" (e.g. cancelled invoice — not restorable).
+     */
+    public function deleteInstantSaleLedger(InstantSale $sale): void
     {
         $transactions = DebtTransaction::query()
             ->active()
@@ -332,7 +368,7 @@ class DebtLedgerService
             ->get();
 
         foreach ($transactions as $transaction) {
-            $this->archiveTransaction($transaction);
+            $this->deleteTransaction($transaction);
         }
     }
 
@@ -570,6 +606,10 @@ class DebtLedgerService
 
     public function archiveTransaction(DebtTransaction $transaction): void
     {
+        if ($transaction->deleted_at) {
+            throw new \RuntimeException(__('messages.ledger_transaction_not_restorable'));
+        }
+
         DB::transaction(function () use ($transaction) {
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
                 $this->reverseBoxMovement(
@@ -581,6 +621,27 @@ class DebtLedgerService
             }
 
             $transaction->update(['archived_at' => now()]);
+            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+        });
+    }
+
+    public function deleteTransaction(DebtTransaction $transaction): void
+    {
+        DB::transaction(function () use ($transaction) {
+            if ($transaction->archived_at || $transaction->deleted_at) {
+                return;
+            }
+
+            if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
+                $this->reverseBoxMovement(
+                    $transaction,
+                    (int) $transaction->box_id,
+                    $transaction->type,
+                    (float) $transaction->amount
+                );
+            }
+
+            $transaction->update(['deleted_at' => now()]);
             $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
         });
     }
