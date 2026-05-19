@@ -136,7 +136,7 @@ class DebtLedger extends Controller
                 'amount' => 'required|numeric|min:0.01',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
-                'box_id' => 'required|integer|exists:boxes,id',
+                'box_id' => 'nullable|integer|exists:boxes,id',
                 'receipt_images' => 'nullable|array',
                 'receipt_images.*' => 'image',
             ]);
@@ -247,14 +247,6 @@ class DebtLedger extends Controller
             ]);
 
             $transaction = DebtTransaction::active()->findOrFail($id);
-
-            $source = $transaction->source ?? 'manual';
-            if (($source === 'manual' || $source === '') && empty($data['box_id']) && ! $transaction->box_id) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.must_select_box'),
-                ], 200);
-            }
 
             $imageNames = $transaction->receipt_images ?? [];
             if ($request->hasFile('receipt_images')) {

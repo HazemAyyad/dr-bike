@@ -408,12 +408,6 @@ class InstantSales extends Controller
         $box = Box::lockForUpdate()->findOrFail($boxId);
         $note = $this->instantSaleBoxLogNote($sale, 'cancel');
 
-        if ((float) $box->total < $amount) {
-            throw ValidationException::withMessages([
-                'instant_sale_id' => [__('messages.box_out_of_money')],
-            ]);
-        }
-
         $box->total = (float) $box->total - $amount;
         $box->save();
 
