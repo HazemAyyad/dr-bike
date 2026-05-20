@@ -46,22 +46,21 @@ class AdminImpersonationController extends Controller
                 now()->addDay()
             )->plainTextToken;
 
-            $employee->employee_img = $employee->employee_img
-                ? 'public/EmployeeImages/'.$employee->employee_img[0]
-                : null;
-            $employee->document_img = $employee->document_img
-                ? 'public/EmployeeDocumetImages/'.$employee->document_img[0]
-                : null;
+            $employee->setAttribute('employee_img', $this->formatEmployeeImagePath($employee->employee_img));
+            $employee->setAttribute('document_img', $this->formatDocumentImagePath($employee->document_img));
+            $employeePermissions = $employee->permissions
+                ->filter(fn ($p) => $p->permission !== null)
+                ->map(function ($permission) {
+                    return [
+                        'permission_id' => $permission->permission->id,
+                        'permission_name' => $permission->permission->name,
+                        'permission_name_en' => $permission->permission->name_en,
+                    ];
+                })
+                ->values();
 
+            $employee->unsetRelation('permissions');
             $user->setRelation('employee', $employee);
-
-            $employeePermissions = $employee->permissions->map(function ($permission) {
-                return [
-                    'permission_id' => $permission->permission->id,
-                    'permission_name' => $permission->permission->name,
-                    'permission_name_en' => $permission->permission->name_en,
-                ];
-            });
 
             return response()->json([
                 'status' => 'success',
@@ -80,5 +79,33 @@ class AdminImpersonationController extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    private function formatEmployeeImagePath(mixed $img): ?string
+    {
+        if (empty($img)) {
+            return null;
+        }
+        if (is_array($img)) {
+            return 'public/EmployeeImages/'.($img[0] ?? '');
+        }
+
+        return str_starts_with((string) $img, 'public/')
+            ? (string) $img
+            : 'public/EmployeeImages/'.(string) $img;
+    }
+
+    private function formatDocumentImagePath(mixed $img): ?string
+    {
+        if (empty($img)) {
+            return null;
+        }
+        if (is_array($img)) {
+            return 'public/EmployeeDocumetImages/'.($img[0] ?? '');
+        }
+
+        return str_starts_with((string) $img, 'public/')
+            ? (string) $img
+            : 'public/EmployeeDocumetImages/'.(string) $img;
     }
 }
