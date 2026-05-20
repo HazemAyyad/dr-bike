@@ -140,6 +140,10 @@ class EmployeeVisibleTasks
      */
     public static function mapLegacyForDashboard(EmployeeTask $task): array
     {
+        $subCount = $task->relationLoaded('subtasks')
+            ? $task->subtasks->count()
+            : $task->subtasks()->count();
+
         return [
             'id' => $task->id,
             'employee_id' => $task->employee_id,
@@ -152,6 +156,8 @@ class EmployeeVisibleTasks
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'occurrence_id' => $task->occurrence_id,
             'source' => 'legacy',
+            'has_sub_tasks' => $subCount > 0,
+            'sub_tasks_count' => $subCount,
         ];
     }
 
@@ -160,7 +166,8 @@ class EmployeeVisibleTasks
      */
     public static function mapOccurrenceForDashboard(EmployeeTaskOccurrence $task): array
     {
-        $task->loadMissing('template');
+        $task->loadMissing(['template', 'subtasks']);
+        $subCount = $task->subtasks->count();
 
         return [
             'id' => $task->id,
@@ -174,6 +181,8 @@ class EmployeeVisibleTasks
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'occurrence_id' => $task->id,
             'source' => 'occurrence',
+            'has_sub_tasks' => $subCount > 0,
+            'sub_tasks_count' => $subCount,
         ];
     }
 }
