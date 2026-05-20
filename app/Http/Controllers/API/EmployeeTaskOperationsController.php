@@ -14,6 +14,7 @@ use App\Services\EmployeeTasks\EmployeeTaskRecurrenceService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
 use App\Services\AdminNotificationService;
+use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -227,6 +228,11 @@ class EmployeeTaskOperationsController extends Controller
 
             $occurrences = $this->recurrence->ensureOccurrences($template);
             $summary = $this->recurrence->buildRecurrenceSummary($template);
+
+            $first = $occurrences->first();
+            if ($first) {
+                app(EmployeeTaskNotificationService::class)->notifyAssignedOccurrence($first);
+            }
 
             return response()->json([
                 'status' => 'success',

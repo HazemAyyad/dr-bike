@@ -4,7 +4,10 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Enums\EmployeeTaskStatus;
+use App\Models\EmployeeTaskOccurrence;
+use App\Services\EmployeeTasks\EmployeeTaskDetailsService;
 use App\Services\EmployeeTasks\EmployeeTaskListService;
+use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
 use Illuminate\Support\Facades\Schema;
@@ -665,6 +668,8 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 
         $this->createHelper($employeeTask,$request->task_recurrence);
 
+        app(EmployeeTaskNotificationService::class)->notifyAssignedLegacy($employeeTask->fresh());
+
         Logs::createLog('اضافة مهمة موظف','تم اضافة مهمة موظف باسم'.' '.$employeeTask->name
         
         .' '.'تابعة للموظف'.' '.$employeeTask->employee->user->name
@@ -701,54 +706,29 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 
     public function showEmployeeTaskDetails(Request $request){
         try{
-        $request->validate(['employee_task_id'=>['required','exists:employee_tasks,id']]);
+        $request->validate([
+            'employee_task_id' => 'nullable|exists:employee_tasks,id',
+            'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
+        ]);
 
-        $employeeTask = EmployeeTask
-        ::with(['subTasks' => fn ($q) => $q->orderBy('sort_order'), 'employee'])
-            ->findOrFail($request->employee_task_id);
-    
-        $employeeTask->subTasks->transform(function ($subTask) {
-        if ($subTask->admin_img) {
-                    $subTask->admin_img = collect($subTask->admin_img)->map(function ($img) {
-                        return 'public/EmployeeSubTasks/AdminImages/' . $img;
-                      })->toArray();
-                    
-                    
+        if (! $request->employee_task_id && ! $request->occurrence_id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => ['employee_task_id' => ['Task id is required']],
+            ], 200);
+        }
 
-                }
-        if ($subTask->employee_img) {
-                $subTask->employee_img = collect($subTask->employee_img)->map(function ($empImg) {
-                    return 'public/EmployeeSubTasks/EmployeeImages/' . $empImg;
-                })->toArray();
-            }
-                return $subTask;
-            });
-            $employeeTask->makeHidden(['admin_img','employee_img','audio']);
-            $taskData = $employeeTask->toArray(); // all fields of the task
-            $taskData['employee_name'] = $employeeTask->employee->user->name; // add only employee name
-            $taskData['employee_photo'] = $this->employeeProfilePhoto($employeeTask->employee);
-            $taskData['admin_img'] =
-                $employeeTask->admin_img
-                ? collect($employeeTask->admin_img)->map(fn($img) => 'public/AdminEmployeeTasksImages/'.$img)->toArray()
-                : 'no images';
-            
-            $taskData['employee_img'] = 
-                $employeeTask->employee_img
-                ? collect($employeeTask->employee_img)->map(fn($img) => 'public/EmployeeTasksImages/'.$img)->toArray()
-                : 'no images';
-            
-            $taskData['audio'] = $employeeTask->audio? 'public/employeeTasksAudio/'.$employeeTask->audio : 'no audio';
-            $taskData['status'] = EmployeeTaskStatus::normalize($employeeTask->status)->value;
-            $taskData['priority'] = $employeeTask->priority ?? 'medium';
-            $taskData['rejection_notes'] = $employeeTask->rejection_notes;
-            $taskData['started_at'] = $employeeTask->started_at;
-            $taskData['submitted_at'] = $employeeTask->submitted_at;
-            $taskData['reviewed_at'] = $employeeTask->reviewed_at;
+        $details = app(EmployeeTaskDetailsService::class);
+        $photo = fn ($employee) => $this->employeeProfilePhoto($employee);
 
-            $subTotal = $employeeTask->subTasks->count();
-            $subDone = $employeeTask->subTasks->where('status', 'completed')->count();
-            $taskData['progress'] = $subTotal > 0 ? round(($subDone / $subTotal) * 100) : 0;
-            $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
+        if ($request->occurrence_id) {
+            $occurrence = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
+            $taskData = $details->formatOccurrence($occurrence, $photo);
+        } else {
+            $employeeTask = EmployeeTask::findOrFail($request->employee_task_id);
+            $taskData = $details->formatLegacy($employeeTask, $photo);
+        }
 
             return response([
                 'status' => 'success',

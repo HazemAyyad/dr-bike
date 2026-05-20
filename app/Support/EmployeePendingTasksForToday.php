@@ -3,8 +3,10 @@
 namespace App\Support;
 
 use App\Models\EmployeeTask;
+use App\Models\EmployeeTaskOccurrence;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Schema;
 
 class EmployeePendingTasksForToday
 {
@@ -33,9 +35,22 @@ class EmployeePendingTasksForToday
     /** مهام اليوم التي يراها الموظف في التطبيق (نفس منطق EmployeeData). */
     public static function visibleForEmployee(int $employeeId): Collection
     {
-        return self::forEmployee($employeeId)
-            ->filter(fn (EmployeeTask $task) => self::isVisibleToEmployee($task))
-            ->values();
+        $legacy = self::forEmployee($employeeId)
+            ->filter(fn (EmployeeTask $task) => self::isVisibleToEmployee($task));
+
+        if (! Schema::hasTable('employee_task_occurrences')) {
+            return $legacy->values();
+        }
+
+        $occurrences = EmployeeTaskOccurrence::query()
+            ->where('employee_id', $employeeId)
+            ->where('is_canceled', 0)
+            ->where('status', '!=', 'completed')
+            ->whereDate('scheduled_date', self::todayDateString())
+            ->get()
+            ->filter(fn (EmployeeTaskOccurrence $task) => EmployeeVisibleTasks::isOccurrenceVisibleToEmployee($task));
+
+        return $legacy->merge($occurrences)->values();
     }
 
     public static function isVisibleToEmployee(EmployeeTask $task): bool

@@ -60,6 +60,8 @@ return [
     'employee_task_not_found' => 'Employee task not found',
     'employee_task_canceled' => 'Employee task has been canceled',
     'employee_task_created_successfully' => 'Employee task was created successfully',
+    'employee_task_assigned_title' => 'New task assigned',
+    'employee_task_assigned_body' => 'A new task was assigned to you: :name',
     'failed_to_cancel_task' => 'Failed to cancel the task',
     'failed_to_create_task' => 'Failed to create employee task',
     'failed_to_fetch_task_details' => 'Failed to fetch task details',

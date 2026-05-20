@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API\Employees;
 
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
+use App\Support\EmployeeVisibleTasks;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -18,25 +19,10 @@ class EmployeeData extends Controller
 
             $user = $request->user();
 
-            $employee = EmployeeDetail::where('id',$user->employee->id)
+            $employee = EmployeeDetail::where('id', $user->employee->id)
             ->with('user:id,name')
-            ->with([
-                    'tasks' => function ($q) {
-                        //$q->whereNull('parent_id')
-                        $q->where(function ($query) {
-                                    $query->where('not_shown_for_employee', false) // show if false
-                                            ->orWhere(function ($sub) {
-                                                $sub->where('not_shown_for_employee', true)
-                                                      ->whereDate('start_time', '<=', now()->toDateString());
-                                            });
-                                })
-                ->select('id', 'employee_id', 'name', 'start_time', 'end_time', 'status', 'task_recurrence', 'task_recurrence_time', 'is_forced_to_upload_img');
-                    }
-                ])  
-              ->with(['permissions.permission:id,name'])
-            
-           
-            ->first(['id','user_id','number_of_work_hours','hour_work_price','debts','salary','points']);
+            ->with(['permissions.permission:id,name'])
+            ->first(['id', 'user_id', 'number_of_work_hours', 'hour_work_price', 'debts', 'salary', 'points']);
 
             $employee->permissions = $employee->permissions->map(function ($perm) {
                     return [
@@ -46,35 +32,7 @@ class EmployeeData extends Controller
                 });
             $employee->unsetRelation('permissions');
 
-            // Recurrence filtering logic
-       $filteredTasks = $employee->tasks->filter(function ($task) {
-            $recurrence = $task->task_recurrence;
-            $times = is_array($task->task_recurrence_time) ? $task->task_recurrence_time : [];
-            $dayName = strtolower(\Carbon\Carbon::parse($task->start_time)->format('l'));
-            $dayOfMonth = (int) \Carbon\Carbon::parse($task->start_time)->format('d');
-
-            switch ($recurrence) {
-                case 'noRepeat':
-                    return true; // no restriction
-
-                case 'daily':
-                    return true; // appears every day
-
-                case 'weekly':
-                    // only if today's weekday is included in recurrence time
-                    return in_array($dayName, $times);
-
-                case 'monthly':
-                    // only if today's date matches the recurrence time number
-                    return in_array((string)$dayOfMonth, $times);
-
-                default:
-                    return false;
-            }
-        })->values();
-
-            $employee['tasks'] = $filteredTasks;
-            $employee->unsetRelation('tasks');
+            $employee['tasks'] = EmployeeVisibleTasks::dashboardPayload($employee->id);
 
             return response()->json([
                 'status' => 'success',

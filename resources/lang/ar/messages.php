@@ -57,6 +57,8 @@ return [
     'employee_task_not_found' => 'لم يتم العثور على مهمة الموظف',
     'employee_task_canceled' => 'تم إلغاء مهمة الموظف',
     'employee_task_created_successfully' => 'تم إنشاء مهمة الموظف بنجاح',
+    'employee_task_assigned_title' => 'مهمة جديدة',
+    'employee_task_assigned_body' => 'تم تعيين مهمة جديدة لك: :name',
     'failed_to_cancel_task' => 'فشل في إلغاء المهمة',
     'failed_to_create_task' => 'فشل في إنشاء مهمة الموظف',
     'failed_to_fetch_task_details' => 'فشل في جلب تفاصيل المهمة',
