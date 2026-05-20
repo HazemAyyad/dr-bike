@@ -739,7 +739,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/admin/cron-job-logs', [\App\Http\Controllers\API\CronJobLogController::class, 'index']);
     Route::get('/admin/cron-job-logs/{id}', [\App\Http\Controllers\API\CronJobLogController::class, 'show']);
 
-
+    Route::post('/admin/impersonate-employee/{employeeId}', [\App\Http\Controllers\API\AdminImpersonationController::class, 'impersonate']);
 
 });
 
