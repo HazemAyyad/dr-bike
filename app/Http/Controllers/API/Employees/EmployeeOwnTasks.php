@@ -6,6 +6,7 @@ use App\Http\Controllers\API\CommonUse;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
+use App\Models\EmployeeTaskOccurrenceSubtask;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -153,5 +154,57 @@ class EmployeeOwnTasks extends Controller
             ], 200);        }
 
     
+    }
+
+    public function editOccurrenceSubtaskImages(Request $request)
+    {
+        try {
+            $request->validate([
+                'sub_task_id' => 'required|integer|exists:employee_task_occurrence_subtasks,id',
+                'employee_img' => ['nullable', 'array'],
+                'employee_img.*' => ['nullable'],
+            ]);
+
+            $employee = $request->user()->employee;
+            $subTask = EmployeeTaskOccurrenceSubtask::with('occurrence')
+                ->findOrFail($request->sub_task_id);
+
+            if (! $employee || $subTask->occurrence->employee_id != $employee->id) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $finalEmployeeImages = CommonUse::handleImageUpdate(
+                $request,
+                'employee_img',
+                'EmployeeSubTasks/EmployeeImages',
+                $subTask->employee_img ?? []
+            );
+
+            $subTask->employee_img = $finalEmployeeImages;
+            $subTask->save();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.employee_sub_task_images_updated'),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.employee_task_not_found'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 }
