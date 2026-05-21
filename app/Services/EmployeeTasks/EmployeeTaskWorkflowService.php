@@ -9,7 +9,9 @@ use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTimeline;
+use App\Services\AdminNotificationService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class EmployeeTaskWorkflowService
 {
@@ -66,7 +68,10 @@ class EmployeeTaskWorkflowService
 
         $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_SUBMITTED);
 
-        return $task->fresh();
+        $fresh = $task->fresh();
+        $this->notifyAdminTaskSubmitted($fresh);
+
+        return $fresh;
     }
 
     public function submitOccurrenceForReview(EmployeeTaskOccurrence $occurrence, ?string $employeeNotes = null): EmployeeTaskOccurrence
@@ -82,7 +87,10 @@ class EmployeeTaskWorkflowService
 
         $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_SUBMITTED);
 
-        return $occurrence->fresh();
+        $fresh = $occurrence->fresh(['employee']);
+        $this->notifyAdminOccurrenceSubmitted($fresh);
+
+        return $fresh;
     }
 
     public function approveTask(EmployeeTask $task): EmployeeTask
@@ -166,7 +174,10 @@ class EmployeeTaskWorkflowService
         $task = $subTask->employeeTask;
         $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_SUBTASK_COMPLETED, $subTask->name);
 
-        return $subTask->fresh();
+        $fresh = $subTask->fresh();
+        $this->notifyAdminLegacySubtaskCompleted($fresh);
+
+        return $fresh;
     }
 
     public function completeOccurrenceSubtask(EmployeeTaskOccurrenceSubtask $subTask): EmployeeTaskOccurrenceSubtask
@@ -182,7 +193,10 @@ class EmployeeTaskWorkflowService
             $subTask->name
         );
 
-        return $subTask->fresh();
+        $fresh = $subTask->fresh();
+        $this->notifyAdminOccurrenceSubtaskCompleted($fresh);
+
+        return $fresh;
     }
 
     private function assertSubtasksComplete(EmployeeTask $task): void
@@ -220,5 +234,71 @@ class EmployeeTaskWorkflowService
         }
 
         return (int) $task->subTasks()->where('status', 'completed')->sum('bonus_points');
+    }
+
+    private function notifyAdminTaskSubmitted(EmployeeTask $task): void
+    {
+        try {
+            $task->loadMissing('employee.user');
+            if ($task->employee) {
+                app(AdminNotificationService::class)->notifyTaskSubmittedForReview($task->employee, $task);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('admin_notification.task_submitted_failed', [
+                'task_id' => $task->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyAdminOccurrenceSubmitted(EmployeeTaskOccurrence $occurrence): void
+    {
+        try {
+            $occurrence->loadMissing('employee.user');
+            if ($occurrence->employee) {
+                app(AdminNotificationService::class)->notifyOccurrenceSubmittedForReview(
+                    $occurrence->employee,
+                    $occurrence
+                );
+            }
+        } catch (\Throwable $e) {
+            Log::warning('admin_notification.occurrence_submitted_failed', [
+                'occurrence_id' => $occurrence->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyAdminLegacySubtaskCompleted(\App\Models\EmployeeSubTask $subTask): void
+    {
+        try {
+            $subTask->loadMissing('employeeTask.employee.user');
+            $employee = $subTask->employeeTask?->employee;
+            if ($employee) {
+                app(AdminNotificationService::class)->notifyLegacySubtaskCompleted($employee, $subTask);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('admin_notification.subtask_completed_failed', [
+                'sub_task_id' => $subTask->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyAdminOccurrenceSubtaskCompleted(
+        \App\Models\EmployeeTaskOccurrenceSubtask $subTask
+    ): void {
+        try {
+            $subTask->loadMissing('occurrence.employee.user');
+            $employee = $subTask->occurrence?->employee;
+            if ($employee) {
+                app(AdminNotificationService::class)->notifyOccurrenceSubtaskCompleted($employee, $subTask);
+            }
+        } catch (\Throwable $e) {
+            Log::warning('admin_notification.occurrence_subtask_completed_failed', [
+                'sub_task_id' => $subTask->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 }

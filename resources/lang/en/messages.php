@@ -405,4 +405,11 @@ return [
     'employee_deleted_successfully' => 'Employee deleted successfully',
     'employee_not_found' => 'Employee not found',
     'failed_to_delete_employee' => 'Failed to delete the employee, please try again later',
+
+    'admin_notify_task_submitted_title' => 'Task awaiting review',
+    'admin_notify_task_submitted_body' => ':employee finished task «:task» and is waiting for your review.',
+
+    'admin_notify_subtask_completed_title' => 'Subtask completed',
+    'admin_notify_subtask_completed_body' => ':employee completed «:subtask» in «:task».',
+    'admin_notify_subtask_completed_body_progress' => ':employee completed «:subtask» in «:task» (:done/:total).',
 ];

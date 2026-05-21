@@ -417,4 +417,11 @@ return [
     'employee_deleted_successfully' => 'تم حذف الموظف بنجاح',
     'employee_not_found' => 'الموظف غير موجود',
     'failed_to_delete_employee' => 'فشل حذف الموظف، الرجاء المحاولة لاحقًا',
+
+    'admin_notify_task_submitted_title' => 'مهمة بانتظار المراجعة',
+    'admin_notify_task_submitted_body' => ':employee أنهى المهمة «:task» وبانتظار مراجعتك.',
+
+    'admin_notify_subtask_completed_title' => 'إنجاز مهمة فرعية',
+    'admin_notify_subtask_completed_body' => ':employee أنجز «:subtask» ضمن «:task».',
+    'admin_notify_subtask_completed_body_progress' => ':employee أنجز «:subtask» ضمن «:task» (:done/:total).',
 ];

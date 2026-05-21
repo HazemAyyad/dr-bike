@@ -22,8 +22,7 @@ class AdminImpersonationController extends Controller
                 ], 200);
             }
 
-            $employee = EmployeeDetail::with(['user', 'permissions.permission'])
-                ->find($employeeId);
+            $employee = EmployeeDetail::with(['user'])->find($employeeId);
 
             if (! $employee || ! $employee->user) {
                 return response()->json([
@@ -48,16 +47,21 @@ class AdminImpersonationController extends Controller
 
             $employee->setAttribute('employee_img', $this->formatEmployeeImagePath($employee->employee_img));
             $employee->setAttribute('document_img', $this->formatDocumentImagePath($employee->document_img));
-            $employeePermissions = $employee->permissions
-                ->filter(fn ($p) => $p->permission !== null)
-                ->map(function ($permission) {
-                    return [
+
+            $employeePermissions = collect();
+            try {
+                $employee->load(['permissions.permission']);
+                $employeePermissions = $employee->permissions
+                    ->filter(fn ($p) => $p->permission !== null)
+                    ->map(fn ($permission) => [
                         'permission_id' => $permission->permission->id,
                         'permission_name' => $permission->permission->name,
                         'permission_name_en' => $permission->permission->name_en,
-                    ];
-                })
-                ->values();
+                    ])
+                    ->values();
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('impersonate permissions: '.$e->getMessage());
+            }
 
             $employee->unsetRelation('permissions');
             $user->setRelation('employee', $employee);

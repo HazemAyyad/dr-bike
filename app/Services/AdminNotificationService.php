@@ -5,7 +5,10 @@ namespace App\Services;
 use App\Models\AdminDeviceToken;
 use App\Models\AdminNotification;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
+use App\Models\EmployeeTaskOccurrence;
+use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
 use App\Support\EmployeePendingTasksForToday;
@@ -21,6 +24,10 @@ class AdminNotificationService
     public const TYPE_EMPLOYEE_LOGIN = 'employee_login';
 
     public const TYPE_EMPLOYEE_TASK_COMPLETED = 'employee_task_completed';
+
+    public const TYPE_EMPLOYEE_TASK_SUBMITTED = 'employee_task_submitted';
+
+    public const TYPE_EMPLOYEE_SUBTASK_COMPLETED = 'employee_subtask_completed';
 
     public const TYPE_EMPLOYEE_LOGOUT_PENDING_TASKS = 'employee_logout_pending_tasks';
 
@@ -107,6 +114,208 @@ class AdminNotificationService
             $task->id,
             true
         );
+    }
+
+    /**
+     * Employee finished a task and submitted it for admin review (legacy row).
+     */
+    public function notifyTaskSubmittedForReview(EmployeeDetail $employee, EmployeeTask $task): AdminNotification
+    {
+        return $this->notifyTaskSubmitted(
+            $employee,
+            $task->name ?? 'Task',
+            (int) $task->id,
+            null
+        );
+    }
+
+    /**
+     * Employee finished an occurrence (v2) and submitted for review.
+     */
+    public function notifyOccurrenceSubmittedForReview(
+        EmployeeDetail $employee,
+        EmployeeTaskOccurrence $occurrence
+    ): AdminNotification {
+        return $this->notifyTaskSubmitted(
+            $employee,
+            $occurrence->name ?? 'Task',
+            (int) ($occurrence->legacy_task_id ?? $occurrence->id),
+            (int) $occurrence->id
+        );
+    }
+
+    public function notifyTaskSubmitted(
+        EmployeeDetail $employee,
+        string $taskTitle,
+        int $taskId,
+        ?int $occurrenceId = null
+    ): AdminNotification {
+        $employee->loadMissing('user');
+        $name = $employee->user->name ?? 'Employee';
+        $submittedAt = now()->toIso8601String();
+
+        $data = [
+            'employee_id' => (string) $employee->id,
+            'employee_name' => $name,
+            'task_id' => (string) $taskId,
+            'task_title' => $taskTitle,
+            'occurrence_id' => $occurrenceId !== null ? (string) $occurrenceId : '',
+            'status' => 'waiting_review',
+            'submitted_at' => $submittedAt,
+        ];
+
+        return $this->create(
+            self::TYPE_EMPLOYEE_TASK_SUBMITTED,
+            __('messages.admin_notify_task_submitted_title'),
+            __('messages.admin_notify_task_submitted_body', [
+                'employee' => $name,
+                'task' => $taskTitle,
+            ]),
+            $data,
+            $employee->id,
+            $occurrenceId !== null ? 'employee_task_occurrence' : 'employee_task',
+            $occurrenceId ?? $taskId,
+            true
+        );
+    }
+
+    public function notifyLegacySubtaskCompleted(
+        EmployeeDetail $employee,
+        EmployeeSubTask $subTask
+    ): AdminNotification {
+        $subTask->loadMissing('employeeTask');
+        $task = $subTask->employeeTask;
+        $taskTitle = $task?->name ?? 'Task';
+        $taskId = (int) ($task?->id ?? 0);
+        $subTitle = $subTask->name ?? 'Subtask';
+        $progress = $this->legacySubtaskProgress($task);
+
+        return $this->notifySubtaskCompleted(
+            $employee,
+            $subTitle,
+            $taskTitle,
+            $taskId,
+            null,
+            (int) $subTask->id,
+            $progress
+        );
+    }
+
+    public function notifyOccurrenceSubtaskCompleted(
+        EmployeeDetail $employee,
+        EmployeeTaskOccurrenceSubtask $subTask
+    ): AdminNotification {
+        $subTask->loadMissing('occurrence');
+        $occurrence = $subTask->occurrence;
+        $taskTitle = $occurrence?->name ?? 'Task';
+        $taskId = (int) ($occurrence?->legacy_task_id ?? $occurrence?->id ?? 0);
+        $occurrenceId = $occurrence ? (int) $occurrence->id : null;
+        $subTitle = $subTask->name ?? 'Subtask';
+        $progress = $occurrence ? $this->occurrenceSubtaskProgress($occurrence) : null;
+
+        return $this->notifySubtaskCompleted(
+            $employee,
+            $subTitle,
+            $taskTitle,
+            $taskId,
+            $occurrenceId,
+            (int) $subTask->id,
+            $progress
+        );
+    }
+
+    /**
+     * @param  array{done: int, total: int}|null  $progress
+     */
+    public function notifySubtaskCompleted(
+        EmployeeDetail $employee,
+        string $subtaskTitle,
+        string $taskTitle,
+        int $taskId,
+        ?int $occurrenceId,
+        int $subtaskId,
+        ?array $progress = null
+    ): AdminNotification {
+        $employee->loadMissing('user');
+        $name = $employee->user->name ?? 'Employee';
+        $completedAt = now()->toIso8601String();
+
+        $data = [
+            'employee_id' => (string) $employee->id,
+            'employee_name' => $name,
+            'task_id' => (string) $taskId,
+            'task_title' => $taskTitle,
+            'occurrence_id' => $occurrenceId !== null ? (string) $occurrenceId : '',
+            'sub_task_id' => (string) $subtaskId,
+            'sub_task_title' => $subtaskTitle,
+            'completed_at' => $completedAt,
+        ];
+
+        if ($progress !== null) {
+            $data['subtasks_done'] = (string) $progress['done'];
+            $data['subtasks_total'] = (string) $progress['total'];
+        }
+
+        $bodyParams = [
+            'employee' => $name,
+            'subtask' => $subtaskTitle,
+            'task' => $taskTitle,
+        ];
+
+        if ($progress !== null && $progress['total'] > 0) {
+            $bodyParams['done'] = (string) $progress['done'];
+            $bodyParams['total'] = (string) $progress['total'];
+            $body = __('messages.admin_notify_subtask_completed_body_progress', $bodyParams);
+        } else {
+            $body = __('messages.admin_notify_subtask_completed_body', $bodyParams);
+        }
+
+        return $this->create(
+            self::TYPE_EMPLOYEE_SUBTASK_COMPLETED,
+            __('messages.admin_notify_subtask_completed_title'),
+            $body,
+            $data,
+            $employee->id,
+            $occurrenceId !== null ? 'employee_task_occurrence_subtask' : 'sub_employee_task',
+            $subtaskId,
+            true
+        );
+    }
+
+    /**
+     * @return array{done: int, total: int}|null
+     */
+    private function legacySubtaskProgress(?EmployeeTask $task): ?array
+    {
+        if (! $task) {
+            return null;
+        }
+
+        $total = (int) $task->subTasks()->count();
+        if ($total === 0) {
+            return null;
+        }
+
+        return [
+            'done' => (int) $task->subTasks()->where('status', 'completed')->count(),
+            'total' => $total,
+        ];
+    }
+
+    /**
+     * @return array{done: int, total: int}|null
+     */
+    private function occurrenceSubtaskProgress(EmployeeTaskOccurrence $occurrence): ?array
+    {
+        $total = (int) $occurrence->subtasks()->count();
+        if ($total === 0) {
+            return null;
+        }
+
+        return [
+            'done' => (int) $occurrence->subtasks()->where('status', 'completed')->count(),
+            'total' => $total,
+        ];
     }
 
     /**
@@ -280,8 +489,15 @@ class AdminNotificationService
             'check_id' => '',
         ]);
 
-        if ($row->type === self::TYPE_EMPLOYEE_TASK_COMPLETED) {
-            $merged['task_id'] = (string) ($merged['task_id'] ?? $row->related_id ?? '');
+        if ($row->type === self::TYPE_EMPLOYEE_TASK_COMPLETED
+            || $row->type === self::TYPE_EMPLOYEE_TASK_SUBMITTED
+            || $row->type === self::TYPE_EMPLOYEE_SUBTASK_COMPLETED) {
+            $merged['task_id'] = (string) (
+                $merged['task_id']
+                ?? $merged['occurrence_id']
+                ?? $row->related_id
+                ?? ''
+            );
         }
 
         if ($row->type === self::TYPE_CHECK_DUE_REMINDER) {
