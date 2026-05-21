@@ -8,6 +8,7 @@ use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
+use App\Services\EmployeeTasks\EmployeeSubtaskProofCompletionService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -113,10 +114,16 @@ class EmployeeOwnTasks extends Controller
         );
         $subTask->save();
 
+        $completion = app(EmployeeSubtaskProofCompletionService::class)
+            ->afterLegacySubtaskProofUpload($subTask);
+
         return response()->json([
-            'status'=>'success',
-            'message'=>__('messages.employee_sub_task_images_updated'),
-        ],200);
+            'status' => 'success',
+            'message' => $completion['subtask_completed']
+                ? __('messages.task_completed')
+                : __('messages.employee_sub_task_images_updated'),
+            ...$completion,
+        ], 200);
 
         }
 
@@ -264,9 +271,15 @@ class EmployeeOwnTasks extends Controller
             );
             $subTask->save();
 
+            $completion = app(EmployeeSubtaskProofCompletionService::class)
+                ->afterOccurrenceSubtaskProofUpload($subTask);
+
             return response()->json([
                 'status' => 'success',
-                'message' => __('messages.employee_sub_task_images_updated'),
+                'message' => $completion['subtask_completed']
+                    ? __('messages.task_completed')
+                    : __('messages.employee_sub_task_images_updated'),
+                ...$completion,
             ], 200);
         } catch (ModelNotFoundException $e) {
             return response()->json([
@@ -281,7 +294,7 @@ class EmployeeOwnTasks extends Controller
         } catch (\Throwable $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => $e->getMessage() ?: __('messages.something_wrong'),
             ], 200);
         }
     }
