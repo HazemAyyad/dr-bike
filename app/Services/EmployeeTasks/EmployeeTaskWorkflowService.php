@@ -10,6 +10,7 @@ use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTimeline;
 use App\Services\AdminNotificationService;
+use App\Support\EmployeeProofImages;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -165,7 +166,7 @@ class EmployeeTaskWorkflowService
     public function completeSubtask(EmployeeSubTask $subTask): EmployeeSubTask
     {
         if ($subTask->requires_image ?? $subTask->is_forced_to_upload_img) {
-            if (empty($subTask->employee_img)) {
+            if (! EmployeeProofImages::has($subTask->employee_img)) {
                 throw new \RuntimeException(__('messages.employee_image_required'));
             }
         }
@@ -182,7 +183,7 @@ class EmployeeTaskWorkflowService
 
     public function completeOccurrenceSubtask(EmployeeTaskOccurrenceSubtask $subTask): EmployeeTaskOccurrenceSubtask
     {
-        if ($subTask->requires_image && empty($subTask->employee_img)) {
+        if ($subTask->requires_image && ! EmployeeProofImages::has($subTask->employee_img)) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
 
@@ -215,14 +216,14 @@ class EmployeeTaskWorkflowService
 
     private function assertProofIfRequired(EmployeeTask $task): void
     {
-        if ($task->is_forced_to_upload_img && empty($task->employee_img)) {
+        if ($task->is_forced_to_upload_img && ! EmployeeProofImages::has($task->employee_img)) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
     }
 
     private function assertOccurrenceProofIfRequired(EmployeeTaskOccurrence $occurrence): void
     {
-        if ($occurrence->is_forced_to_upload_img && empty($occurrence->employee_img)) {
+        if ($occurrence->is_forced_to_upload_img && ! EmployeeProofImages::has($occurrence->employee_img)) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
     }

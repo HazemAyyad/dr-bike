@@ -4,7 +4,9 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class AdminImpersonationController extends Controller
 {
@@ -45,9 +47,6 @@ class AdminImpersonationController extends Controller
                 now()->addDay()
             )->plainTextToken;
 
-            $employee->setAttribute('employee_img', $this->formatEmployeeImagePath($employee->employee_img));
-            $employee->setAttribute('document_img', $this->formatDocumentImagePath($employee->document_img));
-
             $employeePermissions = collect();
             try {
                 $employee->load(['permissions.permission']);
@@ -60,15 +59,12 @@ class AdminImpersonationController extends Controller
                     ])
                     ->values();
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('impersonate permissions: '.$e->getMessage());
+                Log::warning('impersonate permissions: '.$e->getMessage());
             }
-
-            $employee->unsetRelation('permissions');
-            $user->setRelation('employee', $employee);
 
             return response()->json([
                 'status' => 'success',
-                'user' => $user,
+                'user' => $this->buildUserPayload($user, $employee),
                 'token' => $token,
                 'employee_permissions' => $employeePermissions,
                 'impersonation' => [
@@ -77,12 +73,62 @@ class AdminImpersonationController extends Controller
                     'admin_name' => $admin->name,
                 ],
             ], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            Log::error('impersonate failed', [
+                'employee_id' => $employeeId,
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    /**
+     * Compact JSON (avoids heavy Eloquent graphs that can timeout proxies).
+     *
+     * @return array<string, mixed>
+     */
+    private function buildUserPayload(User $user, EmployeeDetail $employee): array
+    {
+        $empImg = $this->formatEmployeeImagePath($employee->employee_img);
+        $docImg = $this->formatDocumentImagePath($employee->document_img);
+
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'email_verified_at' => $user->email_verified_at,
+            'phone' => $user->phone,
+            'sub_phone' => $user->sub_phone,
+            'city' => $user->city,
+            'address' => $user->address,
+            'created_at' => $user->created_at,
+            'updated_at' => $user->updated_at,
+            'type' => $user->type,
+            'fcm_token' => $user->fcm_token,
+            'employee' => [
+                'id' => $employee->id,
+                'user_id' => (string) $employee->user_id,
+                'points' => (string) ($employee->points ?? '0'),
+                'hour_work_price' => (string) ($employee->hour_work_price ?? '0'),
+                'overtime_work_price' => (string) ($employee->overtime_work_price ?? '0'),
+                'number_of_work_hours' => (string) ($employee->number_of_work_hours ?? '0'),
+                'start_work_time' => (string) ($employee->start_work_time ?? ''),
+                'end_work_time' => (string) ($employee->end_work_time ?? ''),
+                'job_title' => $employee->job_title,
+                'salary' => (string) ($employee->salary ?? '0'),
+                'debts' => (string) ($employee->debts ?? '0'),
+                'created_at' => $employee->created_at,
+                'updated_at' => $employee->updated_at,
+                'work_time' => $employee->work_time,
+                'employee_img' => $empImg ?? '',
+                'document_img' => $docImg ?? '',
+                'total_work_hours' => (string) ($employee->total_work_hours ?? '0'),
+            ],
+        ];
     }
 
     private function formatEmployeeImagePath(mixed $img): ?string

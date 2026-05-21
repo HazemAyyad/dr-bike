@@ -1117,7 +1117,7 @@ public function updateEmployeeTask(Request $request)
             ], 200);
         }
 
-        if($subTask->is_forced_to_upload_img && !$subTask->employee_img){
+        if ($subTask->is_forced_to_upload_img && ! \App\Support\EmployeeProofImages::has($subTask->employee_img)) {
                 return response()->json([
                 'status' => 'error',
                 'message' => __('messages.employee_image_required'),
@@ -1133,7 +1133,7 @@ public function updateEmployeeTask(Request $request)
         if(!$allSubTasks){
             $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id);
 
-            if($employeeTask->is_forced_to_upload_img && !$employeeTask->employee_img){
+            if ($employeeTask->is_forced_to_upload_img && ! \App\Support\EmployeeProofImages::has($employeeTask->employee_img)) {
                     return response()->json([
                     'status' => 'error',
                     'message' => __('messages.employee_image_required'),
