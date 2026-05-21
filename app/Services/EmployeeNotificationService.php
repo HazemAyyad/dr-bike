@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeNotification;
+use App\Support\EmployeeAttendanceToday;
 use App\Support\EmployeePendingTasksForToday;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -11,6 +12,10 @@ use Illuminate\Support\Facades\Log;
 class EmployeeNotificationService
 {
     public const TYPE_DAILY_TASKS = 'employee_daily_tasks';
+
+    public const TYPE_HOURLY_REMINDER = 'employee_hourly_reminder';
+
+    public const TYPE_DAILY_TASKS_COMPLETE = 'employee_daily_tasks_complete';
 
     public function __construct(
         protected FirebaseService $firebaseService
@@ -415,5 +420,163 @@ class EmployeeNotificationService
             'text' => implode("\n", $lines),
             'report' => $report,
         ];
+    }
+
+    /**
+     * Hourly push/in-app: pending tasks and/or missing attendance check-in.
+     *
+     * @return array<string, mixed>
+     */
+    public function sendHourlyReminders(bool $force = false): array
+    {
+        $tz = EmployeePendingTasksForToday::TIMEZONE;
+        $now = now()->timezone($tz);
+        $dateKey = $now->toDateString();
+        $hourKey = $now->format('G');
+
+        $stats = [
+            'employees' => 0,
+            'notified' => 0,
+            'fcm_sent' => 0,
+            'skipped' => 0,
+            'skipped_hour' => 0,
+            'skipped_nothing' => 0,
+            'failed' => 0,
+        ];
+
+        $employees = EmployeeDetail::query()
+            ->with('user:id,name,fcm_token,type')
+            ->whereHas('user', fn ($q) => $q->where('type', 'employee'))
+            ->get();
+
+        foreach ($employees as $employee) {
+            $stats['employees']++;
+            $pending = EmployeePendingTasksForToday::pendingActionForEmployee((int) $employee->id);
+            $needsAttendance = ! EmployeeAttendanceToday::hasCheckedInToday((int) $employee->id);
+
+            if ($pending->isEmpty() && ! $needsAttendance) {
+                $stats['skipped']++;
+                $stats['skipped_nothing']++;
+
+                continue;
+            }
+
+            $cacheKey = "employee_hourly_reminder:{$employee->id}:{$dateKey}:{$hourKey}";
+            if (! $force && Cache::has($cacheKey)) {
+                $stats['skipped']++;
+                $stats['skipped_hour']++;
+
+                continue;
+            }
+
+            [$title, $body, $data] = $this->buildHourlyReminderMessage($pending, $needsAttendance, $dateKey);
+
+            try {
+                $this->create(
+                    $employee,
+                    self::TYPE_HOURLY_REMINDER,
+                    $title,
+                    $body,
+                    $data,
+                    'employee_hourly_reminder',
+                    null,
+                    true
+                );
+                $stats['notified']++;
+                $stats['fcm_sent']++;
+                Cache::put($cacheKey, true, $now->copy()->addHour());
+            } catch (\Throwable $e) {
+                $stats['failed']++;
+                Log::error('Employee hourly reminder failed', [
+                    'employee_id' => $employee->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * @return array{0: string, 1: string, 2: array<string, string>}
+     */
+    private function buildHourlyReminderMessage(
+        \Illuminate\Support\Collection $pending,
+        bool $needsAttendance,
+        string $dateKey
+    ): array {
+        $count = $pending->count();
+        $names = $pending->take(3)->map(fn ($t) => $t->name ?? '')->filter()->values();
+
+        if ($count > 0 && $needsAttendance) {
+            $title = __('messages.employee_hourly_reminder_tasks_attendance_title');
+            $body = $count === 1
+                ? __('messages.employee_hourly_reminder_tasks_attendance_body_one')
+                : __('messages.employee_hourly_reminder_tasks_attendance_body', ['count' => $count]);
+        } elseif ($count > 0) {
+            $title = __('messages.employee_hourly_reminder_tasks_title');
+            $body = $count === 1
+                ? __('messages.employee_hourly_reminder_tasks_body_one')
+                : __('messages.employee_hourly_reminder_tasks_body', ['count' => $count]);
+        } else {
+            $title = __('messages.employee_hourly_reminder_attendance_title');
+            $body = __('messages.employee_hourly_reminder_attendance_body');
+        }
+
+        if ($names->isNotEmpty()) {
+            $body .= ': '.$names->implode('، ');
+            if ($count > 3) {
+                $body .= '…';
+            }
+        }
+
+        return [
+            $title,
+            $body,
+            [
+                'date' => $dateKey,
+                'task_count' => (string) $count,
+                'needs_attendance' => $needsAttendance ? '1' : '0',
+            ],
+        ];
+    }
+
+    public function maybeNotifyAllDailyTasksCompleted(EmployeeDetail $employee): void
+    {
+        if (! EmployeePendingTasksForToday::allVisibleTodayFinishedByEmployee((int) $employee->id)) {
+            return;
+        }
+
+        $tz = EmployeePendingTasksForToday::TIMEZONE;
+        $dateKey = now()->timezone($tz)->toDateString();
+        $cacheKey = "employee_daily_tasks_congrats:{$employee->id}:{$dateKey}";
+
+        if (Cache::has($cacheKey)) {
+            return;
+        }
+
+        $count = EmployeePendingTasksForToday::allVisibleForEmployeeToday((int) $employee->id)->count();
+
+        try {
+            $this->create(
+                $employee,
+                self::TYPE_DAILY_TASKS_COMPLETE,
+                __('messages.employee_daily_tasks_complete_title'),
+                __('messages.employee_daily_tasks_complete_body', ['count' => $count]),
+                [
+                    'date' => $dateKey,
+                    'task_count' => (string) $count,
+                ],
+                'employee_daily_tasks_complete',
+                null,
+                true
+            );
+            Cache::put($cacheKey, true, now()->timezone($tz)->endOfDay());
+        } catch (\Throwable $e) {
+            Log::error('Employee daily tasks complete notification failed', [
+                'employee_id' => $employee->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }

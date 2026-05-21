@@ -66,6 +66,18 @@ return [
     'employee_task_approved_body' => 'Admin approved your task «:name».',
     'employee_task_rejected_title' => 'Task rejected',
     'employee_task_rejected_body' => 'Admin rejected your task «:name». Reason: :notes',
+
+    'employee_hourly_reminder_tasks_title' => 'Reminder: your tasks today',
+    'employee_hourly_reminder_tasks_body_one' => 'You still have 1 task — open the app and complete it',
+    'employee_hourly_reminder_tasks_body' => 'You still have :count tasks — open the app and complete them',
+    'employee_hourly_reminder_attendance_title' => 'Reminder: check in',
+    'employee_hourly_reminder_attendance_body' => 'You have not checked in today — scan the QR code to start',
+    'employee_hourly_reminder_tasks_attendance_title' => 'Reminder: attendance & tasks',
+    'employee_hourly_reminder_tasks_attendance_body_one' => 'Check in and finish your remaining task',
+    'employee_hourly_reminder_tasks_attendance_body' => 'Check in and finish :count remaining tasks',
+
+    'employee_daily_tasks_complete_title' => 'Great job! All tasks done',
+    'employee_daily_tasks_complete_body' => 'Congratulations — you finished all your tasks for today (:count).',
     'failed_to_cancel_task' => 'Failed to cancel the task',
     'failed_to_create_task' => 'Failed to create employee task',
     'failed_to_fetch_task_details' => 'Failed to fetch task details',

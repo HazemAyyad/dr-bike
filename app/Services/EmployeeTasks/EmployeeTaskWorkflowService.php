@@ -10,6 +10,7 @@ use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTimeline;
 use App\Services\AdminNotificationService;
+use App\Services\EmployeeNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Support\EmployeeProofImages;
 use Illuminate\Database\Eloquent\Model;
@@ -76,8 +77,9 @@ class EmployeeTaskWorkflowService
 
         $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_SUBMITTED);
 
-        $fresh = $task->fresh();
+        $fresh = $task->fresh(['employee']);
         $this->notifyAdminTaskSubmitted($fresh);
+        $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
 
         return $fresh;
     }
@@ -101,6 +103,7 @@ class EmployeeTaskWorkflowService
 
         $fresh = $occurrence->fresh(['employee']);
         $this->notifyAdminOccurrenceSubmitted($fresh);
+        $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
 
         return $fresh;
     }
@@ -123,6 +126,7 @@ class EmployeeTaskWorkflowService
 
             $fresh = $task->fresh(['employee']);
             $this->notifyEmployeeTaskApproved($fresh->employee, $fresh->name, (int) $fresh->id, null);
+            $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
 
             return $fresh;
         });
@@ -152,6 +156,7 @@ class EmployeeTaskWorkflowService
                 (int) ($fresh->legacy_task_id ?? $fresh->id),
                 (int) $fresh->id
             );
+            $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
 
             return $fresh;
         });
@@ -211,6 +216,8 @@ class EmployeeTaskWorkflowService
 
         $fresh = $subTask->fresh();
         $this->notifyAdminLegacySubtaskCompleted($fresh);
+        $subTask->loadMissing('employeeTask.employee');
+        $this->notifyDailyTasksCompletedIfApplicable($subTask->employeeTask?->employee);
 
         return $fresh;
     }
@@ -230,6 +237,8 @@ class EmployeeTaskWorkflowService
 
         $fresh = $subTask->fresh();
         $this->notifyAdminOccurrenceSubtaskCompleted($fresh);
+        $subTask->loadMissing('occurrence.employee');
+        $this->notifyDailyTasksCompletedIfApplicable($subTask->occurrence?->employee);
 
         return $fresh;
     }
@@ -389,6 +398,21 @@ class EmployeeTaskWorkflowService
             );
         } catch (\Throwable $e) {
             Log::warning('employee_notification.task_rejected_failed', [
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyDailyTasksCompletedIfApplicable(?EmployeeDetail $employee): void
+    {
+        if ($employee === null) {
+            return;
+        }
+        try {
+            app(EmployeeNotificationService::class)->maybeNotifyAllDailyTasksCompleted($employee);
+        } catch (\Throwable $e) {
+            Log::warning('employee_notification.daily_tasks_complete_failed', [
+                'employee_id' => $employee->id,
                 'message' => $e->getMessage(),
             ]);
         }

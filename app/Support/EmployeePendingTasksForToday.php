@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use Carbon\Carbon;
@@ -35,7 +36,21 @@ class EmployeePendingTasksForToday
     /** مهام اليوم التي يراها الموظف في التطبيق (نفس منطق EmployeeData). */
     public static function visibleForEmployee(int $employeeId): Collection
     {
-        $legacy = self::forEmployee($employeeId)
+        return self::pendingActionForEmployee($employeeId);
+    }
+
+    /**
+     * All visible tasks for today (any status) — for completion checks.
+     */
+    public static function allVisibleForEmployeeToday(int $employeeId): Collection
+    {
+        $today = self::todayDateString();
+
+        $legacy = EmployeeTask::query()
+            ->where('employee_id', $employeeId)
+            ->where('is_canceled', 0)
+            ->whereDate('start_time', $today)
+            ->get()
             ->filter(fn (EmployeeTask $task) => self::isVisibleToEmployee($task));
 
         if (! Schema::hasTable('employee_task_occurrences')) {
@@ -45,12 +60,43 @@ class EmployeePendingTasksForToday
         $occurrences = EmployeeTaskOccurrence::query()
             ->where('employee_id', $employeeId)
             ->where('is_canceled', 0)
-            ->where('status', '!=', 'completed')
-            ->whereDate('scheduled_date', self::todayDateString())
+            ->whereDate('scheduled_date', $today)
             ->get()
             ->filter(fn (EmployeeTaskOccurrence $task) => EmployeeVisibleTasks::isOccurrenceVisibleToEmployee($task));
 
         return $legacy->merge($occurrences)->values();
+    }
+
+    /** Tasks still needing employee action today (not completed / not awaiting admin only). */
+    public static function pendingActionForEmployee(int $employeeId): Collection
+    {
+        return self::allVisibleForEmployeeToday($employeeId)
+            ->filter(fn ($task) => ! self::isEmployeeFinishedStatus(self::normalizeStatus($task)))
+            ->values();
+    }
+
+    /** True when employee has visible tasks today and all are done or waiting review. */
+    public static function allVisibleTodayFinishedByEmployee(int $employeeId): bool
+    {
+        $all = self::allVisibleForEmployeeToday($employeeId);
+        if ($all->isEmpty()) {
+            return false;
+        }
+
+        return $all->every(fn ($task) => self::isEmployeeFinishedStatus(self::normalizeStatus($task)));
+    }
+
+    public static function isEmployeeFinishedStatus(string $status): bool
+    {
+        return in_array($status, [
+            EmployeeTaskStatus::Completed->value,
+            EmployeeTaskStatus::WaitingReview->value,
+        ], true);
+    }
+
+    public static function normalizeStatus(EmployeeTask|EmployeeTaskOccurrence $task): string
+    {
+        return EmployeeTaskStatus::normalize($task->status)->value;
     }
 
     public static function isVisibleToEmployee(EmployeeTask $task): bool

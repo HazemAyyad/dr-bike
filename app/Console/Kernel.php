@@ -18,6 +18,11 @@ class Kernel extends ConsoleKernel
             ->dailyAt('10:00')
             ->timezone('Asia/Hebron');
 
+        $schedule->command('employees:send-hourly-reminders')
+            ->hourly()
+            ->timezone('Asia/Hebron')
+            ->between('7:00', '21:00');
+
         $schedule->command('employees:mark-overdue-tasks')
             ->hourly()
             ->timezone('Asia/Hebron');

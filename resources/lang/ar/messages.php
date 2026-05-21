@@ -63,6 +63,18 @@ return [
     'employee_task_approved_body' => 'اعتمد الأدمن مهمتك «:name».',
     'employee_task_rejected_title' => 'تم رفض المهمة',
     'employee_task_rejected_body' => 'رفض الأدمن مهمتك «:name». السبب: :notes',
+
+    'employee_hourly_reminder_tasks_title' => 'تذكير: مهامك لليوم',
+    'employee_hourly_reminder_tasks_body_one' => 'لديك مهمة واحدة لم تُنجَز بعد — ادخل وأكملها',
+    'employee_hourly_reminder_tasks_body' => 'لديك :count مهام لم تُنجَز بعد — ادخل وأكملها',
+    'employee_hourly_reminder_attendance_title' => 'تذكير: تسجيل الدوام',
+    'employee_hourly_reminder_attendance_body' => 'لم تسجّل دخولك للدوام اليوم — امسح الباركود وابدأ العمل',
+    'employee_hourly_reminder_tasks_attendance_title' => 'تذكير: دوام ومهام',
+    'employee_hourly_reminder_tasks_attendance_body_one' => 'سجّل دوامك وأكمل مهمتك المتبقية',
+    'employee_hourly_reminder_tasks_attendance_body' => 'سجّل دوامك وأكمل :count مهام متبقية',
+
+    'employee_daily_tasks_complete_title' => 'أحسنت! أنجزت مهام اليوم',
+    'employee_daily_tasks_complete_body' => 'تهانينا — أنجزت كل مهامك لليوم (:count مهمة).',
     'failed_to_cancel_task' => 'فشل في إلغاء المهمة',
     'failed_to_create_task' => 'فشل في إنشاء مهمة الموظف',
     'failed_to_fetch_task_details' => 'فشل في جلب تفاصيل المهمة',
