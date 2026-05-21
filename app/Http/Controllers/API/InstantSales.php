@@ -46,7 +46,7 @@ class InstantSales extends Controller
     private function buyerTypeLabelAr(string $type): string
     {
         return match ($type) {
-            'trader' => 'تاجر',
+            'trader', 'seller' => 'تاجر',
             'customer' => 'زبون',
             default => 'غير محدد',
         };
@@ -126,7 +126,7 @@ class InstantSales extends Controller
 
         $manualName = trim((string) $request->input('buyer_name', ''));
         if ($manualName !== '' || $request->filled('buyer_phone') || $request->filled('buyer_address')) {
-            $type = in_array($requestedType, ['trader', 'customer', 'unknown'], true)
+            $type = in_array($requestedType, ['trader', 'customer', 'unknown', 'seller'], true)
                 ? $requestedType
                 : 'unknown';
 
@@ -624,7 +624,7 @@ public function store(Request $request)
         'other_products.*.type' => 'required|string|in:normal,project',
         'other_products.*.project_id' => 'nullable|exists:projects,id',
 
-        'buyer_type' => 'nullable|string|in:trader,customer,unknown',
+        'buyer_type' => 'nullable|string|in:trader,customer,unknown,seller',
         'buyer_id' => 'nullable|integer|exists:customers,id',
         'buyer_name' => 'nullable|string|max:255',
         'buyer_phone' => 'nullable|string|max:50',
