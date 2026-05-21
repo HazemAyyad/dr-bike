@@ -61,6 +61,67 @@ class EmployeeTaskNotificationService
         $this->send($employee, $taskName, null, null);
     }
 
+    public function notifyTaskApproved(
+        EmployeeDetail $employee,
+        string $taskName,
+        ?int $legacyTaskId,
+        ?int $occurrenceId
+    ): void {
+        try {
+            $this->notifications->create(
+                $employee,
+                'employee_task_approved',
+                __('messages.employee_task_approved_title'),
+                __('messages.employee_task_approved_body', ['name' => $taskName]),
+                array_filter([
+                    'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
+                    'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
+                    'task_name' => $taskName,
+                ]),
+                $occurrenceId ? 'employee_task_occurrence' : 'employee_task',
+                $occurrenceId ?? $legacyTaskId,
+                true
+            );
+        } catch (\Throwable $e) {
+            Log::error('Employee task approved notification failed: '.$e->getMessage(), [
+                'employee_id' => $employee->id,
+            ]);
+        }
+    }
+
+    public function notifyTaskRejected(
+        EmployeeDetail $employee,
+        string $taskName,
+        string $rejectionNotes,
+        ?int $legacyTaskId,
+        ?int $occurrenceId
+    ): void {
+        try {
+            $this->notifications->create(
+                $employee,
+                'employee_task_rejected',
+                __('messages.employee_task_rejected_title'),
+                __('messages.employee_task_rejected_body', [
+                    'name' => $taskName,
+                    'notes' => $rejectionNotes,
+                ]),
+                array_filter([
+                    'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
+                    'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
+                    'task_name' => $taskName,
+                    'rejection_notes' => $rejectionNotes,
+                ]),
+                $occurrenceId ? 'employee_task_occurrence' : 'employee_task',
+                $occurrenceId ?? $legacyTaskId,
+                true
+            );
+        } catch (\Throwable $e) {
+            Log::error('Employee task rejected notification failed: '.$e->getMessage(), [
+                'employee_id' => $employee->id,
+            ]);
+        }
+    }
+
     private function send(
         EmployeeDetail $employee,
         string $taskName,

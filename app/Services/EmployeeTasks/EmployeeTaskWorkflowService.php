@@ -10,6 +10,7 @@ use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTimeline;
 use App\Services\AdminNotificationService;
+use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Support\EmployeeProofImages;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -120,7 +121,10 @@ class EmployeeTaskWorkflowService
 
             $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_APPROVED);
 
-            return $task->fresh();
+            $fresh = $task->fresh(['employee']);
+            $this->notifyEmployeeTaskApproved($fresh->employee, $fresh->name, (int) $fresh->id, null);
+
+            return $fresh;
         });
     }
 
@@ -141,7 +145,15 @@ class EmployeeTaskWorkflowService
 
             $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_APPROVED);
 
-            return $occurrence->fresh();
+            $fresh = $occurrence->fresh(['employee']);
+            $this->notifyEmployeeTaskApproved(
+                $fresh->employee,
+                $fresh->name,
+                (int) ($fresh->legacy_task_id ?? $fresh->id),
+                (int) $fresh->id
+            );
+
+            return $fresh;
         });
     }
 
@@ -156,7 +168,10 @@ class EmployeeTaskWorkflowService
 
         $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_REJECTED, $rejectionNotes);
 
-        return $task->fresh();
+        $fresh = $task->fresh(['employee']);
+        $this->notifyEmployeeTaskRejected($fresh->employee, $fresh->name, $rejectionNotes, (int) $fresh->id, null);
+
+        return $fresh;
     }
 
     public function rejectOccurrence(EmployeeTaskOccurrence $occurrence, string $rejectionNotes): EmployeeTaskOccurrence
@@ -170,7 +185,16 @@ class EmployeeTaskWorkflowService
 
         $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_REJECTED, $rejectionNotes);
 
-        return $occurrence->fresh();
+        $fresh = $occurrence->fresh(['employee']);
+        $this->notifyEmployeeTaskRejected(
+            $fresh->employee,
+            $fresh->name,
+            $rejectionNotes,
+            (int) ($fresh->legacy_task_id ?? $fresh->id),
+            (int) $fresh->id
+        );
+
+        return $fresh;
     }
 
     public function completeSubtask(EmployeeSubTask $subTask): EmployeeSubTask
@@ -193,7 +217,7 @@ class EmployeeTaskWorkflowService
 
     public function completeOccurrenceSubtask(EmployeeTaskOccurrenceSubtask $subTask): EmployeeTaskOccurrenceSubtask
     {
-        if ($subTask->requires_image && ! EmployeeProofImages::has($subTask->employee_img)) {
+        if ($subTask->requires_image && ! \App\Support\TaskMediaFiles::hasProof($subTask->employee_img)) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
 
@@ -317,6 +341,54 @@ class EmployeeTaskWorkflowService
         } catch (\Throwable $e) {
             Log::warning('admin_notification.occurrence_subtask_completed_failed', [
                 'sub_task_id' => $subTask->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyEmployeeTaskApproved(
+        ?\App\Models\EmployeeDetail $employee,
+        string $taskName,
+        int $legacyTaskId,
+        ?int $occurrenceId
+    ): void {
+        if (! $employee) {
+            return;
+        }
+        try {
+            app(EmployeeTaskNotificationService::class)->notifyTaskApproved(
+                $employee,
+                $taskName,
+                $legacyTaskId,
+                $occurrenceId
+            );
+        } catch (\Throwable $e) {
+            Log::warning('employee_notification.task_approved_failed', [
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyEmployeeTaskRejected(
+        ?\App\Models\EmployeeDetail $employee,
+        string $taskName,
+        string $rejectionNotes,
+        int $legacyTaskId,
+        ?int $occurrenceId
+    ): void {
+        if (! $employee) {
+            return;
+        }
+        try {
+            app(EmployeeTaskNotificationService::class)->notifyTaskRejected(
+                $employee,
+                $taskName,
+                $rejectionNotes,
+                $legacyTaskId,
+                $occurrenceId
+            );
+        } catch (\Throwable $e) {
+            Log::warning('employee_notification.task_rejected_failed', [
                 'message' => $e->getMessage(),
             ]);
         }

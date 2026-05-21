@@ -273,7 +273,8 @@ class EmployeeTaskOperationsController extends Controller
             $pending = $occurrence->subtasks()->where('status', '!=', 'completed')->exists();
 
             if (! $pending) {
-                if ($occurrence->is_forced_to_upload_img && empty($occurrence->employee_img)) {
+                if ($occurrence->is_forced_to_upload_img
+                    && ! \App\Support\TaskMediaFiles::hasProof($occurrence->employee_img)) {
                     return response()->json([
                         'status' => 'success',
                         'message' => __('messages.subtask_completed_upload_proof'),
