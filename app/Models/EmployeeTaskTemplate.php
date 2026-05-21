@@ -16,6 +16,7 @@ class EmployeeTaskTemplate extends Model
         'points',
         'priority',
         'is_forced_to_upload_img',
+        'requires_admin_review',
         'not_shown_for_employee',
         'admin_img',
         'audio',
@@ -31,6 +32,7 @@ class EmployeeTaskTemplate extends Model
         'admin_img' => 'array',
         'recurrence_config' => 'array',
         'is_forced_to_upload_img' => 'boolean',
+        'requires_admin_review' => 'boolean',
         'not_shown_for_employee' => 'boolean',
         'is_active' => 'boolean',
     ];

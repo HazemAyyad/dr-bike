@@ -27,6 +27,7 @@ class EmployeeTask extends Model
         'status',
         'admin_img',
         'is_forced_to_upload_img',
+        'requires_admin_review',
         'task_recurrence',
         'task_recurrence_time',
         'employee_img',
@@ -41,6 +42,7 @@ class EmployeeTask extends Model
         'task_recurrence_time'=>'array',
         'employee_img'=>'array',
         'admin_img'=>'array',
+        'requires_admin_review' => 'boolean',
 
     ];
 

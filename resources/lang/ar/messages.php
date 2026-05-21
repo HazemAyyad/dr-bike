@@ -424,4 +424,6 @@ return [
     'admin_notify_subtask_completed_title' => 'إنجاز مهمة فرعية',
     'admin_notify_subtask_completed_body' => ':employee أنجز «:subtask» ضمن «:task».',
     'admin_notify_subtask_completed_body_progress' => ':employee أنجز «:subtask» ضمن «:task» (:done/:total).',
+
+    'task_completed_without_review' => 'تم إنهاء المهمة مباشرة دون مراجعة.',
 ];

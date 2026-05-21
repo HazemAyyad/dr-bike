@@ -588,14 +588,20 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 
 
 
-            'admin_img' => ['nullable','array'],
-            'admin_img.*' => ['required', 'image'],
+            'admin_img' => ['nullable', 'array'],
+            'admin_img.*' => [
+                'nullable',
+                'file',
+                'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp',
+                'max:102400',
+            ],
 
 
         ]);
 
         $data['not_shown_for_employee'] = $request->boolean('not_shown_for_employee');
         $data['is_forced_to_upload_img'] = $request->boolean('is_forced_to_upload_img');
+        $data['requires_admin_review'] = $request->boolean('requires_admin_review', true);
         
         if ($request->hasFile('audio')) {
             $audio = $request->file('audio');
@@ -1117,7 +1123,7 @@ public function updateEmployeeTask(Request $request)
             ], 200);
         }
 
-        if ($subTask->is_forced_to_upload_img && ! \App\Support\EmployeeProofImages::has($subTask->employee_img)) {
+        if ($subTask->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($subTask->employee_img)) {
                 return response()->json([
                 'status' => 'error',
                 'message' => __('messages.employee_image_required'),
@@ -1133,7 +1139,7 @@ public function updateEmployeeTask(Request $request)
         if(!$allSubTasks){
             $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id);
 
-            if ($employeeTask->is_forced_to_upload_img && ! \App\Support\EmployeeProofImages::has($employeeTask->employee_img)) {
+            if ($employeeTask->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($employeeTask->employee_img)) {
                     return response()->json([
                     'status' => 'error',
                     'message' => __('messages.employee_image_required'),

@@ -11,8 +11,10 @@ use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTimeline;
 use App\Services\AdminNotificationService;
 use App\Support\EmployeeProofImages;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class EmployeeTaskWorkflowService
 {
@@ -61,6 +63,10 @@ class EmployeeTaskWorkflowService
         $this->assertSubtasksComplete($task);
         $this->assertProofIfRequired($task);
 
+        if (! $this->requiresAdminReview($task)) {
+            return $this->approveTask($task);
+        }
+
         $task->update([
             'status' => EmployeeTaskStatus::WaitingReview->value,
             'submitted_at' => now(),
@@ -79,6 +85,10 @@ class EmployeeTaskWorkflowService
     {
         $this->assertOccurrenceSubtasksComplete($occurrence);
         $this->assertOccurrenceProofIfRequired($occurrence);
+
+        if (! $this->requiresAdminReview($occurrence)) {
+            return $this->approveOccurrence($occurrence);
+        }
 
         $occurrence->update([
             'status' => EmployeeTaskStatus::WaitingReview->value,
@@ -166,7 +176,7 @@ class EmployeeTaskWorkflowService
     public function completeSubtask(EmployeeSubTask $subTask): EmployeeSubTask
     {
         if ($subTask->requires_image ?? $subTask->is_forced_to_upload_img) {
-            if (! EmployeeProofImages::has($subTask->employee_img)) {
+            if (! \App\Support\TaskMediaFiles::hasProof($subTask->employee_img)) {
                 throw new \RuntimeException(__('messages.employee_image_required'));
             }
         }
@@ -216,16 +226,25 @@ class EmployeeTaskWorkflowService
 
     private function assertProofIfRequired(EmployeeTask $task): void
     {
-        if ($task->is_forced_to_upload_img && ! EmployeeProofImages::has($task->employee_img)) {
+        if ($task->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($task->employee_img)) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
     }
 
     private function assertOccurrenceProofIfRequired(EmployeeTaskOccurrence $occurrence): void
     {
-        if ($occurrence->is_forced_to_upload_img && ! EmployeeProofImages::has($occurrence->employee_img)) {
+        if ($occurrence->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($occurrence->employee_img)) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
+    }
+
+    private function requiresAdminReview(Model $model): bool
+    {
+        if (! Schema::hasColumn($model->getTable(), 'requires_admin_review')) {
+            return true;
+        }
+
+        return (bool) ($model->requires_admin_review ?? true);
     }
 
     private function calculateSubtaskBonus(EmployeeTask $task): int

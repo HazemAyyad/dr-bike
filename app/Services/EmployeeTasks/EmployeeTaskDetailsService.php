@@ -48,6 +48,7 @@ class EmployeeTaskDetailsService
             : 'no audio';
         $taskData['status'] = EmployeeTaskStatus::normalize($employeeTask->status)->value;
         $taskData['priority'] = $employeeTask->priority ?? 'medium';
+        $taskData['requires_admin_review'] = (bool) ($employeeTask->requires_admin_review ?? true);
         $taskData['progress'] = $this->progressFromSubtasks($employeeTask->subTasks, $employeeTask->status);
         $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
         $taskData['sub_tasks'] = $taskData['sub_tasks'] ?? $taskData['subTasks'] ?? [];
@@ -94,6 +95,7 @@ class EmployeeTaskDetailsService
             'notes' => $occurrence->notes,
             'points' => (int) $occurrence->points,
             'priority' => $occurrence->priority ?? 'medium',
+            'requires_admin_review' => (bool) ($occurrence->requires_admin_review ?? true),
             'status' => EmployeeTaskStatus::normalize($occurrence->status)->value,
             'is_canceled' => (bool) $occurrence->is_canceled,
             'is_forced_to_upload_img' => (bool) $occurrence->is_forced_to_upload_img,

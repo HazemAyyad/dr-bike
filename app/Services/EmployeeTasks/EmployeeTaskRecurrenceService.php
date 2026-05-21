@@ -119,6 +119,7 @@ class EmployeeTaskRecurrenceService
             'audio' => $template->audio,
             'is_forced_to_upload_img' => $template->is_forced_to_upload_img,
             'not_shown_for_employee' => $template->not_shown_for_employee,
+            'requires_admin_review' => $template->requires_admin_review ?? true,
         ];
     }
 
