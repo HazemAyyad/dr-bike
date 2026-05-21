@@ -23,6 +23,10 @@ class Kernel extends ConsoleKernel
             ->timezone('Asia/Hebron')
             ->between('7:00', '21:00');
 
+        $schedule->command('employees:dispatch-task-reminders')
+            ->everyFiveMinutes()
+            ->timezone('Asia/Hebron');
+
         $schedule->command('employees:mark-overdue-tasks')
             ->hourly()
             ->timezone('Asia/Hebron');

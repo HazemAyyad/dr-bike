@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class EmployeeTask extends Model
 {
@@ -36,6 +37,8 @@ class EmployeeTask extends Model
         'parent_id',
         'template_id',
         'occurrence_id',
+        'reminder_before_minutes',
+        'reminder_channel',
     ];
 
     protected $casts = [
@@ -52,6 +55,11 @@ class EmployeeTask extends Model
 
     public function employee(){
         return $this->belongsTo(EmployeeDetail::class,'employee_id');
+    }
+
+    public function template(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeTaskTemplate::class, 'template_id');
     }
 
     //override

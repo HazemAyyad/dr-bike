@@ -17,6 +17,8 @@ class EmployeeNotificationService
 
     public const TYPE_DAILY_TASKS_COMPLETE = 'employee_daily_tasks_complete';
 
+    public const TYPE_TASK_SCHEDULED_REMINDER = 'employee_task_scheduled_reminder';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}
@@ -539,6 +541,36 @@ class EmployeeNotificationService
                 'needs_attendance' => $needsAttendance ? '1' : '0',
             ],
         ];
+    }
+
+    public function notifyTaskScheduledReminder(
+        EmployeeDetail $employee,
+        string $taskName,
+        string $body,
+        string $kind,
+        int $relatedId
+    ): void {
+        try {
+            $this->create(
+                $employee,
+                self::TYPE_TASK_SCHEDULED_REMINDER,
+                __('messages.employee_task_reminder_title'),
+                $body,
+                [
+                    'task_name' => $taskName,
+                    'reminder_kind' => $kind,
+                ],
+                $kind === 'occ' ? 'employee_task_occurrence' : 'employee_task',
+                $relatedId,
+                true
+            );
+        } catch (\Throwable $e) {
+            Log::error('Employee task scheduled reminder failed', [
+                'employee_id' => $employee->id,
+                'task' => $taskName,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function maybeNotifyAllDailyTasksCompleted(EmployeeDetail $employee): void

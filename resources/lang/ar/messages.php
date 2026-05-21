@@ -75,6 +75,14 @@ return [
 
     'employee_daily_tasks_complete_title' => 'أحسنت! أنجزت مهام اليوم',
     'employee_daily_tasks_complete_body' => 'تهانينا — أنجزت كل مهامك لليوم (:count مهمة).',
+
+    'employee_task_reminder_title' => 'تذكير مهمة',
+    'employee_task_reminder_body_at_time' => 'حان موعد المهمة «:name» (:time). ادخل وأكملها.',
+    'employee_task_reminder_body_before' => 'اقترب موعد المهمة «:name» (:time). ادخل وأكملها.',
+    'employee_task_reminder_email_subject' => 'تذكير: :name',
+    'employee_task_reminder_email_greeting' => 'مرحباً :name،',
+    'employee_task_reminder_email_footer' => 'Doctor Bike — نظام المهام',
+    'end_time_must_be_after_start' => 'وقت النهاية يجب أن يكون بعد وقت البداية (يمكن نفس اليوم بساعة لاحقة).',
     'failed_to_cancel_task' => 'فشل في إلغاء المهمة',
     'failed_to_create_task' => 'فشل في إنشاء مهمة الموظف',
     'failed_to_fetch_task_details' => 'فشل في جلب تفاصيل المهمة',

@@ -78,6 +78,14 @@ return [
 
     'employee_daily_tasks_complete_title' => 'Great job! All tasks done',
     'employee_daily_tasks_complete_body' => 'Congratulations — you finished all your tasks for today (:count).',
+
+    'employee_task_reminder_title' => 'Task reminder',
+    'employee_task_reminder_body_at_time' => 'It is time for task «:name» (:time). Open the app to complete it.',
+    'employee_task_reminder_body_before' => 'Upcoming task «:name» at :time. Open the app to complete it.',
+    'employee_task_reminder_email_subject' => 'Reminder: :name',
+    'employee_task_reminder_email_greeting' => 'Hello :name,',
+    'employee_task_reminder_email_footer' => 'Doctor Bike — Tasks',
+    'end_time_must_be_after_start' => 'End time must be after start time (same day with a later hour is allowed).',
     'failed_to_cancel_task' => 'Failed to cancel the task',
     'failed_to_create_task' => 'Failed to create employee task',
     'failed_to_fetch_task_details' => 'Failed to fetch task details',

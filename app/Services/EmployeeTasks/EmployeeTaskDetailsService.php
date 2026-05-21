@@ -6,6 +6,8 @@ use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
+use App\Models\EmployeeTaskTemplate;
+use App\Support\TaskReminderConfig;
 
 class EmployeeTaskDetailsService
 {
@@ -53,7 +55,11 @@ class EmployeeTaskDetailsService
         $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
         $taskData['sub_tasks'] = $taskData['sub_tasks'] ?? $taskData['subTasks'] ?? [];
 
-        return $taskData;
+        $template = $employeeTask->template_id
+            ? EmployeeTaskTemplate::find($employeeTask->template_id)
+            : null;
+
+        return $this->enrichWithRecurrenceMeta($taskData, $template, $employeeTask);
     }
 
     /**
@@ -84,7 +90,7 @@ class EmployeeTaskDetailsService
         $subTotal = count($subTasks);
         $subDone = collect($subTasks)->where('status', 'completed')->count();
 
-        return [
+        $taskData = [
             'id' => $occurrence->id,
             'task_id' => $occurrence->legacy_task_id ?? $occurrence->id,
             'occurrence_id' => $occurrence->id,
@@ -121,6 +127,46 @@ class EmployeeTaskDetailsService
             'task_recurrence' => $occurrence->template?->recurrence_type ?? 'noRepeat',
             'source' => 'occurrence',
         ];
+
+        return $this->enrichWithRecurrenceMeta($taskData, $occurrence->template, null, $occurrence);
+    }
+
+    /**
+     * @param  array<string, mixed>  $taskData
+     * @return array<string, mixed>
+     */
+    private function enrichWithRecurrenceMeta(
+        array $taskData,
+        ?EmployeeTaskTemplate $template,
+        ?EmployeeTask $legacyTask = null,
+        ?EmployeeTaskOccurrence $occurrence = null
+    ): array {
+        if ($occurrence) {
+            $taskData['occurrence_id'] = $occurrence->id;
+        }
+
+        if ($template) {
+            $taskData['template_id'] = $template->id;
+            $taskData['recurrence_config'] = $template->recurrence_config ?? [];
+            $taskData['task_recurrence'] = $template->recurrence_type ?? ($taskData['task_recurrence'] ?? 'noRepeat');
+        } elseif (! empty($taskData['recurrence_config'])) {
+            // already set
+        } else {
+            $taskData['recurrence_config'] = [];
+        }
+
+        $config = is_array($taskData['recurrence_config'] ?? null) ? $taskData['recurrence_config'] : [];
+
+        $taskData = array_merge(
+            $taskData,
+            TaskReminderConfig::apiReminderFields(
+                $config !== [] ? $config : null,
+                $legacyTask?->reminder_before_minutes,
+                $legacyTask?->reminder_channel
+            )
+        );
+
+        return $taskData;
     }
 
     /**

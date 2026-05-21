@@ -13,6 +13,7 @@ use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
 use Illuminate\Support\Facades\Schema;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
+use App\Models\EmployeeTaskTemplate;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -595,7 +596,9 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                 'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp',
                 'max:102400',
             ],
-
+            'reminder_before_minutes' => ['nullable', 'integer', 'min:0', 'max:10080'],
+            'reminder_channel' => ['nullable', 'string', 'in:push,email'],
+            'reminder_when' => ['nullable', 'string', 'in:none,at_time,before_10m,before_1h,before_1d'],
 
         ]);
 
@@ -632,11 +635,28 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                 ],200);
             }
         }
+        $start = \Carbon\Carbon::parse($data['start_time']);
+        $end = \Carbon\Carbon::parse($data['end_time']);
+        if ($end->lte($start)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.end_time_must_be_after_start'),
+            ], 200);
+        }
+
         $data['status'] = EmployeeTaskStatus::Pending->value;
         $data['priority'] = $request->input('priority', 'medium');
 
-        if ($request->boolean('use_v2_recurrence') && $request->task_recurrence !== 'noRepeat') {
+        $reminderMinutes = \App\Support\TaskReminderConfig::minutesFromRequest($request);
+        $reminderChannel = \App\Support\TaskReminderConfig::channelFromRequest($request);
+
+        if ($request->boolean('use_v2_recurrence')) {
             return app(EmployeeTaskOperationsController::class)->createWithTemplate($request);
+        }
+
+        if ($reminderMinutes !== null) {
+            $data['reminder_before_minutes'] = $reminderMinutes;
+            $data['reminder_channel'] = $reminderChannel;
         }
 
         $employeeTask = EmployeeTask::create($data);
@@ -774,6 +794,17 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 public function updateEmployeeTask(Request $request)
 {
     try {
+        if ($request->filled('occurrence_id') && ! $request->filled('template_id')) {
+            $occ = EmployeeTaskOccurrence::find($request->occurrence_id);
+            if ($occ) {
+                $request->merge(['template_id' => $occ->template_id]);
+            }
+        }
+
+        if ($request->boolean('use_v2_recurrence') || $request->filled('template_id')) {
+            return app(EmployeeTaskOperationsController::class)->updateWithTemplate($request);
+        }
+
         $data = $request->validate([
             'employee_task_id'=>['required','exists:employee_tasks,id'],
             'name' => ['required', 'string', 'max:255'],
@@ -807,8 +838,20 @@ public function updateEmployeeTask(Request $request)
             'sub_employee_tasks.*.admin_subtask__img.*' => ['nullable'],
  
             'audio' => 'nullable',
+            'reminder_before_minutes' => ['nullable', 'integer', 'min:0', 'max:10080'],
+            'reminder_channel' => ['nullable', 'string', 'in:push,email'],
+            'reminder_when' => ['nullable', 'string', 'in:none,at_time,before_10m,before_1h,before_1d'],
 
         ]);
+
+        $start = \Carbon\Carbon::parse($data['start_time']);
+        $end = \Carbon\Carbon::parse($data['end_time']);
+        if ($end->lte($start)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.end_time_must_be_after_start'),
+            ], 200);
+        }
 
         // ✅ Always update the parent if the task is a recurrence
         $employeeTask = EmployeeTask::findOrFail($request->employee_task_id);
@@ -820,6 +863,36 @@ public function updateEmployeeTask(Request $request)
         $finalData['not_shown_for_employee'] = $request->boolean('not_shown_for_employee');
         $finalData['is_forced_to_upload_img'] = $request->boolean('is_forced_to_upload_img');
 
+        $reminderMinutes = \App\Support\TaskReminderConfig::minutesFromRequest($request);
+        $reminderChannel = \App\Support\TaskReminderConfig::channelFromRequest($request);
+        if ($reminderMinutes !== null) {
+            $finalData['reminder_before_minutes'] = $reminderMinutes;
+            $finalData['reminder_channel'] = $reminderChannel;
+        } else {
+            $finalData['reminder_before_minutes'] = null;
+            $finalData['reminder_channel'] = null;
+        }
+
+        if ($employeeTask->template_id) {
+            $template = EmployeeTaskTemplate::find($employeeTask->template_id);
+            if ($template) {
+                $config = \App\Support\TaskReminderConfig::mergeIntoRecurrenceConfig(
+                    array_merge($template->recurrence_config ?? [], [
+                        'start_time' => $data['start_time'],
+                        'end_time' => $data['end_time'],
+                    ]),
+                    $reminderMinutes,
+                    $reminderChannel
+                );
+                $template->update([
+                    'name' => $data['name'],
+                    'description' => $data['description'] ?? null,
+                    'notes' => $data['notes'] ?? null,
+                    'points' => $data['points'],
+                    'recurrence_config' => $config,
+                ]);
+            }
+        }
 
         if($request->task_recurrence === 'daily'){
             $finalData['task_recurrence_time'] = ['saturday','sunday','monday','tuesday','wednesday','thursday','friday'];
