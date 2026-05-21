@@ -90,6 +90,7 @@ return [
     'employee_sub_task_images_updated'=>'employee images of employee sub task was updated successfully',
 
     'employee_image_required'=>'Employee image must be uploaded before finishing the task',
+    'subtask_completed_upload_proof' => 'All subtasks are done. Add main task proof, then submit for review.',
     'unauthorized'      => 'You are not authorized to perform this action',
     'task_not_found'    => 'The requested task was not found',
     'invalid_task_type' => 'Invalid task type',

@@ -87,6 +87,7 @@ return [
     'invalid_task_type' => 'نوع المهمة غير صالح',
     'employee_images_updated'=>'تم تعديل صور الموظف لمهمة الموظفين بنجاح',
     'employee_image_required'=>'يجب تحميل صورة من الموظف قبل انهاء المهمة',
+    'subtask_completed_upload_proof' => 'تم إنجاز كل المهام الفرعية. أضف إثبات المهمة الرئيسية ثم أرسل للمراجعة.',
     'employee_sub_task_images_updated'=>'تم تعديل صور الموظف لمهمة فرعية بنجاح',
 
 

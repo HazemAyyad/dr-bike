@@ -1136,21 +1136,24 @@ public function updateEmployeeTask(Request $request)
         ->exists();
 
 
-        if(!$allSubTasks){
-            $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id);
-
-            if ($employeeTask->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($employeeTask->employee_img)) {
-                    return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.employee_image_required'),
-                ], 200);
-            }
-
+        if (! $allSubTasks) {
             $this->workflow->completeSubtask($subTask);
+
+            $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id)->fresh();
 
             if ($employeeTask->status === EmployeeTaskStatus::Pending->value) {
                 $this->workflow->startTask($employeeTask);
                 $employeeTask->refresh();
+            }
+
+            // إثبات المهمة الرئيسية منفصل — لا يمنع إكمال آخر فرعية
+            if ($employeeTask->is_forced_to_upload_img
+                && ! \App\Support\TaskMediaFiles::hasProof($employeeTask->employee_img)) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => __('messages.subtask_completed_upload_proof'),
+                    'all_subtasks_done' => true,
+                ], 200);
             }
 
             try {
@@ -1159,7 +1162,7 @@ public function updateEmployeeTask(Request $request)
                 return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
             }
         } else {
-          $this->workflow->completeSubtask($subTask);
+            $this->workflow->completeSubtask($subTask);
         }
 
         Logs::createLog('اكمال مهمة موظف فرعية','اكمال مهمة موظف فرعية باسم'.' '.$subTask->name
