@@ -33,6 +33,7 @@ class EmployeeData extends Controller
             $employee->unsetRelation('permissions');
 
             $employee['tasks'] = EmployeeVisibleTasks::dashboardPayload($employee->id);
+            $employee['today_tasks_summary'] = EmployeeVisibleTasks::todaySummaryForEmployee($employee->id);
 
             return response()->json([
                 'status' => 'success',

@@ -6,6 +6,7 @@ use App\Http\Controllers\API\CommonUse;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
+use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -91,11 +92,7 @@ class EmployeeOwnTasks extends Controller
         public function editEmployeeSubTasksImages(Request $request){
         try{
             $request->validate([
-                'sub_employee_task_id'=>'required|integer|exists:sub_employee_tasks,id',
-
-                'employee_img' => ['nullable','array'],
-                'employee_img.*' => ['nullable'],
-
+                'sub_employee_task_id' => 'required|integer|exists:sub_employee_tasks,id',
             ]);
             $user = $request->user();
             $employee = $user->employee;
@@ -109,14 +106,11 @@ class EmployeeOwnTasks extends Controller
                 ]);
             }
 
-        $finalEmployeeImages = CommonUse::handleImageUpdate(
+        $subTask->employee_img = self::storeEmployeeProofImages(
             $request,
-            'employee_img',
             'EmployeeSubTasks/EmployeeImages',
             $subTask->employee_img ?? []
         );
-
-        $subTask->employee_img = $finalEmployeeImages;
         $subTask->save();
 
         return response()->json([
@@ -156,13 +150,76 @@ class EmployeeOwnTasks extends Controller
     
     }
 
+    /**
+     * Accept employee_img or employee_img[] from mobile multipart uploads.
+     *
+     * @return array<int, string>
+     */
+    private static function storeEmployeeProofImages(
+        Request $request,
+        string $path,
+        array $currentFiles = []
+    ): array {
+        $newFiles = [];
+        foreach (['employee_img', 'employee_img[]'] as $field) {
+            if (! $request->hasFile($field)) {
+                continue;
+            }
+            $uploaded = $request->file($field);
+            $list = is_array($uploaded) ? $uploaded : [$uploaded];
+            foreach ($list as $file) {
+                if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
+                    $imageName = $file->getClientOriginalName();
+                    $file->move(public_path($path), $imageName);
+                    $newFiles[] = $imageName;
+                }
+            }
+        }
+
+        return array_values(array_unique(array_merge($currentFiles, $newFiles)));
+    }
+
+    public function editOccurrenceTaskImages(Request $request)
+    {
+        try {
+            $request->validate([
+                'occurrence_id' => 'required|integer|exists:employee_task_occurrences,id',
+            ]);
+
+            $employee = $request->user()->employee;
+            $task = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
+
+            if (! $employee || $task->employee_id != $employee->id) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $task->employee_img = self::storeEmployeeProofImages(
+                $request,
+                'EmployeeTasksImages',
+                $task->employee_img ?? []
+            );
+            $task->save();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.employee_images_updated'),
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function editOccurrenceSubtaskImages(Request $request)
     {
         try {
             $request->validate([
                 'sub_task_id' => 'required|integer|exists:employee_task_occurrence_subtasks,id',
-                'employee_img' => ['nullable', 'array'],
-                'employee_img.*' => ['nullable'],
             ]);
 
             $employee = $request->user()->employee;
@@ -176,14 +233,11 @@ class EmployeeOwnTasks extends Controller
                 ], 200);
             }
 
-            $finalEmployeeImages = CommonUse::handleImageUpdate(
+            $subTask->employee_img = self::storeEmployeeProofImages(
                 $request,
-                'employee_img',
                 'EmployeeSubTasks/EmployeeImages',
                 $subTask->employee_img ?? []
             );
-
-            $subTask->employee_img = $finalEmployeeImages;
             $subTask->save();
 
             return response()->json([

@@ -138,11 +138,25 @@ class EmployeeVisibleTasks
     /**
      * @return array<string, mixed>
      */
+    public static function progressForTask(string $status, int $subCount, int $subDone): int
+    {
+        if ($subCount > 0) {
+            return (int) round(($subDone / $subCount) * 100);
+        }
+
+        return match (EmployeeTaskStatus::normalize($status)->value) {
+            'completed' => 100,
+            'waiting_review' => 90,
+            'in_progress', 'started' => 50,
+            default => 0,
+        };
+    }
+
     public static function mapLegacyForDashboard(EmployeeTask $task): array
     {
-        $subCount = $task->relationLoaded('subtasks')
-            ? $task->subtasks->count()
-            : $task->subtasks()->count();
+        $task->loadMissing('subTasks');
+        $subCount = $task->subTasks->count();
+        $subDone = $task->subTasks->where('status', 'completed')->count();
 
         return [
             'id' => $task->id,
@@ -158,6 +172,7 @@ class EmployeeVisibleTasks
             'source' => 'legacy',
             'has_sub_tasks' => $subCount > 0,
             'sub_tasks_count' => $subCount,
+            'progress' => self::progressForTask($task->status, $subCount, $subDone),
         ];
     }
 
@@ -168,6 +183,7 @@ class EmployeeVisibleTasks
     {
         $task->loadMissing(['template', 'subtasks']);
         $subCount = $task->subtasks->count();
+        $subDone = $task->subtasks->where('status', 'completed')->count();
 
         return [
             'id' => $task->id,
@@ -183,6 +199,37 @@ class EmployeeVisibleTasks
             'source' => 'occurrence',
             'has_sub_tasks' => $subCount > 0,
             'sub_tasks_count' => $subCount,
+            'progress' => self::progressForTask($task->status, $subCount, $subDone),
+        ];
+    }
+
+    /**
+     * @return array{total: int, completed: int, progress_percent: int}
+     */
+    public static function todaySummaryForEmployee(int $employeeId): array
+    {
+        $today = self::todayDateString();
+        $tasks = self::dashboardPayload($employeeId)->filter(function ($row) use ($today) {
+            $start = $row['start_time'] ?? null;
+            if (empty($start)) {
+                return false;
+            }
+
+            return Carbon::parse($start)->timezone(self::TIMEZONE)->toDateString() === $today;
+        });
+
+        $total = $tasks->count();
+        if ($total === 0) {
+            return ['total' => 0, 'completed' => 0, 'progress_percent' => 0];
+        }
+
+        $completed = $tasks->filter(fn ($row) => in_array($row['status'], ['completed', 'waiting_review'], true))->count();
+        $progressSum = $tasks->sum(fn ($row) => (int) ($row['progress'] ?? 0));
+
+        return [
+            'total' => $total,
+            'completed' => $completed,
+            'progress_percent' => (int) round($progressSum / $total),
         ];
     }
 }

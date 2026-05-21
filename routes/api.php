@@ -766,6 +766,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     // employee tasks
     Route::post('/employee/edit/employee/task/images', [EmployeeOwnTasks::class, 'editEmployeeTasksImages']);
+    Route::post('/employee/edit/occurrence/task/images', [EmployeeOwnTasks::class, 'editOccurrenceTaskImages']);
     Route::post('/employee/edit/employee/sub/task/images', [EmployeeOwnTasks::class, 'editEmployeeSubTasksImages']);
     Route::post('/employee/edit/occurrence/sub/task/images', [EmployeeOwnTasks::class, 'editOccurrenceSubtaskImages']);
 
