@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Models\Customer;
-use App\Models\Debt;
 use App\Models\Seller;
 use App\Models\IncomingCheck;
 use App\Models\IncomingCheckBox;
@@ -80,27 +80,14 @@ public function store(Request $request)
                 'message' => __('messages.must_select_either_customer_or_seller')
             ], 200);
         }
-       $currencyService = new \App\Services\CurrencyService();
-
-       $amountInShekel = $currencyService->convertToShekel($request->total, $request->currency);
-
         $data = $this->handleImages($request, $data, [
             'front_image' => 'IncomingCheckImages/front',
             'back_image'  => 'IncomingCheckImages/back',
         ]);
 
-
-
         $check = IncomingCheck::create($data);
 
-
-        $debt =Debt::create([
-            'customer_id' => $request->from_customer ?? null,
-            'seller_id'   => $request->from_seller ?? null,
-            'total'       => $amountInShekel, // always in شيكل
-            'type'        => 'we owe',
-        ]);
-
+        app(DebtLedgerService::class)->syncIncomingCheckToLedger($check->fresh());
 
         Logs::createLog(
             'إضافة شيك وارد',
@@ -109,11 +96,10 @@ public function store(Request $request)
         );
         $personName = $check->from_customer? $check->fromCustomer->name : $check->fromSeller->name;
         Logs::createLog(
-                    'اضافة دين علينا من شيك وارد',
-                    ' تمت اضافة دين علينا إلى رصيد ديون الشخص'.' '.$personName
-                    .' '.' بقيمة'.' '.$debt->total,
-                    'debts'
-                ); 
+            'قبض شيك وارد في دفتر الديون',
+            'تم تسجيل قبض شيك وارد بقيمة '.$check->total.' '.$check->currency.' من '.$personName.' في دفتر الديون',
+            'debts'
+        );
 
         return response()->json([
             'status'  => 'success',
@@ -284,65 +270,43 @@ public function store(Request $request)
             ], 200);
         }
         $incomingCheck = IncomingCheck::findOrFail($request->incoming_check_id);
-        $personName =null;
-       $currencyService = new \App\Services\CurrencyService();
+        $personName = null;
 
-       $amountInShekel = $currencyService->convertToShekel($incomingCheck->total, $incomingCheck->currency);
-
-        if($request->filled('customer_id')){
+        if ($request->filled('customer_id')) {
             $customer = Customer::findOrFail($request->customer_id);
             $incomingCheck->update([
                 'to_customer' => $customer->id,
-                'status' =>'cashed_to_person',
+                'status' => 'cashed_to_person',
             ]);
- 
-            Debt::create([
-                'customer_id' => $customer->id,
-                'total' => $amountInShekel,
-                'type' => 'owed to us',
-            ]);
-
             $personName = $customer->name;
-            Logs::createLog(
-                'التصرف في شيك',
-                'تم صرف شيك وارد بقيمة ' . $incomingCheck->total.' '.$incomingCheck->currency . ' '.
-                ' لصالح ' . $personName . 
-                ' وتمت إضافته إلى رصيد ديونه',
-                'debts'
-            );
-            
-        }
-        elseif($request->filled('seller_id')){
+        } elseif ($request->filled('seller_id')) {
             $seller = Seller::findOrFail($request->seller_id);
             $incomingCheck->update([
                 'to_seller' => $seller->id,
-                'status' =>'cashed_to_person',
-            ]);
-            Debt::create([
-                'seller_id' => $seller->id,
-                'total' => $amountInShekel,
-                'type' => 'owed to us',
+                'status' => 'cashed_to_person',
             ]);
             $personName = $seller->name;
-            Logs::createLog(
-                'التصرف في شيك',
-                'تم صرف شيك وارد بقيمة ' . $incomingCheck->total . ' '.$incomingCheck->currency.' '.
-                ' لصالح ' . $personName . 
-                ' وتمت إضافته إلى رصيد ديونه ',
-                'debts'
-            );   
-        
         }
-        else{
-         return response()->json([
+        else {
+            return response()->json([
                 'status'  => 'error',
-                'message' => __('messages.must_select_customer_or_seller')
+                'message' => __('messages.must_select_customer_or_seller'),
             ], 200);
         }
 
+        $incomingCheck = $incomingCheck->fresh();
+        app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck);
+
         Logs::createLog(
             'التصرف في شيك',
-            'تم التصرف في الشيك الوارد بقيمة ' . $incomingCheck->total .' '.$incomingCheck->currency.' '. ' لصالح ' .' '. $personName,
+            'تم صرف شيك وارد بقيمة '.$incomingCheck->total.' '.$incomingCheck->currency.
+            ' لصالح '.$personName.' وتم تحديث دفتر الديون',
+            'debts'
+        );
+
+        Logs::createLog(
+            'التصرف في شيك',
+            'تم التصرف في الشيك الوارد بقيمة '.$incomingCheck->total.' '.$incomingCheck->currency.' لصالح '.$personName,
             'incoming_checks'
         );
 
@@ -411,8 +375,10 @@ public function store(Request $request)
             'box_id' => $box->id,
             
         ]);
-        $incomingCheck->update(['status'=>'cashed_to_box']);
-        $box->update(['total'=> $box->total + $incomingCheck->total]);
+        $incomingCheck->update(['status' => 'cashed_to_box']);
+        $box->update(['total' => $box->total + $incomingCheck->total]);
+
+        app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck->fresh());
 
         BoxLogs::createBoxLog($box,'تم صرف شيك وارد برقم '.' '.($incomingCheck->check_id??'غير معروف').' '.'للصندوق'
         ,'add',$incomingCheck->total);
@@ -461,41 +427,21 @@ public function store(Request $request)
 
 
        $incomingCheck = IncomingCheck::findOrFail($request->incoming_check_id);
-       $currencyService = new \App\Services\CurrencyService();
 
-       $amountInShekel = $currencyService->convertToShekel($incomingCheck->total, $incomingCheck->currency);
+        $incomingCheck->update(['status' => $status]);
+        $incomingCheck = $incomingCheck->fresh();
+        app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck);
 
-        $incomingCheck->update(['status'=>$status]);
-        $personName = $incomingCheck->from_customer? $incomingCheck->fromCustomer->name: $incomingCheck->fromSeller->name;
+        $personName = $incomingCheck->from_customer
+            ? $incomingCheck->fromCustomer->name
+            : $incomingCheck->fromSeller->name;
 
-        if($status ==='returned'){
-                $firstDebt = Debt::create([
-                    'customer_id'=> $incomingCheck->from_customer??null,
-                    'seller_id'=> $incomingCheck->from_seller??null,
-                    'total' => $amountInShekel,
-                    'type' => 'owed to us',
-                ]);
-                Logs::createLog(
-                        'اضافة دين لنا من ارجاع شيك وارد',
-                        ' تمت اضافة دين لنا إلى رصيد ديون الشخص'.' '.$personName
-                        .' '.' بقيمة'.' '.$firstDebt->total,
-                        'debts'
-                    ); 
-                if($incomingCheck->to_seller || $incomingCheck->to_customer){
-                    $secondPersonName = $incomingCheck->to_customer? $incomingCheck->toCustomer->name: $incomingCheck->toSeller->name;
-                    $secondDebt = Debt::create([
-                        'customer_id'=> $incomingCheck->to_customer??null,
-                        'seller_id'=> $incomingCheck->to_seller??null,
-                        'total' => $amountInShekel,
-                        'type' => 'we owe',
-                    ]);
-                    Logs::createLog(
-                            'اضافة دين علينا من ارجاع شيك وارد بعد التصرف فيه',
-                            ' تمت اضافة دين علينا إلى رصيد ديون الشخص'.' '.$secondPersonName
-                            .' '.' بقيمة'.' '.$secondDebt->total,
-                            'debts'
-                        );                    
-                }
+        if ($status === 'returned') {
+            Logs::createLog(
+                'ارجاع شيك وارد',
+                'تم ارجاع شيك وارد بقيمة '.$incomingCheck->total.' '.$incomingCheck->currency.' من '.$personName.' وتحديث دفتر الديون',
+                'debts'
+            );
 
             // $boxCheck = IncomingCheckBox::where('incoming_check_id',$incomingCheck->id)->first();
             // if($boxCheck){
@@ -512,19 +458,12 @@ public function store(Request $request)
 
         }
 
-        elseif($status==='cancelled'){
-                $debtCancel = Debt::create([
-                    'customer_id'=> $incomingCheck->from_customer??null,
-                    'seller_id'=> $incomingCheck->from_seller??null,
-                    'total' => $amountInShekel,
-                    'type' => 'owed to us',
-                ]);
-                Logs::createLog(
-                        'اضافة دين لنا من الغاء شيك وارد',
-                        ' تمت اضافة دين لنا إلى رصيد ديون الشخص'.' '.$personName
-                        .' '.' بقيمة'.' '.$debtCancel->total,
-                        'debts'
-                    );             
+        elseif ($status === 'cancelled') {
+            Logs::createLog(
+                'الغاء شيك وارد',
+                'تم الغاء شيك وارد بقيمة '.$incomingCheck->total.' '.$incomingCheck->currency.' من '.$personName.' وتحديث دفتر الديون',
+                'debts'
+            );
         }
 
          Logs::createLog(
@@ -581,26 +520,9 @@ public function store(Request $request)
                     'message' => __('messages.cannot_delete_check'),
                 ], 200);
             }
-                $currencyService = new \App\Services\CurrencyService();
+            app(DebtLedgerService::class)->deleteSourceLedger('incoming_check', (int) $incomingCheck->id);
 
-                $amountInShekel = $currencyService->convertToShekel($incomingCheck->total, $incomingCheck->currency);
-                $personName = $incomingCheck->from_customer? $incomingCheck->fromCustomer->name: $incomingCheck->fromSeller->name;
-
-            if($incomingCheck->status==='not_cashed' || $incomingCheck->status==='cashed_to_box'){
-                $firstDebt = Debt::create([
-                    'customer_id'=> $incomingCheck->from_customer??null,
-                    'seller_id'=> $incomingCheck->from_seller??null,
-                    'total' => $amountInShekel,
-                    'type' => 'owed to us',
-                ]);
-                Logs::createLog(
-                        'اضافة دين لنا من حذف شيك وارد',
-                        ' تمت اضافة دين لنا إلى رصيد ديون الشخص'.' '.$personName
-                        .' '.' بقيمة'.' '.$firstDebt->total,
-                        'debts'
-                    ); 
-
-                if($incomingCheck->status==='cashed_to_box'){
+            if ($incomingCheck->status === 'cashed_to_box') {
                     $boxCheck = IncomingCheckBox::where('incoming_check_id',$incomingCheck->id)->first();
                     if($boxCheck){
                         $box = $boxCheck->box;
@@ -614,12 +536,9 @@ public function store(Request $request)
                                     'boxes'
                                 );                 
                     }
-                }
-
             }
 
-
-                Logs::createLog('حذف شيك وارد','تم حذف شيك وارد بقيمة'.' '.$incomingCheck->total.' '. $incomingCheck->currency,'incoming_checks');
+            Logs::createLog('حذف شيك وارد', 'تم حذف شيك وارد بقيمة '.$incomingCheck->total.' '.$incomingCheck->currency, 'incoming_checks');
 
                 $incomingCheck->delete();
                 return response()->json([

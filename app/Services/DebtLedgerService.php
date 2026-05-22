@@ -523,7 +523,7 @@ class DebtLedgerService
     }
 
     /**
-     * قبض شيك وارد (أخذت).
+     * قبض شيك وارد — على من أعطانا الشيك (أخذت).
      */
     public function syncIncomingCheckReceiveToLedger(IncomingCheck $check): ?DebtTransaction
     {
@@ -552,11 +552,58 @@ class DebtLedgerService
     }
 
     /**
+     * مزامنة شيك وارد مع دفتر الديون حسب الحالة والعملة.
+     */
+    public function syncIncomingCheckToLedger(IncomingCheck $check): ?DebtTransaction
+    {
+        if (in_array($check->status, ['returned', 'cancelled'], true)) {
+            $this->deleteSourceLedger('incoming_check', (int) $check->id);
+
+            return null;
+        }
+
+        if ($check->status === 'cashed_to_box') {
+            $this->deleteSourceLedger('incoming_check', (int) $check->id);
+
+            return null;
+        }
+
+        if ($check->status === 'cashed_to_person') {
+            $customerId = $check->to_customer ? (int) $check->to_customer : null;
+            $sellerId = $check->to_seller ? (int) $check->to_seller : null;
+
+            if (! $customerId && ! $sellerId) {
+                return null;
+            }
+
+            $currency = $this->normalizeCurrency($check->currency);
+            $amount = (float) $check->total;
+            $note = trim('شيك وارد #'.$check->id.' — تصرف لشخص — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
+
+            return $this->upsertSourceLedgerEntry(
+                'incoming_check',
+                $check->id,
+                $customerId,
+                $sellerId,
+                'taken',
+                $amount,
+                $note,
+                $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+                $currency
+            );
+        }
+
+        return $this->syncIncomingCheckReceiveToLedger($check);
+    }
+
+    /**
      * شيك صادر بعد التصرف (أعطيت).
      */
     public function syncOutgoingCheckToLedger(OutgoingCheck $check): ?DebtTransaction
     {
         if (! $this->isOutgoingCheckDisposed($check->status)) {
+            $this->deleteSourceLedger('outgoing_check', (int) $check->id);
+
             return null;
         }
 

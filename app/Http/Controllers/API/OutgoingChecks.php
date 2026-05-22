@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Models\Customer;
-use App\Models\Debt;
 use App\Models\OutgoingCheck;
 use App\Models\Seller;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -223,33 +222,19 @@ class OutgoingChecks extends Controller
         try{
             $request->validate(['outgoing_check_id'=>'required|exists:outgoing_checks,id']);
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
-            $currencyService = new \App\Services\CurrencyService();
 
-            $amountInShekel = $currencyService->convertToShekel($check->total, $check->currency);
- 
-            $check->update(['status'=>$status]);
+            $check->update(['status' => $status]);
             $check = $check->fresh();
 
             app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check);
 
-            if($status==='returned'){
-                if($check->customer_id || $check->seller_id){
-                        $personName = $check->customer_id? $check->customer->name: $check->seller->name;
-
-                        $firstDebt = Debt::create([
-                            'customer_id'=> $check->customer_id??null,
-                            'seller_id'=> $check->seller_id??null,
-                            'total' => $amountInShekel,
-                            'type' => 'we owe',
-                                ]);
-                        Logs::createLog(
-                                'اضافة دين علينا لارجاع الشيك الصادر',
-                                ' تمت اضافة دين علينا إلى رصيد ديون الشخص'.' '.$personName
-                                .' '.' بقيمة'.' '.$firstDebt->total,
-                                'debts'
-                            ); 
-
-                }
+            if ($status === 'returned' && ($check->customer_id || $check->seller_id)) {
+                $personName = $check->customer_id ? $check->customer->name : $check->seller->name;
+                Logs::createLog(
+                    'ارجاع شيك صادر',
+                    'تم ارجاع شيك صادر بقيمة '.$check->total.' '.$check->currency.' لصالح '.$personName.' وتحديث دفتر الديون',
+                    'debts'
+                );
             }
 
             Logs::createLog(
@@ -332,54 +317,30 @@ class OutgoingChecks extends Controller
             ], 200);
         }
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
-            $currencyService = new \App\Services\CurrencyService();
-
-            $amountInShekel = $currencyService->convertToShekel($check->total, $check->currency);
 
             $personName = 'غير معروف';
 
-            if($request->filled('customer_id')){
+            if ($request->filled('customer_id')) {
                 $customer = Customer::findOrFail($request->customer_id);
                 $check->customer_id = $request->customer_id;
                 $personName = $customer->name;
-
-                Debt::create([
-                'customer_id' => $customer->id,
-                'total' => $amountInShekel,
-                'type' => 'owed to us',
-            ]);
-                Logs::createLog(
-                    'التصرف في شيك',
-                    'تم صرف شيك صادر بقيمة ' .' '. $check->total . ' '.$check->currency.' '.
-                    ' لصالح ' . $personName . 
-                    ' وتمت إضافته إلى رصيد ديونه',
-                    'debts'
-                );
-
-            }
-            elseif($request->filled('seller_id')){
+            } elseif ($request->filled('seller_id')) {
                 $seller = Seller::findOrFail($request->seller_id);
-                $check->seller_id = $request->seller_id;  
+                $check->seller_id = $request->seller_id;
                 $personName = $seller->name;
-
-                Debt::create([
-                'seller_id' => $seller->id,
-                'total' => $amountInShekel,
-                'type' => 'owed to us',
-             ]);
-                Logs::createLog(
-                    'التصرف في شيك',
-                    'تم صرف شيك صادر بقيمة ' .' '. $check->total . ' '.$check->currency.' '.
-                    ' لصالح ' . $personName . 
-                    ' وتمت إضافته إلى رصيد ديونه',
-                    'debts'
-                );
-
             }
             $check->status = 'cashed_to_person';
             $check->save();
 
-            app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
+            $check = $check->fresh();
+            app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check);
+
+            Logs::createLog(
+                'التصرف في شيك',
+                'تم صرف شيك صادر بقيمة '.$check->total.' '.$check->currency.
+                ' لصالح '.$personName.' وتم تحديث دفتر الديون',
+                'debts'
+            );
 
             Logs::createLog(
             'التصرف في شيك',
@@ -438,9 +399,11 @@ class OutgoingChecks extends Controller
                 ], 200);
             }
 
-                Logs::createLog('حذف شيك صادر','تم حذف شيك صادر بقيمة'.' '.$check->total.' '. $check->currency,'outgoing_checks');
+            app(DebtLedgerService::class)->deleteSourceLedger('outgoing_check', (int) $check->id);
 
-                $check->delete();
+            Logs::createLog('حذف شيك صادر', 'تم حذف شيك صادر بقيمة '.$check->total.' '.$check->currency, 'outgoing_checks');
+
+            $check->delete();
 
 
                 return response()->json([

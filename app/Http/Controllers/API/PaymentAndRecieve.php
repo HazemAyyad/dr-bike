@@ -177,10 +177,6 @@ class PaymentAndRecieve extends Controller
                 }
 
                 if ($type === 'payment') {
-                    $currencyService = new \App\Services\CurrencyService();
-
-                    $amountInShekel = $currencyService->convertToShekel($checkData['check_value'], $checkData['check_currency']);
-
                     $check = OutgoingCheck::create([
                         'total'     => $checkData['check_value'],
                         'due_date'  => $checkData['due_date'] ?? null,
@@ -197,31 +193,20 @@ class PaymentAndRecieve extends Controller
 
 
 
-                    $sdebt = Debt::create([
-                        'customer_id' => $request->customer_id??null,
-                        'seller_id' => $request->seller_id??null,
-                        'total' => $amountInShekel,
-                        'type' => 'owed to us',
-                    ]);
-                        Logs::createLog(
-                            'اضافة دين لنا بعد الدفع',
-                            'تم  اضافة دين لنا بقيمة ' .' '. $sdebt->total.' '.
-                            ' لصالح ' . $personName,
-                            'debts'
-                        );
+                    app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
+
+                    Logs::createLog(
+                        'صرف شيك صادر في دفتر الديون',
+                        'تم تسجيل صرف شيك صادر بقيمة '.$check->total.' '.$check->currency.' لصالح '.$personName.' في دفتر الديون',
+                        'debts'
+                    );
 
                     Logs::createLog(
                         'اضافة شيك صادر والتصرف فيه',
                         "تمت إضافة شيك صادر بقيمة {$check->total}  {$check->currency}".' '.'والتصرف فيه لصالح'.$personName,
                         'outgoing_checks'
                     );
-
-                    app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
                 } else {
-                    $currencyService = new \App\Services\CurrencyService();
-
-                    $amountInShekelIncom = $currencyService->convertToShekel($checkData['check_value'], $checkData['check_currency']);
-
                     $check = IncomingCheck::create([
                         'total'        => $checkData['check_value'],
                         'due_date'     => $checkData['due_date'] ?? null,
@@ -236,27 +221,19 @@ class PaymentAndRecieve extends Controller
                     ]);
 
 
-                    $mydebt = Debt::create([
-                        'customer_id' => $request->customer_id??null,
-                        'seller_id' => $request->seller_id??null,
-                        'total' => $amountInShekelIncom,
-                        'type' => 'we owe',
-                    ]);
-                        Logs::createLog(
-                            'اضافة دين علينا بعد القبض',
-                            'تم  اضافة دين علينا بقيمة ' .' '. $mydebt->total.' '.
-                            ' لصالح ' . $personName,
-                            'debts'
-                        );
+                    app(DebtLedgerService::class)->syncIncomingCheckToLedger($check->fresh());
 
+                    Logs::createLog(
+                        'قبض شيك وارد في دفتر الديون',
+                        'تم تسجيل قبض شيك وارد بقيمة '.$check->total.' '.$check->currency.' من '.$personName.' في دفتر الديون',
+                        'debts'
+                    );
 
                     Logs::createLog(
                         'اضافة شيك وارد جديد',
                         "تمت إضافة شيك وارد بقيمة {$check->total} {$check->currency}"." "."من الشخص"." ".$personName,
                         'incoming_checks'
                     );
-
-                    app(DebtLedgerService::class)->syncIncomingCheckReceiveToLedger($check->fresh());
                 }
             }
         }
