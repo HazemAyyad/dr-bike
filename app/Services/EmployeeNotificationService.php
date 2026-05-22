@@ -6,6 +6,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeNotification;
 use App\Support\EmployeeAttendanceToday;
 use App\Support\EmployeePendingTasksForToday;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
@@ -22,6 +23,25 @@ class EmployeeNotificationService
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}
+
+    /**
+     * Employee push/in-app notifications are always Arabic.
+     *
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    private function withArabicLocale(callable $callback): mixed
+    {
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            return $callback();
+        } finally {
+            App::setLocale($previous);
+        }
+    }
 
     /**
      * @param  array<string, mixed>  $data
@@ -431,6 +451,14 @@ class EmployeeNotificationService
      */
     public function sendHourlyReminders(bool $force = false): array
     {
+        return $this->withArabicLocale(fn () => $this->sendHourlyRemindersArabic($force));
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function sendHourlyRemindersArabic(bool $force = false): array
+    {
         $tz = EmployeePendingTasksForToday::TIMEZONE;
         $now = now()->timezone($tz);
         $dateKey = $now->toDateString();
@@ -546,34 +574,55 @@ class EmployeeNotificationService
     public function notifyTaskScheduledReminder(
         EmployeeDetail $employee,
         string $taskName,
-        string $body,
+        int $minutesBefore,
+        \Carbon\Carbon $start,
         string $kind,
         int $relatedId
     ): void {
-        try {
-            $this->create(
-                $employee,
-                self::TYPE_TASK_SCHEDULED_REMINDER,
-                __('messages.employee_task_reminder_title'),
-                $body,
-                [
-                    'task_name' => $taskName,
-                    'reminder_kind' => $kind,
-                ],
-                $kind === 'occ' ? 'employee_task_occurrence' : 'employee_task',
-                $relatedId,
-                true
-            );
-        } catch (\Throwable $e) {
-            Log::error('Employee task scheduled reminder failed', [
-                'employee_id' => $employee->id,
-                'task' => $taskName,
-                'error' => $e->getMessage(),
-            ]);
-        }
+        $this->withArabicLocale(function () use ($employee, $taskName, $minutesBefore, $start, $kind, $relatedId) {
+            $timeLabel = $start->timezone(EmployeePendingTasksForToday::TIMEZONE)->format('Y-m-d H:i');
+            $body = $minutesBefore <= 0
+                ? __('messages.employee_task_reminder_body_at_time', [
+                    'name' => $taskName,
+                    'time' => $timeLabel,
+                ])
+                : __('messages.employee_task_reminder_body_before', [
+                    'name' => $taskName,
+                    'time' => $timeLabel,
+                ]);
+
+            try {
+                $this->create(
+                    $employee,
+                    self::TYPE_TASK_SCHEDULED_REMINDER,
+                    __('messages.employee_task_reminder_title'),
+                    $body,
+                    [
+                        'task_name' => $taskName,
+                        'reminder_kind' => $kind,
+                    ],
+                    $kind === 'occ' ? 'employee_task_occurrence' : 'employee_task',
+                    $relatedId,
+                    true
+                );
+            } catch (\Throwable $e) {
+                Log::error('Employee task scheduled reminder failed', [
+                    'employee_id' => $employee->id,
+                    'task' => $taskName,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
     }
 
     public function maybeNotifyAllDailyTasksCompleted(EmployeeDetail $employee): void
+    {
+        $this->withArabicLocale(function () use ($employee) {
+            $this->maybeNotifyAllDailyTasksCompletedArabic($employee);
+        });
+    }
+
+    private function maybeNotifyAllDailyTasksCompletedArabic(EmployeeDetail $employee): void
     {
         if (! EmployeePendingTasksForToday::allVisibleTodayFinishedByEmployee((int) $employee->id)) {
             return;

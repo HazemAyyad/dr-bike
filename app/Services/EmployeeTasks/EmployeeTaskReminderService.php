@@ -12,6 +12,7 @@ use App\Support\EmployeePendingTasksForToday;
 use App\Support\EmployeeVisibleTasks;
 use App\Support\TaskReminderConfig;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -175,16 +176,22 @@ class EmployeeTaskReminderService
             return false;
         }
 
-        $body = $this->bodyForReminder($minutesBefore, $start, $taskName);
-
         try {
             if ($channel === TaskReminderConfig::CHANNEL_EMAIL) {
-                $this->sendEmail($employee, $taskName, $body);
+                $previous = App::getLocale();
+                App::setLocale('ar');
+                try {
+                    $body = $this->bodyForReminder($minutesBefore, $start, $taskName);
+                    $this->sendEmail($employee, $taskName, $body);
+                } finally {
+                    App::setLocale($previous);
+                }
             } else {
                 $this->employeeNotifications->notifyTaskScheduledReminder(
                     $employee,
                     $taskName,
-                    $body,
+                    $minutesBefore,
+                    $start,
                     $kind,
                     $id
                 );

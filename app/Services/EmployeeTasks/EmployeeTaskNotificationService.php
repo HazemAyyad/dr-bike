@@ -6,6 +6,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeeNotificationService;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 
 class EmployeeTaskNotificationService
@@ -67,12 +68,13 @@ class EmployeeTaskNotificationService
         ?int $legacyTaskId,
         ?int $occurrenceId
     ): void {
-        try {
-            $this->notifications->create(
-                $employee,
-                'employee_task_approved',
-                __('messages.employee_task_approved_title'),
-                __('messages.employee_task_approved_body', ['name' => $taskName]),
+        $this->withArabicLocale(function () use ($employee, $taskName, $legacyTaskId, $occurrenceId) {
+            try {
+                $this->notifications->create(
+                    $employee,
+                    'employee_task_approved',
+                    __('messages.employee_task_approved_title'),
+                    __('messages.employee_task_approved_body', ['name' => $taskName]),
                 array_filter([
                     'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
                     'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
@@ -82,11 +84,12 @@ class EmployeeTaskNotificationService
                 $occurrenceId ?? $legacyTaskId,
                 true
             );
-        } catch (\Throwable $e) {
-            Log::error('Employee task approved notification failed: '.$e->getMessage(), [
-                'employee_id' => $employee->id,
-            ]);
-        }
+            } catch (\Throwable $e) {
+                Log::error('Employee task approved notification failed: '.$e->getMessage(), [
+                    'employee_id' => $employee->id,
+                ]);
+            }
+        });
     }
 
     public function notifyTaskRejected(
@@ -96,15 +99,16 @@ class EmployeeTaskNotificationService
         ?int $legacyTaskId,
         ?int $occurrenceId
     ): void {
-        try {
-            $this->notifications->create(
-                $employee,
-                'employee_task_rejected',
-                __('messages.employee_task_rejected_title'),
-                __('messages.employee_task_rejected_body', [
-                    'name' => $taskName,
-                    'notes' => $rejectionNotes,
-                ]),
+        $this->withArabicLocale(function () use ($employee, $taskName, $rejectionNotes, $legacyTaskId, $occurrenceId) {
+            try {
+                $this->notifications->create(
+                    $employee,
+                    'employee_task_rejected',
+                    __('messages.employee_task_rejected_title'),
+                    __('messages.employee_task_rejected_body', [
+                        'name' => $taskName,
+                        'notes' => $rejectionNotes,
+                    ]),
                 array_filter([
                     'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
                     'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
@@ -115,11 +119,12 @@ class EmployeeTaskNotificationService
                 $occurrenceId ?? $legacyTaskId,
                 true
             );
-        } catch (\Throwable $e) {
-            Log::error('Employee task rejected notification failed: '.$e->getMessage(), [
-                'employee_id' => $employee->id,
-            ]);
-        }
+            } catch (\Throwable $e) {
+                Log::error('Employee task rejected notification failed: '.$e->getMessage(), [
+                    'employee_id' => $employee->id,
+                ]);
+            }
+        });
     }
 
     private function send(
@@ -128,29 +133,48 @@ class EmployeeTaskNotificationService
         ?int $legacyTaskId,
         ?int $occurrenceId
     ): void {
-        try {
-            $title = __('messages.employee_task_assigned_title');
-            $body = __('messages.employee_task_assigned_body', ['name' => $taskName]);
+        $this->withArabicLocale(function () use ($employee, $taskName, $legacyTaskId, $occurrenceId) {
+            try {
+                $title = __('messages.employee_task_assigned_title');
+                $body = __('messages.employee_task_assigned_body', ['name' => $taskName]);
 
-            $this->notifications->create(
-                $employee,
-                'employee_task_assigned',
-                $title,
-                $body,
-                array_filter([
-                    'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
-                    'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
+                $this->notifications->create(
+                    $employee,
+                    'employee_task_assigned',
+                    $title,
+                    $body,
+                    array_filter([
+                        'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
+                        'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
+                        'task_name' => $taskName,
+                    ]),
+                    $occurrenceId ? 'employee_task_occurrence' : 'employee_task',
+                    $occurrenceId ?? $legacyTaskId,
+                    true
+                );
+            } catch (\Throwable $e) {
+                Log::error('Employee task assigned notification failed: '.$e->getMessage(), [
+                    'employee_id' => $employee->id,
                     'task_name' => $taskName,
-                ]),
-                $occurrenceId ? 'employee_task_occurrence' : 'employee_task',
-                $occurrenceId ?? $legacyTaskId,
-                true
-            );
-        } catch (\Throwable $e) {
-            Log::error('Employee task assigned notification failed: '.$e->getMessage(), [
-                'employee_id' => $employee->id,
-                'task_name' => $taskName,
-            ]);
+                ]);
+            }
+        });
+    }
+
+    /**
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    private function withArabicLocale(callable $callback): mixed
+    {
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            return $callback();
+        } finally {
+            App::setLocale($previous);
         }
     }
 }

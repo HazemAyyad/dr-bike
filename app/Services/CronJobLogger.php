@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CronJobLog;
 use Illuminate\Console\OutputStyle;
+use Illuminate\Support\Facades\App;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Throwable;
 
@@ -55,6 +56,8 @@ class CronJobLogger
     {
         $log = $this->start($jobName, $commandName, $payload);
         $buffer = new BufferedOutput();
+        $previousLocale = App::getLocale();
+        App::setLocale('ar');
 
         try {
             $result = (new \ReflectionFunction($callback))->getNumberOfParameters() >= 2
@@ -67,6 +70,8 @@ class CronJobLogger
             $output = trim($buffer->fetch());
             $this->finishFailed($log, $e, $output !== '' ? $output : null);
             throw $e;
+        } finally {
+            App::setLocale($previousLocale);
         }
     }
 

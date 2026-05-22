@@ -9,9 +9,9 @@ class SetLocale
 {
     public function handle(Request $request, Closure $next)
     {
-        $lang = $request->header('lang', 'en'); // default to English
-        if (!in_array($lang, ['en', 'ar'])) {
-            $lang = 'en'; // fallback
+        $lang = $request->header('lang', config('app.locale', 'ar'));
+        if (! in_array($lang, ['en', 'ar'], true)) {
+            $lang = config('app.locale', 'ar');
         }
         App::setLocale($lang);
         return $next($request);
