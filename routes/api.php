@@ -399,6 +399,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Debts','refresh.to
    // debt ledger (Konnash-style account book)
    Route::get('/debt-ledger/summary', [DebtLedger::class, 'summary']);
    Route::get('/debt-ledger/people', [DebtLedger::class, 'people']);
+   Route::get('/debt-ledger/people-picker', [DebtLedger::class, 'peoplePicker']);
    Route::get('/debt-ledger/person', [DebtLedger::class, 'person']);
    Route::post('/debt-ledger/person/meta', [DebtLedger::class, 'updatePersonMeta']);
    Route::post('/debt-ledger/person/share-link', [DebtLedger::class, 'createPersonShareLink']);

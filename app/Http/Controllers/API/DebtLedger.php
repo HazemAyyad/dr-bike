@@ -70,6 +70,37 @@ class DebtLedger extends Controller
         }
     }
 
+    public function peoplePicker(Request $request)
+    {
+        try {
+            $request->validate([
+                'type' => 'required|in:customers,sellers',
+                'search' => 'nullable|string',
+            ]);
+
+            $people = $this->ledger->getPeoplePickerList(
+                $request->type,
+                $request->search
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'people' => $people,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function person(Request $request)
     {
         try {

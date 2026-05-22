@@ -6,7 +6,9 @@ use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\DebtTransaction;
+use App\Models\IncomingCheck;
 use App\Models\InstantSale;
+use App\Models\OutgoingCheck;
 use App\Models\Seller;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -362,7 +364,7 @@ class DebtLedgerService
     }
 
     /**
-     * Record instant sale on the person's ledger (بيع فوري = أخذت).
+     * Record unpaid portion of instant sale on the ledger (أعطيت = باقي الفاتورة بعد النقدي).
      */
     public function syncInstantSaleToLedger(InstantSale $sale): ?DebtTransaction
     {
@@ -370,39 +372,171 @@ class DebtLedgerService
             return null;
         }
 
-        if (DebtTransaction::query()
-            ->where('source', 'instant_sale')
-            ->where('source_id', $sale->id)
-            ->whereNull('archived_at')
-            ->whereNull('deleted_at')
-            ->exists()) {
-            return null;
-        }
-
-        $amount = (float) $sale->total_cost;
-        if ($amount <= 0) {
-            return null;
-        }
-
         [$customerId, $sellerId] = $this->resolveInstantSalePersonIds($sale);
-        if (!$customerId && !$sellerId) {
+        if (! $customerId && ! $sellerId) {
+            $this->deleteSourceLedger('instant_sale', $sale->id);
+
             return null;
         }
 
+        $debtAmount = $this->instantSaleDebtAmount($sale);
         $productName = $sale->product?->nameAr ?? $sale->offerPackage?->name ?? 'منتج';
         $note = trim('بيع فوري #'.$sale->id.' — '.$productName.($sale->notes ? ' — '.$sale->notes : ''));
 
-        return $this->createTransaction([
+        return $this->upsertSourceLedgerEntry(
+            'instant_sale',
+            $sale->id,
+            $customerId,
+            $sellerId,
+            'given',
+            $debtAmount,
+            $note,
+            $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d')
+        );
+    }
+
+    /**
+     * قبض شيك وارد (أخذت).
+     */
+    public function syncIncomingCheckReceiveToLedger(IncomingCheck $check): ?DebtTransaction
+    {
+        $customerId = $check->from_customer ? (int) $check->from_customer : null;
+        $sellerId = $check->from_seller ? (int) $check->from_seller : null;
+
+        if (! $customerId && ! $sellerId) {
+            return null;
+        }
+
+        $amount = $this->checkAmountInShekel((float) $check->total, (string) $check->currency);
+        $note = trim('شيك وارد #'.$check->id.' — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
+
+        return $this->upsertSourceLedgerEntry(
+            'incoming_check',
+            $check->id,
+            $customerId,
+            $sellerId,
+            'taken',
+            $amount,
+            $note,
+            $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d')
+        );
+    }
+
+    /**
+     * شيك صادر بعد التصرف (أعطيت).
+     */
+    public function syncOutgoingCheckToLedger(OutgoingCheck $check): ?DebtTransaction
+    {
+        if (! $this->isOutgoingCheckDisposed($check->status)) {
+            return null;
+        }
+
+        $customerId = $check->customer_id ? (int) $check->customer_id : null;
+        $sellerId = $check->seller_id ? (int) $check->seller_id : null;
+
+        if (! $customerId && ! $sellerId) {
+            return null;
+        }
+
+        $amount = $this->checkAmountInShekel((float) $check->total, (string) $check->currency);
+        $note = trim('شيك صادر #'.$check->id.' — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
+
+        return $this->upsertSourceLedgerEntry(
+            'outgoing_check',
+            $check->id,
+            $customerId,
+            $sellerId,
+            'given',
+            $amount,
+            $note,
+            $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d')
+        );
+    }
+
+    public function deleteSourceLedger(string $source, int $sourceId): void
+    {
+        $transactions = DebtTransaction::query()
+            ->active()
+            ->where('source', $source)
+            ->where('source_id', $sourceId)
+            ->get();
+
+        foreach ($transactions as $transaction) {
+            $this->deleteTransaction($transaction);
+        }
+    }
+
+    private function upsertSourceLedgerEntry(
+        string $source,
+        int $sourceId,
+        ?int $customerId,
+        ?int $sellerId,
+        string $type,
+        float $amount,
+        string $note,
+        string $transactionDate
+    ): ?DebtTransaction {
+        $amount = round(max(0, $amount), 2);
+
+        $existing = DebtTransaction::query()
+            ->where('source', $source)
+            ->where('source_id', $sourceId)
+            ->whereNull('archived_at')
+            ->whereNull('deleted_at')
+            ->first();
+
+        if ($amount <= 0.0001) {
+            if ($existing) {
+                $this->deleteTransaction($existing);
+            }
+
+            return null;
+        }
+
+        $payload = [
             'customer_id' => $customerId,
             'seller_id' => $sellerId,
-            'type' => 'taken',
+            'type' => $type,
             'amount' => $amount,
-            'transaction_date' => $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            'transaction_date' => $transactionDate,
             'note' => $note,
             'box_id' => null,
-            'source' => 'instant_sale',
-            'source_id' => $sale->id,
-        ], auth()->id(), applyBox: false);
+            'source' => $source,
+            'source_id' => $sourceId,
+        ];
+
+        if ($existing) {
+            return $this->updateTransaction($existing, $payload);
+        }
+
+        return $this->createTransaction($payload, auth()->id(), applyBox: false);
+    }
+
+    private function instantSaleCashPaid(InstantSale $sale): float
+    {
+        if (! $sale->payment_box_id) {
+            return 0.0;
+        }
+
+        return max(0, (float) ($sale->payment_box_value ?? 0));
+    }
+
+    private function instantSaleDebtAmount(InstantSale $sale): float
+    {
+        $total = (float) $sale->total_cost;
+        $cash = $this->instantSaleCashPaid($sale);
+
+        return max(0, round($total - $cash, 2));
+    }
+
+    private function checkAmountInShekel(float $total, string $currency): float
+    {
+        return (new CurrencyService())->convertToShekel($total, $currency);
+    }
+
+    private function isOutgoingCheckDisposed(?string $status): bool
+    {
+        return in_array($status, ['cashed_to_person', 'cashed_from_box', 'cashed'], true);
     }
 
     /**
@@ -410,15 +544,7 @@ class DebtLedgerService
      */
     public function deleteInstantSaleLedger(InstantSale $sale): void
     {
-        $transactions = DebtTransaction::query()
-            ->active()
-            ->where('source', 'instant_sale')
-            ->where('source_id', $sale->id)
-            ->get();
-
-        foreach ($transactions as $transaction) {
-            $this->deleteTransaction($transaction);
-        }
+        $this->deleteSourceLedger('instant_sale', $sale->id);
     }
 
     /**
@@ -564,6 +690,51 @@ class DebtLedgerService
         return $this->formatPersonInfo($person, $type);
     }
 
+    private function formatPersonImageUrl(object $person, bool $isCustomer): ?string
+    {
+        $images = $person->ID_image ?? null;
+        if (! is_array($images) || count($images) === 0) {
+            return null;
+        }
+
+        $first = $images[0] ?? null;
+        if (! is_string($first) || trim($first) === '') {
+            return null;
+        }
+
+        $folder = $isCustomer ? 'customer' : 'seller';
+
+        return 'public/'.$folder.'Images/ID/'.$first;
+    }
+
+    /**
+     * كل العملاء/الموردين النشطين لاختيار إضافة دين (بدون شرط وجود معاملات).
+     */
+    public function getPeoplePickerList(string $type, ?string $search = null): array
+    {
+        $isCustomers = $type === 'customers';
+        $modelClass = $isCustomers ? Customer::class : Seller::class;
+
+        $peopleQuery = $modelClass::query()->where('is_canceled', false);
+
+        if ($search) {
+            $peopleQuery->where(function ($q) use ($search) {
+                $q->where('name', 'like', '%'.$search.'%')
+                    ->orWhere('phone', 'like', '%'.$search.'%');
+            });
+        }
+
+        return $peopleQuery->orderBy('name')->get()->map(function ($person) use ($isCustomers) {
+            return [
+                'id' => $person->id,
+                'name' => $person->name,
+                'phone' => $person->phone,
+                'image_url' => $this->formatPersonImageUrl($person, $isCustomers),
+                'person_type' => $isCustomers ? 'customer' : 'seller',
+            ];
+        })->values()->all();
+    }
+
     public function getPeopleList(string $type, ?string $search = null, ?string $startDate = null, ?string $endDate = null): array
     {
         $isCustomers = $type === 'customers';
@@ -607,6 +778,8 @@ class DebtLedgerService
                 'id' => $person->id,
                 'name' => $person->name,
                 'phone' => $person->phone,
+                'image_url' => $this->formatPersonImageUrl($person, $isCustomers),
+                'person_type' => $isCustomers ? 'customer' : 'seller',
                 'total_taken' => $taken,
                 'total_given' => $given,
                 'balance' => $taken - $given,

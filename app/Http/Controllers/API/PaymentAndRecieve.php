@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\Debt;
@@ -214,6 +215,8 @@ class PaymentAndRecieve extends Controller
                         "تمت إضافة شيك صادر بقيمة {$check->total}  {$check->currency}".' '.'والتصرف فيه لصالح'.$personName,
                         'outgoing_checks'
                     );
+
+                    app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
                 } else {
                     $currencyService = new \App\Services\CurrencyService();
 
@@ -252,6 +255,8 @@ class PaymentAndRecieve extends Controller
                         "تمت إضافة شيك وارد بقيمة {$check->total} {$check->currency}"." "."من الشخص"." ".$personName,
                         'incoming_checks'
                     );
+
+                    app(DebtLedgerService::class)->syncIncomingCheckReceiveToLedger($check->fresh());
                 }
             }
         }

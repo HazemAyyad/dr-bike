@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\Debt;
@@ -227,6 +228,9 @@ class OutgoingChecks extends Controller
             $amountInShekel = $currencyService->convertToShekel($check->total, $check->currency);
  
             $check->update(['status'=>$status]);
+            $check = $check->fresh();
+
+            app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check);
 
             if($status==='returned'){
                 if($check->customer_id || $check->seller_id){
@@ -374,6 +378,9 @@ class OutgoingChecks extends Controller
             }
             $check->status = 'cashed_to_person';
             $check->save();
+
+            app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
+
             Logs::createLog(
             'التصرف في شيك',
             'تم التصرف في الشيك الصادر بقيمة ' .' '. $check->total .' '.$check->currency.' '. ' لصالح ' . $personName,
@@ -653,6 +660,9 @@ class OutgoingChecks extends Controller
 
         $box->update(['total'=> $box->total - $outgoingCheck->total]);
         $outgoingCheck->update(['status'=>'cashed_from_box']);
+
+        app(DebtLedgerService::class)->syncOutgoingCheckToLedger($outgoingCheck->fresh());
+
         BoxLogs::createBoxLog($box,'تم صرف شيك صادر برقم '.' '.($outgoingCheck->check_id??'غير معروف').' '.'من الصندوق'
         ,'minus',$outgoingCheck->total);
 

@@ -1303,6 +1303,13 @@ public function store(Request $request)
                     collect($data)->except(['instant_sale_id'])->toArray(),
                     $this->auditFieldsForUpdate()
                 ));
+
+                if (! $instantSale->parent_id) {
+                    app(DebtLedgerService::class)->syncInstantSaleToLedger(
+                        $instantSale->fresh(['product', 'offerPackage'])
+                    );
+                }
+
                 Logs::createLog('تعديل بيع فوري', 'تم تعديل بيع فوري #'.$instantSale->id, 'instant_sales');
             });
 
