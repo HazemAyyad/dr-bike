@@ -229,21 +229,70 @@ class DebtLedgerService
 
     public function getGlobalSummary(): array
     {
-        $customerQuery = DebtTransaction::query()->active()->whereNotNull('customer_id')->whereNull('seller_id');
-        $sellerQuery = DebtTransaction::query()->active()->whereNotNull('seller_id')->whereNull('customer_id');
-
-        $customerTaken = (float) (clone $customerQuery)->where('type', 'taken')->sum('amount');
-        $customerGiven = (float) (clone $customerQuery)->where('type', 'given')->sum('amount');
-        $sellerTaken = (float) (clone $sellerQuery)->where('type', 'taken')->sum('amount');
-        $sellerGiven = (float) (clone $sellerQuery)->where('type', 'given')->sum('amount');
+        $customerTotals = $this->summarizeLedgerBalancesForPeople(true);
+        $sellerTotals = $this->summarizeLedgerBalancesForPeople(false);
 
         return [
-            'total_taken_customers' => $customerTaken,
-            'total_given_customers' => $customerGiven,
-            'balance_customers' => $customerTaken - $customerGiven,
-            'total_taken_sellers' => $sellerTaken,
-            'total_given_sellers' => $sellerGiven,
-            'balance_sellers' => $sellerTaken - $sellerGiven,
+            // مجاميع أرصدة العملاء/الموردين (موجب = لنا، سالب = علينا)
+            'total_taken_customers' => $customerTotals['receivable'],
+            'total_given_customers' => $customerTotals['payable'],
+            'balance_customers' => $customerTotals['receivable'] - $customerTotals['payable'],
+            'customers_count' => $customerTotals['count'],
+            'total_taken_sellers' => $sellerTotals['receivable'],
+            'total_given_sellers' => $sellerTotals['payable'],
+            'balance_sellers' => $sellerTotals['receivable'] - $sellerTotals['payable'],
+            'sellers_count' => $sellerTotals['count'],
+            'receivable_customers' => $customerTotals['receivable'],
+            'payable_customers' => $customerTotals['payable'],
+            'receivable_sellers' => $sellerTotals['receivable'],
+            'payable_sellers' => $sellerTotals['payable'],
+        ];
+    }
+
+    /**
+     * @return array{receivable: float, payable: float, count: int}
+     */
+    private function summarizeLedgerBalancesForPeople(bool $customers): array
+    {
+        $isCustomers = $customers;
+        $modelClass = $isCustomers ? Customer::class : Seller::class;
+        $foreignKey = $isCustomers ? 'customer_id' : 'seller_id';
+
+        $people = $modelClass::query()
+            ->where('is_canceled', false)
+            ->orderBy('name')
+            ->get(['id']);
+
+        $receivable = 0.0;
+        $payable = 0.0;
+        $count = 0;
+
+        foreach ($people as $person) {
+            $txQuery = DebtTransaction::query()
+                ->active()
+                ->where($foreignKey, $person->id)
+                ->whereNull($isCustomers ? 'seller_id' : 'customer_id');
+
+            if ((clone $txQuery)->count() === 0) {
+                continue;
+            }
+
+            $taken = (float) (clone $txQuery)->where('type', 'taken')->sum('amount');
+            $given = (float) (clone $txQuery)->where('type', 'given')->sum('amount');
+            $balance = $taken - $given;
+
+            $count++;
+            if ($balance > 0) {
+                $receivable += $balance;
+            } elseif ($balance < 0) {
+                $payable += abs($balance);
+            }
+        }
+
+        return [
+            'receivable' => $receivable,
+            'payable' => $payable,
+            'count' => $count,
         ];
     }
 
@@ -543,7 +592,7 @@ class DebtLedgerService
 
             $transactionsCount = (clone $txQuery)->count();
 
-            if ($transactionsCount === 0 && ($startDate || $endDate)) {
+            if ($transactionsCount === 0) {
                 continue;
             }
 
