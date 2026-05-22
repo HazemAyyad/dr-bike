@@ -399,10 +399,18 @@ class DebtLedgerService
     {
         $currency = $this->normalizeCurrency($transaction->currency);
 
+        $source = $transaction->source ?? 'manual';
+
         return [
             'id' => $transaction->id,
             'type' => $transaction->type,
             'type_label' => $transaction->type === 'taken' ? 'أخذت' : 'أعطيت',
+            'source_label' => match ($source) {
+                'instant_sale' => 'بيع فوري',
+                'incoming_check' => 'شيك وارد',
+                'outgoing_check' => 'شيك صادر',
+                default => null,
+            },
             'amount' => (float) $transaction->amount,
             'currency' => $currency,
             'balance_before' => $this->balanceBefore($transaction),
@@ -499,8 +507,7 @@ class DebtLedgerService
             : 'شيكل';
 
         $debtAmount = $this->instantSaleDebtAmount($sale);
-        $productName = $sale->product?->nameAr ?? $sale->offerPackage?->name ?? 'منتج';
-        $note = trim('بيع فوري #'.$sale->id.' — '.$productName.($sale->notes ? ' — '.$sale->notes : ''));
+        $note = 'بيع فوري #'.$sale->id;
 
         return $this->upsertSourceLedgerEntry(
             'instant_sale',
@@ -933,11 +940,17 @@ class DebtLedgerService
         })->values()->all();
     }
 
-    public function getPeopleList(string $type, ?string $search = null, ?string $startDate = null, ?string $endDate = null): array
-    {
+    public function getPeopleList(
+        string $type,
+        ?string $search = null,
+        ?string $startDate = null,
+        ?string $endDate = null,
+        ?string $currency = null
+    ): array {
         $isCustomers = $type === 'customers';
         $modelClass = $isCustomers ? Customer::class : Seller::class;
         $foreignKey = $isCustomers ? 'customer_id' : 'seller_id';
+        $filterCurrency = $currency ? $this->normalizeCurrency($currency) : null;
 
         $peopleQuery = $modelClass::query()->where('is_canceled', false);
 
@@ -959,32 +972,43 @@ class DebtLedgerService
 
             $this->applyDateFilter($txQuery, $startDate, $endDate);
 
-            $transactionsCount = (clone $txQuery)->count();
-
-            if ($transactionsCount === 0) {
+            if ((clone $txQuery)->count() === 0) {
                 continue;
             }
 
             $balancesByCurrency = [];
-            foreach (self::CURRENCIES as $currency) {
-                $currencyQuery = (clone $txQuery)->where('currency', $currency);
+            foreach (self::CURRENCIES as $currencyCode) {
+                $currencyQuery = (clone $txQuery)->where('currency', $currencyCode);
                 $takenCur = (float) (clone $currencyQuery)->where('type', 'taken')->sum('amount');
                 $givenCur = (float) (clone $currencyQuery)->where('type', 'given')->sum('amount');
-                $balancesByCurrency[$currency] = [
+                $balancesByCurrency[$currencyCode] = [
                     'total_taken' => $takenCur,
                     'total_given' => $givenCur,
                     'balance' => $takenCur - $givenCur,
                 ];
             }
 
-            $taken = $balancesByCurrency['شيكل']['total_taken'];
-            $given = $balancesByCurrency['شيكل']['total_given'];
-            $balance = $balancesByCurrency['شيكل']['balance'];
+            $displayCurrency = $filterCurrency ?? 'شيكل';
+            if ($filterCurrency && ! (clone $txQuery)->where('currency', $filterCurrency)->exists()) {
+                continue;
+            }
 
-            $lastTransaction = (clone $txQuery)
+            $taken = $balancesByCurrency[$displayCurrency]['total_taken'];
+            $given = $balancesByCurrency[$displayCurrency]['total_given'];
+            $balance = $balancesByCurrency[$displayCurrency]['balance'];
+
+            $lastTxQuery = $filterCurrency
+                ? (clone $txQuery)->where('currency', $filterCurrency)
+                : clone $txQuery;
+
+            $lastTransaction = $lastTxQuery
                 ->orderByDesc('transaction_date')
                 ->orderByDesc('id')
                 ->first();
+
+            $transactionsCount = $filterCurrency
+                ? (clone $txQuery)->where('currency', $filterCurrency)->count()
+                : (clone $txQuery)->count();
 
             $result[] = [
                 'id' => $person->id,
