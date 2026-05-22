@@ -202,6 +202,24 @@ class InstantSales extends Controller
             'payment_box_id' => $sale->payment_box_id,
             'payment_box_name' => $boxName,
             'payment_box_value' => $sale->payment_box_value,
+            ...$this->instantSalePaymentAmounts($sale),
+        ];
+    }
+
+    /**
+     * @return array{paid_amount: float, remaining_amount: float}
+     */
+    private function instantSalePaymentAmounts(InstantSale $sale): array
+    {
+        $total = round((float) $sale->total_cost, 2);
+        $paid = round((float) ($sale->payment_box_value ?? 0), 2);
+        if ($paid > $total) {
+            $paid = $total;
+        }
+
+        return [
+            'paid_amount' => $paid,
+            'remaining_amount' => max(0, round($total - $paid, 2)),
         ];
     }
 
@@ -1149,6 +1167,7 @@ public function store(Request $request)
                     'payment_box_id' => $sale->payment_box_id,
                     'payment_box_name' => $sale->payment_box_name,
                     'payment_box_value' => $sale->payment_box_value,
+                    ...$this->instantSalePaymentAmounts($sale),
                 'sub_products' => $sale->subProducts->map(function ($sub) {
                     return [
                         'id' => $sub->id,
@@ -1236,6 +1255,7 @@ public function store(Request $request)
                 'quantity' => 'required|numeric|min:1',
             'total_cost' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
+            'payment_box_value' => 'nullable|numeric|min:0',
             ]);
 
             DB::transaction(function () use ($request, $data) {
@@ -1270,33 +1290,42 @@ public function store(Request $request)
                     $product->save();
                 }
 
-                $oldTotal = (float) $instantSale->total_cost;
                 $newTotal = (float) $data['total_cost'];
-                $totalDelta = $newTotal - $oldTotal;
+                $oldPaid = (float) ($instantSale->payment_box_value ?? 0);
+                $newPaid = $request->has('payment_box_value')
+                    ? max(0, (float) $request->input('payment_box_value'))
+                    : $oldPaid;
 
-                if (abs($totalDelta) > 0.0001 && $instantSale->payment_box_id) {
+                if ($newPaid > $newTotal + 0.0001) {
+                    throw ValidationException::withMessages([
+                        'payment_box_value' => ['المبلغ المدفوع لا يمكن أن يتجاوز إجمالي الفاتورة'],
+                    ]);
+                }
+
+                $paidDelta = $newPaid - $oldPaid;
+                if (abs($paidDelta) > 0.0001 && $instantSale->payment_box_id) {
                     $box = Box::lockForUpdate()->findOrFail($instantSale->payment_box_id);
 
-                    if ($totalDelta < 0 && (float) $box->total < abs($totalDelta)) {
+                    if ($paidDelta < 0 && (float) $box->total < abs($paidDelta)) {
                         throw ValidationException::withMessages([
-                            'total_cost' => [__('messages.box_out_of_money')],
+                            'payment_box_value' => [__('messages.box_out_of_money')],
                         ]);
                     }
 
-                    $box->total = (float) $box->total + $totalDelta;
+                    $box->total = (float) $box->total + $paidDelta;
                     $box->save();
-                    $editAction = $totalDelta >= 0 ? 'edit_add' : 'edit_minus';
+                    $editAction = $paidDelta >= 0 ? 'edit_add' : 'edit_minus';
                     BoxLogs::createBoxLog(
                         $box,
-                        $totalDelta >= 0 ? 'إضافة — تعديل بيع فوري' : 'سحب — تعديل بيع فوري',
-                        $totalDelta >= 0 ? 'add' : 'minus',
-                        $totalDelta,
+                        $paidDelta >= 0 ? 'إضافة — تعديل بيع فوري' : 'سحب — تعديل بيع فوري',
+                        $paidDelta >= 0 ? 'add' : 'minus',
+                        $paidDelta,
                         $this->instantSaleBoxLogNote($instantSale, $editAction)
                     );
-                    $data['payment_box_value'] = max(
-                        0,
-                        (float) ($instantSale->payment_box_value ?? 0) + $totalDelta
-                    );
+                }
+
+                if ($request->has('payment_box_value') || $instantSale->payment_box_id) {
+                    $data['payment_box_value'] = $newPaid;
                 }
 
                 $instantSale->update(array_merge(
@@ -1471,8 +1500,7 @@ public function store(Request $request)
                 'total_cost' => $totalCost,
                 'discount' => $discount,
                 'tax' => 0,
-                'paid_amount' => $totalCost,
-                'remaining_amount' => 0,
+                ...$this->instantSalePaymentAmounts($sale),
                 'sale_status' => $sale->type ?? 'normal',
                 'payment_method' => $sale->project?->payment_method,
                 'notes' => $sale->notes,
