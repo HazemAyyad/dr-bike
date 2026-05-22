@@ -12,6 +12,7 @@ class DebtTransaction extends Model
         'seller_id',
         'type',
         'amount',
+        'currency',
         'balance_after',
         'note',
         'receipt_images',

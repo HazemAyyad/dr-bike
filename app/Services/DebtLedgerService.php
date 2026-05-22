@@ -16,6 +16,40 @@ use Illuminate\Support\Facades\DB;
 
 class DebtLedgerService
 {
+    public const CURRENCIES = ['شيكل', 'دولار', 'دينار'];
+
+    public function __construct(private ?DebtLedgerActivityLogger $activityLogger = null)
+    {
+    }
+
+    private function activity(): DebtLedgerActivityLogger
+    {
+        return $this->activityLogger ?? app(DebtLedgerActivityLogger::class);
+    }
+
+    public function normalizeCurrency(?string $currency): string
+    {
+        $value = trim((string) $currency);
+
+        return in_array($value, self::CURRENCIES, true) ? $value : 'شيكل';
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function getTransactionActivity(int $transactionId): array
+    {
+        return $this->activity()->getTransactionActivity($transactionId);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function getPersonActivity(?int $customerId, ?int $sellerId): array
+    {
+        return $this->activity()->getPersonActivity($customerId, $sellerId);
+    }
+
     public function validatePerson(?int $customerId, ?int $sellerId): ?string
     {
         if (!$customerId && !$sellerId) {
@@ -157,6 +191,14 @@ class DebtLedgerService
             }
 
             $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+
+            $this->activity()->logForTransaction(
+                $transaction,
+                'transaction_restored',
+                'استعادة معاملة دفتر ديون',
+                'استعادة المعاملة #'.$transaction->id.' من الأرشيف',
+                ['snapshot' => $this->activity()->transactionSnapshot($transaction)]
+            );
         });
     }
 
@@ -204,9 +246,12 @@ class DebtLedgerService
         };
     }
 
-    public function getPreviousBalance(?int $customerId, ?int $sellerId): float
+    public function getPreviousBalance(?int $customerId, ?int $sellerId, ?string $currency = 'شيكل'): float
     {
+        $currency = $this->normalizeCurrency($currency);
+
         $latest = $this->baseQuery($customerId, $sellerId)
+            ->where('currency', $currency)
             ->orderByDesc('transaction_date')
             ->orderByDesc('id')
             ->value('balance_after');
@@ -214,10 +259,33 @@ class DebtLedgerService
         return (float) ($latest ?? 0);
     }
 
-    public function calculateTotals(?int $customerId, ?int $sellerId, ?string $startDate = null, ?string $endDate = null): array
+    /**
+     * @return array<string, float>
+     */
+    public function calculateBalancesByCurrency(?int $customerId, ?int $sellerId, ?string $startDate = null, ?string $endDate = null): array
     {
+        $balances = [];
+        foreach (self::CURRENCIES as $currency) {
+            $totals = $this->calculateTotals($customerId, $sellerId, $startDate, $endDate, $currency);
+            $balances[$currency] = (float) $totals['balance'];
+        }
+
+        return $balances;
+    }
+
+    public function calculateTotals(
+        ?int $customerId,
+        ?int $sellerId,
+        ?string $startDate = null,
+        ?string $endDate = null,
+        ?string $currency = null
+    ): array {
         $query = $this->baseQuery($customerId, $sellerId);
         $this->applyDateFilter($query, $startDate, $endDate);
+
+        if ($currency !== null) {
+            $query->where('currency', $this->normalizeCurrency($currency));
+        }
 
         $taken = (float) (clone $query)->where('type', 'taken')->sum('amount');
         $given = (float) (clone $query)->where('type', 'given')->sum('amount');
@@ -235,7 +303,7 @@ class DebtLedgerService
         $sellerTotals = $this->summarizeLedgerBalancesForPeople(false);
 
         return [
-            // مجاميع أرصدة العملاء/الموردين (موجب = لنا، سالب = علينا)
+            // مجاميع أرصدة العملاء/الموردين (موجب = لنا، سالب = علينا) — شيكل للعرض الرئيسي
             'total_taken_customers' => $customerTotals['receivable'],
             'total_given_customers' => $customerTotals['payable'],
             'balance_customers' => $customerTotals['receivable'] - $customerTotals['payable'],
@@ -248,6 +316,8 @@ class DebtLedgerService
             'payable_customers' => $customerTotals['payable'],
             'receivable_sellers' => $sellerTotals['receivable'],
             'payable_sellers' => $sellerTotals['payable'],
+            'customers_by_currency' => $customerTotals['by_currency'] ?? [],
+            'sellers_by_currency' => $sellerTotals['by_currency'] ?? [],
         ];
     }
 
@@ -265,8 +335,10 @@ class DebtLedgerService
             ->orderBy('name')
             ->get(['id']);
 
-        $receivable = 0.0;
-        $payable = 0.0;
+        $byCurrency = [];
+        foreach (self::CURRENCIES as $currency) {
+            $byCurrency[$currency] = ['receivable' => 0.0, 'payable' => 0.0];
+        }
         $count = 0;
 
         foreach ($people as $person) {
@@ -279,22 +351,37 @@ class DebtLedgerService
                 continue;
             }
 
-            $taken = (float) (clone $txQuery)->where('type', 'taken')->sum('amount');
-            $given = (float) (clone $txQuery)->where('type', 'given')->sum('amount');
-            $balance = $taken - $given;
+            $hasBalance = false;
+            foreach (self::CURRENCIES as $currency) {
+                $currencyQuery = (clone $txQuery)->where('currency', $currency);
+                $taken = (float) (clone $currencyQuery)->where('type', 'taken')->sum('amount');
+                $given = (float) (clone $currencyQuery)->where('type', 'given')->sum('amount');
+                $balance = $taken - $given;
 
-            $count++;
-            if ($balance > 0) {
-                $receivable += $balance;
-            } elseif ($balance < 0) {
-                $payable += abs($balance);
+                if (abs($balance) <= 0.0001) {
+                    continue;
+                }
+
+                $hasBalance = true;
+                if ($balance > 0) {
+                    $byCurrency[$currency]['receivable'] += $balance;
+                } else {
+                    $byCurrency[$currency]['payable'] += abs($balance);
+                }
+            }
+
+            if ($hasBalance) {
+                $count++;
             }
         }
 
+        $shekel = $byCurrency['شيكل'];
+
         return [
-            'receivable' => $receivable,
-            'payable' => $payable,
+            'receivable' => $shekel['receivable'],
+            'payable' => $shekel['payable'],
             'count' => $count,
+            'by_currency' => $byCurrency,
         ];
     }
 
@@ -310,11 +397,14 @@ class DebtLedgerService
 
     public function formatTransaction(DebtTransaction $transaction): array
     {
+        $currency = $this->normalizeCurrency($transaction->currency);
+
         return [
             'id' => $transaction->id,
             'type' => $transaction->type,
             'type_label' => $transaction->type === 'taken' ? 'أخذت' : 'أعطيت',
             'amount' => (float) $transaction->amount,
+            'currency' => $currency,
             'balance_before' => $this->balanceBefore($transaction),
             'balance_after' => (float) $transaction->balance_after,
             'note' => $transaction->note,
@@ -330,10 +420,19 @@ class DebtLedgerService
         ];
     }
 
-    public function createTransaction(array $data, ?int $userId = null, bool $applyBox = true): DebtTransaction
-    {
-        return DB::transaction(function () use ($data, $userId, $applyBox) {
-            $previousBalance = $this->getPreviousBalance($data['customer_id'] ?? null, $data['seller_id'] ?? null);
+    public function createTransaction(
+        array $data,
+        ?int $userId = null,
+        bool $applyBox = true,
+        bool $logActivity = true
+    ): DebtTransaction {
+        return DB::transaction(function () use ($data, $userId, $applyBox, $logActivity) {
+            $currency = $this->normalizeCurrency($data['currency'] ?? 'شيكل');
+            $previousBalance = $this->getPreviousBalance(
+                $data['customer_id'] ?? null,
+                $data['seller_id'] ?? null,
+                $currency
+            );
             $amount = (float) $data['amount'];
 
             $balanceAfter = $data['type'] === 'taken'
@@ -345,6 +444,7 @@ class DebtLedgerService
                 'seller_id' => $data['seller_id'] ?? null,
                 'type' => $data['type'],
                 'amount' => $amount,
+                'currency' => $currency,
                 'balance_after' => $balanceAfter,
                 'note' => $data['note'] ?? null,
                 'receipt_images' => $data['receipt_images'] ?? null,
@@ -355,11 +455,25 @@ class DebtLedgerService
                 'created_by' => $userId,
             ]);
 
-            if ($applyBox && !empty($data['box_id'])) {
+            if ($applyBox && ! empty($data['box_id'])) {
                 $this->applyBoxMovement($transaction, (int) $data['box_id']);
             }
 
-            return $transaction->fresh(['customer', 'seller']);
+            $transaction = $transaction->fresh(['customer', 'seller']);
+
+            if ($logActivity) {
+                $typeLabel = $transaction->type === 'taken' ? 'أخذت' : 'أعطيت';
+                $person = $this->activity()->personLabel($transaction->customer_id, $transaction->seller_id);
+                $this->activity()->logForTransaction(
+                    $transaction,
+                    'transaction_created',
+                    'إنشاء معاملة دفتر ديون',
+                    "تسجيل {$typeLabel} بقيمة {$amount} {$currency} — {$person}",
+                    ['snapshot' => $this->activity()->transactionSnapshot($transaction)]
+                );
+            }
+
+            return $transaction;
         });
     }
 
@@ -379,6 +493,11 @@ class DebtLedgerService
             return null;
         }
 
+        $sale->loadMissing('paymentBox');
+        $currency = $sale->paymentBox
+            ? $this->normalizeCurrency($sale->paymentBox->currency)
+            : 'شيكل';
+
         $debtAmount = $this->instantSaleDebtAmount($sale);
         $productName = $sale->product?->nameAr ?? $sale->offerPackage?->name ?? 'منتج';
         $note = trim('بيع فوري #'.$sale->id.' — '.$productName.($sale->notes ? ' — '.$sale->notes : ''));
@@ -391,7 +510,8 @@ class DebtLedgerService
             'given',
             $debtAmount,
             $note,
-            $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d')
+            $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            $currency
         );
     }
 
@@ -407,7 +527,8 @@ class DebtLedgerService
             return null;
         }
 
-        $amount = $this->checkAmountInShekel((float) $check->total, (string) $check->currency);
+        $currency = $this->normalizeCurrency($check->currency);
+        $amount = (float) $check->total;
         $note = trim('شيك وارد #'.$check->id.' — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
 
         return $this->upsertSourceLedgerEntry(
@@ -418,7 +539,8 @@ class DebtLedgerService
             'taken',
             $amount,
             $note,
-            $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d')
+            $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            $currency
         );
     }
 
@@ -438,7 +560,8 @@ class DebtLedgerService
             return null;
         }
 
-        $amount = $this->checkAmountInShekel((float) $check->total, (string) $check->currency);
+        $currency = $this->normalizeCurrency($check->currency);
+        $amount = (float) $check->total;
         $note = trim('شيك صادر #'.$check->id.' — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
 
         return $this->upsertSourceLedgerEntry(
@@ -449,11 +572,12 @@ class DebtLedgerService
             'given',
             $amount,
             $note,
-            $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d')
+            $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            $currency
         );
     }
 
-    public function deleteSourceLedger(string $source, int $sourceId): void
+    public function deleteSourceLedger(string $source, int $sourceId, bool $logActivity = true): void
     {
         $transactions = DebtTransaction::query()
             ->active()
@@ -462,7 +586,16 @@ class DebtLedgerService
             ->get();
 
         foreach ($transactions as $transaction) {
-            $this->deleteTransaction($transaction);
+            if ($logActivity) {
+                $this->activity()->logForTransaction(
+                    $transaction,
+                    'auto_removed',
+                    'إزالة قيد دفتر ديون تلقائي',
+                    'إزالة معاملة مرتبطة بـ '.$source.' #'.$sourceId,
+                    ['snapshot' => $this->activity()->transactionSnapshot($transaction)]
+                );
+            }
+            $this->deleteTransaction($transaction, logActivity: false);
         }
     }
 
@@ -474,7 +607,8 @@ class DebtLedgerService
         string $type,
         float $amount,
         string $note,
-        string $transactionDate
+        string $transactionDate,
+        string $currency = 'شيكل'
     ): ?DebtTransaction {
         $amount = round(max(0, $amount), 2);
 
@@ -487,17 +621,26 @@ class DebtLedgerService
 
         if ($amount <= 0.0001) {
             if ($existing) {
-                $this->deleteTransaction($existing);
+                $this->activity()->logForTransaction(
+                    $existing,
+                    'auto_removed',
+                    'إزالة قيد دفتر ديون تلقائي',
+                    'إزالة معاملة مرتبطة بـ '.$source.' #'.$sourceId.' (لا مبلغ دين)',
+                    ['snapshot' => $this->activity()->transactionSnapshot($existing)]
+                );
+                $this->deleteTransaction($existing, logActivity: false);
             }
 
             return null;
         }
 
+        $currency = $this->normalizeCurrency($currency);
         $payload = [
             'customer_id' => $customerId,
             'seller_id' => $sellerId,
             'type' => $type,
             'amount' => $amount,
+            'currency' => $currency,
             'transaction_date' => $transactionDate,
             'note' => $note,
             'box_id' => null,
@@ -506,10 +649,29 @@ class DebtLedgerService
         ];
 
         if ($existing) {
-            return $this->updateTransaction($existing, $payload);
+            $before = $this->activity()->transactionSnapshot($existing);
+            $updated = $this->updateTransaction($existing, $payload, logActivity: false);
+            $this->activity()->logForTransaction(
+                $updated,
+                'auto_updated',
+                'تحديث قيد دفتر ديون تلقائي',
+                'تحديث معاملة مرتبطة بـ '.$source.' #'.$sourceId,
+                ['before' => $before, 'after' => $this->activity()->transactionSnapshot($updated)]
+            );
+
+            return $updated;
         }
 
-        return $this->createTransaction($payload, auth()->id(), applyBox: false);
+        $created = $this->createTransaction($payload, auth()->id(), applyBox: false, logActivity: false);
+        $this->activity()->logForTransaction(
+            $created,
+            'auto_created',
+            'إضافة قيد دفتر ديون تلقائي',
+            'إضافة معاملة مرتبطة بـ '.$source.' #'.$sourceId,
+            ['snapshot' => $this->activity()->transactionSnapshot($created)]
+        );
+
+        return $created;
     }
 
     private function instantSaleCashPaid(InstantSale $sale): float
@@ -527,11 +689,6 @@ class DebtLedgerService
         $cash = $this->instantSaleCashPaid($sale);
 
         return max(0, round($total - $cash, 2));
-    }
-
-    private function checkAmountInShekel(float $total, string $currency): float
-    {
-        return (new CurrencyService())->convertToShekel($total, $currency);
     }
 
     private function isOutgoingCheckDisposed(?string $status): bool
@@ -556,12 +713,27 @@ class DebtLedgerService
             return [null, (int) $sale->seller_id];
         }
 
-        if (in_array($sale->buyer_type, ['seller'], true) && $sale->buyer_id) {
-            return [null, (int) $sale->buyer_id];
-        }
+        if ($sale->buyer_id) {
+            $customer = Customer::find($sale->buyer_id);
+            if ($customer) {
+                $type = strtolower(trim((string) ($customer->type ?? '')));
+                $traderTypes = ['trader', 'تاجر', 'seller', 'مورد', 'supplier'];
+                $isTrader = in_array($type, $traderTypes, true)
+                    || in_array($sale->buyer_type, ['trader', 'seller'], true);
 
-        if ($sale->buyer_type === 'customer' && $sale->buyer_id) {
-            return [(int) $sale->buyer_id, null];
+                if ($isTrader) {
+                    $seller = Seller::query()
+                        ->when($customer->phone, fn ($q) => $q->where('phone', $customer->phone))
+                        ->where('name', $customer->name)
+                        ->first();
+
+                    if ($seller) {
+                        return [null, (int) $seller->id];
+                    }
+                }
+
+                return [(int) $sale->buyer_id, null];
+            }
         }
 
         if (in_array($sale->buyer_type, ['trader', 'seller'], true)) {
@@ -570,26 +742,12 @@ class DebtLedgerService
                 ->where('name', $sale->buyer_name)
                 ->first();
             if ($seller) {
-                return [null, $seller->id];
+                return [null, (int) $seller->id];
             }
         }
 
-        if ($sale->buyer_id) {
-            $customer = Customer::find($sale->buyer_id);
-            if ($customer) {
-                $type = strtolower(trim((string) ($customer->type ?? '')));
-                $traderTypes = ['trader', 'تاجر', 'seller', 'مورد', 'supplier'];
-                if (in_array($type, $traderTypes, true)) {
-                    $seller = Seller::query()
-                        ->when($customer->phone, fn ($q) => $q->where('phone', $customer->phone))
-                        ->where('name', $customer->name)
-                        ->first();
-
-                    return [null, $seller?->id];
-                }
-
-                return [(int) $sale->buyer_id, null];
-            }
+        if ($sale->buyer_type === 'customer' && $sale->buyer_id) {
+            return [(int) $sale->buyer_id, null];
         }
 
         return [null, null];
@@ -599,8 +757,8 @@ class DebtLedgerService
     {
         $box = Box::findOrFail($boxId);
 
-        if ($box->currency !== 'شيكل') {
-            throw new \RuntimeException(__('messages.currency_shekel'));
+        if ($this->normalizeCurrency($box->currency) !== $this->normalizeCurrency($transaction->currency)) {
+            throw new \RuntimeException(__('messages.must_be_same_currency_check'));
         }
 
         $personName = $transaction->customer_id
@@ -683,6 +841,25 @@ class DebtLedgerService
         if ($payload !== []) {
             $person->update($payload);
             $person = $person->fresh();
+
+            $personName = $person->name ?? '';
+            $parts = [];
+            if ($touchNotes) {
+                $parts[] = 'تحديث ملاحظات الدفتر: '.($notes ?? '—');
+            }
+            if ($touchReminder) {
+                $parts[] = 'تحديث تذكير التحصيل: '.($collectionReminderAt ?? '—');
+            }
+
+            $this->activity()->log(
+                'person_meta_updated',
+                'تحديث بيانات شخص في دفتر الديون',
+                implode(' — ', $parts).' — '.$personName,
+                $customerId,
+                $sellerId,
+                null,
+                ['notes' => $notes, 'collection_reminder_at' => $collectionReminderAt]
+            );
         }
 
         $type = $customerId ? 'customer' : 'seller';
@@ -767,8 +944,22 @@ class DebtLedgerService
                 continue;
             }
 
-            $taken = (float) (clone $txQuery)->where('type', 'taken')->sum('amount');
-            $given = (float) (clone $txQuery)->where('type', 'given')->sum('amount');
+            $balancesByCurrency = [];
+            foreach (self::CURRENCIES as $currency) {
+                $currencyQuery = (clone $txQuery)->where('currency', $currency);
+                $takenCur = (float) (clone $currencyQuery)->where('type', 'taken')->sum('amount');
+                $givenCur = (float) (clone $currencyQuery)->where('type', 'given')->sum('amount');
+                $balancesByCurrency[$currency] = [
+                    'total_taken' => $takenCur,
+                    'total_given' => $givenCur,
+                    'balance' => $takenCur - $givenCur,
+                ];
+            }
+
+            $taken = $balancesByCurrency['شيكل']['total_taken'];
+            $given = $balancesByCurrency['شيكل']['total_given'];
+            $balance = $balancesByCurrency['شيكل']['balance'];
+
             $lastTransaction = (clone $txQuery)
                 ->orderByDesc('transaction_date')
                 ->orderByDesc('id')
@@ -782,12 +973,14 @@ class DebtLedgerService
                 'person_type' => $isCustomers ? 'customer' : 'seller',
                 'total_taken' => $taken,
                 'total_given' => $given,
-                'balance' => $taken - $given,
+                'balance' => $balance,
+                'balances' => $balancesByCurrency,
                 'last_transaction' => $lastTransaction ? [
                     'id' => $lastTransaction->id,
                     'type' => $lastTransaction->type,
                     'type_label' => $lastTransaction->type === 'taken' ? 'أخذت' : 'أعطيت',
                     'amount' => (float) $lastTransaction->amount,
+                    'currency' => $this->normalizeCurrency($lastTransaction->currency),
                     'transaction_date' => $lastTransaction->transaction_date?->format('Y-m-d'),
                     'created_at' => $lastTransaction->created_at?->format('Y-m-d H:i:s'),
                 ] : null,
@@ -812,27 +1005,31 @@ class DebtLedgerService
             ->orderBy('id')
             ->get();
 
-        $running = 0.0;
+        foreach (self::CURRENCIES as $currency) {
+            $running = 0.0;
 
-        foreach ($transactions as $transaction) {
-            $amount = (float) $transaction->amount;
-            $running = $transaction->type === 'taken'
-                ? $running + $amount
-                : $running - $amount;
+            foreach ($transactions->where('currency', $currency) as $transaction) {
+                $amount = (float) $transaction->amount;
+                $running = $transaction->type === 'taken'
+                    ? $running + $amount
+                    : $running - $amount;
 
-            if ((float) $transaction->balance_after !== $running) {
-                $transaction->update(['balance_after' => $running]);
+                if ((float) $transaction->balance_after !== $running) {
+                    $transaction->update(['balance_after' => $running]);
+                }
             }
         }
     }
 
-    public function archiveTransaction(DebtTransaction $transaction): void
+    public function archiveTransaction(DebtTransaction $transaction, bool $logActivity = true): void
     {
         if ($transaction->deleted_at) {
             throw new \RuntimeException(__('messages.ledger_transaction_not_restorable'));
         }
 
-        DB::transaction(function () use ($transaction) {
+        DB::transaction(function () use ($transaction, $logActivity) {
+            $before = $this->activity()->transactionSnapshot($transaction);
+
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
                 $this->reverseBoxMovement(
                     $transaction,
@@ -844,15 +1041,27 @@ class DebtLedgerService
 
             $transaction->update(['archived_at' => now()]);
             $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+
+            if ($logActivity) {
+                $this->activity()->logForTransaction(
+                    $transaction->fresh(),
+                    'transaction_archived',
+                    'أرشفة معاملة دفتر ديون',
+                    'أرشفة معاملة #'.$transaction->id,
+                    ['before' => $before]
+                );
+            }
         });
     }
 
-    public function deleteTransaction(DebtTransaction $transaction): void
+    public function deleteTransaction(DebtTransaction $transaction, bool $logActivity = true): void
     {
-        DB::transaction(function () use ($transaction) {
+        DB::transaction(function () use ($transaction, $logActivity) {
             if ($transaction->archived_at || $transaction->deleted_at) {
                 return;
             }
+
+            $before = $this->activity()->transactionSnapshot($transaction);
 
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
                 $this->reverseBoxMovement(
@@ -865,12 +1074,26 @@ class DebtLedgerService
 
             $transaction->update(['deleted_at' => now()]);
             $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+
+            if ($logActivity) {
+                $this->activity()->logForTransaction(
+                    $transaction,
+                    'transaction_deleted',
+                    'حذف نهائي لمعاملة دفتر ديون',
+                    'حذف نهائي للمعاملة #'.$transaction->id,
+                    ['before' => $before]
+                );
+            }
         });
     }
 
-    public function updateTransaction(DebtTransaction $transaction, array $data): DebtTransaction
-    {
-        return DB::transaction(function () use ($transaction, $data) {
+    public function updateTransaction(
+        DebtTransaction $transaction,
+        array $data,
+        bool $logActivity = true
+    ): DebtTransaction {
+        return DB::transaction(function () use ($transaction, $data, $logActivity) {
+            $before = $this->activity()->transactionSnapshot($transaction);
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
                 $this->reverseBoxMovement(
                     $transaction,
@@ -880,9 +1103,14 @@ class DebtLedgerService
                 );
             }
 
+            $currency = array_key_exists('currency', $data)
+                ? $this->normalizeCurrency($data['currency'])
+                : $this->normalizeCurrency($transaction->currency);
+
             $updatePayload = [
                 'type' => $data['type'],
                 'amount' => $data['amount'],
+                'currency' => $currency,
                 'transaction_date' => $data['transaction_date'],
                 'note' => $data['note'] ?? null,
             ];
@@ -906,7 +1134,22 @@ class DebtLedgerService
                 $this->applyBoxMovement($transaction, (int) $newBoxId);
             }
 
-            return $transaction->fresh(['customer', 'seller']);
+            $transaction = $transaction->fresh(['customer', 'seller']);
+
+            if ($logActivity) {
+                $this->activity()->logForTransaction(
+                    $transaction,
+                    'transaction_updated',
+                    'تعديل معاملة دفتر ديون',
+                    'تعديل المعاملة #'.$transaction->id,
+                    [
+                        'before' => $before,
+                        'after' => $this->activity()->transactionSnapshot($transaction),
+                    ]
+                );
+            }
+
+            return $transaction;
         });
     }
 
@@ -925,8 +1168,9 @@ class DebtLedgerService
     ): void {
         $box = Box::findOrFail($boxId);
 
-        if ($box->currency !== 'شيكل') {
-            throw new \RuntimeException(__('messages.currency_shekel'));
+        $txCurrency = $this->normalizeCurrency($transaction->currency);
+        if ($this->normalizeCurrency($box->currency) !== $txCurrency) {
+            throw new \RuntimeException(__('messages.must_be_same_currency_check'));
         }
 
         $personName = $transaction->customer_id

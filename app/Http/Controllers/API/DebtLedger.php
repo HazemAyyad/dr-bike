@@ -136,6 +136,12 @@ class DebtLedger extends Controller
                 'total_taken' => $totals['total_taken'],
                 'total_given' => $totals['total_given'],
                 'balance' => $totals['balance'],
+                'balances' => $this->ledger->calculateBalancesByCurrency(
+                    $request->customer_id,
+                    $request->seller_id,
+                    $request->start_date,
+                    $request->end_date
+                ),
                 'active_transactions_count' => $transactions->count(),
                 'transactions' => $transactions->map(fn ($t) => $this->ledger->formatTransaction($t))->values(),
             ], 200);
@@ -165,6 +171,7 @@ class DebtLedger extends Controller
                 'seller_id' => 'nullable|exists:sellers,id',
                 'type' => 'required|in:taken,given',
                 'amount' => 'required|numeric|min:0.01',
+                'currency' => 'nullable|string|in:شيكل,دولار,دينار',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
                 'box_id' => 'nullable|integer|exists:boxes,id',
@@ -192,11 +199,18 @@ class DebtLedger extends Controller
                 }
             }
 
+            $currency = $data['currency'] ?? null;
+            if (! empty($data['box_id'])) {
+                $box = \App\Models\Box::find($data['box_id']);
+                $currency = $box?->currency ?? $currency;
+            }
+
             $transaction = $this->ledger->createTransaction([
                 'customer_id' => $request->customer_id,
                 'seller_id' => $request->seller_id,
                 'type' => $data['type'],
                 'amount' => $data['amount'],
+                'currency' => $this->ledger->normalizeCurrency($currency),
                 'transaction_date' => $data['transaction_date'],
                 'note' => $data['note'] ?? null,
                 'box_id' => $data['box_id'] ?? null,
@@ -205,12 +219,6 @@ class DebtLedger extends Controller
             ], auth()->id());
 
             $personTotals = $this->ledger->calculateTotals($request->customer_id, $request->seller_id);
-
-            Logs::createLog(
-                'دفتر الديون',
-                'تسجيل معاملة ' . ($data['type'] === 'taken' ? 'أخذت' : 'أعطيت') . ' بقيمة ' . $data['amount'],
-                'debts'
-            );
 
             return response()->json([
                 'status' => 'success',
@@ -272,6 +280,7 @@ class DebtLedger extends Controller
             $data = $request->validate([
                 'type' => 'required|in:taken,given',
                 'amount' => 'required|numeric|min:0.01',
+                'currency' => 'nullable|string|in:شيكل,دولار,دينار',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
                 'box_id' => 'nullable|integer|exists:boxes,id',
@@ -296,9 +305,16 @@ class DebtLedger extends Controller
                 }
             }
 
+            $currency = $data['currency'] ?? $transaction->currency;
+            if ($request->filled('box_id')) {
+                $box = \App\Models\Box::find($data['box_id']);
+                $currency = $box?->currency ?? $currency;
+            }
+
             $updatePayload = [
                 'type' => $data['type'],
                 'amount' => $data['amount'],
+                'currency' => $this->ledger->normalizeCurrency($currency),
                 'transaction_date' => $data['transaction_date'],
                 'note' => $data['note'] ?? null,
                 'receipt_images' => $request->hasFile('receipt_images') ? $imageNames : null,
@@ -313,12 +329,6 @@ class DebtLedger extends Controller
             $personTotals = $this->ledger->calculateTotals(
                 $transaction->customer_id,
                 $transaction->seller_id
-            );
-
-            Logs::createLog(
-                'دفتر الديون',
-                'تعديل معاملة رقم ' . $id,
-                'debts'
             );
 
             return response()->json([
@@ -359,12 +369,6 @@ class DebtLedger extends Controller
                 $transaction->seller_id
             );
 
-            Logs::createLog(
-                'دفتر الديون',
-                'أرشفة معاملة رقم ' . $id,
-                'debts'
-            );
-
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.ledger_transaction_archived'),
@@ -394,12 +398,6 @@ class DebtLedger extends Controller
             $personTotals = $this->ledger->calculateTotals(
                 $transaction->customer_id,
                 $transaction->seller_id
-            );
-
-            Logs::createLog(
-                'دفتر الديون',
-                'حذف نهائي لمعاملة رقم ' . $id,
-                'debts'
             );
 
             return response()->json([
@@ -810,5 +808,59 @@ class DebtLedger extends Controller
             'custom' => ($startDate && $endDate) ? "من {$startDate} إلى {$endDate}" : 'فترة مخصصة',
             default => 'جميع التواريخ',
         };
+    }
+
+    public function transactionActivity(int $id)
+    {
+        try {
+            DebtTransaction::query()->where('id', $id)->firstOrFail();
+
+            return response()->json([
+                'status' => 'success',
+                'activity' => $this->ledger->getTransactionActivity($id),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.ledger_transaction_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function personActivity(Request $request)
+    {
+        try {
+            $request->validate([
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
+            ]);
+
+            if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
+                return response()->json(['status' => 'error', 'message' => $error], 200);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'activity' => $this->ledger->getPersonActivity(
+                    $request->customer_id,
+                    $request->seller_id
+                ),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 }

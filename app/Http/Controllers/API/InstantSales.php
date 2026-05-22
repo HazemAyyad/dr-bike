@@ -181,8 +181,8 @@ class InstantSales extends Controller
             'status' => 'active',
         ];
 
-        if ($request->filled('payment_box_value')) {
-            $payload['payment_box_value'] = (float) $request->input('payment_box_value');
+        if ($request->has('payment_box_value')) {
+            $payload['payment_box_value'] = max(0, (float) $request->input('payment_box_value'));
         }
 
         return $payload;
@@ -721,7 +721,7 @@ public function store(Request $request)
         );
 
         app(DebtLedgerService::class)->syncInstantSaleToLedger(
-            $mainInstantSale->fresh(['product', 'offerPackage'])
+            $mainInstantSale->fresh(['product', 'offerPackage', 'paymentBox'])
         );
 
         $mainProduct->stock -= $mainInstantSale->quantity;
@@ -884,7 +884,7 @@ public function store(Request $request)
             );
 
             app(DebtLedgerService::class)->syncInstantSaleToLedger(
-                $mainInstantSale->fresh(['product', 'offerPackage'])
+                $mainInstantSale->fresh(['product', 'offerPackage', 'paymentBox'])
             );
 
             foreach ($package->items as $item) {
