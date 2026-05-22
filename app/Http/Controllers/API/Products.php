@@ -16,6 +16,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Validation\ValidationException;
 
 use function PHPUnit\Framework\isEmpty;
 
@@ -70,6 +71,43 @@ class Products extends Controller
 
     }
 
+    /**
+     * تحديث سعر بيع المفرق (normailPrice) من شاشة البيع الفوري.
+     */
+    public function updateRetailPrice(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'product_id' => 'required|integer|exists:products,id',
+                'normail_price' => 'required|numeric|min:0.01',
+            ]);
+
+            $product = Product::findOrFail($data['product_id']);
+            $product->update(['normailPrice' => $data['normail_price']]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.product_updated'),
+                'normail_price' => (float) $product->normailPrice,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.update_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
 
     // **************************************************************
 

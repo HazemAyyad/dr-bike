@@ -98,8 +98,12 @@ class DebtLedgerActivityLogger
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function getPersonActivity(?int $customerId, ?int $sellerId, int $limit = 80): array
-    {
+    public function getPersonActivity(
+        ?int $customerId,
+        ?int $sellerId,
+        int $limit = 80,
+        ?string $currency = null
+    ): array {
         $query = DebtLedgerActivityLog::query()->with('creator:id,name');
 
         if ($customerId) {
@@ -108,6 +112,17 @@ class DebtLedgerActivityLogger
             $query->where('seller_id', $sellerId)->whereNull('customer_id');
         } else {
             return [];
+        }
+
+        if ($currency !== null && $currency !== '') {
+            $txQuery = DebtTransaction::query();
+            if ($customerId) {
+                $txQuery->forCustomer($customerId);
+            } else {
+                $txQuery->forSeller($sellerId);
+            }
+            $transactionIds = $txQuery->where('currency', $currency)->pluck('id');
+            $query->whereIn('debt_transaction_id', $transactionIds);
         }
 
         return $this->formatEntries(
@@ -124,6 +139,7 @@ class DebtLedgerActivityLogger
         return $entries->map(fn (DebtLedgerActivityLog $log) => [
             'id' => $log->id,
             'action' => $log->action,
+            'action_label' => $this->actionLabelArabic($log->action),
             'title' => $log->title,
             'description' => $log->description,
             'meta' => $log->meta,
@@ -132,6 +148,22 @@ class DebtLedgerActivityLogger
             'created_by_name' => $log->creator?->name,
             'created_at' => $log->created_at?->format('Y-m-d H:i:s'),
         ])->values()->all();
+    }
+
+    private function actionLabelArabic(?string $action): string
+    {
+        return match ((string) $action) {
+            'auto_created' => 'إضافة تلقائية',
+            'auto_updated' => 'تحديث تلقائي',
+            'auto_removed' => 'إزالة تلقائية',
+            'transaction_created' => 'إنشاء معاملة',
+            'transaction_updated' => 'تعديل معاملة',
+            'transaction_archived' => 'أرشفة معاملة',
+            'transaction_deleted' => 'حذف معاملة',
+            'transaction_restored' => 'استعادة معاملة',
+            'person_meta_updated' => 'تحديث بيانات الشخص',
+            default => 'حدث في الدفتر',
+        };
     }
 
     private function appendActorToDescription(string $description): string

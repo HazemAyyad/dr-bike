@@ -87,18 +87,10 @@ public function store(Request $request)
 
         $check = IncomingCheck::create($data);
 
-        app(DebtLedgerService::class)->syncIncomingCheckToLedger($check->fresh());
-
         Logs::createLog(
             'إضافة شيك وارد',
             'تمت إضافة شيك وارد بقيمة ' . $check->total.' '.$check->currency,
             'incoming_checks'
-        );
-        $personName = $check->from_customer? $check->fromCustomer->name : $check->fromSeller->name;
-        Logs::createLog(
-            'قبض شيك وارد في دفتر الديون',
-            'تم تسجيل قبض شيك وارد بقيمة '.$check->total.' '.$check->currency.' من '.$personName.' في دفتر الديون',
-            'debts'
         );
 
         return response()->json([

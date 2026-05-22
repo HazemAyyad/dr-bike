@@ -221,14 +221,6 @@ class PaymentAndRecieve extends Controller
                     ]);
 
 
-                    app(DebtLedgerService::class)->syncIncomingCheckToLedger($check->fresh());
-
-                    Logs::createLog(
-                        'قبض شيك وارد في دفتر الديون',
-                        'تم تسجيل قبض شيك وارد بقيمة '.$check->total.' '.$check->currency.' من '.$personName.' في دفتر الديون',
-                        'debts'
-                    );
-
                     Logs::createLog(
                         'اضافة شيك وارد جديد',
                         "تمت إضافة شيك وارد بقيمة {$check->total} {$check->currency}"." "."من الشخص"." ".$personName,

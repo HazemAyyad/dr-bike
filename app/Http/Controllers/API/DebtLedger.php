@@ -542,18 +542,35 @@ class DebtLedger extends Controller
             $request->validate([
                 'customer_id' => 'nullable|exists:customers,id',
                 'seller_id' => 'nullable|exists:sellers,id',
+                'currency' => 'nullable|string|in:شيكل,دولار,دينار',
             ]);
 
             if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
                 return response()->json(['status' => 'error', 'message' => $error], 200);
             }
 
-            $transactions = $this->ledger->archivedQuery($request->customer_id, $request->seller_id)
+            $filterCurrency = $request->filled('currency')
+                ? $this->ledger->normalizeCurrency($request->currency)
+                : null;
+
+            $query = $this->ledger->archivedQuery($request->customer_id, $request->seller_id);
+            if ($filterCurrency) {
+                $query->where('currency', $filterCurrency);
+            }
+
+            $transactions = (clone $query)
                 ->orderByDesc('archived_at')
                 ->orderByDesc('id')
                 ->get();
 
+            $displayCurrency = $filterCurrency ?? 'شيكل';
             $totals = $this->ledger->calculateArchivedTotals(
+                $request->customer_id,
+                $request->seller_id,
+                $displayCurrency
+            );
+
+            $balancesByCurrency = $this->ledger->calculateArchivedBalancesByCurrency(
                 $request->customer_id,
                 $request->seller_id
             );
@@ -561,9 +578,11 @@ class DebtLedger extends Controller
             return response()->json([
                 'status' => 'success',
                 'person' => $this->ledger->getPersonInfo($request->customer_id, $request->seller_id),
+                'currency' => $displayCurrency,
                 'total_taken' => $totals['total_taken'],
                 'total_given' => $totals['total_given'],
                 'balance' => $totals['balance'],
+                'balances' => $balancesByCurrency,
                 'archived_transactions_count' => $transactions->count(),
                 'transactions' => $transactions->map(fn ($t) => $this->ledger->formatTransaction($t))->values(),
             ], 200);
@@ -586,18 +605,35 @@ class DebtLedger extends Controller
             $request->validate([
                 'customer_id' => 'nullable|exists:customers,id',
                 'seller_id' => 'nullable|exists:sellers,id',
+                'currency' => 'nullable|string|in:شيكل,دولار,دينار',
             ]);
 
             if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
                 return response()->json(['status' => 'error', 'message' => $error], 200);
             }
 
-            $transactions = $this->ledger->deletedQuery($request->customer_id, $request->seller_id)
+            $filterCurrency = $request->filled('currency')
+                ? $this->ledger->normalizeCurrency($request->currency)
+                : null;
+
+            $query = $this->ledger->deletedQuery($request->customer_id, $request->seller_id);
+            if ($filterCurrency) {
+                $query->where('currency', $filterCurrency);
+            }
+
+            $transactions = (clone $query)
                 ->orderByDesc('deleted_at')
                 ->orderByDesc('id')
                 ->get();
 
+            $displayCurrency = $filterCurrency ?? 'شيكل';
             $totals = $this->ledger->calculateDeletedTotals(
+                $request->customer_id,
+                $request->seller_id,
+                $displayCurrency
+            );
+
+            $balancesByCurrency = $this->ledger->calculateDeletedBalancesByCurrency(
                 $request->customer_id,
                 $request->seller_id
             );
@@ -605,9 +641,11 @@ class DebtLedger extends Controller
             return response()->json([
                 'status' => 'success',
                 'person' => $this->ledger->getPersonInfo($request->customer_id, $request->seller_id),
+                'currency' => $displayCurrency,
                 'total_taken' => $totals['total_taken'],
                 'total_given' => $totals['total_given'],
                 'balance' => $totals['balance'],
+                'balances' => $balancesByCurrency,
                 'deleted_transactions_count' => $transactions->count(),
                 'transactions' => $transactions->map(fn ($t) => $this->ledger->formatTransaction($t))->values(),
             ], 200);
@@ -721,6 +759,7 @@ class DebtLedger extends Controller
                 'start_date' => 'nullable|date',
                 'end_date' => 'nullable|date',
                 'period' => 'nullable|in:all,today,yesterday,current_week,last_week,current_month,last_month,custom',
+                'currency' => 'nullable|string|in:شيكل,دولار,دينار',
             ]);
 
             if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
@@ -741,8 +780,13 @@ class DebtLedger extends Controller
             }
 
             $person = $this->ledger->getPersonInfo($request->customer_id, $request->seller_id);
+            $displayCurrency = $request->filled('currency')
+                ? $this->ledger->normalizeCurrency($request->currency)
+                : 'شيكل';
+
             $query = $this->ledger->baseQuery($request->customer_id, $request->seller_id);
             $this->ledger->applyDateFilter($query, $startDate, $endDate);
+            $query->where('currency', $displayCurrency);
 
             $transactions = $query
                 ->orderBy('transaction_date')
@@ -753,10 +797,12 @@ class DebtLedger extends Controller
                 $request->customer_id,
                 $request->seller_id,
                 $startDate,
-                $endDate
+                $endDate,
+                $displayCurrency
             );
 
             $periodLabel = $this->formatPeriodLabel($request->period, $startDate, $endDate);
+            $periodLabel = $periodLabel.' — '.$displayCurrency;
 
             $reportHtml = view('pdf.debt-ledger-report', [
                 'person' => $person,
@@ -765,6 +811,7 @@ class DebtLedger extends Controller
                 'total_given' => $totals['total_given'],
                 'balance' => $totals['balance'],
                 'period_label' => $periodLabel,
+                'currency' => $displayCurrency,
                 'generated_at' => now()->format('Y-m-d H:i'),
                 'transactions_count' => $transactions->count(),
             ])->render();
@@ -863,17 +910,24 @@ class DebtLedger extends Controller
             $request->validate([
                 'customer_id' => 'nullable|exists:customers,id',
                 'seller_id' => 'nullable|exists:sellers,id',
+                'currency' => 'nullable|string|in:شيكل,دولار,دينار',
             ]);
 
             if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
                 return response()->json(['status' => 'error', 'message' => $error], 200);
             }
 
+            $currency = $request->filled('currency')
+                ? $this->ledger->normalizeCurrency($request->currency)
+                : null;
+
             return response()->json([
                 'status' => 'success',
+                'currency' => $currency ?? 'شيكل',
                 'activity' => $this->ledger->getPersonActivity(
                     $request->customer_id,
-                    $request->seller_id
+                    $request->seller_id,
+                    $currency
                 ),
             ], 200);
         } catch (ValidationException $e) {

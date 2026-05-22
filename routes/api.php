@@ -557,6 +557,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Goal Creation','re
 Route::group(['middleware' => ['auth:sanctum','check.permission:Sales,Follow-up Section,Projects and Purchases Management,Purchasing Section','refresh.token.expiry']], function () {
       //products
     Route::get('/all/products' , [Products::class,'allproducts']);
+    Route::post('/product/retail-price' , [Products::class,'updateRetailPrice']);
   });
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:Boxes Section,Checks,Sales,Goal Creation','refresh.token.expiry']], function () {

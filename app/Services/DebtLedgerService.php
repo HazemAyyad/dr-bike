@@ -34,6 +34,60 @@ class DebtLedgerService
         return in_array($value, self::CURRENCIES, true) ? $value : 'شيكل';
     }
 
+    private function ledgerSourceLabel(?string $source): string
+    {
+        return match ((string) $source) {
+            'instant_sale' => 'بيع فوري',
+            'incoming_check' => 'شيك وارد',
+            'outgoing_check' => 'شيك صادر',
+            'manual', '' => 'إدخال يدوي',
+            default => 'مصدر آخر',
+        };
+    }
+
+    private function ledgerSourceActivitySuffix(string $source, int $sourceId): string
+    {
+        return $this->ledgerSourceLabel($source).' (رقم السجل '.$sourceId.')';
+    }
+
+    private function incomingCheckLedgerNote(IncomingCheck $check, string $context = ''): string
+    {
+        $parts = ['شيك وارد'];
+        if ($context !== '') {
+            $parts[] = $context;
+        }
+        $checkNumber = trim((string) ($check->check_id ?? ''));
+        if ($checkNumber !== '') {
+            $parts[] = 'رقم الشيك: '.$checkNumber;
+        }
+        $bank = trim((string) ($check->bank_name ?? ''));
+        if ($bank !== '') {
+            $parts[] = 'البنك: '.$bank;
+        }
+        $parts[] = 'مرجع النظام: '.$check->id;
+
+        return implode(' — ', $parts);
+    }
+
+    private function outgoingCheckLedgerNote(OutgoingCheck $check, string $context = ''): string
+    {
+        $parts = ['شيك صادر'];
+        if ($context !== '') {
+            $parts[] = $context;
+        }
+        $checkNumber = trim((string) ($check->check_id ?? ''));
+        if ($checkNumber !== '') {
+            $parts[] = 'رقم الشيك: '.$checkNumber;
+        }
+        $bank = trim((string) ($check->bank_name ?? ''));
+        if ($bank !== '') {
+            $parts[] = 'البنك: '.$bank;
+        }
+        $parts[] = 'مرجع النظام: '.$check->id;
+
+        return implode(' — ', $parts);
+    }
+
     /**
      * @return array<int, array<string, mixed>>
      */
@@ -45,9 +99,16 @@ class DebtLedgerService
     /**
      * @return array<int, array<string, mixed>>
      */
-    public function getPersonActivity(?int $customerId, ?int $sellerId): array
+    public function getPersonActivity(?int $customerId, ?int $sellerId, ?string $currency = null): array
     {
-        return $this->activity()->getPersonActivity($customerId, $sellerId);
+        $filterCurrency = $currency ? $this->normalizeCurrency($currency) : null;
+
+        return $this->activity()->getPersonActivity(
+            $customerId,
+            $sellerId,
+            80,
+            $filterCurrency
+        );
     }
 
     public function validatePerson(?int $customerId, ?int $sellerId): ?string
@@ -102,9 +163,36 @@ class DebtLedgerService
         return $query;
     }
 
-    public function calculateArchivedTotals(?int $customerId, ?int $sellerId): array
+    public function calculateArchivedTotals(
+        ?int $customerId,
+        ?int $sellerId,
+        ?string $currency = null
+    ): array {
+        return $this->calculateTotalsForQuery(
+            $this->archivedQuery($customerId, $sellerId),
+            $currency
+        );
+    }
+
+    public function calculateDeletedTotals(
+        ?int $customerId,
+        ?int $sellerId,
+        ?string $currency = null
+    ): array {
+        return $this->calculateTotalsForQuery(
+            $this->deletedQuery($customerId, $sellerId),
+            $currency
+        );
+    }
+
+    /**
+     * @return array{total_taken: float, total_given: float, balance: float}
+     */
+    private function calculateTotalsForQuery(Builder $query, ?string $currency = null): array
     {
-        $query = $this->archivedQuery($customerId, $sellerId);
+        if ($currency !== null) {
+            $query->where('currency', $this->normalizeCurrency($currency));
+        }
 
         $taken = (float) (clone $query)->where('type', 'taken')->sum('amount');
         $given = (float) (clone $query)->where('type', 'given')->sum('amount');
@@ -116,18 +204,38 @@ class DebtLedgerService
         ];
     }
 
-    public function calculateDeletedTotals(?int $customerId, ?int $sellerId): array
+    /**
+     * @return array<string, array{total_taken: float, total_given: float, balance: float}>
+     */
+    public function calculateArchivedBalancesByCurrency(?int $customerId, ?int $sellerId): array
     {
-        $query = $this->deletedQuery($customerId, $sellerId);
+        $balances = [];
+        foreach (self::CURRENCIES as $currencyCode) {
+            $balances[$currencyCode] = $this->calculateArchivedTotals(
+                $customerId,
+                $sellerId,
+                $currencyCode
+            );
+        }
 
-        $taken = (float) (clone $query)->where('type', 'taken')->sum('amount');
-        $given = (float) (clone $query)->where('type', 'given')->sum('amount');
+        return $balances;
+    }
 
-        return [
-            'total_taken' => $taken,
-            'total_given' => $given,
-            'balance' => $taken - $given,
-        ];
+    /**
+     * @return array<string, array{total_taken: float, total_given: float, balance: float}>
+     */
+    public function calculateDeletedBalancesByCurrency(?int $customerId, ?int $sellerId): array
+    {
+        $balances = [];
+        foreach (self::CURRENCIES as $currencyCode) {
+            $balances[$currencyCode] = $this->calculateDeletedTotals(
+                $customerId,
+                $sellerId,
+                $currencyCode
+            );
+        }
+
+        return $balances;
     }
 
     /**
@@ -405,12 +513,9 @@ class DebtLedgerService
             'id' => $transaction->id,
             'type' => $transaction->type,
             'type_label' => $transaction->type === 'taken' ? 'أخذت' : 'أعطيت',
-            'source_label' => match ($source) {
-                'instant_sale' => 'بيع فوري',
-                'incoming_check' => 'شيك وارد',
-                'outgoing_check' => 'شيك صادر',
-                default => null,
-            },
+            'source_label' => $source === 'manual' || $source === '' || $source === null
+                ? null
+                : $this->ledgerSourceLabel($source),
             'amount' => (float) $transaction->amount,
             'currency' => $currency,
             'balance_before' => $this->balanceBefore($transaction),
@@ -536,7 +641,7 @@ class DebtLedgerService
 
         $currency = $this->normalizeCurrency($check->currency);
         $amount = (float) $check->total;
-        $note = trim('شيك وارد #'.$check->id.' — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
+        $note = $this->incomingCheckLedgerNote($check, 'قبض شيك وارد');
 
         return $this->upsertSourceLedgerEntry(
             'incoming_check',
@@ -556,18 +661,6 @@ class DebtLedgerService
      */
     public function syncIncomingCheckToLedger(IncomingCheck $check): ?DebtTransaction
     {
-        if (in_array($check->status, ['returned', 'cancelled'], true)) {
-            $this->deleteSourceLedger('incoming_check', (int) $check->id);
-
-            return null;
-        }
-
-        if ($check->status === 'cashed_to_box') {
-            $this->deleteSourceLedger('incoming_check', (int) $check->id);
-
-            return null;
-        }
-
         if ($check->status === 'cashed_to_person') {
             $customerId = $check->to_customer ? (int) $check->to_customer : null;
             $sellerId = $check->to_seller ? (int) $check->to_seller : null;
@@ -578,7 +671,7 @@ class DebtLedgerService
 
             $currency = $this->normalizeCurrency($check->currency);
             $amount = (float) $check->total;
-            $note = trim('شيك وارد #'.$check->id.' — تصرف لشخص — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
+            $note = $this->incomingCheckLedgerNote($check, 'بعد التصرف في الشيك');
 
             return $this->upsertSourceLedgerEntry(
                 'incoming_check',
@@ -593,7 +686,8 @@ class DebtLedgerService
             );
         }
 
-        return $this->syncIncomingCheckReceiveToLedger($check);
+        // not_cashed / صرف للصندوق / إرجاع / إلغاء: لا قيد جديد ولا حذف من الدفتر
+        return null;
     }
 
     /**
@@ -616,7 +710,7 @@ class DebtLedgerService
 
         $currency = $this->normalizeCurrency($check->currency);
         $amount = (float) $check->total;
-        $note = trim('شيك صادر #'.$check->id.' — '.($check->check_id ?? '').' — '.($check->bank_name ?? ''));
+        $note = $this->outgoingCheckLedgerNote($check, 'بعد صرف الشيك');
 
         return $this->upsertSourceLedgerEntry(
             'outgoing_check',
@@ -645,7 +739,7 @@ class DebtLedgerService
                     $transaction,
                     'auto_removed',
                     'إزالة قيد دفتر ديون تلقائي',
-                    'إزالة معاملة مرتبطة بـ '.$source.' #'.$sourceId,
+                    'إزالة معاملة مرتبطة بـ '.$this->ledgerSourceActivitySuffix($source, $sourceId),
                     ['snapshot' => $this->activity()->transactionSnapshot($transaction)]
                 );
             }
@@ -679,7 +773,7 @@ class DebtLedgerService
                     $existing,
                     'auto_removed',
                     'إزالة قيد دفتر ديون تلقائي',
-                    'إزالة معاملة مرتبطة بـ '.$source.' #'.$sourceId.' (لا مبلغ دين)',
+                    'إزالة معاملة مرتبطة بـ '.$this->ledgerSourceActivitySuffix($source, $sourceId).' (لا مبلغ دين)',
                     ['snapshot' => $this->activity()->transactionSnapshot($existing)]
                 );
                 $this->deleteTransaction($existing, logActivity: false);
@@ -709,7 +803,7 @@ class DebtLedgerService
                 $updated,
                 'auto_updated',
                 'تحديث قيد دفتر ديون تلقائي',
-                'تحديث معاملة مرتبطة بـ '.$source.' #'.$sourceId,
+                'تحديث معاملة مرتبطة بـ '.$this->ledgerSourceActivitySuffix($source, $sourceId),
                 ['before' => $before, 'after' => $this->activity()->transactionSnapshot($updated)]
             );
 
@@ -721,7 +815,7 @@ class DebtLedgerService
             $created,
             'auto_created',
             'إضافة قيد دفتر ديون تلقائي',
-            'إضافة معاملة مرتبطة بـ '.$source.' #'.$sourceId,
+            'إضافة معاملة مرتبطة بـ '.$this->ledgerSourceActivitySuffix($source, $sourceId),
             ['snapshot' => $this->activity()->transactionSnapshot($created)]
         );
 
