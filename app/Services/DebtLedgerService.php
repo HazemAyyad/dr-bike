@@ -750,6 +750,27 @@ class DebtLedgerService
             return [(int) $sale->buyer_id, null];
         }
 
+        $buyerName = trim((string) ($sale->buyer_name ?? ''));
+        if ($buyerName !== '' && $buyerName !== '-') {
+            $customer = Customer::query()
+                ->when($sale->buyer_phone, fn ($q) => $q->where('phone', $sale->buyer_phone))
+                ->where('name', $buyerName)
+                ->first();
+
+            if ($customer) {
+                return [(int) $customer->id, null];
+            }
+
+            $seller = Seller::query()
+                ->when($sale->buyer_phone, fn ($q) => $q->where('phone', $sale->buyer_phone))
+                ->where('name', $buyerName)
+                ->first();
+
+            if ($seller) {
+                return [null, (int) $seller->id];
+            }
+        }
+
         return [null, null];
     }
 
