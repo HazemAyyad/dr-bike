@@ -9,8 +9,10 @@ use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTimeline;
+use App\Models\EmployeePointCategory;
 use App\Services\AdminNotificationService;
 use App\Services\EmployeeNotificationService;
+use App\Services\EmployeePointsService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Support\EmployeeProofImages;
 use Illuminate\Database\Eloquent\Model;
@@ -132,6 +134,7 @@ class EmployeeTaskWorkflowService
     public function approveTask(EmployeeTask $task): EmployeeTask
     {
         return DB::transaction(function () use ($task) {
+            $wasCompleted = EmployeeTaskStatus::normalize($task->status) === EmployeeTaskStatus::Completed;
             $actorId = auth()->user()?->employee?->id;
 
             $task->update([
@@ -140,16 +143,15 @@ class EmployeeTaskWorkflowService
                 'completed_by_employee_id' => $task->completed_by_employee_id ?? $actorId,
             ]);
 
-            $employee = $task->employee;
-            if ($employee) {
-                $bonus = $this->calculateSubtaskBonus($task);
-                $employee->update(['points' => $employee->points + $task->points + $bonus]);
+            if (! $wasCompleted) {
+                $this->awardCompletionPointsForTask($task->fresh());
             }
 
             $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_APPROVED);
 
             $fresh = $task->fresh(['employee']);
-            $this->notifyEmployeeTaskApproved($fresh->employee, $fresh->name, (int) $fresh->id, null);
+            $pointsRecipient = $this->resolvePointsRecipient($fresh, null);
+            $this->notifyEmployeeTaskApproved($pointsRecipient, $fresh->name, (int) $fresh->id, null);
             $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
             $completedBy = (int) ($fresh->completed_by_employee_id ?? $actorId ?? 0);
             if ($completedBy > 0) {
@@ -167,6 +169,7 @@ class EmployeeTaskWorkflowService
     public function approveOccurrence(EmployeeTaskOccurrence $occurrence): EmployeeTaskOccurrence
     {
         return DB::transaction(function () use ($occurrence) {
+            $wasCompleted = EmployeeTaskStatus::normalize($occurrence->status) === EmployeeTaskStatus::Completed;
             $actorId = auth()->user()?->employee?->id;
 
             $occurrence->update([
@@ -176,17 +179,16 @@ class EmployeeTaskWorkflowService
                 'completed_by_employee_id' => $occurrence->completed_by_employee_id ?? $actorId,
             ]);
 
-            $employee = $occurrence->employee;
-            if ($employee) {
-                $bonus = $occurrence->subtasks()->where('status', 'completed')->sum('bonus_points');
-                $employee->update(['points' => $employee->points + $occurrence->points + $bonus]);
+            if (! $wasCompleted) {
+                $this->awardCompletionPointsForOccurrence($occurrence->fresh());
             }
 
             $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_APPROVED);
 
             $fresh = $occurrence->fresh(['employee']);
+            $pointsRecipient = $this->resolvePointsRecipient(null, $fresh);
             $this->notifyEmployeeTaskApproved(
-                $fresh->employee,
+                $pointsRecipient,
                 $fresh->name,
                 (int) ($fresh->legacy_task_id ?? $fresh->id),
                 (int) $fresh->id
@@ -362,11 +364,83 @@ class EmployeeTaskWorkflowService
 
     private function calculateSubtaskBonus(EmployeeTask $task): int
     {
-        if (! \Illuminate\Support\Facades\Schema::hasColumn('sub_employee_tasks', 'bonus_points')) {
+        if (! Schema::hasColumn('sub_employee_tasks', 'bonus_points')) {
             return 0;
         }
 
         return (int) $task->subTasks()->where('status', 'completed')->sum('bonus_points');
+    }
+
+    private function resolvePointsRecipient(
+        ?EmployeeTask $task,
+        ?EmployeeTaskOccurrence $occurrence
+    ): ?EmployeeDetail {
+        $recipientId = (int) (
+            $occurrence?->completed_by_employee_id
+            ?? $task?->completed_by_employee_id
+            ?? $occurrence?->employee_id
+            ?? $task?->employee_id
+            ?? 0
+        );
+        if ($recipientId < 1) {
+            return $task?->employee ?? $occurrence?->employee;
+        }
+
+        return EmployeeDetail::find($recipientId) ?? $task?->employee ?? $occurrence?->employee;
+    }
+
+    private function awardCompletionPointsForTask(EmployeeTask $task): void
+    {
+        $recipient = $this->resolvePointsRecipient($task, null);
+        if (! $recipient) {
+            return;
+        }
+
+        $taskPoints = (int) $task->points;
+        $bonus = $this->calculateSubtaskBonus($task);
+        $this->creditEmployeeTaskPoints($recipient, $taskPoints + $bonus, $task->name);
+    }
+
+    private function awardCompletionPointsForOccurrence(EmployeeTaskOccurrence $occurrence): void
+    {
+        $recipient = $this->resolvePointsRecipient(null, $occurrence);
+        if (! $recipient) {
+            return;
+        }
+
+        $taskPoints = (int) $occurrence->points;
+        $bonus = (int) $occurrence->subtasks()->where('status', 'completed')->sum('bonus_points');
+        $this->creditEmployeeTaskPoints($recipient, $taskPoints + $bonus, $occurrence->name);
+    }
+
+    private function creditEmployeeTaskPoints(EmployeeDetail $recipient, int $total, string $taskName): void
+    {
+        if ($total < 1) {
+            return;
+        }
+
+        $recipient->update(['points' => (int) $recipient->points + $total]);
+
+        try {
+            $category = EmployeePointCategory::query()
+                ->where('code', 'extra_tasks')
+                ->where('is_active', true)
+                ->first();
+
+            app(EmployeePointsService::class)->addPoints($recipient->id, [
+                'points' => $total,
+                'category' => 'extra_tasks',
+                'category_id' => $category?->id,
+                'source' => 'employee_task',
+                'reason' => __('messages.task_completion_points', ['task' => $taskName]),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('employee_task.points_log_failed', [
+                'employee_id' => $recipient->id,
+                'points' => $total,
+                'message' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function notifyAdminTaskSubmitted(EmployeeTask $task): void

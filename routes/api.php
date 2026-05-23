@@ -5,6 +5,7 @@ use App\Http\Controllers\API\CategoryController;
 use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
+use App\Http\Controllers\API\AppSettingsController;
 use App\Http\Controllers\API\Authentication;
 use App\Http\Controllers\API\BanksController;
 use App\Http\Controllers\API\Bills;
@@ -744,6 +745,9 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/admin/cron-job-logs/{id}', [\App\Http\Controllers\API\CronJobLogController::class, 'show']);
 
     Route::post('/admin/impersonate-employee/{employeeId}', [\App\Http\Controllers\API\AdminImpersonationController::class, 'impersonate']);
+
+    Route::get('/app/settings', [AppSettingsController::class, 'show']);
+    Route::put('/app/settings', [AppSettingsController::class, 'update']);
 
 });
 

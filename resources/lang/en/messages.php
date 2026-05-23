@@ -444,4 +444,6 @@ return [
     'admin_notify_subtask_completed_title' => 'Subtask completed',
     'admin_notify_subtask_completed_body' => ':employee completed «:subtask» in «:task».',
     'admin_notify_subtask_completed_body_progress' => ':employee completed «:subtask» in «:task» (:done/:total).',
+    'settings_updated' => 'Settings updated successfully.',
+    'task_completion_points' => 'Task completion points: :task',
 ];

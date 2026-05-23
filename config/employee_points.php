@@ -25,5 +25,6 @@ return [
         'overtime',
         'absence',
         'lateness',
+        'employee_task',
     ],
 ];
