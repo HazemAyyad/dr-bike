@@ -764,7 +764,11 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 
         $this->createHelper($employeeTask,$request->task_recurrence);
 
-        app(EmployeeTaskNotificationService::class)->notifyAssignedLegacy($employeeTask->fresh());
+        app(EmployeeTaskNotificationService::class)->notifyAssignedToEmployeeIds(
+            $employeeTask->fresh(),
+            $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id],
+            $employeeTask->occurrence_id
+        );
 
         Logs::createLog('اضافة مهمة موظف','تم اضافة مهمة موظف باسم'.' '.$employeeTask->name
         

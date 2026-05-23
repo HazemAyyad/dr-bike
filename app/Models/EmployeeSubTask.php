@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class EmployeeSubTask extends Model
 {
@@ -19,6 +20,7 @@ class EmployeeSubTask extends Model
         'bonus_points',
         'admin_img',
         'status',
+        'completed_by_employee_id',
         'employee_img',
         'sort_order',
     ];
@@ -31,5 +33,10 @@ class EmployeeSubTask extends Model
 
     public function employeeTask(){
         return $this->belongsTo(EmployeeTask::class);
+    }
+
+    public function completedByEmployee(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeDetail::class, 'completed_by_employee_id');
     }
 }

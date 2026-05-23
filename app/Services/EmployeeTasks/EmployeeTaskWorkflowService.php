@@ -83,6 +83,13 @@ class EmployeeTaskWorkflowService
         $fresh = $task->fresh(['employee']);
         $this->notifyAdminTaskSubmitted($fresh);
         $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
+        if ($actorId) {
+            app(EmployeeTaskNotificationService::class)->notifyCoAssigneesMainTaskSubmitted(
+                $fresh,
+                (int) $actorId,
+                null
+            );
+        }
 
         return $fresh;
     }
@@ -110,6 +117,14 @@ class EmployeeTaskWorkflowService
         $fresh = $occurrence->fresh(['employee']);
         $this->notifyAdminOccurrenceSubmitted($fresh);
         $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
+        $legacy = $this->legacyTaskForOccurrence($fresh);
+        if ($actorId && $legacy) {
+            app(EmployeeTaskNotificationService::class)->notifyCoAssigneesMainTaskSubmitted(
+                $legacy,
+                (int) $actorId,
+                (int) $fresh->id
+            );
+        }
 
         return $fresh;
     }
@@ -136,6 +151,14 @@ class EmployeeTaskWorkflowService
             $fresh = $task->fresh(['employee']);
             $this->notifyEmployeeTaskApproved($fresh->employee, $fresh->name, (int) $fresh->id, null);
             $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
+            $completedBy = (int) ($fresh->completed_by_employee_id ?? $actorId ?? 0);
+            if ($completedBy > 0) {
+                app(EmployeeTaskNotificationService::class)->notifyCoAssigneesMainTaskCompleted(
+                    $fresh,
+                    $completedBy,
+                    null
+                );
+            }
 
             return $fresh;
         });
@@ -169,6 +192,15 @@ class EmployeeTaskWorkflowService
                 (int) $fresh->id
             );
             $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
+            $legacy = $this->legacyTaskForOccurrence($fresh);
+            $completedBy = (int) ($fresh->completed_by_employee_id ?? $actorId ?? 0);
+            if ($legacy && $completedBy > 0) {
+                app(EmployeeTaskNotificationService::class)->notifyCoAssigneesMainTaskCompleted(
+                    $legacy,
+                    $completedBy,
+                    (int) $fresh->id
+                );
+            }
 
             return $fresh;
         });
@@ -222,7 +254,12 @@ class EmployeeTaskWorkflowService
             }
         }
 
-        $subTask->update(['status' => 'completed']);
+        $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+        $payload = ['status' => 'completed'];
+        if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = $actorId > 0 ? $actorId : null;
+        }
+        $subTask->update($payload);
         $task = $subTask->employeeTask;
         $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_SUBTASK_COMPLETED, $subTask->name);
 
@@ -230,6 +267,14 @@ class EmployeeTaskWorkflowService
         $this->notifyAdminLegacySubtaskCompleted($fresh);
         $subTask->loadMissing('employeeTask.employee');
         $this->notifyDailyTasksCompletedIfApplicable($subTask->employeeTask?->employee);
+        if ($actorId > 0 && $task) {
+            app(EmployeeTaskNotificationService::class)->notifyCoAssigneesSubtaskCompleted(
+                $task,
+                $subTask->name,
+                $actorId,
+                null
+            );
+        }
 
         return $fresh;
     }
@@ -240,7 +285,12 @@ class EmployeeTaskWorkflowService
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
 
-        $subTask->update(['status' => 'completed']);
+        $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+        $payload = ['status' => 'completed'];
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = $actorId > 0 ? $actorId : null;
+        }
+        $subTask->update($payload);
         $this->timeline->recordForOccurrence(
             $subTask->occurrence,
             EmployeeTaskTimeline::EVENT_SUBTASK_COMPLETED,
@@ -251,8 +301,26 @@ class EmployeeTaskWorkflowService
         $this->notifyAdminOccurrenceSubtaskCompleted($fresh);
         $subTask->loadMissing('occurrence.employee');
         $this->notifyDailyTasksCompletedIfApplicable($subTask->occurrence?->employee);
+        $legacy = $this->legacyTaskForOccurrence($subTask->occurrence);
+        if ($actorId > 0 && $legacy) {
+            app(EmployeeTaskNotificationService::class)->notifyCoAssigneesSubtaskCompleted(
+                $legacy,
+                $subTask->name,
+                $actorId,
+                (int) $subTask->occurrence_id
+            );
+        }
 
         return $fresh;
+    }
+
+    private function legacyTaskForOccurrence(?EmployeeTaskOccurrence $occurrence): ?EmployeeTask
+    {
+        if (! $occurrence?->legacy_task_id) {
+            return null;
+        }
+
+        return EmployeeTask::find($occurrence->legacy_task_id);
     }
 
     private function assertSubtasksComplete(EmployeeTask $task): void

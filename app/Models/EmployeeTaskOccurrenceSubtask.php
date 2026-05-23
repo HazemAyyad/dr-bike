@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\EmployeeDetail;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -16,6 +17,7 @@ class EmployeeTaskOccurrenceSubtask extends Model
         'requires_image',
         'bonus_points',
         'status',
+        'completed_by_employee_id',
         'admin_img',
         'employee_img',
     ];
@@ -29,5 +31,10 @@ class EmployeeTaskOccurrenceSubtask extends Model
     public function occurrence(): BelongsTo
     {
         return $this->belongsTo(EmployeeTaskOccurrence::class, 'occurrence_id');
+    }
+
+    public function completedByEmployee(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeDetail::class, 'completed_by_employee_id');
     }
 }

@@ -6,8 +6,10 @@ use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
+use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTaskTemplate;
 use App\Support\TaskReminderConfig;
+use Illuminate\Support\Facades\Schema;
 
 class EmployeeTaskDetailsService
 {
@@ -20,7 +22,12 @@ class EmployeeTaskDetailsService
      */
     public function formatLegacy(EmployeeTask $employeeTask, callable $photoResolver): array
     {
-        $employeeTask->loadMissing(['subTasks' => fn ($q) => $q->orderBy('sort_order'), 'employee.user']);
+        $employeeTask->loadMissing([
+            'subTasks' => fn ($q) => $q->orderBy('sort_order'),
+            'subTasks.completedByEmployee.user',
+            'employee.user',
+            'completedByEmployee.user',
+        ]);
 
         $employeeTask->subTasks->transform(function ($subTask) {
             if ($subTask->admin_img) {
@@ -53,8 +60,15 @@ class EmployeeTaskDetailsService
         $taskData['requires_admin_review'] = (bool) ($employeeTask->requires_admin_review ?? true);
         $taskData['progress'] = $this->progressFromSubtasks($employeeTask->subTasks, $employeeTask->status);
         $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
-        $taskData['sub_tasks'] = $taskData['sub_tasks'] ?? $taskData['subTasks'] ?? [];
-        $taskData['assignee_ids'] = app(EmployeeTaskAssigneeService::class)->idsForTask($employeeTask);
+        $taskData['sub_tasks'] = $employeeTask->subTasks
+            ->map(fn (EmployeeSubTask $sub) => $this->formatLegacySubtask($sub))
+            ->values()
+            ->all();
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+        $taskData['assignee_ids'] = $assigneeService->idsForTask($employeeTask);
+        $taskData['assignees'] = $assigneeService->profilesForTask($employeeTask, $photoResolver);
+        $taskData['completed_by_employee_id'] = $employeeTask->completed_by_employee_id;
+        $taskData['completed_by_name'] = $employeeTask->completedByEmployee?->user?->name;
 
         $template = $employeeTask->template_id
             ? EmployeeTaskTemplate::find($employeeTask->template_id)
@@ -68,25 +82,18 @@ class EmployeeTaskDetailsService
      */
     public function formatOccurrence(EmployeeTaskOccurrence $occurrence, callable $photoResolver): array
     {
-        $occurrence->loadMissing(['subtasks' => fn ($q) => $q->orderBy('sort_order'), 'employee.user', 'template']);
+        $occurrence->loadMissing([
+            'subtasks' => fn ($q) => $q->orderBy('sort_order'),
+            'subtasks.completedByEmployee.user',
+            'employee.user',
+            'completedByEmployee.user',
+            'template',
+        ]);
 
-        $subTasks = $occurrence->subtasks->map(function (EmployeeTaskOccurrenceSubtask $sub) {
-            return [
-                'id' => $sub->id,
-                'name' => $sub->name,
-                'description' => $sub->description,
-                'status' => $sub->status,
-                'is_forced_to_upload_img' => (bool) $sub->requires_image,
-                'bonus_points' => (int) $sub->bonus_points,
-                'sort_order' => (int) $sub->sort_order,
-                'admin_img' => $sub->admin_img
-                    ? collect($sub->admin_img)->map(fn ($img) => 'public/EmployeeSubTasks/AdminImages/'.$img)->toArray()
-                    : [],
-                'employee_img' => $sub->employee_img
-                    ? collect($sub->employee_img)->map(fn ($img) => 'public/EmployeeSubTasks/EmployeeImages/'.$img)->toArray()
-                    : [],
-            ];
-        })->values()->all();
+        $subTasks = $occurrence->subtasks
+            ->map(fn (EmployeeTaskOccurrenceSubtask $sub) => $this->formatOccurrenceSubtask($sub))
+            ->values()
+            ->all();
 
         $subTotal = count($subTasks);
         $subDone = collect($subTasks)->where('status', 'completed')->count();
@@ -127,16 +134,27 @@ class EmployeeTaskDetailsService
             'sub_tasks' => $subTasks,
             'task_recurrence' => $occurrence->template?->recurrence_type ?? 'noRepeat',
             'source' => 'occurrence',
+            'completed_by_employee_id' => $occurrence->completed_by_employee_id,
+            'completed_by_name' => $occurrence->completedByEmployee?->user?->name,
         ];
 
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
         if ($occurrence->legacy_task_id) {
             $legacy = EmployeeTask::find($occurrence->legacy_task_id);
             if ($legacy) {
-                $taskData['assignee_ids'] = app(EmployeeTaskAssigneeService::class)->idsForTask($legacy);
+                $taskData['assignee_ids'] = $assigneeService->idsForTask($legacy);
+                $taskData['assignees'] = $assigneeService->profilesForTask($legacy, $photoResolver);
             }
         }
         if (! isset($taskData['assignee_ids'])) {
             $taskData['assignee_ids'] = [(int) $occurrence->employee_id];
+        }
+        if (! isset($taskData['assignees'])) {
+            $taskData['assignees'] = [[
+                'id' => (int) $occurrence->employee_id,
+                'name' => $occurrence->employee?->user?->name ?? '',
+                'photo' => $photoResolver($occurrence->employee),
+            ]];
         }
 
         return $this->enrichWithRecurrenceMeta($taskData, $occurrence->template, null, $occurrence);
@@ -218,5 +236,60 @@ class EmployeeTaskDetailsService
         $subDone = $subTasks->where('status', 'completed')->count();
 
         return (int) round(($subDone / $subTotal) * 100);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatLegacySubtask(EmployeeSubTask $sub): array
+    {
+        $adminImg = $sub->admin_img
+            ? collect($sub->admin_img)->map(fn ($img) => 'public/EmployeeSubTasks/AdminImages/'.$img)->toArray()
+            : [];
+        $employeeImg = $sub->employee_img
+            ? collect($sub->employee_img)->map(fn ($img) => 'public/EmployeeSubTasks/EmployeeImages/'.$img)->toArray()
+            : [];
+
+        return [
+            'id' => $sub->id,
+            'name' => $sub->name,
+            'description' => $sub->description,
+            'status' => $sub->status,
+            'is_forced_to_upload_img' => (bool) $sub->is_forced_to_upload_img,
+            'bonus_points' => (int) ($sub->bonus_points ?? 0),
+            'sort_order' => (int) ($sub->sort_order ?? 0),
+            'admin_img' => $adminImg,
+            'employee_img' => $employeeImg,
+            'completed_by_employee_id' => Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')
+                ? $sub->completed_by_employee_id
+                : null,
+            'completed_by_name' => $sub->completedByEmployee?->user?->name,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatOccurrenceSubtask(EmployeeTaskOccurrenceSubtask $sub): array
+    {
+        return [
+            'id' => $sub->id,
+            'name' => $sub->name,
+            'description' => $sub->description,
+            'status' => $sub->status,
+            'is_forced_to_upload_img' => (bool) $sub->requires_image,
+            'bonus_points' => (int) $sub->bonus_points,
+            'sort_order' => (int) $sub->sort_order,
+            'admin_img' => $sub->admin_img
+                ? collect($sub->admin_img)->map(fn ($img) => 'public/EmployeeSubTasks/AdminImages/'.$img)->toArray()
+                : [],
+            'employee_img' => $sub->employee_img
+                ? collect($sub->employee_img)->map(fn ($img) => 'public/EmployeeSubTasks/EmployeeImages/'.$img)->toArray()
+                : [],
+            'completed_by_employee_id' => Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')
+                ? $sub->completed_by_employee_id
+                : null,
+            'completed_by_name' => $sub->completedByEmployee?->user?->name,
+        ];
     }
 }

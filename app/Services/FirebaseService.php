@@ -18,6 +18,27 @@ class FirebaseService
     /** Must match Flutter [kDrBikeAdminNotificationChannelId] and AndroidManifest. */
     public const ADMIN_CHANNEL_ID = 'dr_bike_admin_notifications';
 
+    /** Employee task FCM — must match Flutter [kDrBikeTaskNotificationChannelId] and res/raw/task_sos_alert. */
+    public const EMPLOYEE_TASK_CHANNEL_ID = 'dr_bike_task_notifications';
+
+    public const EMPLOYEE_TASK_SOUND_ANDROID = 'task_sos_alert';
+
+    public const EMPLOYEE_TASK_SOUND_IOS = 'task_sos_alert.mp3';
+
+    /** @var list<string> */
+    private const EMPLOYEE_TASK_NOTIFICATION_TYPES = [
+        'employee_task_assigned',
+        'employee_task_approved',
+        'employee_task_rejected',
+        'employee_task_co_subtask_done',
+        'employee_task_co_main_done',
+        'employee_task_co_main_completed',
+        'employee_task_scheduled_reminder',
+        'employee_daily_tasks',
+        'employee_hourly_reminder',
+        'employee_daily_tasks_complete',
+    ];
+
     protected ?Messaging $messaging = null;
 
     protected ?string $lastInitError = null;
@@ -354,13 +375,16 @@ class FirebaseService
             'body' => $body,
         ]);
 
+        $androidMeta = $this->resolveNotificationDelivery($dataWithText);
+
         Log::info('FCM send start', [
             'firebase_project_id' => $this->serviceAccountProjectId(),
             'credentials_path' => $this->resolveCredentialsFile(),
             'token_prefix' => substr($token, 0, 12).'…',
             'title' => $title,
             'body' => mb_substr($body, 0, 80),
-            'channel_id' => self::ADMIN_CHANNEL_ID,
+            'channel_id' => $androidMeta['channel_id'],
+            'sound' => $androidMeta['sound'],
             'data_keys' => array_keys($dataWithText),
         ]);
 
@@ -373,8 +397,8 @@ class FirebaseService
                     AndroidConfig::fromArray([
                         'priority' => 'high',
                         'notification' => [
-                            'channel_id' => self::ADMIN_CHANNEL_ID,
-                            'sound' => 'default',
+                            'channel_id' => $androidMeta['channel_id'],
+                            'sound' => $androidMeta['sound'],
                             'icon' => 'ic_notification',
                             'color' => '#6B65BD',
                         ],
@@ -391,7 +415,7 @@ class FirebaseService
                                     'title' => $title,
                                     'body' => $body,
                                 ],
-                                'sound' => 'default',
+                                'sound' => $androidMeta['ios_sound'],
                             ],
                         ],
                     ])
@@ -401,7 +425,7 @@ class FirebaseService
 
             Log::info('FCM send success', [
                 'token_prefix' => substr($token, 0, 12).'…',
-                'channel_id' => self::ADMIN_CHANNEL_ID,
+                'channel_id' => $androidMeta['channel_id'],
                 'firebase_project_id' => $this->serviceAccountProjectId(),
                 'response' => $this->formatResponseForLog($response),
                 'response_type' => is_object($response) ? get_class($response) : gettype($response),
@@ -426,6 +450,29 @@ class FirebaseService
         }
 
         return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{channel_id: string, sound: string, ios_sound: string}
+     */
+    protected function resolveNotificationDelivery(array $data): array
+    {
+        $type = (string) ($data['type'] ?? '');
+
+        if (in_array($type, self::EMPLOYEE_TASK_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::EMPLOYEE_TASK_CHANNEL_ID,
+                'sound' => self::EMPLOYEE_TASK_SOUND_ANDROID,
+                'ios_sound' => self::EMPLOYEE_TASK_SOUND_IOS,
+            ];
+        }
+
+        return [
+            'channel_id' => self::ADMIN_CHANNEL_ID,
+            'sound' => 'default',
+            'ios_sound' => 'default',
+        ];
     }
 
     /**

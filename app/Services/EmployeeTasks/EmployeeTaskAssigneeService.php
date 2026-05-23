@@ -2,6 +2,7 @@
 
 namespace App\Services\EmployeeTasks;
 
+use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -137,5 +138,33 @@ class EmployeeTaskAssigneeService
             ->all();
 
         return $ids !== [] ? $ids : [(int) $task->employee_id];
+    }
+
+    /**
+     * @return array<int, array{id: int, name: string, photo: string}>
+     */
+    public function profilesForTask(EmployeeTask $task, callable $photoResolver): array
+    {
+        $ids = $this->idsForTask($task);
+
+        $employees = EmployeeDetail::with('user')
+            ->whereIn('id', $ids)
+            ->get()
+            ->keyBy('id');
+
+        $profiles = [];
+        foreach ($ids as $employeeId) {
+            $employee = $employees->get($employeeId);
+            if (! $employee) {
+                continue;
+            }
+            $profiles[] = [
+                'id' => (int) $employee->id,
+                'name' => $employee->user?->name ?? '',
+                'photo' => $photoResolver($employee),
+            ];
+        }
+
+        return $profiles;
     }
 }
