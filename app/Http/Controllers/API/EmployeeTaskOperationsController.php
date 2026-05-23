@@ -15,6 +15,7 @@ use App\Services\EmployeeTasks\EmployeeTaskRecurrenceService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
 use App\Services\AdminNotificationService;
+use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -177,7 +178,9 @@ class EmployeeTaskOperationsController extends Controller
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'notes' => 'nullable|string',
-                'employee_id' => 'required|exists:employee_details,id',
+                'employee_id' => 'required_without:employee_ids|exists:employee_details,id',
+                'employee_ids' => 'nullable|array|min:1',
+                'employee_ids.*' => 'integer|exists:employee_details,id',
                 'points' => 'required|integer|min:0',
                 'priority' => 'nullable|in:low,medium,high',
                 'start_time' => 'required|date',
@@ -220,6 +223,14 @@ class EmployeeTaskOperationsController extends Controller
                 $reminderChannel
             );
 
+            $assigneeService = app(EmployeeTaskAssigneeService::class);
+            $assigneeIds = $assigneeService->resolveAssigneeIdsFromRequest(
+                $request,
+                (int) ($data['employee_id'] ?? 0)
+            );
+            $data['employee_id'] = $assigneeIds[0] ?? (int) $data['employee_id'];
+            $extraAssignees = array_slice($assigneeIds, 1);
+
             $template = EmployeeTaskTemplate::create([
                 'employee_id' => $data['employee_id'],
                 'name' => $data['name'],
@@ -248,12 +259,36 @@ class EmployeeTaskOperationsController extends Controller
                 }
             }
 
+            $template->load('subtasks');
+
             $occurrences = $this->recurrence->ensureOccurrences($template);
             $summary = $this->recurrence->buildRecurrenceSummary($template);
+            $notifier = app(EmployeeTaskNotificationService::class);
 
-            $first = $occurrences->first();
-            if ($first) {
-                app(EmployeeTaskNotificationService::class)->notifyAssignedOccurrence($first);
+            foreach ($occurrences as $occ) {
+                $notifier->notifyAssignedOccurrence($occ);
+            }
+
+            foreach ($extraAssignees as $extraEmployeeId) {
+                $clone = $template->replicate();
+                $clone->employee_id = $extraEmployeeId;
+                $clone->save();
+
+                foreach ($template->subtasks as $sub) {
+                    EmployeeTaskTemplateSubtask::create([
+                        'template_id' => $clone->id,
+                        'name' => $sub->name,
+                        'description' => $sub->description,
+                        'sort_order' => $sub->sort_order,
+                        'requires_image' => (bool) $sub->requires_image,
+                        'bonus_points' => (int) $sub->bonus_points,
+                    ]);
+                }
+
+                $extraOccurrences = $this->recurrence->ensureOccurrences($clone);
+                foreach ($extraOccurrences as $occ) {
+                    $notifier->notifyAssignedOccurrence($occ);
+                }
             }
 
             return response()->json([

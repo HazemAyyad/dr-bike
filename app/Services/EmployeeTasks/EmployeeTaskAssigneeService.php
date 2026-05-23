@@ -10,6 +10,24 @@ use Illuminate\Support\Facades\Schema;
 class EmployeeTaskAssigneeService
 {
     /**
+     * @return array<int>
+     */
+    public function resolveAssigneeIdsFromRequest(\Illuminate\Http\Request $request, int $fallbackEmployeeId): array
+    {
+        $ids = collect($request->input('employee_ids', []))
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty() && $fallbackEmployeeId > 0) {
+            $ids->push($fallbackEmployeeId);
+        }
+
+        return $ids->all();
+    }
+
+    /**
      * @param  array<int|string>  $employeeIds
      */
     public function syncForTask(EmployeeTask $task, array $employeeIds): void

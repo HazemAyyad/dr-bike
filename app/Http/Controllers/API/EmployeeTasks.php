@@ -237,13 +237,41 @@ private function getTasks($status)
     
     public function cancelEmployeeTask(Request $request){
         try{
-        $request->validate(['employee_task_id'=>'required|exists:employee_tasks,id']);
+        $request->validate([
+            'employee_task_id' => 'nullable|exists:employee_tasks,id',
+            'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
+        ]);
 
-        $ongoingTask = EmployeeTask::findOrFail($request->employee_task_id);
+        if (! $request->filled('employee_task_id') && ! $request->filled('occurrence_id')) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        }
+
+        if ($request->filled('occurrence_id')) {
+            $occurrence = EmployeeTaskOccurrence::with('employee.user', 'template')
+                ->findOrFail($request->occurrence_id);
+            $occurrence->update(['is_canceled' => 1]);
+
+            Logs::createLog(
+                'الغاء مهمة موظف',
+                ' الغاء مهمة موظف باسم '.$occurrence->name
+                    .' '.'التابعة للموظف '.($occurrence->employee->user->name ?? ''),
+                'employee_tasks'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.employee_task_canceled'),
+            ], 200);
+        }
+
+        $ongoingTask = EmployeeTask::with('employee.user')->findOrFail($request->employee_task_id);
        
         $ongoingTask->update(['is_canceled'=>1]);
         Logs::createLog('الغاء مهمة موظف',' الغاء مهمة موظف باسم'.' '.$ongoingTask->name
-        .' '.'التابعة للموظف'.' '. $ongoingTask->employee->user->name
+        .' '.'التابعة للموظف'.' '. ($ongoingTask->employee->user->name ?? '')
         
         ,'employee_tasks');
             return response()->json([
@@ -306,7 +334,26 @@ private function getTasks($status)
 
     public function cancelEmployeeTaskWithRepetition(Request $request){
         try{
-        $request->validate(['employee_task_id'=>'required|exists:employee_tasks,id']);
+        $request->validate([
+            'employee_task_id' => 'nullable|exists:employee_tasks,id',
+            'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
+        ]);
+
+        if ($request->filled('occurrence_id')) {
+            $occurrence = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
+            $templateId = $occurrence->template_id;
+            EmployeeTaskOccurrence::where('template_id', $templateId)
+                ->update(['is_canceled' => 1]);
+            EmployeeTask::where('template_id', $templateId)
+                ->update(['is_canceled' => 1]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.employee_task_canceled'),
+            ], 200);
+        }
+
+        $request->validate(['employee_task_id' => 'required|exists:employee_tasks,id']);
 
         $ongoingTask = EmployeeTask::findOrFail($request->employee_task_id);
 
@@ -666,19 +713,18 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             $data['reminder_channel'] = $reminderChannel;
         }
 
-        $assigneeIds = collect($request->input('employee_ids', []))
-            ->map(fn ($id) => (int) $id)
-            ->filter(fn ($id) => $id > 0)
-            ->unique()
-            ->values()
-            ->all();
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+        $assigneeIds = $assigneeService->resolveAssigneeIdsFromRequest(
+            $request,
+            (int) ($data['employee_id'] ?? 0)
+        );
         if ($assigneeIds !== []) {
             $data['employee_id'] = $assigneeIds[0];
         }
         unset($data['employee_ids']);
 
         $employeeTask = EmployeeTask::create($data);
-        app(EmployeeTaskAssigneeService::class)->syncForTask(
+        $assigneeService->syncForTask(
             $employeeTask,
             $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]
         );
@@ -1084,11 +1130,17 @@ public function updateEmployeeTask(Request $request)
         }
 
 
-            //delete old children first
-        EmployeeTask::where('parent_id', $employeeTask->id)->delete();
+        $newRecurrence = $finalData['task_recurrence'] ?? $employeeTask->task_recurrence;
+        $recurrenceTimesChanged = json_encode($employeeTask->task_recurrence_time ?? [])
+            !== json_encode($finalData['task_recurrence_time'] ?? $employeeTask->task_recurrence_time ?? []);
+        $shouldRebuildChildren = in_array($newRecurrence, ['daily', 'weekly', 'monthly'], true)
+            && ($oldRecurrence !== $newRecurrence || $recurrenceTimesChanged);
 
-            // Create new recurrence children
-        $this->createHelper($employeeTask, $employeeTask->task_recurrence);
+        if ($shouldRebuildChildren) {
+            EmployeeTask::where('parent_id', $employeeTask->id)->delete();
+            $this->createHelper($employeeTask->fresh(), $newRecurrence);
+        }
+
         Logs::createLog(
             'تعديل مهمة موظف',
             'تم تعديل مهمة الموظف باسم ' . $employeeTask->name
