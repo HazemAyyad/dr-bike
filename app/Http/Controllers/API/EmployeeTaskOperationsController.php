@@ -228,8 +228,14 @@ class EmployeeTaskOperationsController extends Controller
                 $request,
                 (int) ($data['employee_id'] ?? 0)
             );
+
+            if (count($assigneeIds) > 1) {
+                $request->merge(['use_v2_recurrence' => false]);
+
+                return app(EmployeeTasks::class)->createEmployeeTask($request);
+            }
+
             $data['employee_id'] = $assigneeIds[0] ?? (int) $data['employee_id'];
-            $extraAssignees = array_slice($assigneeIds, 1);
 
             $template = EmployeeTaskTemplate::create([
                 'employee_id' => $data['employee_id'],
@@ -265,30 +271,9 @@ class EmployeeTaskOperationsController extends Controller
             $summary = $this->recurrence->buildRecurrenceSummary($template);
             $notifier = app(EmployeeTaskNotificationService::class);
 
-            foreach ($occurrences as $occ) {
-                $notifier->notifyAssignedOccurrence($occ);
-            }
-
-            foreach ($extraAssignees as $extraEmployeeId) {
-                $clone = $template->replicate();
-                $clone->employee_id = $extraEmployeeId;
-                $clone->save();
-
-                foreach ($template->subtasks as $sub) {
-                    EmployeeTaskTemplateSubtask::create([
-                        'template_id' => $clone->id,
-                        'name' => $sub->name,
-                        'description' => $sub->description,
-                        'sort_order' => $sub->sort_order,
-                        'requires_image' => (bool) $sub->requires_image,
-                        'bonus_points' => (int) $sub->bonus_points,
-                    ]);
-                }
-
-                $extraOccurrences = $this->recurrence->ensureOccurrences($clone);
-                foreach ($extraOccurrences as $occ) {
-                    $notifier->notifyAssignedOccurrence($occ);
-                }
+            $firstOccurrence = $occurrences->first();
+            if ($firstOccurrence) {
+                $notifier->notifyAssignedOccurrence($firstOccurrence);
             }
 
             return response()->json([
@@ -321,7 +306,9 @@ class EmployeeTaskOperationsController extends Controller
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'notes' => 'nullable|string',
-                'employee_id' => 'required|exists:employee_details,id',
+                'employee_id' => 'required_without:employee_ids|exists:employee_details,id',
+                'employee_ids' => 'nullable|array|min:1',
+                'employee_ids.*' => 'integer|exists:employee_details,id',
                 'points' => 'required|integer|min:0',
                 'priority' => 'nullable|in:low,medium,high',
                 'start_time' => 'required|date',
@@ -351,6 +338,22 @@ class EmployeeTaskOperationsController extends Controller
                     'status' => 'error',
                     'message' => __('messages.end_time_must_be_after_start'),
                 ], 200);
+            }
+
+            $assigneeService = app(EmployeeTaskAssigneeService::class);
+            $assigneeIds = $assigneeService->resolveAssigneeIdsFromRequest(
+                $request,
+                (int) ($data['employee_id'] ?? 0)
+            );
+
+            if (count($assigneeIds) > 1) {
+                $request->merge(['use_v2_recurrence' => false, 'template_id' => null]);
+
+                return app(EmployeeTasks::class)->updateEmployeeTask($request);
+            }
+
+            if ($assigneeIds !== []) {
+                $data['employee_id'] = $assigneeIds[0];
             }
 
             $template = EmployeeTaskTemplate::findOrFail($data['template_id']);
@@ -427,6 +430,16 @@ class EmployeeTaskOperationsController extends Controller
                     'admin_img' => $adminImg,
                     'audio' => $audio,
                 ]);
+
+                if ($occurrence->legacy_task_id) {
+                    $legacy = EmployeeTask::find($occurrence->legacy_task_id);
+                    if ($legacy) {
+                        $assigneeService->syncForTask(
+                            $legacy,
+                            $assigneeIds !== [] ? $assigneeIds : [(int) $data['employee_id']]
+                        );
+                    }
+                }
             }
 
             if ($request->has('sub_employee_tasks')) {

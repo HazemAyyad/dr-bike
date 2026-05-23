@@ -41,7 +41,7 @@ class EmployeeTaskDetailsService
         $taskData = $employeeTask->toArray();
         $taskData['id'] = $employeeTask->id;
         $taskData['task_id'] = $employeeTask->id;
-        $taskData['employee_name'] = $employeeTask->employee->user->name ?? '';
+        $taskData['employee_name'] = $employeeTask->employee?->user?->name ?? '';
         $taskData['employee_photo'] = $photoResolver($employeeTask->employee);
         $taskData['admin_img'] = $this->formatAdminImages($employeeTask->admin_img);
         $taskData['employee_img'] = $this->formatEmployeeImages($employeeTask->employee_img);
@@ -110,7 +110,7 @@ class EmployeeTaskDetailsService
             'start_time' => $occurrence->start_time,
             'end_time' => $occurrence->end_time,
             'scheduled_date' => $occurrence->scheduled_date,
-            'employee_name' => $occurrence->employee->user->name ?? '',
+            'employee_name' => $occurrence->employee?->user?->name ?? '',
             'employee_photo' => $photoResolver($occurrence->employee),
             'admin_img' => $this->formatAdminImages($occurrence->admin_img),
             'employee_img' => $this->formatEmployeeImages($occurrence->employee_img),
@@ -128,6 +128,16 @@ class EmployeeTaskDetailsService
             'task_recurrence' => $occurrence->template?->recurrence_type ?? 'noRepeat',
             'source' => 'occurrence',
         ];
+
+        if ($occurrence->legacy_task_id) {
+            $legacy = EmployeeTask::find($occurrence->legacy_task_id);
+            if ($legacy) {
+                $taskData['assignee_ids'] = app(EmployeeTaskAssigneeService::class)->idsForTask($legacy);
+            }
+        }
+        if (! isset($taskData['assignee_ids'])) {
+            $taskData['assignee_ids'] = [(int) $occurrence->employee_id];
+        }
 
         return $this->enrichWithRecurrenceMeta($taskData, $occurrence->template, null, $occurrence);
     }

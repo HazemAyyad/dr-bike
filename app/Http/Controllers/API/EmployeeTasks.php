@@ -704,7 +704,13 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         $reminderMinutes = \App\Support\TaskReminderConfig::minutesFromRequest($request);
         $reminderChannel = \App\Support\TaskReminderConfig::channelFromRequest($request);
 
-        if ($request->boolean('use_v2_recurrence')) {
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+        $assigneeIdsForRoute = $assigneeService->resolveAssigneeIdsFromRequest(
+            $request,
+            (int) ($data['employee_id'] ?? 0)
+        );
+
+        if ($request->boolean('use_v2_recurrence') && count($assigneeIdsForRoute) <= 1) {
             return app(EmployeeTaskOperationsController::class)->createWithTemplate($request);
         }
 
@@ -713,11 +719,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             $data['reminder_channel'] = $reminderChannel;
         }
 
-        $assigneeService = app(EmployeeTaskAssigneeService::class);
-        $assigneeIds = $assigneeService->resolveAssigneeIdsFromRequest(
-            $request,
-            (int) ($data['employee_id'] ?? 0)
-        );
+        $assigneeIds = $assigneeIdsForRoute;
         if ($assigneeIds !== []) {
             $data['employee_id'] = $assigneeIds[0];
         }
@@ -869,7 +871,16 @@ public function updateEmployeeTask(Request $request)
             }
         }
 
-        if ($request->boolean('use_v2_recurrence') || $request->filled('template_id')) {
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+        $assigneeIdsForRoute = $assigneeService->resolveAssigneeIdsFromRequest(
+            $request,
+            (int) $request->input('employee_id', 0)
+        );
+
+        if (
+            ($request->boolean('use_v2_recurrence') || $request->filled('template_id'))
+            && count($assigneeIdsForRoute) <= 1
+        ) {
             return app(EmployeeTaskOperationsController::class)->updateWithTemplate($request);
         }
 
@@ -1003,12 +1014,10 @@ public function updateEmployeeTask(Request $request)
             }
         }
 
-        $assigneeIds = collect($request->input('employee_ids', []))
-            ->map(fn ($id) => (int) $id)
-            ->filter(fn ($id) => $id > 0)
-            ->unique()
-            ->values()
-            ->all();
+        $assigneeIds = app(EmployeeTaskAssigneeService::class)->resolveAssigneeIdsFromRequest(
+            $request,
+            (int) $request->input('employee_id', 0)
+        );
         if ($assigneeIds !== []) {
             $finalData['employee_id'] = $assigneeIds[0];
         }

@@ -14,7 +14,26 @@ class EmployeeTaskAssigneeService
      */
     public function resolveAssigneeIdsFromRequest(\Illuminate\Http\Request $request, int $fallbackEmployeeId): array
     {
-        $ids = collect($request->input('employee_ids', []))
+        $raw = $request->input('employee_ids');
+
+        if (! is_array($raw)) {
+            $raw = [];
+        }
+
+        if ($raw === []) {
+            foreach ($request->all() as $key => $value) {
+                $key = (string) $key;
+                if ($key === 'employee_ids[]' || preg_match('/^employee_ids\[\d*\]$/', $key)) {
+                    if (is_array($value)) {
+                        $raw = array_merge($raw, $value);
+                    } elseif ($value !== null && $value !== '') {
+                        $raw[] = $value;
+                    }
+                }
+            }
+        }
+
+        $ids = collect($raw)
             ->map(fn ($id) => (int) $id)
             ->filter(fn ($id) => $id > 0)
             ->unique()
