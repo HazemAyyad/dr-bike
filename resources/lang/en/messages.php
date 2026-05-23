@@ -49,6 +49,7 @@ return [
     'task_restored' => 'Special task is restored',
     'can_not_complete_special_task' => 'special task can not be completed until all subtasks are',
     'task_completed' => 'task is completed',
+    'task_completed_by_other' => 'This task was completed by :name and you cannot execute it',
     'task_transfered'=>'task was transfered successfully',
 
     // update profile

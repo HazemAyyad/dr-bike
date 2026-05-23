@@ -20,6 +20,7 @@ class EmployeeTask extends Model
         'rejection_notes',
         'not_shown_for_employee',
         'employee_id',
+        'completed_by_employee_id',
         'start_time',
         'end_time',
         'started_at',
@@ -55,6 +56,21 @@ class EmployeeTask extends Model
 
     public function employee(){
         return $this->belongsTo(EmployeeDetail::class,'employee_id');
+    }
+
+    public function completedByEmployee(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeDetail::class, 'completed_by_employee_id');
+    }
+
+    public function assignees()
+    {
+        return $this->belongsToMany(
+            EmployeeDetail::class,
+            'employee_task_assignees',
+            'employee_task_id',
+            'employee_id'
+        )->withTimestamps();
     }
 
     public function template(): BelongsTo

@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
+use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -19,9 +20,18 @@ class EmployeeVisibleTasks
     public static function legacyForEmployee(int $employeeId): Collection
     {
         return EmployeeTask::query()
-            ->where('employee_id', $employeeId)
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')
+            ->where(function ($query) use ($employeeId) {
+                $query->where('employee_id', $employeeId);
+                if (Schema::hasTable('employee_task_assignees')) {
+                    $query->orWhereIn('id', function ($sub) use ($employeeId) {
+                        $sub->select('employee_task_id')
+                            ->from('employee_task_assignees')
+                            ->where('employee_id', $employeeId);
+                    });
+                }
+            })
             ->get()
             ->filter(fn (EmployeeTask $task) => self::isVisibleToEmployee($task))
             ->values();
@@ -45,11 +55,11 @@ class EmployeeVisibleTasks
     {
         $legacy = self::legacyForEmployee($employeeId)
             ->filter(fn (EmployeeTask $task) => self::passesRecurrenceFilter($task))
-            ->map(fn (EmployeeTask $task) => self::mapLegacyForDashboard($task));
+            ->map(fn (EmployeeTask $task) => self::mapLegacyForDashboard($task, $employeeId));
 
         $occurrences = self::occurrencesForEmployee($employeeId)
             ->filter(fn (EmployeeTaskOccurrence $task) => self::passesOccurrenceDayFilter($task))
-            ->map(fn (EmployeeTaskOccurrence $task) => self::mapOccurrenceForDashboard($task));
+            ->map(fn (EmployeeTaskOccurrence $task) => self::mapOccurrenceForDashboard($task, $employeeId));
 
         return $legacy->merge($occurrences)->values();
     }
@@ -152,15 +162,21 @@ class EmployeeVisibleTasks
         };
     }
 
-    public static function mapLegacyForDashboard(EmployeeTask $task): array
+    public static function mapLegacyForDashboard(EmployeeTask $task, int $viewerEmployeeId): array
     {
-        $task->loadMissing('subTasks');
+        $task->loadMissing(['subTasks', 'completedByEmployee.user']);
         $subCount = $task->subTasks->count();
         $subDone = $task->subTasks->where('status', 'completed')->count();
+        $completedByName = $task->completedByEmployee?->user?->name;
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
 
         return [
             'id' => $task->id,
             'employee_id' => $task->employee_id,
+            'assignee_ids' => $assigneeService->idsForTask($task),
+            'completed_by_employee_id' => $task->completed_by_employee_id,
+            'completed_by_name' => $completedByName,
+            'can_execute' => self::canEmployeeExecuteTask($task, $viewerEmployeeId),
             'name' => $task->name,
             'start_time' => $task->start_time,
             'end_time' => $task->end_time,
@@ -179,15 +195,23 @@ class EmployeeVisibleTasks
     /**
      * @return array<string, mixed>
      */
-    public static function mapOccurrenceForDashboard(EmployeeTaskOccurrence $task): array
+    public static function mapOccurrenceForDashboard(EmployeeTaskOccurrence $task, int $viewerEmployeeId): array
     {
-        $task->loadMissing(['template', 'subtasks']);
+        $task->loadMissing(['template', 'subtasks', 'employee.user']);
         $subCount = $task->subtasks->count();
         $subDone = $task->subtasks->where('status', 'completed')->count();
+        $completedByName = null;
+        if (Schema::hasColumn('employee_task_occurrences', 'completed_by_employee_id') && $task->completed_by_employee_id) {
+            $completedBy = \App\Models\EmployeeDetail::with('user')->find($task->completed_by_employee_id);
+            $completedByName = $completedBy?->user?->name;
+        }
 
         return [
             'id' => $task->id,
             'employee_id' => $task->employee_id,
+            'completed_by_employee_id' => $task->completed_by_employee_id ?? null,
+            'completed_by_name' => $completedByName,
+            'can_execute' => self::canEmployeeExecuteOccurrence($task, $viewerEmployeeId),
             'name' => $task->name,
             'start_time' => $task->start_time,
             'end_time' => $task->end_time,
@@ -231,5 +255,49 @@ class EmployeeVisibleTasks
             'completed' => $completed,
             'progress_percent' => (int) round($progressSum / $total),
         ];
+    }
+
+    public static function canEmployeeExecuteTask(EmployeeTask $task, int $viewerEmployeeId): bool
+    {
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+        if (! $assigneeService->isAssignee($task, $viewerEmployeeId)) {
+            return false;
+        }
+
+        $status = EmployeeTaskStatus::normalize($task->status);
+        if (in_array($status, [EmployeeTaskStatus::Canceled], true)) {
+            return false;
+        }
+
+        $completedBy = (int) ($task->completed_by_employee_id ?? 0);
+        if ($completedBy > 0 && $completedBy !== $viewerEmployeeId) {
+            return false;
+        }
+
+        if (in_array($status, [EmployeeTaskStatus::Completed, EmployeeTaskStatus::WaitingReview], true)
+            && $completedBy > 0
+            && $completedBy !== $viewerEmployeeId) {
+            return false;
+        }
+
+        return ! in_array($status, [EmployeeTaskStatus::Completed], true)
+            || $completedBy === $viewerEmployeeId
+            || $completedBy === 0;
+    }
+
+    public static function canEmployeeExecuteOccurrence(EmployeeTaskOccurrence $task, int $viewerEmployeeId): bool
+    {
+        if ((int) $task->employee_id !== $viewerEmployeeId) {
+            return false;
+        }
+
+        $status = EmployeeTaskStatus::normalize($task->status);
+        $completedBy = (int) ($task->completed_by_employee_id ?? 0);
+
+        if ($completedBy > 0 && $completedBy !== $viewerEmployeeId) {
+            return false;
+        }
+
+        return ! in_array($status, [EmployeeTaskStatus::Completed], true);
     }
 }

@@ -69,10 +69,13 @@ class EmployeeTaskWorkflowService
             return $this->approveTask($task);
         }
 
+        $actorId = auth()->user()?->employee?->id;
+
         $task->update([
             'status' => EmployeeTaskStatus::WaitingReview->value,
             'submitted_at' => now(),
             'notes' => $employeeNotes ?? $task->notes,
+            'completed_by_employee_id' => $actorId ?? $task->completed_by_employee_id,
         ]);
 
         $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_SUBMITTED);
@@ -93,10 +96,13 @@ class EmployeeTaskWorkflowService
             return $this->approveOccurrence($occurrence);
         }
 
+        $actorId = auth()->user()?->employee?->id;
+
         $occurrence->update([
             'status' => EmployeeTaskStatus::WaitingReview->value,
             'submitted_at' => now(),
             'employee_notes' => $employeeNotes ?? $occurrence->employee_notes,
+            'completed_by_employee_id' => $actorId ?? $occurrence->completed_by_employee_id,
         ]);
 
         $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_SUBMITTED);
@@ -111,9 +117,12 @@ class EmployeeTaskWorkflowService
     public function approveTask(EmployeeTask $task): EmployeeTask
     {
         return DB::transaction(function () use ($task) {
+            $actorId = auth()->user()?->employee?->id;
+
             $task->update([
                 'status' => EmployeeTaskStatus::Completed->value,
                 'reviewed_at' => now(),
+                'completed_by_employee_id' => $task->completed_by_employee_id ?? $actorId,
             ]);
 
             $employee = $task->employee;
@@ -135,10 +144,13 @@ class EmployeeTaskWorkflowService
     public function approveOccurrence(EmployeeTaskOccurrence $occurrence): EmployeeTaskOccurrence
     {
         return DB::transaction(function () use ($occurrence) {
+            $actorId = auth()->user()?->employee?->id;
+
             $occurrence->update([
                 'status' => EmployeeTaskStatus::Completed->value,
                 'reviewed_at' => now(),
                 'completed_at' => now(),
+                'completed_by_employee_id' => $occurrence->completed_by_employee_id ?? $actorId,
             ]);
 
             $employee = $occurrence->employee;

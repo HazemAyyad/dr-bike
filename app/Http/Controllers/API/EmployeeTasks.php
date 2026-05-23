@@ -7,6 +7,7 @@ use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeeTasks\EmployeeTaskDetailsService;
 use App\Services\EmployeeTasks\EmployeeTaskListService;
+use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
@@ -531,6 +532,10 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
     $data['end_time'] = $mainEnd->format('Y-m-d H:i:s'); // always same as main
     $newTask= $task::create($data);
 
+    if ($task instanceof EmployeeTask && $newTask instanceof EmployeeTask) {
+        app(EmployeeTaskAssigneeService::class)->copyFromParent($task, $newTask);
+    }
+
     $subtasks = $task->subTasks()->get();
 
     foreach ($subtasks as $subtask) {
@@ -563,7 +568,9 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
-            'employee_id' => ['required','exists:employee_details,id'],
+            'employee_id' => ['required_without:employee_ids','exists:employee_details,id'],
+            'employee_ids' => ['nullable', 'array', 'min:1'],
+            'employee_ids.*' => ['integer', 'exists:employee_details,id'],
             'points' => ['required', 'integer', 'min:0'],
             'start_time' => ['required', 'date', 'before_or_equal:end_time'],
             'end_time' => ['required', 'date', 'after_or_equal:start_time'],
@@ -659,7 +666,22 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             $data['reminder_channel'] = $reminderChannel;
         }
 
+        $assigneeIds = collect($request->input('employee_ids', []))
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        if ($assigneeIds !== []) {
+            $data['employee_id'] = $assigneeIds[0];
+        }
+        unset($data['employee_ids']);
+
         $employeeTask = EmployeeTask::create($data);
+        app(EmployeeTaskAssigneeService::class)->syncForTask(
+            $employeeTask,
+            $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]
+        );
         $this->timeline->recordForTask($employeeTask, \App\Models\EmployeeTaskTimeline::EVENT_CREATED);
 
         if ($request->has('sub_employee_tasks')) {
@@ -810,7 +832,9 @@ public function updateEmployeeTask(Request $request)
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'notes' => ['nullable', 'string'],
-            'employee_id' => ['required','exists:employee_details,id'],
+            'employee_id' => ['required_without:employee_ids','exists:employee_details,id'],
+            'employee_ids' => ['nullable', 'array', 'min:1'],
+            'employee_ids.*' => ['integer', 'exists:employee_details,id'],
             'points' => ['required', 'integer', 'min:0'],
             'start_time' => ['required', 'date', 'before_or_equal:end_time'],
             'end_time' => ['required', 'date', 'after_or_equal:start_time'],
@@ -933,10 +957,23 @@ public function updateEmployeeTask(Request $request)
             }
         }
 
+        $assigneeIds = collect($request->input('employee_ids', []))
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+        if ($assigneeIds !== []) {
+            $finalData['employee_id'] = $assigneeIds[0];
+        }
+        unset($finalData['employee_ids']);
+
         $employeeTask->update($finalData);
 
-
-        
+        app(EmployeeTaskAssigneeService::class)->syncForTask(
+            $employeeTask->fresh(),
+            $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]
+        );
 
         if ($request->has('sub_employee_tasks')) {
 
@@ -1107,6 +1144,27 @@ public function updateEmployeeTask(Request $request)
         $task = EmployeeTask::findOrFail($request->employee_task_id);
         $user = auth()->user();
         $isManager = $user && ! $user->employee;
+        $actorEmployeeId = (int) ($user?->employee?->id ?? 0);
+        $assignees = app(EmployeeTaskAssigneeService::class);
+
+        if (! $isManager && $actorEmployeeId > 0 && ! $assignees->isAssignee($task, $actorEmployeeId)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.unauthorized'),
+            ], 200);
+        }
+
+        if (! $isManager
+            && $task->completed_by_employee_id
+            && (int) $task->completed_by_employee_id !== $actorEmployeeId) {
+            $task->loadMissing('completedByEmployee.user');
+            $name = $task->completedByEmployee?->user?->name ?? __('messages.employee');
+
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.task_completed_by_other', ['name' => $name]),
+            ], 200);
+        }
 
         if ($task->status === EmployeeTaskStatus::WaitingReview->value && $isManager) {
             $task = $this->workflow->approveTask($task);
@@ -1189,7 +1247,9 @@ public function updateEmployeeTask(Request $request)
         ]);
 
         $subTask = EmployeeSubTask::findOrFail($request->sub_task_id);
-        if($subTask->employeeTask->employee_id != auth()->user()->employee->id){
+        $actorId = (int) (auth()->user()->employee->id ?? 0);
+        $parent = $subTask->employeeTask;
+        if (! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, $actorId)) {
            return response()->json([
                 'status' => 'error',
                 'message' => __('messages.unauthorized'),

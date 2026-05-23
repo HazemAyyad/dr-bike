@@ -21,12 +21,21 @@ class EmployeeTaskNotificationService
             return;
         }
 
-        $task->loadMissing('employee.user');
-        if (! $task->employee) {
-            return;
-        }
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+        $ids = $assigneeService->idsForTask($task);
+        $notified = [];
 
-        $this->send($task->employee, $task->name, $task->id, null);
+        foreach ($ids as $employeeId) {
+            if (isset($notified[$employeeId])) {
+                continue;
+            }
+            $employee = EmployeeDetail::with('user')->find($employeeId);
+            if (! $employee) {
+                continue;
+            }
+            $this->send($employee, $task->name, $task->id, null);
+            $notified[$employeeId] = true;
+        }
     }
 
     public function notifyAssignedOccurrence(EmployeeTaskOccurrence $occurrence): void

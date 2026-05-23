@@ -48,6 +48,7 @@ return [
     'task_restored' => 'تم استعادة المهمة الخاصة',
     'can_not_complete_special_task' => 'لا يمكن اتمام المهمة الا عند اتمام جميع مهامها الفرعية',
     'task_completed' => 'تم اكمال المهمة',
+    'task_completed_by_other' => 'أنجزت المهمة بواسطة :name ولا يمكنك تنفيذها',
     'task_transfered'=>'تم نقل المهمة بنجاح',
     // update profile
     'profile_updated' => 'تم تحديث المعلومات الشخصية بنجاح',

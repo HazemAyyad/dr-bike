@@ -54,6 +54,7 @@ class EmployeeTaskDetailsService
         $taskData['progress'] = $this->progressFromSubtasks($employeeTask->subTasks, $employeeTask->status);
         $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
         $taskData['sub_tasks'] = $taskData['sub_tasks'] ?? $taskData['subTasks'] ?? [];
+        $taskData['assignee_ids'] = app(EmployeeTaskAssigneeService::class)->idsForTask($employeeTask);
 
         $template = $employeeTask->template_id
             ? EmployeeTaskTemplate::find($employeeTask->template_id)
