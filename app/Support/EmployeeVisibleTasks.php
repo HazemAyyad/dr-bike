@@ -181,6 +181,7 @@ class EmployeeVisibleTasks
 
         return [
             'id' => $task->id,
+            'task_id' => $task->id,
             'employee_id' => $task->employee_id,
             'assignee_ids' => $assigneeService->idsForTask($task),
             'completed_by_employee_id' => $task->completed_by_employee_id,
@@ -225,6 +226,7 @@ class EmployeeVisibleTasks
 
         return [
             'id' => $task->id,
+            'task_id' => $task->legacy_task_id ?? $task->id,
             'employee_id' => $task->employee_id,
             'assignee_ids' => $assigneeIds,
             'completed_by_employee_id' => $task->completed_by_employee_id ?? null,
