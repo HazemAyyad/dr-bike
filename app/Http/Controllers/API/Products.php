@@ -30,7 +30,7 @@ class Products extends Controller
                 'viewImages',
                 'normalImages',
             ])
-            ->get(['id', 'nameAr', 'stock', 'normailPrice', 'price', 'min_sale_price']);
+            ->get(['id', 'nameAr', 'stock', 'normailPrice', 'wholesalePrice', 'price', 'min_sale_price']);
 
         $formatted = $products->map(function ($product) {
             $image = $product->viewImages->first()
@@ -45,6 +45,7 @@ class Products extends Controller
                 'nameAr' => $product->nameAr,
                 'stock' => $product->stock,
                 'normail_price' => $unitPrice,
+                'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
                 'product_image' => $image
                     ? \App\Support\ApiImageUrl::normalize($image->imageUrl)
                     : 'no image',
@@ -80,15 +81,21 @@ class Products extends Controller
             $data = $request->validate([
                 'product_id' => 'required|integer|exists:products,id',
                 'normail_price' => 'required|numeric|min:0.01',
+                'wholesale_price' => 'nullable|numeric|min:0',
             ]);
 
             $product = Product::findOrFail($data['product_id']);
-            $product->update(['normailPrice' => $data['normail_price']]);
+            $updates = ['normailPrice' => $data['normail_price']];
+            if (array_key_exists('wholesale_price', $data) && $data['wholesale_price'] !== null) {
+                $updates['wholesalePrice'] = $data['wholesale_price'];
+            }
+            $product->update($updates);
 
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.product_updated'),
                 'normail_price' => (float) $product->normailPrice,
+                'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
