@@ -179,11 +179,13 @@ class EmployeeTaskNotificationService
     ): void {
         $this->withArabicLocale(function () use ($employee, $taskName, $legacyTaskId, $occurrenceId) {
             try {
+                $title = 'تم اعتماد المهمة';
+                $body = 'اعتمد الأدمن مهمتك «'.$taskName.'».';
                 $this->notifications->create(
                     $employee,
                     'employee_task_approved',
-                    __('messages.employee_task_approved_title'),
-                    __('messages.employee_task_approved_body', ['name' => $taskName]),
+                    $title,
+                    $body,
                     array_filter([
                         'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
                         'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',

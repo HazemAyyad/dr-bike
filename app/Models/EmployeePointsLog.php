@@ -19,6 +19,7 @@ class EmployeePointsLog extends Model
     public const SOURCE_OVERTIME = 'overtime';
     public const SOURCE_ABSENCE = 'absence';
     public const SOURCE_LATENESS = 'lateness';
+    public const SOURCE_EMPLOYEE_TASK = 'employee_task';
 
     protected $fillable = [
         'employee_id',

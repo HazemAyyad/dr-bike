@@ -10,6 +10,7 @@ use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTimeline;
 use App\Models\EmployeePointCategory;
+use App\Models\EmployeePointsLog;
 use App\Services\AdminNotificationService;
 use App\Services\EmployeeNotificationService;
 use App\Services\EmployeePointsService;
@@ -398,7 +399,12 @@ class EmployeeTaskWorkflowService
 
         $taskPoints = (int) $task->points;
         $bonus = $this->calculateSubtaskBonus($task);
-        $this->creditEmployeeTaskPoints($recipient, $taskPoints + $bonus, $task->name);
+        $this->creditEmployeeTaskPoints(
+            $recipient,
+            $taskPoints + $bonus,
+            $task->name,
+            (int) $task->id
+        );
     }
 
     private function awardCompletionPointsForOccurrence(EmployeeTaskOccurrence $occurrence): void
@@ -410,15 +416,25 @@ class EmployeeTaskWorkflowService
 
         $taskPoints = (int) $occurrence->points;
         $bonus = (int) $occurrence->subtasks()->where('status', 'completed')->sum('bonus_points');
-        $this->creditEmployeeTaskPoints($recipient, $taskPoints + $bonus, $occurrence->name);
+        $this->creditEmployeeTaskPoints(
+            $recipient,
+            $taskPoints + $bonus,
+            $occurrence->name,
+            (int) ($occurrence->legacy_task_id ?? $occurrence->id)
+        );
     }
 
-    private function creditEmployeeTaskPoints(EmployeeDetail $recipient, int $total, string $taskName): void
-    {
+    private function creditEmployeeTaskPoints(
+        EmployeeDetail $recipient,
+        int $total,
+        string $taskName,
+        int $taskRefId
+    ): void {
         if ($total < 1) {
             return;
         }
 
+        $recipient->refresh();
         $recipient->update(['points' => (int) $recipient->points + $total]);
 
         try {
@@ -427,17 +443,28 @@ class EmployeeTaskWorkflowService
                 ->where('is_active', true)
                 ->first();
 
-            app(EmployeePointsService::class)->addPoints($recipient->id, [
+            $payload = [
                 'points' => $total,
-                'category' => 'extra_tasks',
-                'category_id' => $category?->id,
-                'source' => 'employee_task',
-                'reason' => __('messages.task_completion_points', ['task' => $taskName]),
-            ]);
+                'source' => EmployeePointsLog::SOURCE_EMPLOYEE_TASK,
+                'reason' => 'نقاط إتمام المهمة: '.$taskName,
+                'notes' => 'employee_task_id:'.$taskRefId,
+            ];
+
+            if ($category) {
+                app(EmployeePointsService::class)->applyCategoryMutation(
+                    $recipient->id,
+                    $category,
+                    $payload
+                );
+            } else {
+                $payload['category'] = 'extra_tasks';
+                app(EmployeePointsService::class)->addPoints($recipient->id, $payload);
+            }
         } catch (\Throwable $e) {
-            Log::warning('employee_task.points_log_failed', [
+            Log::error('employee_task.points_log_failed', [
                 'employee_id' => $recipient->id,
                 'points' => $total,
+                'task_ref' => $taskRefId,
                 'message' => $e->getMessage(),
             ]);
         }
