@@ -1198,10 +1198,18 @@ public function store(Request $request)
                 $buyerLabel = $this->buyerTypeLabelAr($sale->buyer_type ?? 'unknown');
                 $isPackageSale = $sale->offer_package_id !== null;
                 $packageName = $sale->offerPackage?->name;
+                $hasAdditionalProducts = $isPackageSale && $sale->subProducts->contains(
+                    fn ($sub) => (float) $sub->cost > 0
+                );
+                $saleComposition = $isPackageSale
+                    ? ($hasAdditionalProducts ? 'mixed' : 'package')
+                    : 'product';
 
             return [
                 'id' => $sale->id,
                 'sale_type' => $isPackageSale ? 'package' : 'product',
+                'sale_composition' => $saleComposition,
+                'has_additional_products' => $hasAdditionalProducts,
                 'is_package_sale' => $isPackageSale,
                 'offer_package_id' => $sale->offer_package_id,
                 'package_name' => $packageName,
@@ -1227,12 +1235,16 @@ public function store(Request $request)
                     'payment_box_name' => $sale->payment_box_name,
                     'payment_box_value' => $sale->payment_box_value,
                     ...$this->instantSalePaymentAmounts($sale),
-                'sub_products' => $sale->subProducts->map(function ($sub) {
+                'sub_products' => $sale->subProducts->map(function ($sub) use ($isPackageSale) {
+                    $lineCost = (float) $sub->cost;
+
                     return [
                         'id' => $sub->id,
                         'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,
+                        'is_package_component' => $isPackageSale && $lineCost <= 0,
+                        'is_additional_product' => $isPackageSale && $lineCost > 0,
                     ];
                 }),
                 ...$this->formatInstantSaleAuditFields($sale),
@@ -1538,6 +1550,12 @@ public function store(Request $request)
             $discount = (float) ($sale->discount ?? 0);
             $totalCost = (float) $sale->total_cost;
             $isPackageSale = $sale->offer_package_id !== null;
+            $hasAdditionalProducts = $isPackageSale && $sale->subProducts->contains(
+                fn ($sub) => (float) $sub->cost > 0
+            );
+            $saleComposition = $isPackageSale
+                ? ($hasAdditionalProducts ? 'mixed' : 'package')
+                : 'product';
             $displayName = $isPackageSale
                 ? ($sale->offerPackage?->name ?? 'باكيج محذوف')
                 : ($sale->product?->nameAr ?? '-');
@@ -1547,6 +1565,8 @@ public function store(Request $request)
                 'invoice_number' => (string) $sale->id,
                 'invoice_date' => optional($sale->created_at)->format('Y-m-d H:i:s'),
                 'sale_type' => $isPackageSale ? 'package' : 'product',
+                'sale_composition' => $saleComposition,
+                'has_additional_products' => $hasAdditionalProducts,
                 'is_package_sale' => $isPackageSale,
                 'package_name' => $sale->offerPackage?->name,
                 'product' => $displayName,
@@ -1574,7 +1594,8 @@ public function store(Request $request)
                 ...$this->formatInstantSaleAuditFields($sale),
                 ...$this->paymentBoxInvoiceFields($sale),
                 'sub_products' => $sale->subProducts->map(function ($sub) use ($isPackageSale) {
-                    $lineSubtotal = (float) $sub->cost * (float) $sub->quantity;
+                    $lineCost = (float) $sub->cost;
+                    $lineSubtotal = $lineCost * (float) $sub->quantity;
 
                     return [
                         'id' => $sub->id,
@@ -1583,7 +1604,8 @@ public function store(Request $request)
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,
                         'subtotal' => $lineSubtotal,
-                        'is_package_component' => $isPackageSale,
+                        'is_package_component' => $isPackageSale && $lineCost <= 0,
+                        'is_additional_product' => $isPackageSale && $lineCost > 0,
                     ];
                 })->values(),
              ];
