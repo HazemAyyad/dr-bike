@@ -934,8 +934,67 @@ public function store(Request $request)
 
             $offerPackageService->decrementPackageQuantity($package, $packagesSold);
 
+            $extraProductNames = [];
+            if (! empty($data['other_products'])) {
+                foreach ($data['other_products'] as $item) {
+                    $subProduct = Product::find($item['product_id']);
+                    if (! $subProduct) {
+                        continue;
+                    }
+                    if (($subProduct->stock <= 0) || ($item['quantity'] > $subProduct->stock)) {
+                        return response()->json([
+                            'status' => 'error',
+                            'message' => __('messages.cant_sale'),
+                        ], 200);
+                    }
+                }
+
+                foreach ($data['other_products'] as $item) {
+                    $subProduct = Product::findOrFail($item['product_id']);
+                    $subProductProjects = $subProduct->projects;
+
+                    if ($item['type'] === 'project' && $subProductProjects->isEmpty()) {
+                        return response()->json([
+                            'status' => 'error',
+                            'message' => __('messages.cant_be_project_type'),
+                        ], 200);
+                    }
+
+                    $lineCost = (float) $item['cost'];
+                    $lineQty = (float) $item['quantity'];
+                    $lineTotal = $lineCost * $lineQty;
+
+                    InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
+                        'product_id' => $item['product_id'],
+                        'cost' => $lineCost,
+                        'quantity' => $lineQty,
+                        'discount' => 0,
+                        'total_cost' => $lineTotal,
+                        'parent_id' => $mainInstantSale->id,
+                        'type' => $item['type'],
+                        'project_id' => $item['project_id'] ?? null,
+                    ], $buyerPayload)));
+
+                    $subProduct->stock -= $lineQty;
+                    $subProduct->save();
+
+                    if ((float) $subProduct->stock === 0.0) {
+                        $closeout = $subProduct->closeout;
+                        if ($closeout) {
+                            $closeout->status = 'archived';
+                            $closeout->save();
+                        }
+                    }
+
+                    $extraProductNames[] = $subProduct->nameAr ?? 'بدون اسم';
+                }
+            }
+
             $logDescription = 'اضافة بيع فوري لباكيج عرض: '.$package->name
                 .' (×'.$packagesSold.') بإجمالي تكلفة: '.($mainInstantSale->total_cost ?? 0);
+            if (count($extraProductNames) > 0) {
+                $logDescription .= ' مع منتجات إضافية: '.implode(', ', $extraProductNames);
+            }
 
             Logs::createLog('اضافة بيع فوري جديد', $logDescription, 'instant_sales');
 
