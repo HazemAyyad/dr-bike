@@ -12,6 +12,7 @@ use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskTemplate;
@@ -863,6 +864,13 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
    }
 
        catch (\Exception $e) {
+            \Log::error('showEmployeeTaskDetails failed', [
+                'message' => $e->getMessage(),
+                'occurrence_id' => $request->input('occurrence_id'),
+                'employee_task_id' => $request->input('employee_task_id'),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
              return response()->json([
                 'status' => 'error',
                 'message' => __('messages.failed_to_fetch_task_details'),

@@ -12,6 +12,7 @@ class EmployeeTaskOccurrence extends Model
     protected $fillable = [
         'template_id',
         'employee_id',
+        'completed_by_employee_id',
         'legacy_task_id',
         'name',
         'description',
@@ -61,6 +62,11 @@ class EmployeeTaskOccurrence extends Model
     public function employee(): BelongsTo
     {
         return $this->belongsTo(EmployeeDetail::class, 'employee_id');
+    }
+
+    public function completedByEmployee(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeDetail::class, 'completed_by_employee_id');
     }
 
     public function subtasks(): HasMany
