@@ -19,6 +19,12 @@ class Followup extends Model
         'is_canceled',
         'step',
         'seller_id',
+        'created_by_user_id',
+        'admin_only',
+    ];
+
+    protected $casts = [
+        'admin_only' => 'boolean',
     ];
 
     public function customer(){
@@ -30,5 +36,13 @@ class Followup extends Model
     }
     public function seller(){
         return $this->belongsTo(Seller::class);
+    }
+
+    public function createdBy(){
+        return $this->belongsTo(User::class, 'created_by_user_id');
+    }
+
+    public function activityLogs(){
+        return $this->hasMany(FollowupActivityLog::class);
     }
 }

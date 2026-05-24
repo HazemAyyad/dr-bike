@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\Followup;
+use App\Models\FollowupActivityLog;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -12,6 +13,38 @@ use Illuminate\Validation\ValidationException;
 
 class FollowupAPI extends Controller
 {
+    private function actorName(Request $request): string
+    {
+        $user = $request->user();
+
+        return $user?->name ?? 'System';
+    }
+
+    private function logActivity(Followup $followup, Request $request, string $action, string $description, array $changes = []): void
+    {
+        FollowupActivityLog::create([
+            'followup_id' => $followup->id,
+            'user_id' => $request->user()?->id,
+            'action' => $action,
+            'description' => $description,
+            'changes' => $changes ?: null,
+        ]);
+    }
+
+    private function visibleFollowupsQuery(Request $request, array $statuses)
+    {
+        $query = Followup::whereIn('status', $statuses)
+            ->where('is_canceled', 0);
+
+        if ($request->user()?->type !== 'admin') {
+            $query->where(function ($q) {
+                $q->where('admin_only', 0)->orWhereNull('admin_only');
+            });
+        }
+
+        return $query;
+    }
+
     public function storeFollowup(Request $request)
 {
     try{
@@ -26,6 +59,7 @@ class FollowupAPI extends Controller
             ],
 
             'product_id'  => 'required|string',
+            'admin_only' => 'nullable|boolean',
         ]);
 
                 if (!$request->filled('customer_id') && !$request->filled('seller_id')) {
@@ -43,7 +77,21 @@ class FollowupAPI extends Controller
         }
 
         $data['status'] = "initial";
+        $data['admin_only'] = $request->user()?->type === 'admin'
+            ? $request->boolean('admin_only', false)
+            : false;
+        $data['created_by_user_id'] = $request->user()?->id;
         $followup = Followup::create($data);
+        $this->logActivity(
+            $followup,
+            $request,
+            'created',
+            'تم إنشاء المتابعة بواسطة '.$this->actorName($request),
+            [
+                'admin_only' => $data['admin_only'],
+                'status' => 'initial',
+            ]
+        );
         if($followup->customer_id){
           Logs::createLog('اضافة متابعة جديدة','اضافة متابعة للزبون'.' '.$followup->customer->name,'followups');
         }
@@ -94,6 +142,7 @@ public function updateFollowup(Request $request)
 
         'product_id'  => 'required|string',
         'status' => 'required|string|in:inform,agreement,delivered,rejected',
+        'admin_only' => 'nullable|boolean',
     ]);
 
     if (!$request->filled('customer_id') && !$request->filled('seller_id')) {
@@ -111,7 +160,29 @@ public function updateFollowup(Request $request)
         }
 
         $followup = Followup::findOrFail($request->followup_id);
+        $before = $followup->only(['customer_id','seller_id','product_id','status','admin_only']);
+        if ($request->has('admin_only') && $request->user()?->type === 'admin') {
+            $data['admin_only'] = $request->boolean('admin_only');
+        }
         $followup->update($data);
+        $after = $followup->fresh()->only(['customer_id','seller_id','product_id','status','admin_only']);
+        $changes = [];
+        foreach ($after as $key => $value) {
+            if (($before[$key] ?? null) != $value) {
+                $changes[$key] = [
+                    'from' => $before[$key] ?? null,
+                    'to' => $value,
+                ];
+            }
+        }
+
+        $this->logActivity(
+            $followup,
+            $request,
+            'updated',
+            'تم تعديل المتابعة بواسطة '.$this->actorName($request),
+            $changes
+        );
 
         if($request->status==='delivered'||$request->status==='rejected'){
                 $name = $followup->customer_id? $followup->customer->name:$followup->seller->name;
@@ -148,6 +219,12 @@ public function updateFollowup(Request $request)
 
         $followup = Followup::findOrFail($request->followup_id);
         $name = $followup->customer_id? $followup->customer->name:$followup->seller->name;
+        $this->logActivity(
+            $followup,
+            $request,
+            'deleted',
+            'تم حذف المتابعة بواسطة '.$this->actorName($request)
+        );
         $followup->delete();
 
         Logs::createLog('حذف متابعة','تم حذف المتابعة للشخص '.$name,'followups');
@@ -183,16 +260,16 @@ public function updateFollowup(Request $request)
 
 
 
-  private function getFollowups($status){
+  private function getFollowups(Request $request, $status){
     try{
 
         $statuses = is_array($status) ? $status : [$status];
 
-            $followups = Followup::whereIn('status',$statuses)
-            ->where('is_canceled',0)
+            $followups = $this->visibleFollowupsQuery($request, $statuses)
             ->with([
                 'customer:id,name,phone,ID_image',
                 'seller:id,name,phone,ID_image',
+                'createdBy:id,name,type',
 
             ])->get();
 
@@ -218,6 +295,9 @@ public function updateFollowup(Request $request)
                     'product_name' => $followup->product_id,
                     'followup_status'=> $followup->status,
                     'created_at' => $followup->created_at? $followup->created_at->format('Y-m-d'):null,
+                    'created_by_name' => $followup->createdBy?->name,
+                    'created_by_type' => $followup->createdBy?->type,
+                    'admin_only' => (bool) $followup->admin_only,
 
                 ];
             });
@@ -239,23 +319,23 @@ public function updateFollowup(Request $request)
         }
     }
 
-    public function getInitialFollowups()
+    public function getInitialFollowups(Request $request)
     {
-        return $this->getFollowups('initial');
+        return $this->getFollowups($request, 'initial');
     }
 
-    public function getSecondStepFollowups()
+    public function getSecondStepFollowups(Request $request)
     {
-        return $this->getFollowups('inform');
+        return $this->getFollowups($request, 'inform');
     }
-    public function getThirdStepFollowups()
+    public function getThirdStepFollowups(Request $request)
     {
-        return $this->getFollowups('agreement');
+        return $this->getFollowups($request, 'agreement');
     }
 
-    public function getArchivedFollowups()
+    public function getArchivedFollowups(Request $request)
     {
-        return $this->getFollowups(['delivered','rejected']);
+        return $this->getFollowups($request, ['delivered','rejected']);
     }
 
 
@@ -267,6 +347,12 @@ public function updateFollowup(Request $request)
 
        
         $followup->update(['is_canceled'=>1]);
+        $this->logActivity(
+            $followup,
+            $request,
+            'canceled',
+            'تم إلغاء المتابعة بواسطة '.$this->actorName($request)
+        );
 
             return response()->json([
                 'status' => 'success',
@@ -347,8 +433,19 @@ public function updateFollowup(Request $request)
             $request->validate(['followup_id'=>'required|integer|exists:followups,id']);
 
             $followup = Followup::with('customer:id,name,ID_image')
-            ->with('seller:id,name,ID_image')->
+            ->with('seller:id,name,ID_image')
+            ->with('createdBy:id,name,type')
+            ->with(['activityLogs' => function ($query) {
+                $query->with('user:id,name,type')->orderBy('created_at', 'desc');
+            }])->
             findOrFail($request->followup_id);
+
+            if ($followup->admin_only && $request->user()?->type !== 'admin') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.followup_not_found'),
+                ], 200);
+            }
 
             $followup->makeHidden(['customer_id','seller_id','step','start_date','end_date']);
             if($followup->customer_id){
@@ -363,6 +460,17 @@ public function updateFollowup(Request $request)
             return response()->json([
                 'status'=>'success',
                 'followup'=> $followup,
+                'activity_logs' => $followup->activityLogs->map(function ($log) {
+                    return [
+                        'id' => $log->id,
+                        'action' => $log->action,
+                        'description' => $log->description,
+                        'actor_name' => $log->user?->name,
+                        'actor_type' => $log->user?->type,
+                        'changes' => $log->changes,
+                        'created_at' => $log->created_at?->format('Y-m-d H:i'),
+                    ];
+                })->values(),
             ],200);
         }
        catch (ValidationException $e) {
