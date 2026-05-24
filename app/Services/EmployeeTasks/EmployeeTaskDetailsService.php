@@ -29,21 +29,6 @@ class EmployeeTaskDetailsService
             'completedByEmployee.user',
         ]);
 
-        $employeeTask->subTasks->transform(function ($subTask) {
-            if ($subTask->admin_img) {
-                $subTask->admin_img = collect($subTask->admin_img)
-                    ->map(fn ($img) => 'public/EmployeeSubTasks/AdminImages/'.$img)
-                    ->toArray();
-            }
-            if ($subTask->employee_img) {
-                $subTask->employee_img = collect($subTask->employee_img)
-                    ->map(fn ($img) => 'public/EmployeeSubTasks/EmployeeImages/'.$img)
-                    ->toArray();
-            }
-
-            return $subTask;
-        });
-
         $employeeTask->makeHidden(['admin_img', 'employee_img', 'audio']);
         $taskData = $employeeTask->toArray();
         $taskData['id'] = $employeeTask->id;
@@ -208,7 +193,9 @@ class EmployeeTaskDetailsService
             return 'no images';
         }
 
-        return collect($adminImg)->map(fn ($img) => 'public/AdminEmployeeTasksImages/'.$img)->toArray();
+        return collect($adminImg)
+            ->map(fn ($img) => $this->prefixMediaPath((string) $img, 'AdminEmployeeTasksImages'))
+            ->toArray();
     }
 
     /**
@@ -221,7 +208,55 @@ class EmployeeTaskDetailsService
             return 'no images';
         }
 
-        return collect($employeeImg)->map(fn ($img) => 'public/EmployeeTasksImages/'.$img)->toArray();
+        return collect($employeeImg)
+            ->map(fn ($img) => $this->prefixMediaPath((string) $img, 'EmployeeTasksImages'))
+            ->toArray();
+    }
+
+    /**
+     * @param  array<int, mixed>|null  $files
+     * @return array<int, string>
+     */
+    private function formatSubtaskAdminImages(?array $files): array
+    {
+        if (! is_array($files) || $files === []) {
+            return [];
+        }
+
+        return collect($files)
+            ->map(fn ($img) => $this->prefixMediaPath((string) $img, 'EmployeeSubTasks/AdminImages'))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  array<int, mixed>|null  $files
+     * @return array<int, string>
+     */
+    private function formatSubtaskEmployeeImages(?array $files): array
+    {
+        if (! is_array($files) || $files === []) {
+            return [];
+        }
+
+        return collect($files)
+            ->map(fn ($img) => $this->prefixMediaPath((string) $img, 'EmployeeSubTasks/EmployeeImages'))
+            ->values()
+            ->all();
+    }
+
+    private function prefixMediaPath(string $filename, string $directory): string
+    {
+        $filename = trim($filename);
+        if ($filename === '') {
+            return '';
+        }
+
+        if (str_starts_with($filename, 'public/')) {
+            return $filename;
+        }
+
+        return 'public/'.$directory.'/'.$filename;
     }
 
     /**
@@ -243,13 +278,6 @@ class EmployeeTaskDetailsService
      */
     private function formatLegacySubtask(EmployeeSubTask $sub): array
     {
-        $adminImg = $sub->admin_img
-            ? collect($sub->admin_img)->map(fn ($img) => 'public/EmployeeSubTasks/AdminImages/'.$img)->toArray()
-            : [];
-        $employeeImg = $sub->employee_img
-            ? collect($sub->employee_img)->map(fn ($img) => 'public/EmployeeSubTasks/EmployeeImages/'.$img)->toArray()
-            : [];
-
         return [
             'id' => $sub->id,
             'name' => $sub->name,
@@ -258,8 +286,8 @@ class EmployeeTaskDetailsService
             'is_forced_to_upload_img' => (bool) $sub->is_forced_to_upload_img,
             'bonus_points' => (int) ($sub->bonus_points ?? 0),
             'sort_order' => (int) ($sub->sort_order ?? 0),
-            'admin_img' => $adminImg,
-            'employee_img' => $employeeImg,
+            'admin_img' => $this->formatSubtaskAdminImages($sub->admin_img),
+            'employee_img' => $this->formatSubtaskEmployeeImages($sub->employee_img),
             'completed_by_employee_id' => Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')
                 ? $sub->completed_by_employee_id
                 : null,
@@ -280,12 +308,8 @@ class EmployeeTaskDetailsService
             'is_forced_to_upload_img' => (bool) $sub->requires_image,
             'bonus_points' => (int) $sub->bonus_points,
             'sort_order' => (int) $sub->sort_order,
-            'admin_img' => $sub->admin_img
-                ? collect($sub->admin_img)->map(fn ($img) => 'public/EmployeeSubTasks/AdminImages/'.$img)->toArray()
-                : [],
-            'employee_img' => $sub->employee_img
-                ? collect($sub->employee_img)->map(fn ($img) => 'public/EmployeeSubTasks/EmployeeImages/'.$img)->toArray()
-                : [],
+            'admin_img' => $this->formatSubtaskAdminImages($sub->admin_img),
+            'employee_img' => $this->formatSubtaskEmployeeImages($sub->employee_img),
             'completed_by_employee_id' => Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')
                 ? $sub->completed_by_employee_id
                 : null,

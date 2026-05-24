@@ -20,6 +20,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class EmployeeTasks extends Controller
@@ -807,8 +808,13 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
     public function showEmployeeTaskDetails(Request $request){
         try{
         $request->validate([
-            'employee_task_id' => 'nullable|exists:employee_tasks,id',
             'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
+            'employee_task_id' => [
+                Rule::requiredIf(fn () => ! $request->filled('occurrence_id')),
+                'nullable',
+                'integer',
+                Rule::exists('employee_tasks', 'id'),
+            ],
         ]);
 
         if (! $request->employee_task_id && ! $request->occurrence_id) {
