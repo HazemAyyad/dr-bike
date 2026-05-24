@@ -141,7 +141,7 @@ public function updateFollowup(Request $request)
             ],
 
         'product_id'  => 'required|string',
-        'status' => 'required|string|in:inform,agreement,delivered,rejected',
+        'status' => 'required|string|in:initial,inform,agreement,delivered,rejected',
         'admin_only' => 'nullable|boolean',
     ]);
 
