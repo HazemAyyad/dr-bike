@@ -339,7 +339,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Follow-up Section'
     Route::get('/canceled/followup' , [FollowupAPI::class,'getCanceledFollowups']);
    
     Route::post('/cancel/followup' , [FollowupAPI::class,'cancelFollowUp']);
-   
+    Route::post('/delete/followup' , [FollowupAPI::class,'deleteFollowup']);
+
     Route::post('/update/followup' , [FollowupAPI::class,'updateFollowup']);
     Route::post('/show/followup' , [FollowupAPI::class,'showFollowup']);
 

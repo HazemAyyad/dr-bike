@@ -142,6 +142,46 @@ public function updateFollowup(Request $request)
 }
 
 
+    public function deleteFollowup(Request $request){
+      try{
+        $request->validate(['followup_id'=>'required|exists:followups,id']);
+
+        $followup = Followup::findOrFail($request->followup_id);
+        $name = $followup->customer_id? $followup->customer->name:$followup->seller->name;
+        $followup->delete();
+
+        Logs::createLog('حذف متابعة','تم حذف المتابعة للشخص '.$name,'followups');
+
+        return response()->json([
+            'status' => 'success',
+            'message' => __('messages.followup_deleted_successfully')
+        ], 200);
+    }
+
+    catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed')
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.followup_not_found')
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.delete_data_error')
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_delete_followup')
+            ], 200);
+        }
+}
+
+
 
   private function getFollowups($status){
     try{

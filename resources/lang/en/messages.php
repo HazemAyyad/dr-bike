@@ -157,8 +157,10 @@ return [
     //follow up
     'followup_created_successfully'    => 'Followup created successfully',
     'followup_canceled_successfully'   => 'Followup has been canceled',
+    'followup_deleted_successfully'    => 'Followup deleted successfully',
     'failed_to_create_followup'        => 'Failed to create the followup',
     'failed_to_cancel_followup'        => 'Failed to cancel the followup',
+    'failed_to_delete_followup'        => 'Failed to delete the followup',
     'failed_to_load_followups'         => 'Failed to load followups list',
     'followup_not_found'               => 'Followup not found',
     'followup_restored_successfully' => 'Followup restored successfully',

@@ -159,8 +159,10 @@ return [
     // follow up
     'followup_created_successfully'    => 'تم إنشاء المتابعة بنجاح',
     'followup_canceled_successfully'   => 'تم إلغاء المتابعة بنجاح',
+    'followup_deleted_successfully'    => 'تم حذف المتابعة بنجاح',
     'failed_to_create_followup'        => 'فشل في إنشاء المتابعة',
     'failed_to_cancel_followup'        => 'فشل في إلغاء المتابعة',
+    'failed_to_delete_followup'        => 'فشل في حذف المتابعة',
     'failed_to_load_followups'         => 'فشل في تحميل قائمة المتابعات',
     'followup_not_found'               => 'المتابعة غير موجودة',
     'followup_restored_successfully' => 'تم استعادة المتابعة بنجاح',
