@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\ProductDevelopment;
+use App\Models\ProductDevelopmentActivityLog;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -11,6 +12,31 @@ use Illuminate\Validation\ValidationException;
 
 class ProductDevelopmentApi extends Controller
 {
+    private function logActivity(Request $request, ProductDevelopment $prodev, string $action, string $description, ?array $changes = null): void
+    {
+        ProductDevelopmentActivityLog::create([
+            'product_development_id' => $prodev->id,
+            'user_id' => $request->user()?->id,
+            'action' => $action,
+            'description' => $description,
+            'changes' => $changes,
+        ]);
+    }
+
+    private function formatActivityLogs(ProductDevelopment $dev)
+    {
+        return $dev->activityLogs->map(fn ($log) => [
+            'id' => $log->id,
+            'action' => $log->action,
+            'description' => $log->description,
+            'changes' => $log->changes,
+            'user_id' => $log->user_id,
+            'user_name' => $log->user?->name ?? 'غير معروف',
+            'user_type' => $log->user?->type,
+            'created_at' => optional($log->created_at)->format('Y-m-d H:i'),
+        ])->values();
+    }
+
     public function create(Request $request){
 
         try{
@@ -24,11 +50,25 @@ class ProductDevelopmentApi extends Controller
                 ->first();
 
             if ($prodev) {
+                $oldDescription = $prodev->description;
                 $prodev->update([
                     'description' => $data['description'] ?? $prodev->description,
                 ]);
+                $this->logActivity(
+                    $request,
+                    $prodev,
+                    'updated',
+                    'تم تعديل تفاصيل تطوير المنتج',
+                    ['description' => ['old' => $oldDescription, 'new' => $prodev->description]]
+                );
             } else {
                 $prodev = ProductDevelopment::create($data);
+                $this->logActivity(
+                    $request,
+                    $prodev,
+                    'created',
+                    'تم إنشاء تطوير المنتج'
+                );
             }
 
             Logs::createLog(
@@ -69,7 +109,10 @@ class ProductDevelopmentApi extends Controller
             $request->validate(['product_development_id'=>'required|integer|exists:product_development,id',
         ]);
 
-        $prodev = ProductDevelopment::with('product:id,nameAr,rate')
+        $prodev = ProductDevelopment::with([
+            'product:id,nameAr,rate',
+            'activityLogs.user:id,name,type',
+        ])
         ->findOrFail($request->product_development_id);
 
         $image = $prodev->product->viewImages->first();
@@ -82,6 +125,7 @@ class ProductDevelopmentApi extends Controller
             'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
             'description' => $prodev->description,
             'current_step' => $prodev->step,
+            'activity_logs' => $this->formatActivityLogs($prodev),
 
         ];
 
@@ -125,7 +169,15 @@ class ProductDevelopmentApi extends Controller
             ]);
 
             $prodev = ProductDevelopment::findOrFail($data['product_development_id']);
+            $oldStep = $prodev->step;
             $prodev->update(['step'=>$data['step']]);
+            $this->logActivity(
+                $request,
+                $prodev,
+                'updated',
+                'تم تحديث مرحلة تطوير المنتج',
+                ['step' => ['old' => $oldStep, 'new' => $data['step']]]
+            );
             Logs::createLog(
                 'تحديث خطوة تطوير منتج',
                 'تم تحديث خطوة تطوير المنتج ' 
@@ -178,6 +230,12 @@ class ProductDevelopmentApi extends Controller
 
             $prodev = ProductDevelopment::with('product:id,nameAr')->findOrFail($data['product_development_id']);
             $productName = $prodev->product->nameAr ?? 'لا اسم';
+            $this->logActivity(
+                $request,
+                $prodev,
+                'deleted',
+                'تم حذف المنتج من قائمة التطوير'
+            );
             $prodev->delete();
 
             Logs::createLog(
@@ -223,7 +281,10 @@ class ProductDevelopmentApi extends Controller
     public function allProDevs(){
         try{
 
-            $proDevs = ProductDevelopment::with('product:id,nameAr,rate')
+            $proDevs = ProductDevelopment::with([
+                'product:id,nameAr,rate',
+                'activityLogs.user:id,name,type',
+            ])
             ->get();
 
             $formatted = $proDevs->map(function($dev){
@@ -237,6 +298,7 @@ class ProductDevelopmentApi extends Controller
                     'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
                     'current_step' => $dev->step,  
                     'description' => $dev->description,
+                    'activity_logs' => $this->formatActivityLogs($dev),
                               ];
             });
 

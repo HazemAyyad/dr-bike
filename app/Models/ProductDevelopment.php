@@ -14,4 +14,10 @@ class ProductDevelopment extends Model
     public function product(){
         return $this->belongsTo(Product::class);
     }
+
+    public function activityLogs()
+    {
+        return $this->hasMany(ProductDevelopmentActivityLog::class)
+            ->latest();
+    }
 }
