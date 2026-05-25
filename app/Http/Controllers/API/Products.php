@@ -30,7 +30,7 @@ class Products extends Controller
                 'viewImages',
                 'normalImages',
             ])
-            ->get(['id', 'nameAr', 'stock', 'normailPrice', 'wholesalePrice', 'price', 'min_sale_price']);
+            ->get(['id', 'nameAr', 'stock', 'normailPrice', 'wholesalePrice', 'price', 'min_sale_price', 'rate']);
 
         $formatted = $products->map(function ($product) {
             $image = $product->viewImages->first()
@@ -46,6 +46,7 @@ class Products extends Controller
                 'stock' => $product->stock,
                 'normail_price' => $unitPrice,
                 'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
+                'rate' => (float) ($product->rate ?? 0),
                 'product_image' => $image
                     ? \App\Support\ApiImageUrl::normalize($image->imageUrl)
                     : 'no image',

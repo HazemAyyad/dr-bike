@@ -681,6 +681,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/update/product/development/step' , [ProductDevelopmentApi::class,'updateDev']);
     Route::post('/create/product/development' , [ProductDevelopmentApi::class,'create']);
     Route::post('/show/product/development' , [ProductDevelopmentApi::class,'showProDev']);
+    Route::post('/delete/product/development' , [ProductDevelopmentApi::class,'deleteDev']);
 
 
   // reports

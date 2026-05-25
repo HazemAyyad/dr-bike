@@ -69,7 +69,7 @@ class ProductDevelopmentApi extends Controller
             $request->validate(['product_development_id'=>'required|integer|exists:product_development,id',
         ]);
 
-        $prodev = ProductDevelopment::with('product:id,nameAr')
+        $prodev = ProductDevelopment::with('product:id,nameAr,rate')
         ->findOrFail($request->product_development_id);
 
         $image = $prodev->product->viewImages->first();
@@ -78,6 +78,7 @@ class ProductDevelopmentApi extends Controller
             'product_id' => $prodev->product_id,
 
             'product_name' => $prodev->product->nameAr??'no name',
+            'rate' => (float) ($prodev->product->rate ?? 0),
             'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
             'description' => $prodev->description,
             'current_step' => $prodev->step,
@@ -169,10 +170,60 @@ class ProductDevelopmentApi extends Controller
 
     }
 
+    public function deleteDev(Request $request){
+        try{
+            $data = $request->validate([
+                'product_development_id'=>'required|integer|exists:product_development,id',
+            ]);
+
+            $prodev = ProductDevelopment::with('product:id,nameAr')->findOrFail($data['product_development_id']);
+            $productName = $prodev->product->nameAr ?? 'لا اسم';
+            $prodev->delete();
+
+            Logs::createLog(
+                'حذف منتج من التطوير',
+                'تم حذف المنتج ' . $productName . ' من قائمة تطوير المنتجات',
+                'product_developments'
+            );
+
+            return response()->json([
+                'status'=>'success',
+                'message'=>'تم حذف المنتج من التطوير بنجاح',
+            ],200);
+
+        }
+
+        catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors()
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong')
+            ], 200);
+        }
+        catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong')
+            ], 200);
+
+         } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong')
+            ], 200);
+        }
+
+    }
+
     public function allProDevs(){
         try{
 
-            $proDevs = ProductDevelopment::with('product:id,nameAr')
+            $proDevs = ProductDevelopment::with('product:id,nameAr,rate')
             ->get();
 
             $formatted = $proDevs->map(function($dev){
@@ -182,6 +233,7 @@ class ProductDevelopmentApi extends Controller
                     'id'=> $dev->id,
                     'product_id' => $dev->product_id,
                     'product_name' => $dev->product->nameAr??'no name',
+                    'rate' => (float) ($dev->product->rate ?? 0),
                     'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
                     'current_step' => $dev->step,  
                     'description' => $dev->description,
