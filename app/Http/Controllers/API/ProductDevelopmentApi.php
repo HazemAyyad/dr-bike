@@ -19,7 +19,18 @@ class ProductDevelopmentApi extends Controller
                 'description'=>'nullable|string',
             ]);
 
-            $prodev =ProductDevelopment::create($data);
+            $prodev = ProductDevelopment::where('product_id', $data['product_id'])
+                ->where('step', '<', 7)
+                ->first();
+
+            if ($prodev) {
+                $prodev->update([
+                    'description' => $data['description'] ?? $prodev->description,
+                ]);
+            } else {
+                $prodev = ProductDevelopment::create($data);
+            }
+
             Logs::createLog(
                 'تطوير منتج',
                 'تم اضافة المنتج ' . ($prodev->product->nameAr ?? 'لا اسم') . ' الى قائمة تطوير المنتجات',
@@ -64,9 +75,10 @@ class ProductDevelopmentApi extends Controller
         $image = $prodev->product->viewImages->first();
         $formatted = [
             'id' => $prodev->id,
+            'product_id' => $prodev->product_id,
 
             'product_name' => $prodev->product->nameAr??'no name',
-            'product_image' => $image ? env('STORE_DOMAIN').$image->imageUrl : 'no image',
+            'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
             'description' => $prodev->description,
             'current_step' => $prodev->step,
 
@@ -164,12 +176,13 @@ class ProductDevelopmentApi extends Controller
             ->get();
 
             $formatted = $proDevs->map(function($dev){
-                $image = $dev->product->viewImages->first();
+                $image = $dev->product?->viewImages->first();
 
                 return [
                     'id'=> $dev->id,
+                    'product_id' => $dev->product_id,
                     'product_name' => $dev->product->nameAr??'no name',
-                    'product_image' => $image ? env('STORE_DOMAIN').$image->imageUrl : 'no image',
+                    'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
                     'current_step' => $dev->step,  
                     'description' => $dev->description,
                               ];
