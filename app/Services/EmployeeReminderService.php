@@ -39,9 +39,24 @@ class EmployeeReminderService
                     'is_active' => (bool) ($data['is_active'] ?? true),
                 ]);
 
-                $occurrence = $this->ensureOccurrence($reminder, $scheduledAt);
+                $occurrence = $this->ensureOccurrence($reminder, $scheduledAt)
+                    ->fresh(['employee.user', 'reminder']);
                 $this->recordHistory($reminder, 'created', $occurrence, $createdBy, 'تم إنشاء التنبيه');
-                $this->notifyAssignment($occurrence->fresh(['employee.user', 'reminder']));
+
+                if ($scheduledAt->lte(now())) {
+                    $this->notifyOccurrence($occurrence);
+                    $occurrence->update([
+                        'notified_at' => now(),
+                        'status' => EmployeeReminderOccurrence::STATUS_PENDING,
+                        'snoozed_until' => null,
+                    ]);
+                    $this->recordHistory($reminder, 'notified', $occurrence, null, 'تم إرسال إشعار التنبيه');
+                    $this->createNextOccurrenceIfNeeded($reminder, $scheduledAt);
+                } else {
+                    $this->notifyAssignment($occurrence);
+                    $this->recordHistory($reminder, 'assigned_notification', $occurrence, null, 'تم إرسال إشعار إضافة التنبيه');
+                }
+
                 $reminders->push($reminder->fresh(['employee.user', 'occurrences']));
             }
 
@@ -123,8 +138,16 @@ class EmployeeReminderService
             ->with(['employee.user', 'reminder'])
             ->whereIn('status', [EmployeeReminderOccurrence::STATUS_PENDING, EmployeeReminderOccurrence::STATUS_SNOOZED])
             ->where(function ($query) use ($now) {
-                $query->where('scheduled_at', '<=', $now)
-                    ->orWhere('snoozed_until', '<=', $now);
+                $query
+                    ->where(function ($q) use ($now) {
+                        $q->where('status', EmployeeReminderOccurrence::STATUS_PENDING)
+                            ->where('scheduled_at', '<=', $now);
+                    })
+                    ->orWhere(function ($q) use ($now) {
+                        $q->where('status', EmployeeReminderOccurrence::STATUS_SNOOZED)
+                            ->whereNotNull('snoozed_until')
+                            ->where('snoozed_until', '<=', $now);
+                    });
             })
             ->whereNull('notified_at')
             ->whereHas('reminder', fn ($query) => $query->where('is_active', true))
@@ -180,7 +203,6 @@ class EmployeeReminderService
             'employee_reminder_occurrence',
             (int) $occurrence->id
         );
-        $this->recordHistory($reminder, 'assigned_notification', $occurrence, null, 'تم إرسال إشعار إضافة التنبيه');
     }
 
     private function notifyAssignment(EmployeeReminderOccurrence $occurrence): void
