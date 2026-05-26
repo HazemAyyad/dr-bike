@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeReminder;
+use App\Models\EmployeeReminderHistory;
 use App\Models\EmployeeReminderOccurrence;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -34,10 +35,12 @@ class EmployeeReminderService
                     'description' => $data['description'] ?? null,
                     'scheduled_at' => $scheduledAt,
                     'repeat_type' => $data['repeat_type'] ?? EmployeeReminder::REPEAT_ONCE,
+                    'repeat_days' => $this->normalizeRepeatDays($data['repeat_days'] ?? []),
                     'is_active' => (bool) ($data['is_active'] ?? true),
                 ]);
 
                 $occurrence = $this->ensureOccurrence($reminder, $scheduledAt);
+                $this->recordHistory($reminder, 'created', $occurrence, $createdBy, 'تم إنشاء التنبيه');
                 $this->notifyAssignment($occurrence->fresh(['employee.user', 'reminder']));
                 $reminders->push($reminder->fresh(['employee.user', 'occurrences']));
             }
@@ -84,6 +87,7 @@ class EmployeeReminderService
                 'completed_at' => now(),
                 'snoozed_until' => null,
             ]);
+            $this->recordHistory($occurrence->reminder, 'done', $occurrence, auth()->id(), 'تم إنهاء التنبيه من الموظف');
 
             return $occurrence->fresh(['reminder']);
         });
@@ -97,6 +101,15 @@ class EmployeeReminderService
             'snoozed_until' => now()->addMinutes($minutes),
             'notified_at' => null,
         ]);
+        $occurrence->loadMissing('reminder');
+        $this->recordHistory(
+            $occurrence->reminder,
+            'snoozed',
+            $occurrence,
+            auth()->id(),
+            'تم تأجيل التنبيه',
+            ['minutes' => $minutes, 'snoozed_until' => optional($occurrence->snoozed_until)->toIso8601String()]
+        );
 
         return $occurrence->fresh(['reminder']);
     }
@@ -127,6 +140,7 @@ class EmployeeReminderService
                             'status' => EmployeeReminderOccurrence::STATUS_PENDING,
                             'snoozed_until' => null,
                         ]);
+                        $this->recordHistory($occurrence->reminder, 'notified', $occurrence, null, 'تم إرسال إشعار التنبيه');
                         $this->createNextOccurrenceIfNeeded(
                             $occurrence->reminder,
                             Carbon::parse($occurrence->scheduled_at)
@@ -166,6 +180,7 @@ class EmployeeReminderService
             'employee_reminder_occurrence',
             (int) $occurrence->id
         );
+        $this->recordHistory($reminder, 'assigned_notification', $occurrence, null, 'تم إرسال إشعار إضافة التنبيه');
     }
 
     private function notifyAssignment(EmployeeReminderOccurrence $occurrence): void
@@ -208,13 +223,71 @@ class EmployeeReminderService
 
         $next = match ($reminder->repeat_type) {
             EmployeeReminder::REPEAT_DAILY => $currentScheduledAt->copy()->addDay(),
-            EmployeeReminder::REPEAT_WEEKLY => $currentScheduledAt->copy()->addWeek(),
+            EmployeeReminder::REPEAT_WEEKLY => $this->nextWeeklyDate($currentScheduledAt, $reminder->repeat_days ?? []),
             EmployeeReminder::REPEAT_MONTHLY => $currentScheduledAt->copy()->addMonth(),
             default => null,
         };
 
         if ($next !== null) {
-            $this->ensureOccurrence($reminder, $next);
+            $occurrence = $this->ensureOccurrence($reminder, $next);
+            $this->recordHistory($reminder, 'next_occurrence_created', $occurrence, null, 'تم إنشاء موعد التنبيه القادم');
         }
+    }
+
+    public function recordHistory(
+        EmployeeReminder $reminder,
+        string $event,
+        ?EmployeeReminderOccurrence $occurrence = null,
+        ?int $actorId = null,
+        ?string $title = null,
+        array $meta = []
+    ): void {
+        EmployeeReminderHistory::create([
+            'reminder_id' => $reminder->id,
+            'occurrence_id' => $occurrence?->id,
+            'employee_id' => $occurrence?->employee_id ?? $reminder->employee_id,
+            'actor_id' => $actorId,
+            'event' => $event,
+            'title' => $title,
+            'meta' => $meta,
+        ]);
+    }
+
+    private function normalizeRepeatDays(array $days): array
+    {
+        $allowed = ['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+
+        return array_values(array_intersect($allowed, array_map(
+            fn ($day) => strtolower((string) $day),
+            $days
+        )));
+    }
+
+    private function nextWeeklyDate(Carbon $currentScheduledAt, array $repeatDays): Carbon
+    {
+        $days = $this->normalizeRepeatDays($repeatDays);
+        if ($days === []) {
+            return $currentScheduledAt->copy()->addWeek();
+        }
+
+        $map = [
+            'sunday' => 0,
+            'monday' => 1,
+            'tuesday' => 2,
+            'wednesday' => 3,
+            'thursday' => 4,
+            'friday' => 5,
+            'saturday' => 6,
+        ];
+        $targetDays = array_map(fn ($day) => $map[$day], $days);
+
+        for ($i = 1; $i <= 14; $i++) {
+            $next = $currentScheduledAt->copy()->addDays($i);
+            if (in_array($next->dayOfWeek, $targetDays, true)) {
+                return $next;
+            }
+        }
+
+        return $currentScheduledAt->copy()->addWeek();
     }
 }

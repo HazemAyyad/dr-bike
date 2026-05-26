@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeReminder;
+use App\Models\EmployeeReminderHistory;
 use App\Models\EmployeeReminderOccurrence;
 use App\Services\EmployeeReminderService;
 use Illuminate\Http\Request;
@@ -26,7 +27,19 @@ class EmployeeRemindersController extends Controller
         }
 
         if ($request->filled('status')) {
-            $query->where('is_active', $request->input('status') === 'active');
+            if ($request->input('status') === 'deleted') {
+                $query->onlyTrashed();
+            } elseif (in_array($request->input('status'), ['pending', 'snoozed', 'done', 'canceled'], true)) {
+                $query->whereHas('occurrences', fn ($q) => $q->where('status', $request->input('status')));
+            } else {
+                $query->where('is_active', $request->input('status') === 'active');
+                if ($request->input('status') === 'active') {
+                    $query->whereHas('occurrences', fn ($q) => $q->whereIn('status', [
+                        EmployeeReminderOccurrence::STATUS_PENDING,
+                        EmployeeReminderOccurrence::STATUS_SNOOZED,
+                    ]));
+                }
+            }
         }
 
         if ($request->filled('search')) {
@@ -52,6 +65,8 @@ class EmployeeRemindersController extends Controller
             'description' => ['nullable', 'string'],
             'scheduled_at' => ['required', 'date'],
             'repeat_type' => ['nullable', 'string', Rule::in(EmployeeReminder::REPEAT_TYPES)],
+            'repeat_days' => ['nullable', 'array'],
+            'repeat_days.*' => ['string', Rule::in(['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday'])],
             'is_active' => ['nullable', 'boolean'],
         ]);
 
@@ -75,6 +90,8 @@ class EmployeeRemindersController extends Controller
             'description' => ['nullable', 'string'],
             'scheduled_at' => ['sometimes', 'required', 'date'],
             'repeat_type' => ['sometimes', 'required', 'string', Rule::in(EmployeeReminder::REPEAT_TYPES)],
+            'repeat_days' => ['nullable', 'array'],
+            'repeat_days.*' => ['string', Rule::in(['saturday', 'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday'])],
             'is_active' => ['sometimes', 'boolean'],
         ]);
 
@@ -87,6 +104,7 @@ class EmployeeRemindersController extends Controller
 
     public function destroy(EmployeeReminder $reminder)
     {
+        $this->reminders->recordHistory($reminder, 'deleted', null, auth()->id(), 'تم حذف التنبيه من الأدمن');
         $reminder->update(['is_active' => false]);
         $reminder->occurrences()
             ->whereIn('status', [EmployeeReminderOccurrence::STATUS_PENDING, EmployeeReminderOccurrence::STATUS_SNOOZED])
@@ -107,11 +125,16 @@ class EmployeeRemindersController extends Controller
             ->with('reminder')
             ->where('employee_id', $employeeId)
             ->whereHas('reminder', fn ($q) => $q->where('is_active', true))
-            ->whereIn('status', [
+            ->orderBy('scheduled_at');
+
+        if ($request->input('status') === 'done') {
+            $query->where('status', EmployeeReminderOccurrence::STATUS_DONE);
+        } else {
+            $query->whereIn('status', [
                 EmployeeReminderOccurrence::STATUS_PENDING,
                 EmployeeReminderOccurrence::STATUS_SNOOZED,
-            ])
-            ->orderBy('scheduled_at');
+            ]);
+        }
 
         if ($request->filled('from')) {
             $query->where('scheduled_at', '>=', $request->input('from'));
@@ -150,6 +173,18 @@ class EmployeeRemindersController extends Controller
             'status' => 'success',
             'message' => 'تم تأجيل التذكير',
             'occurrence' => $this->reminders->snooze($occurrence, (int) ($validated['minutes'] ?? 30)),
+        ]);
+    }
+
+    public function history(EmployeeReminder $reminder)
+    {
+        return response()->json([
+            'status' => 'success',
+            'history' => EmployeeReminderHistory::query()
+                ->with(['employee.user', 'actor'])
+                ->where('reminder_id', $reminder->id)
+                ->latest()
+                ->get(),
         ]);
     }
 

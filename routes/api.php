@@ -267,6 +267,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
     Route::post('/employee-reminders', [EmployeeRemindersController::class, 'store']);
     Route::put('/employee-reminders/{reminder}', [EmployeeRemindersController::class, 'update'])
         ->whereNumber('reminder');
+    Route::get('/employee-reminders/{reminder}/history', [EmployeeRemindersController::class, 'history'])
+        ->whereNumber('reminder');
     Route::delete('/employee-reminders/{reminder}', [EmployeeRemindersController::class, 'destroy'])
         ->whereNumber('reminder');
 });

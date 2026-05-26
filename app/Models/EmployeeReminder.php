@@ -30,11 +30,13 @@ class EmployeeReminder extends Model
         'description',
         'scheduled_at',
         'repeat_type',
+        'repeat_days',
         'is_active',
     ];
 
     protected $casts = [
         'scheduled_at' => 'datetime',
+        'repeat_days' => 'array',
         'is_active' => 'boolean',
     ];
 
@@ -51,5 +53,10 @@ class EmployeeReminder extends Model
     public function occurrences(): HasMany
     {
         return $this->hasMany(EmployeeReminderOccurrence::class, 'reminder_id');
+    }
+
+    public function histories(): HasMany
+    {
+        return $this->hasMany(EmployeeReminderHistory::class, 'reminder_id');
     }
 }
