@@ -20,6 +20,8 @@ class EmployeeNotificationService
 
     public const TYPE_TASK_SCHEDULED_REMINDER = 'employee_task_scheduled_reminder';
 
+    public const TYPE_OPERATIONAL_REMINDER = 'employee_operational_reminder';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}

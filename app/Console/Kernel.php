@@ -27,6 +27,10 @@ class Kernel extends ConsoleKernel
             ->everyFiveMinutes()
             ->timezone('Asia/Hebron');
 
+        $schedule->command('employees:dispatch-operational-reminders')
+            ->everyFiveMinutes()
+            ->timezone('Asia/Hebron');
+
         $schedule->command('employees:mark-overdue-tasks')
             ->hourly()
             ->timezone('Asia/Hebron');

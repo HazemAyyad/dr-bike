@@ -23,6 +23,7 @@ use App\Http\Controllers\API\EmployeeOrders;
 use App\Http\Controllers\API\EmployeePointCategoryController;
 use App\Http\Controllers\API\EmployeePointsController;
 use App\Http\Controllers\API\EmployeeRewardRuleController;
+use App\Http\Controllers\API\EmployeeRemindersController;
 use App\Http\Controllers\API\Employees\EmployeeData;
 use App\Http\Controllers\API\Employees\EmployeeOwnTasks;
 use App\Http\Controllers\API\Employees\OrdersAPI;
@@ -259,6 +260,15 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
     Route::post('/employee/task/timeline', [EmployeeTaskOperationsController::class, 'getTimeline']);
     Route::get('/employee/task/performance', [EmployeeTaskOperationsController::class, 'getPerformance']);
 
+});
+
+Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','refresh.token.expiry']] , function() {
+    Route::get('/employee-reminders', [EmployeeRemindersController::class, 'index']);
+    Route::post('/employee-reminders', [EmployeeRemindersController::class, 'store']);
+    Route::put('/employee-reminders/{reminder}', [EmployeeRemindersController::class, 'update'])
+        ->whereNumber('reminder');
+    Route::delete('/employee-reminders/{reminder}', [EmployeeRemindersController::class, 'destroy'])
+        ->whereNumber('reminder');
 });
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Projects and Purchases Management','refresh.token.expiry']] , function() {
@@ -773,6 +783,12 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/employee/notifications/mark-all-read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markAllRead']);
     Route::post('/employee/notifications/{id}/read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markRead']);
     Route::delete('/employee/notifications/{id}', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'destroy']);
+
+    Route::get('/employee/reminders', [EmployeeRemindersController::class, 'employeeIndex']);
+    Route::post('/employee/reminders/{occurrence}/done', [EmployeeRemindersController::class, 'markDone'])
+        ->whereNumber('occurrence');
+    Route::post('/employee/reminders/{occurrence}/snooze', [EmployeeRemindersController::class, 'snooze'])
+        ->whereNumber('occurrence');
 
     // employee tasks
     Route::post('/employee/edit/employee/task/images', [EmployeeOwnTasks::class, 'editEmployeeTasksImages']);

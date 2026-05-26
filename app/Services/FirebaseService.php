@@ -37,6 +37,7 @@ class FirebaseService
         'employee_daily_tasks',
         'employee_hourly_reminder',
         'employee_daily_tasks_complete',
+        'employee_operational_reminder',
     ];
 
     protected ?Messaging $messaging = null;

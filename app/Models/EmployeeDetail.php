@@ -47,6 +47,11 @@ class EmployeeDetail extends Model
         return $this->hasMany(EmployeeTask::class,'employee_id');
     }
 
+    public function reminders()
+    {
+        return $this->hasMany(EmployeeReminder::class, 'employee_id');
+    }
+
     public function boxes(){
         return $this->hasMany(Box::class);
     }
