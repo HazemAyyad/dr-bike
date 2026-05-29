@@ -80,6 +80,7 @@ class DebtLedger extends Controller
     {
         try {
             $categories = ContactCategory::query()
+                ->with('assignments:id,contact_category_id,customer_id,seller_id')
                 ->withCount([
                     'assignments as customers_count' => fn ($q) => $q->whereNotNull('customer_id'),
                     'assignments as sellers_count' => fn ($q) => $q->whereNotNull('seller_id'),
@@ -92,6 +93,14 @@ class DebtLedger extends Controller
                     'color' => $category->color,
                     'customers_count' => (int) $category->customers_count,
                     'sellers_count' => (int) $category->sellers_count,
+                    'customer_ids' => $category->assignments
+                        ->pluck('customer_id')
+                        ->filter()
+                        ->values(),
+                    'seller_ids' => $category->assignments
+                        ->pluck('seller_id')
+                        ->filter()
+                        ->values(),
                 ]);
 
             return response()->json([

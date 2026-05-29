@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\ContactCategoryAssignment;
 use App\Models\Customer;
 use App\Models\Debt;
 use App\Models\IncomingCheck;
@@ -184,6 +185,8 @@ public function getIncompletePersons()
         'license_image'      => 'nullable|array',
         'license_image.*'      => 'required|file|image',
         'type' => 'nullable|string',
+        'contact_category_ids' => 'nullable|array',
+        'contact_category_ids.*' => 'integer|exists:contact_categories,id',
 
 
     ]);
@@ -218,12 +221,14 @@ public function getIncompletePersons()
 
     if($request->person_type ==='customer'){
         // Create customer
-        Customer::create($data);
+        $customer = Customer::create($data);
+        $this->syncContactCategories($customer->id, null, $data['contact_category_ids'] ?? []);
         Logs::createLog('اضافة زبون جديد','تم اضافة زبون جديد باسم'.' '.$request->name,'customers');
 
         }
     elseif($request->person_type==='seller'){
-            Seller::create($data);
+            $seller = Seller::create($data);
+            $this->syncContactCategories(null, $seller->id, $data['contact_category_ids'] ?? []);
            Logs::createLog('اضافة تاجر جديد','تم اضافة تاجر جديد باسم'.' '.$request->name,'sellers');
 
         }
@@ -364,6 +369,10 @@ public function getIncompletePersons()
             } }
             $customer['ID_image'] = $idImages;
             $customer['license_image'] = $licenseImages;
+            $customer['contact_category_ids'] = ContactCategoryAssignment::query()
+                ->where('customer_id', $customer->id)
+                ->pluck('contact_category_id')
+                ->values();
 
                 return response()->json([
                     'status' => 'success',
@@ -388,6 +397,10 @@ public function getIncompletePersons()
         }}
             $seller['ID_image'] = $idImages;
             $seller['license_image'] = $licenseImages;
+            $seller['contact_category_ids'] = ContactCategoryAssignment::query()
+                ->where('seller_id', $seller->id)
+                ->pluck('contact_category_id')
+                ->values();
             return response()->json([
                 'status' => 'success',
                 'person_details' => $seller
@@ -442,6 +455,8 @@ public function getIncompletePersons()
             'license_image'      => 'nullable|array',
             'license_image.*'      => 'nullable',
             'type' => 'nullable|string',
+            'contact_category_ids' => 'nullable|array',
+            'contact_category_ids.*' => 'integer|exists:contact_categories,id',
                 
     ]);
 
@@ -469,6 +484,7 @@ public function getIncompletePersons()
             $data['ID_image'] = $idImages;
             $data['license_image'] = $licenseImages;
             $customer->update($data);
+            $this->syncContactCategories($customer->id, null, $data['contact_category_ids'] ?? []);
             Logs::createLog('تعديل بيانات زبون','تم تعديل بيانات الزبون  '.' '.$customer->name,'customers');
 
 
@@ -481,6 +497,7 @@ public function getIncompletePersons()
             $data['ID_image'] = $idImages;
             $data['license_image'] = $licenseImages;
             $seller->update($data);
+            $this->syncContactCategories(null, $seller->id, $data['contact_category_ids'] ?? []);
             Logs::createLog('تعديل بيانات تاجر','تم تعديل بيانات التاجر  '.' '.$seller->name,'sellers');
 
         }
@@ -514,6 +531,30 @@ public function getIncompletePersons()
                 'message' => __('messages.something_wrong')
             ], 200);
         }       
+    }
+
+    private function syncContactCategories(?int $customerId, ?int $sellerId, array $categoryIds): void
+    {
+        $query = ContactCategoryAssignment::query();
+        if ($customerId) {
+            $query->where('customer_id', $customerId);
+        } elseif ($sellerId) {
+            $query->where('seller_id', $sellerId);
+        } else {
+            return;
+        }
+        $query->delete();
+
+        foreach (array_unique(array_map('intval', $categoryIds)) as $categoryId) {
+            if ($categoryId <= 0) {
+                continue;
+            }
+            ContactCategoryAssignment::create([
+                'contact_category_id' => $categoryId,
+                'customer_id' => $customerId,
+                'seller_id' => $sellerId,
+            ]);
+        }
     }
 
     public function allCustomers(){
