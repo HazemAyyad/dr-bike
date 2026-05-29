@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\ContactCategory;
+use App\Models\ContactCategoryAssignment;
 use App\Models\DebtTransaction;
 use App\Services\DebtLedgerService;
 use Illuminate\Support\Facades\Cache;
@@ -44,6 +46,7 @@ class DebtLedger extends Controller
                 'start_date' => 'nullable|date',
                 'end_date' => 'nullable|date',
                 'currency' => 'nullable|string|in:شيكل,دولار,دينار',
+                'category_id' => 'nullable|integer|exists:contact_categories,id',
             ]);
 
             $people = $this->ledger->getPeopleList(
@@ -51,7 +54,8 @@ class DebtLedger extends Controller
                 $request->search,
                 $request->start_date,
                 $request->end_date,
-                $request->currency
+                $request->currency,
+                $request->filled('category_id') ? (int) $request->category_id : null
             );
 
             return response()->json([
@@ -69,6 +73,144 @@ class DebtLedger extends Controller
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
             ], 200);
+        }
+    }
+
+    public function categories()
+    {
+        try {
+            $categories = ContactCategory::query()
+                ->withCount([
+                    'assignments as customers_count' => fn ($q) => $q->whereNotNull('customer_id'),
+                    'assignments as sellers_count' => fn ($q) => $q->whereNotNull('seller_id'),
+                ])
+                ->latest()
+                ->get()
+                ->map(fn ($category) => [
+                    'id' => $category->id,
+                    'name' => $category->name,
+                    'color' => $category->color,
+                    'customers_count' => (int) $category->customers_count,
+                    'sellers_count' => (int) $category->sellers_count,
+                ]);
+
+            return response()->json([
+                'status' => 'success',
+                'categories' => $categories,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function storeCategory(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'name' => 'required|string|max:80',
+                'color' => 'nullable|string|max:20',
+                'customer_ids' => 'nullable|array',
+                'customer_ids.*' => 'integer|exists:customers,id',
+                'seller_ids' => 'nullable|array',
+                'seller_ids.*' => 'integer|exists:sellers,id',
+            ]);
+
+            $category = ContactCategory::create([
+                'name' => $data['name'],
+                'color' => $data['color'] ?? '#2196F3',
+            ]);
+            $this->syncCategoryAssignments($category, $data['customer_ids'] ?? [], $data['seller_ids'] ?? []);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم حفظ التصنيف',
+                'category' => $category,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        }
+    }
+
+    public function updateCategory(Request $request, int $id)
+    {
+        try {
+            $data = $request->validate([
+                'name' => 'required|string|max:80',
+                'color' => 'nullable|string|max:20',
+                'customer_ids' => 'nullable|array',
+                'customer_ids.*' => 'integer|exists:customers,id',
+                'seller_ids' => 'nullable|array',
+                'seller_ids.*' => 'integer|exists:sellers,id',
+            ]);
+
+            $category = ContactCategory::findOrFail($id);
+            $category->update([
+                'name' => $data['name'],
+                'color' => $data['color'] ?? $category->color,
+            ]);
+            $this->syncCategoryAssignments($category, $data['customer_ids'] ?? [], $data['seller_ids'] ?? []);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم تعديل التصنيف',
+                'category' => $category->fresh(),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function deleteCategory(int $id)
+    {
+        try {
+            ContactCategory::findOrFail($id)->delete();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم حذف التصنيف',
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    private function syncCategoryAssignments(ContactCategory $category, array $customerIds, array $sellerIds): void
+    {
+        ContactCategoryAssignment::query()
+            ->where('contact_category_id', $category->id)
+            ->delete();
+
+        foreach (array_unique(array_map('intval', $customerIds)) as $customerId) {
+            ContactCategoryAssignment::create([
+                'contact_category_id' => $category->id,
+                'customer_id' => $customerId,
+            ]);
+        }
+
+        foreach (array_unique(array_map('intval', $sellerIds)) as $sellerId) {
+            ContactCategoryAssignment::create([
+                'contact_category_id' => $category->id,
+                'seller_id' => $sellerId,
+            ]);
         }
     }
 

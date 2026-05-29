@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
 use App\Models\Customer;
+use App\Models\ContactCategoryAssignment;
 use App\Models\DebtTransaction;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
@@ -1086,7 +1087,8 @@ class DebtLedgerService
         ?string $search = null,
         ?string $startDate = null,
         ?string $endDate = null,
-        ?string $currency = null
+        ?string $currency = null,
+        ?int $categoryId = null
     ): array {
         $isCustomers = $type === 'customers';
         $modelClass = $isCustomers ? Customer::class : Seller::class;
@@ -1094,6 +1096,13 @@ class DebtLedgerService
         $filterCurrency = $currency ? $this->normalizeCurrency($currency) : null;
 
         $peopleQuery = $modelClass::query()->where('is_canceled', false);
+
+        if ($categoryId) {
+            $peopleQuery->whereIn('id', ContactCategoryAssignment::query()
+                ->where('contact_category_id', $categoryId)
+                ->whereNotNull($isCustomers ? 'customer_id' : 'seller_id')
+                ->pluck($isCustomers ? 'customer_id' : 'seller_id'));
+        }
 
         if ($search) {
             $peopleQuery->where(function ($q) use ($search) {
