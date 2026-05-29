@@ -309,6 +309,8 @@ class DebtLedger extends Controller
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
                 'box_id' => 'nullable|integer|exists:boxes,id',
+                'receipt_images' => 'nullable|array',
+                'receipt_images.*' => 'image',
             ]);
 
             $transaction = DebtTransaction::active()->findOrFail($id);

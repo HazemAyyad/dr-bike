@@ -50,26 +50,19 @@ class ProductDevelopmentApi extends Controller
                 ->first();
 
             if ($prodev) {
-                $oldDescription = $prodev->description;
-                $prodev->update([
-                    'description' => $data['description'] ?? $prodev->description,
-                ]);
-                $this->logActivity(
-                    $request,
-                    $prodev,
-                    'updated',
-                    'تم تعديل تفاصيل تطوير المنتج',
-                    ['description' => ['old' => $oldDescription, 'new' => $prodev->description]]
-                );
-            } else {
-                $prodev = ProductDevelopment::create($data);
-                $this->logActivity(
-                    $request,
-                    $prodev,
-                    'created',
-                    'تم إنشاء تطوير المنتج'
-                );
+                return response()->json([
+                    'status'=>'error',
+                    'message'=>'هذا المنتج موجود بالفعل في قيد التطوير',
+                ],200);
             }
+
+            $prodev = ProductDevelopment::create($data);
+            $this->logActivity(
+                $request,
+                $prodev,
+                'created',
+                'تم إنشاء تطوير المنتج'
+            );
 
             Logs::createLog(
                 'تطوير منتج',
