@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\CheckSmsNotificationService;
 use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Models\Customer;
@@ -401,6 +402,7 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
 
         $incomingCheck = $incomingCheck->fresh();
         app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck);
+        app(CheckSmsNotificationService::class)->dispatchForAction($incomingCheck, 'cashed');
 
         Logs::createLog(
             'التصرف في شيك',
@@ -483,7 +485,9 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
         $incomingCheck->update(['status' => 'cashed_to_box']);
         $box->update(['total' => $box->total + $incomingCheck->total]);
 
-        app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck->fresh());
+        $incomingCheck = $incomingCheck->fresh();
+        app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck);
+        app(CheckSmsNotificationService::class)->dispatchForAction($incomingCheck, 'cashed');
 
         BoxLogs::createBoxLog($box,'تم صرف شيك وارد برقم '.' '.($incomingCheck->check_id??'غير معروف').' '.'للصندوق'
         ,'add',$incomingCheck->total);
@@ -547,6 +551,7 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
                 'تم ارجاع شيك وارد بقيمة '.$incomingCheck->total.' '.$incomingCheck->currency.' من '.$personName.' وتحديث دفتر الديون',
                 'debts'
             );
+            app(CheckSmsNotificationService::class)->dispatchForAction($incomingCheck, 'returned');
 
             // $boxCheck = IncomingCheckBox::where('incoming_check_id',$incomingCheck->id)->first();
             // if($boxCheck){

@@ -10,6 +10,7 @@ use App\Http\Controllers\API\Stocks;
 use App\Http\Controllers\API\Test;
 use App\Http\Controllers\ProductEditTestController;
 use App\Http\Controllers\CronJobWebController;
+use App\Http\Controllers\SmsTestWebController;
 use App\Http\Controllers\StoreSyncTestController;
 use App\Http\Controllers\UserSessionsWebController;
 use Illuminate\Support\Facades\Artisan;
@@ -46,6 +47,10 @@ Route::get('/test/employee-notify', [EmployeeNotificationWebController::class, '
 Route::post('/test/employee-notify', [EmployeeNotificationWebController::class, 'send'])->name('test.employee-notify.send');
 Route::get('/test/employee-notify/fcm-test', [EmployeeNotificationWebController::class, 'fcmTest'])->name('test.employee-notify.fcm-test');
 Route::post('/test/employee-notify/fcm-test', [EmployeeNotificationWebController::class, 'fcmTestWithToken'])->name('test.employee-notify.fcm-test.post');
+
+/** اختبار إرسال SMS عبر Twilio */
+Route::get('/test/sms', [SmsTestWebController::class, 'show'])->name('test.sms');
+Route::post('/test/sms', [SmsTestWebController::class, 'send'])->name('test.sms.send');
 
 Route::get('/test/store-sync', [StoreSyncTestController::class, 'show'])->name('test.store-sync');
 Route::post('/test/store-sync', [StoreSyncTestController::class, 'run'])->name('test.store-sync.run');

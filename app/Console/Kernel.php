@@ -14,6 +14,10 @@ class Kernel extends ConsoleKernel
     {
         $schedule->command('checks:send-due-reminders')->dailyAt('00:00');
 
+        $schedule->command('checks:dispatch-sms-notifications')
+            ->everyFiveMinutes()
+            ->timezone('Asia/Hebron');
+
         $schedule->command('employees:send-daily-task-reminders')
             ->dailyAt('10:00')
             ->timezone('Asia/Hebron');

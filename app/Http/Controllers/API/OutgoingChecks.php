@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\CheckSmsNotificationService;
 use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Models\Customer;
@@ -235,6 +236,7 @@ class OutgoingChecks extends Controller
                     'تم ارجاع شيك صادر بقيمة '.$check->total.' '.$check->currency.' لصالح '.$personName.' وتحديث دفتر الديون',
                     'debts'
                 );
+                app(CheckSmsNotificationService::class)->dispatchForAction($check, 'returned');
             }
 
             Logs::createLog(
@@ -334,6 +336,7 @@ class OutgoingChecks extends Controller
 
             $check = $check->fresh();
             app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check);
+            app(CheckSmsNotificationService::class)->dispatchForAction($check, 'cashed');
 
             Logs::createLog(
                 'التصرف في شيك',
@@ -624,7 +627,9 @@ class OutgoingChecks extends Controller
         $box->update(['total'=> $box->total - $outgoingCheck->total]);
         $outgoingCheck->update(['status'=>'cashed_from_box']);
 
-        app(DebtLedgerService::class)->syncOutgoingCheckToLedger($outgoingCheck->fresh());
+        $outgoingCheck = $outgoingCheck->fresh();
+        app(DebtLedgerService::class)->syncOutgoingCheckToLedger($outgoingCheck);
+        app(CheckSmsNotificationService::class)->dispatchForAction($outgoingCheck, 'cashed');
 
         BoxLogs::createBoxLog($box,'تم صرف شيك صادر برقم '.' '.($outgoingCheck->check_id??'غير معروف').' '.'من الصندوق'
         ,'minus',$outgoingCheck->total);
