@@ -156,7 +156,7 @@ public function storeBatch(Request $request)
             ], 200);
         }
 
-        $batchNumber = 'IN-' . now()->format('Ymd-His') . '-' . Str::upper(Str::random(4));
+        $batchNumber = 'B' . now()->format('ymd') . Str::upper(Str::random(2));
         $created = [];
 
         DB::transaction(function () use ($request, $data, $batchNumber, &$created) {
