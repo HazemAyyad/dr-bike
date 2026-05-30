@@ -460,6 +460,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Checks','refresh.t
 
     //incoming checks
       Route::post('/add/incoming/check' , [IncomingChecks::class,'store']);
+      Route::post('/add/incoming/checks/batch' , [IncomingChecks::class,'storeBatch']);
       Route::post('/cash/incoming/check/to/person' , [IncomingChecks::class,'cashCheckToPerson']);
       Route::post('/cash/incoming/check/to/box' , [IncomingChecks::class,'cashCheckToBox']);
 

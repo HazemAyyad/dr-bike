@@ -294,6 +294,7 @@ return [
     'must_select_perosn' => 'You need to select at most one person',
     'must_select_one_perosn' =>'You need to select only one person',
     'incoming_check_created_successfully'=>'incoming check created successfully',
+    'incoming_checks_batch_created_successfully'=>'incoming checks batch created successfully',
     'check_cancelled'=>'check was cancelled successfully',
     'check_returned' => 'incoming check was returned successfully',
     'check_updated' =>'Check was updated successfully',

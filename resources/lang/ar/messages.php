@@ -303,6 +303,7 @@ return [
     'must_select_perosn' => 'يجب اختيار شخص على الاكثر',
     'must_select_one_perosn' =>'يجب اختيار شخص واحد فقط',
     'incoming_check_created_successfully' => 'تم إنشاء الشيك الوارد بنجاح',
+    'incoming_checks_batch_created_successfully' => 'تم إنشاء دفعة الشيكات الواردة بنجاح',
     'check_cancelled' => 'تم إلغاء الشيك بنجاح',
     'check_returned' => 'تم ارجاع الشيك بنجاح',
     'check_updated' =>'تم تعديل الشيك بنجاح',

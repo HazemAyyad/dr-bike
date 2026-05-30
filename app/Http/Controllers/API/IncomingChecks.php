@@ -13,6 +13,8 @@ use App\Models\OutgoingCheck;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 class IncomingChecks extends Controller
 {
@@ -64,6 +66,7 @@ public function store(Request $request)
             'front_image'   => 'nullable|image',
             'back_image'    => 'nullable|image',
             'notes' => 'nullable|string',
+            'received_at' => 'nullable|date',
         ]);
 
         // Ensure either from_customer or from_seller is provided, not both or neither
@@ -84,6 +87,7 @@ public function store(Request $request)
             'front_image' => 'IncomingCheckImages/front',
             'back_image'  => 'IncomingCheckImages/back',
         ]);
+        $data['received_at'] = $data['received_at'] ?? now()->toDateString();
 
         $check = IncomingCheck::create($data);
 
@@ -118,6 +122,115 @@ public function store(Request $request)
 
         ], 200);
     }
+}
+
+public function storeBatch(Request $request)
+{
+    try {
+        $data = $request->validate([
+            'from_customer' => 'nullable|exists:customers,id',
+            'from_seller'   => 'nullable|exists:sellers,id',
+            'received_at'   => 'required|date',
+            'checks'        => 'required|array|min:1|max:100',
+            'checks.*.total'       => 'required|numeric|min:1',
+            'checks.*.due_date'    => 'required|date',
+            'checks.*.currency'    => 'required|string',
+            'checks.*.check_id'    => 'required|string',
+            'checks.*.bank_name'   => 'required|string',
+            'checks.*.notes'       => 'nullable|string',
+            'checks.*.front_image' => 'nullable|image',
+            'checks.*.back_image'  => 'nullable|image',
+        ]);
+
+        if (!$request->filled('from_customer') && !$request->filled('from_seller')) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => __('messages.must_select_customer_or_seller')
+            ], 200);
+        }
+
+        if ($request->filled('from_customer') && $request->filled('from_seller')) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => __('messages.must_select_either_customer_or_seller')
+            ], 200);
+        }
+
+        $batchNumber = 'IN-' . now()->format('Ymd-His') . '-' . Str::upper(Str::random(4));
+        $created = [];
+
+        DB::transaction(function () use ($request, $data, $batchNumber, &$created) {
+            foreach ($data['checks'] as $index => $checkData) {
+                $row = [
+                    'from_customer' => $data['from_customer'] ?? null,
+                    'from_seller'   => $data['from_seller'] ?? null,
+                    'total'         => $checkData['total'],
+                    'due_date'      => $checkData['due_date'],
+                    'received_at'   => $data['received_at'],
+                    'currency'      => $checkData['currency'],
+                    'check_id'      => $checkData['check_id'],
+                    'bank_name'     => $checkData['bank_name'],
+                    'notes'         => $checkData['notes'] ?? null,
+                    'batch_number'  => $batchNumber,
+                ];
+
+                $row = $this->handleBatchImages($request, $row, $index);
+                $created[] = IncomingCheck::create($row);
+            }
+        });
+
+        Logs::createLog(
+            'إضافة دفعة شيكات واردة',
+            'تمت إضافة دفعة شيكات واردة رقم ' . $batchNumber . ' بعدد ' . count($created),
+            'incoming_checks'
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => __('messages.incoming_checks_batch_created_successfully'),
+            'batch_number' => $batchNumber,
+            'created_count' => count($created),
+        ], 200);
+
+    } catch (ValidationException $e) {
+        return response()->json([
+            'status'  => 'error',
+            'message' => __('messages.validation_failed'),
+            'errors'  => $e->errors()
+        ], 200);
+    } catch (QueryException $e) {
+        return response()->json([
+            'status'  => 'error',
+            'message' => __('messages.create_data_error'),
+            'msg' => $e->getMessage(),
+        ], 200);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status'  => 'error',
+            'message' => __('messages.something_wrong'),
+            'msg' => $e->getMessage(),
+        ], 200);
+    }
+}
+
+private function handleBatchImages(Request $request, array $row, int $index): array
+{
+    foreach ([
+        'front_image' => 'IncomingCheckImages/front',
+        'back_image' => 'IncomingCheckImages/back',
+    ] as $field => $path) {
+        $file = $request->file("checks.$index.$field");
+        if (! $file) {
+            continue;
+        }
+
+        $extension = $file->getClientOriginalExtension() ?: 'jpg';
+        $name = Str::uuid()->toString() . '.' . $extension;
+        $file->move(public_path($path), $name);
+        $row[$field] = $name;
+    }
+
+    return $row;
 }
 
 

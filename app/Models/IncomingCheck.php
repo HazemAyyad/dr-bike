@@ -24,6 +24,8 @@ class IncomingCheck extends Model
         'back_image',
         'status',
         'notes',
+        'received_at',
+        'batch_number',
     ];
 
         // Relationships
