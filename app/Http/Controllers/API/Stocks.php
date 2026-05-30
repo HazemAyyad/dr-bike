@@ -8,6 +8,7 @@ use App\Models\Closeout;
 use App\Models\Combination;
 use App\Models\Product;
 use App\Models\Project;
+use App\Models\PurchaseProduct;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SubCategory;
@@ -24,6 +25,15 @@ use Illuminate\Validation\ValidationException;
 
 class Stocks extends Controller
 {
+    private const PRODUCT_IMPORT_COLUMNS = [
+        'product_id' => ['product_id', 'id', 'معرف المنتج', 'رقم المنتج'],
+        'product_name' => ['product_name', 'name', 'اسم المنتج', 'اسم المنتح'],
+        'retail_price' => ['retail_price', 'normail_price', 'normal_price', 'سعر المفرق', 'سعر المفرف'],
+        'wholesale_price' => ['wholesale_price', 'سعر الجملة'],
+        'cost_price' => ['cost_price', 'purchase_price', 'سعر التكلفة'],
+        'quantity' => ['quantity', 'stock', 'العدد', 'المخزون'],
+    ];
+
     /**
      * Return a path relative to the Laravel public root (e.g. Images/Items/...).
      * Clients prepend their own API image base — avoids cross-origin CORS from legacy STORE_DOMAIN hosts.
@@ -116,6 +126,300 @@ class Stocks extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    public function exportProductsCsv(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $fileName = 'doctor-bike-products-'.now()->format('Y-m-d-H-i').'.csv';
+
+        return response()->streamDownload(function () {
+            echo "\xEF\xBB\xBF";
+            $handle = fopen('php://output', 'w');
+
+            fputcsv($handle, [
+                'معرف المنتج',
+                'اسم المنتج',
+                'سعر المفرق',
+                'سعر الجملة',
+                'سعر التكلفة',
+                'العدد',
+            ]);
+
+            Product::query()
+                ->with(['purchasePrices' => fn ($q) => $q->latest('id')])
+                ->select('id', 'nameAr', 'normailPrice', 'wholesalePrice', 'stock')
+                ->orderBy('id')
+                ->chunk(500, function ($products) use ($handle) {
+                    foreach ($products as $product) {
+                        fputcsv($handle, [
+                            $product->id,
+                            $product->nameAr,
+                            $product->normailPrice,
+                            $product->wholesalePrice,
+                            optional($product->purchasePrices->first())->price ?? 0,
+                            $product->stock,
+                        ]);
+                    }
+                });
+
+            fclose($handle);
+        }, $fileName, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    public function previewProductsCsvImport(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:csv,txt', 'max:10240'],
+        ]);
+
+        $result = $this->readProductsCsvImport($request, false);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تمت قراءة الملف',
+            'changes_count' => count($result['changes']),
+            'changes' => $result['changes'],
+            'errors' => $result['errors'],
+        ]);
+    }
+
+    public function importProductsCsv(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:csv,txt', 'max:10240'],
+        ]);
+
+        $result = $this->readProductsCsvImport($request, true);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "تم استيراد {$result['updated']} منتج",
+            'updated' => $result['updated'],
+            'errors' => $result['errors'],
+        ]);
+    }
+
+    private function readProductsCsvImport(Request $request, bool $apply): array
+    {
+        $path = $request->file('file')->getRealPath();
+        $handle = fopen($path, 'r');
+        if ($handle === false) {
+            throw ValidationException::withMessages(['file' => __('messages.something_wrong')]);
+        }
+
+        $headerLine = fgets($handle);
+        $delimiter = $this->detectCsvDelimiter((string) $headerLine);
+        $header = str_getcsv((string) $headerLine, $delimiter);
+        if ($headerLine === false || ! is_array($header) || $this->isEmptyCsvRow($header)) {
+            fclose($handle);
+
+            throw ValidationException::withMessages(['file' => 'ملف المنتجات فارغ']);
+        }
+
+        $columns = $this->resolveProductImportColumns($header);
+        if (! array_key_exists('product_id', $columns)) {
+            fclose($handle);
+
+            throw ValidationException::withMessages(['file' => 'عمود معرف المنتج مطلوب للاستيراد']);
+        }
+
+        $updated = 0;
+        $errors = [];
+        $changes = [];
+        $rowNumber = 1;
+
+        while (($line = fgets($handle)) !== false) {
+            $rowNumber++;
+            $row = str_getcsv($line, $delimiter);
+
+            if ($this->isEmptyCsvRow($row)) {
+                continue;
+            }
+
+            $productId = trim((string) ($row[$columns['product_id']] ?? ''));
+            if ($productId === '' || ! ctype_digit($productId)) {
+                $errors[] = "السطر {$rowNumber}: معرف المنتج غير صحيح";
+                continue;
+            }
+
+            $product = Product::with(['purchasePrices' => fn ($q) => $q->latest('id')])
+                ->find($productId);
+
+            if (! $product) {
+                $errors[] = "السطر {$rowNumber}: المنتج غير موجود";
+                continue;
+            }
+
+            $updates = [];
+            $rowChanges = [
+                'row' => $rowNumber,
+                'product_id' => $product->id,
+                'product_name' => $product->nameAr,
+                'fields' => [],
+            ];
+
+            $name = $this->csvValue($row, $columns, 'product_name');
+            if ($name !== null && $name !== '') {
+                $updates['nameAr'] = $name;
+                $this->addProductImportChange($rowChanges, 'اسم المنتج', $product->nameAr, $name);
+            }
+
+            foreach ([
+                'retail_price' => ['field' => 'normailPrice', 'label' => 'سعر المفرق'],
+                'wholesale_price' => ['field' => 'wholesalePrice', 'label' => 'سعر الجملة'],
+            ] as $csvKey => $config) {
+                $value = $this->csvValue($row, $columns, $csvKey);
+                if ($value === null || $value === '') {
+                    continue;
+                }
+                if (! is_numeric($value) || (float) $value < 0) {
+                    $errors[] = "السطر {$rowNumber}: قيمة {$csvKey} غير صحيحة";
+                    continue 2;
+                }
+                $field = $config['field'];
+                $updates[$field] = $value;
+                $this->addProductImportChange($rowChanges, $config['label'], $product->{$field}, $value);
+            }
+
+            $quantity = $this->csvValue($row, $columns, 'quantity');
+            if ($quantity !== null && $quantity !== '') {
+                if (! is_numeric($quantity) || (int) $quantity < 0) {
+                    $errors[] = "السطر {$rowNumber}: العدد غير صحيح";
+                    continue;
+                }
+                $updates['stock'] = (int) $quantity;
+                $this->addProductImportChange($rowChanges, 'العدد', $product->stock, (int) $quantity);
+            }
+
+            if ($apply && $updates !== []) {
+                $product->update($updates);
+            }
+
+            $cost = $this->csvValue($row, $columns, 'cost_price');
+            if ($cost !== null && $cost !== '') {
+                if (! is_numeric($cost) || (float) $cost < 0) {
+                    $errors[] = "السطر {$rowNumber}: سعر التكلفة غير صحيح";
+                    continue;
+                }
+
+                $purchasePrice = $product->purchasePrices->first();
+                $oldCost = $purchasePrice?->price ?? 0;
+                $this->addProductImportChange($rowChanges, 'سعر التكلفة', $oldCost, $cost);
+
+                if ($apply && $purchasePrice) {
+                    $purchasePrice->update(['price' => $cost]);
+                } elseif ($apply) {
+                    PurchaseProduct::create([
+                        'product_id' => $product->id,
+                        'seller_id' => null,
+                        'price' => $cost,
+                    ]);
+                }
+            }
+
+            if ($rowChanges['fields'] !== []) {
+                $changes[] = $rowChanges;
+                if ($apply) {
+                    $updated++;
+                }
+            }
+        }
+
+        fclose($handle);
+
+        return [
+            'updated' => $updated,
+            'changes' => $changes,
+            'errors' => $errors,
+        ];
+    }
+
+    private function addProductImportChange(array &$rowChanges, string $label, mixed $old, mixed $new): void
+    {
+        $oldNormalized = is_numeric($old) ? (string) (float) $old : trim((string) $old);
+        $newNormalized = is_numeric($new) ? (string) (float) $new : trim((string) $new);
+
+        if ($oldNormalized === $newNormalized) {
+            return;
+        }
+
+        $rowChanges['fields'][] = [
+            'label' => $label,
+            'old' => (string) $old,
+            'new' => (string) $new,
+        ];
+    }
+
+    private function isAdminRequest(Request $request): bool
+    {
+        return strtolower((string) $request->user()?->type) === 'admin';
+    }
+
+    private function resolveProductImportColumns(array $header): array
+    {
+        $normalized = [];
+        foreach ($header as $index => $value) {
+            $normalized[$index] = $this->normalizeCsvHeader((string) $value);
+        }
+
+        $columns = [];
+        foreach (self::PRODUCT_IMPORT_COLUMNS as $key => $aliases) {
+            foreach ($aliases as $alias) {
+                $index = array_search($this->normalizeCsvHeader($alias), $normalized, true);
+                if ($index !== false) {
+                    $columns[$key] = $index;
+                    break;
+                }
+            }
+        }
+
+        return $columns;
+    }
+
+    private function detectCsvDelimiter(string $line): string
+    {
+        return substr_count($line, ';') > substr_count($line, ',') ? ';' : ',';
+    }
+
+    private function normalizeCsvHeader(string $value): string
+    {
+        $value = preg_replace('/^\xEF\xBB\xBF/', '', $value) ?? $value;
+
+        return mb_strtolower(trim($value));
+    }
+
+    private function isEmptyCsvRow(array $row): bool
+    {
+        foreach ($row as $value) {
+            if (trim((string) $value) !== '') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function csvValue(array $row, array $columns, string $key): ?string
+    {
+        if (! array_key_exists($key, $columns)) {
+            return null;
+        }
+
+        return trim((string) ($row[$columns[$key]] ?? ''));
     }
 
     private function formatProductListItem(Product $product): array
@@ -812,12 +1116,16 @@ class Stocks extends Controller
     {
         try {
 
-            $closeouts = Closeout::with('product:id,nameAr,min_sale_price,stock',
-                'product.viewImages:id,itemId,imageUrl')
+            $closeouts = Closeout::with(
+                'product:id,nameAr,min_sale_price,stock',
+                'product.viewImages:id,itemId,imageUrl',
+                'product.normalImages:id,itemId,imageUrl'
+            )
                 ->where('status', $status)->get(['id', 'status', 'product_id']);
 
             $formatted = $closeouts->map(function ($closeout) {
-                $image = $closeout->product->viewImages->first();
+                $image = $closeout->product->viewImages->first()
+                    ?? $closeout->product->normalImages->first();
 
                 return [
                     'closeout_id' => $closeout->id,
@@ -1068,6 +1376,7 @@ class Stocks extends Controller
             $products = Product::where('nameAr', 'like', "%{$search}%")
                 ->with([
                     'viewImages:id,itemId,imageUrl',
+                    'normalImages:id,itemId,imageUrl',
                     'tags' => function ($q) {
                         $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                     },
@@ -1075,7 +1384,8 @@ class Stocks extends Controller
                 ->get(['id', 'nameAr', 'stock', 'product_code', 'normailPrice']);
 
             $formatted = $products->map(function ($product) {
-                $image = $product->viewImages->first();
+                $image = $product->viewImages->first()
+                    ?? $product->normalImages->first();
 
                 return [
                     'product_id' => $product->id,

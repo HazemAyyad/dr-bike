@@ -622,6 +622,9 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Stock,Sales','re
 Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.token.expiry']] , function() {
 
     Route::get('/get/products/list' , [Stocks::class,'allProducts']);
+    Route::get('/products/export-csv' , [Stocks::class,'exportProductsCsv']);
+    Route::post('/products/import-csv/preview' , [Stocks::class,'previewProductsCsvImport']);
+    Route::post('/products/import-csv' , [Stocks::class,'importProductsCsv']);
     Route::get('/get/product/size-options' , [Stocks::class,'productSizeOptions']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
     Route::post('/edit/product' , [Stocks::class,'editProduct']);
