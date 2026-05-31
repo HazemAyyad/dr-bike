@@ -409,11 +409,14 @@ class EmployeeTaskOperationsController extends Controller
             ]);
 
             $occurrence = null;
+            $oldOccurrenceEmployeeId = null;
             if ($request->filled('occurrence_id')) {
                 $occurrence = EmployeeTaskOccurrence::query()
                     ->where('id', $request->occurrence_id)
                     ->where('template_id', $template->id)
                     ->firstOrFail();
+
+                $oldOccurrenceEmployeeId = (int) $occurrence->employee_id;
 
                 $occurrence->update([
                     'employee_id' => $data['employee_id'],
@@ -434,11 +437,23 @@ class EmployeeTaskOperationsController extends Controller
                 if ($occurrence->legacy_task_id) {
                     $legacy = EmployeeTask::find($occurrence->legacy_task_id);
                     if ($legacy) {
-                        $assigneeService->syncForTask(
+                        $assigneeService->syncForTaskAndNotifyNewAssignees(
                             $legacy,
-                            $assigneeIds !== [] ? $assigneeIds : [(int) $data['employee_id']]
+                            $assigneeIds !== [] ? $assigneeIds : [(int) $data['employee_id']],
+                            (int) $occurrence->id
                         );
                     }
+                } elseif (
+                    $oldOccurrenceEmployeeId > 0
+                    && (int) $data['employee_id'] !== $oldOccurrenceEmployeeId
+                    && ! $occurrence->fresh()->not_shown_for_employee
+                ) {
+                    app(EmployeeTaskNotificationService::class)->notifyEmployeesAssigned(
+                        [(int) $data['employee_id']],
+                        $data['name'],
+                        $occurrence->legacy_task_id,
+                        (int) $occurrence->id
+                    );
                 }
             }
 

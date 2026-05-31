@@ -92,11 +92,23 @@ public function store(Request $request)
 
         $check = IncomingCheck::create($data);
 
+        $freshCheck = $check->fresh(['fromCustomer', 'fromSeller']);
+        $ledgerEntry = app(DebtLedgerService::class)->syncIncomingCheckToLedger($freshCheck);
+
         Logs::createLog(
             'إضافة شيك وارد',
             'تمت إضافة شيك وارد بقيمة ' . $check->total.' '.$check->currency,
             'incoming_checks'
         );
+
+        if ($ledgerEntry) {
+            $personName = $freshCheck->fromCustomer?->name ?? $freshCheck->fromSeller?->name ?? 'غير معروف';
+            Logs::createLog(
+                'تسجيل شيك وارد في دفتر الديون',
+                'أخذت — '.$personName.' أعطاني شيكاً بقيمة '.$check->total.' '.$check->currency,
+                'debts'
+            );
+        }
 
         return response()->json([
             'status'  => 'success',
@@ -176,7 +188,10 @@ public function storeBatch(Request $request)
                 ];
 
                 $row = $this->handleBatchImages($request, $row, $index);
-                $created[] = IncomingCheck::create($row);
+                $check = IncomingCheck::create($row);
+                $freshCheck = $check->fresh(['fromCustomer', 'fromSeller']);
+                app(DebtLedgerService::class)->syncIncomingCheckToLedger($freshCheck);
+                $created[] = $check;
             }
         });
 

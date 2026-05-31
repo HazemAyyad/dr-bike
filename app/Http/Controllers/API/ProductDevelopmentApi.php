@@ -278,6 +278,8 @@ class ProductDevelopmentApi extends Controller
                 'product:id,nameAr,rate',
                 'activityLogs.user:id,name,type',
             ])
+            ->orderByDesc('step')
+            ->orderByDesc('id')
             ->get();
 
             $formatted = $proDevs->map(function($dev){

@@ -1043,9 +1043,10 @@ public function updateEmployeeTask(Request $request)
 
         $employeeTask->update($finalData);
 
-        app(EmployeeTaskAssigneeService::class)->syncForTask(
+        app(EmployeeTaskAssigneeService::class)->syncForTaskAndNotifyNewAssignees(
             $employeeTask->fresh(),
-            $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]
+            $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id],
+            $employeeTask->occurrence_id
         );
 
         if ($request->has('sub_employee_tasks')) {

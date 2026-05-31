@@ -20,6 +20,8 @@ class OutgoingChecks extends Controller
 {
     try {
         $data = $request->validate([
+            'customer_id' => 'nullable|exists:customers,id',
+            'seller_id'   => 'nullable|exists:sellers,id',
             'total'       => 'required|numeric|min:1',
             'due_date'    => 'required|date',
             'currency'    => 'required|string',
@@ -30,6 +32,12 @@ class OutgoingChecks extends Controller
 
         ]);
 
+        if ($request->filled('customer_id') && $request->filled('seller_id')) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => __('messages.must_select_either_customer_or_seller'),
+            ], 200);
+        }
 
         $data = IncomingChecks::handleImages($request, $data, [
             'img' => 'OutgoingChecksImages',
@@ -37,6 +45,8 @@ class OutgoingChecks extends Controller
 
         // Create the outgoing check
         $check = OutgoingCheck::create($data);
+
+        app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
 
 
         Logs::createLog(

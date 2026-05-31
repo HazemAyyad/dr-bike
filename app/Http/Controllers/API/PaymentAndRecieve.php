@@ -220,6 +220,9 @@ class PaymentAndRecieve extends Controller
 
                     ]);
 
+                    app(DebtLedgerService::class)->syncIncomingCheckToLedger(
+                        $check->fresh(['fromCustomer', 'fromSeller'])
+                    );
 
                     Logs::createLog(
                         'اضافة شيك وارد جديد',

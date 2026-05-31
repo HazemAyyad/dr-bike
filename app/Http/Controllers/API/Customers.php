@@ -10,6 +10,7 @@ use App\Models\IncomingCheck;
 use App\Models\Log;
 use App\Models\Seller;
 use App\Models\User;
+use App\Services\PersonCategoryTransferService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -483,6 +484,25 @@ public function getIncompletePersons()
             $licenseImages = CommonUse::handleImageUpdate($request,'license_image','customerImages/License',$customer->license_image);
             $data['ID_image'] = $idImages;
             $data['license_image'] = $licenseImages;
+
+            if ($data['type'] === 'wholesale') {
+                $seller = app(PersonCategoryTransferService::class)->transferCustomerToSeller($customer, $data);
+                $this->syncContactCategories(null, $seller->id, $data['contact_category_ids'] ?? []);
+                Logs::createLog(
+                    'تحويل زبون إلى تاجر',
+                    'تم تحويل الزبون '.' '.$customer->name.' '.'إلى تاجر (جملة)',
+                    'sellers'
+                );
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => __('messages.person_updated'),
+                    'migrated' => true,
+                    'person_type' => 'seller',
+                    'seller_id' => $seller->id,
+                ], 200);
+            }
+
             $customer->update($data);
             $this->syncContactCategories($customer->id, null, $data['contact_category_ids'] ?? []);
             Logs::createLog('تعديل بيانات زبون','تم تعديل بيانات الزبون  '.' '.$customer->name,'customers');
@@ -496,6 +516,25 @@ public function getIncompletePersons()
             $licenseImages = CommonUse::handleImageUpdate($request,'license_image','sellerImages/License',$seller->license_image);
             $data['ID_image'] = $idImages;
             $data['license_image'] = $licenseImages;
+
+            if ($data['type'] === 'retail') {
+                $customer = app(PersonCategoryTransferService::class)->transferSellerToCustomer($seller, $data);
+                $this->syncContactCategories($customer->id, null, $data['contact_category_ids'] ?? []);
+                Logs::createLog(
+                    'تحويل تاجر إلى زبون',
+                    'تم تحويل التاجر '.' '.$seller->name.' '.'إلى زبون (مفرق)',
+                    'customers'
+                );
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => __('messages.person_updated'),
+                    'migrated' => true,
+                    'person_type' => 'customer',
+                    'customer_id' => $customer->id,
+                ], 200);
+            }
+
             $seller->update($data);
             $this->syncContactCategories(null, $seller->id, $data['contact_category_ids'] ?? []);
             Logs::createLog('تعديل بيانات تاجر','تم تعديل بيانات التاجر  '.' '.$seller->name,'sellers');

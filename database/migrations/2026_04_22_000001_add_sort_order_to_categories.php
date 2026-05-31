@@ -8,9 +8,9 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (!Schema::hasColumn('categories', 'sortOrder')) {
+        if (! Schema::hasColumn('categories', 'sortOrder')) {
             Schema::table('categories', function (Blueprint $table) {
-                $table->integer('sortOrder')->default(0)->after('isShow');
+                $table->integer('sortOrder')->default(0);
             });
         }
         if (!Schema::hasColumn('sub_categories', 'sortOrder')) {

@@ -27,6 +27,23 @@ class EmployeeTaskNotificationService
             return;
         }
 
+        $this->notifyEmployeesAssigned(
+            $employeeIds,
+            $task->name,
+            $task->id,
+            $occurrenceId ?? $task->occurrence_id
+        );
+    }
+
+    /**
+     * @param  array<int>  $employeeIds
+     */
+    public function notifyEmployeesAssigned(
+        array $employeeIds,
+        string $taskName,
+        ?int $legacyTaskId = null,
+        ?int $occurrenceId = null
+    ): void {
         $ids = collect($employeeIds)
             ->map(fn ($id) => (int) $id)
             ->filter(fn ($id) => $id > 0)
@@ -35,7 +52,7 @@ class EmployeeTaskNotificationService
             ->all();
 
         if ($ids === []) {
-            $ids = [(int) $task->employee_id];
+            return;
         }
 
         $notified = [];
@@ -47,7 +64,7 @@ class EmployeeTaskNotificationService
             if (! $employee) {
                 continue;
             }
-            $this->send($employee, $task->name, $task->id, $occurrenceId);
+            $this->send($employee, $taskName, $legacyTaskId, $occurrenceId);
             $notified[$employeeId] = true;
         }
     }

@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('customers', function (Blueprint $table) {
             if (! Schema::hasColumn('customers', 'notes')) {
-                $table->text('notes')->default('no notes');
+                $table->text('notes')->nullable();
             }
         });
     }

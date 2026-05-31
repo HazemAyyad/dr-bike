@@ -79,6 +79,44 @@ class EmployeeTaskAssigneeService
         }
     }
 
+    /**
+     * Sync assignees and notify only newly added employees (e.g. on task edit).
+     *
+     * @param  array<int|string>  $employeeIds
+     */
+    public function syncForTaskAndNotifyNewAssignees(
+        EmployeeTask $task,
+        array $employeeIds,
+        ?int $occurrenceId = null
+    ): void {
+        $oldIds = $this->idsForTask($task);
+
+        $newIds = collect($employeeIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($newIds === []) {
+            $newIds = [(int) $task->employee_id];
+        }
+
+        $this->syncForTask($task, $newIds);
+
+        $addedIds = array_values(array_diff($newIds, $oldIds));
+
+        if ($addedIds === []) {
+            return;
+        }
+
+        app(EmployeeTaskNotificationService::class)->notifyAssignedToEmployeeIds(
+            $task->fresh(),
+            $addedIds,
+            $occurrenceId ?? $task->occurrence_id
+        );
+    }
+
     public function copyFromParent(Model $parent, Model $child): void
     {
         if (! Schema::hasTable('employee_task_assignees') || ! $parent instanceof EmployeeTask || ! $child instanceof EmployeeTask) {

@@ -600,6 +600,8 @@ class DebtLedgerService
             return null;
         }
 
+        $sale = $this->ensureInstantSalePersonForLedger($sale);
+
         [$customerId, $sellerId] = $this->resolveInstantSalePersonIds($sale);
         if (! $customerId && ! $sellerId) {
             $this->deleteSourceLedger('instant_sale', $sale->id);
@@ -633,6 +635,8 @@ class DebtLedgerService
      */
     public function syncIncomingCheckReceiveToLedger(IncomingCheck $check): ?DebtTransaction
     {
+        $check->loadMissing(['fromCustomer', 'fromSeller']);
+
         $customerId = $check->from_customer ? (int) $check->from_customer : null;
         $sellerId = $check->from_seller ? (int) $check->from_seller : null;
 
@@ -642,7 +646,7 @@ class DebtLedgerService
 
         $currency = $this->normalizeCurrency($check->currency);
         $amount = (float) $check->total;
-        $note = $this->incomingCheckLedgerNote($check, 'قبض شيك وارد');
+        $note = $this->incomingCheckReceiveLedgerNote($check);
 
         return $this->upsertSourceLedgerEntry(
             'incoming_check',
@@ -657,11 +661,45 @@ class DebtLedgerService
         );
     }
 
+    private function incomingCheckReceiveLedgerNote(IncomingCheck $check): string
+    {
+        $personName = trim((string) (
+            $check->fromCustomer?->name
+            ?? $check->fromSeller?->name
+            ?? ''
+        ));
+
+        $parts = ['أخذت'];
+        if ($personName !== '') {
+            $parts[] = $personName.' أعطاني شيكاً';
+        } else {
+            $parts[] = 'قبض شيك وارد';
+        }
+
+        $checkNumber = trim((string) ($check->check_id ?? ''));
+        if ($checkNumber !== '') {
+            $parts[] = 'رقم الشيك: '.$checkNumber;
+        }
+
+        $amount = (float) $check->total;
+        $currency = $this->normalizeCurrency($check->currency);
+        $parts[] = 'بقيمة '.$amount.' '.$currency;
+        $parts[] = 'مرجع النظام: '.$check->id;
+
+        return implode(' — ', $parts);
+    }
+
     /**
      * مزامنة شيك وارد مع دفتر الديون حسب الحالة والعملة.
      */
     public function syncIncomingCheckToLedger(IncomingCheck $check): ?DebtTransaction
     {
+        if (in_array($check->status, ['cancelled', 'returned', 'cashed_to_box'], true)) {
+            $this->deleteSourceLedger('incoming_check', (int) $check->id);
+
+            return null;
+        }
+
         if ($check->status === 'cashed_to_person') {
             $customerId = $check->to_customer ? (int) $check->to_customer : null;
             $sellerId = $check->to_seller ? (int) $check->to_seller : null;
@@ -687,8 +725,7 @@ class DebtLedgerService
             );
         }
 
-        // not_cashed / صرف للصندوق / إرجاع / إلغاء: لا قيد جديد ولا حذف من الدفتر
-        return null;
+        return $this->syncIncomingCheckReceiveToLedger($check);
     }
 
     /**
@@ -696,7 +733,7 @@ class DebtLedgerService
      */
     public function syncOutgoingCheckToLedger(OutgoingCheck $check): ?DebtTransaction
     {
-        if (! $this->isOutgoingCheckDisposed($check->status)) {
+        if (in_array($check->status, ['returned', 'cancelled'], true)) {
             $this->deleteSourceLedger('outgoing_check', (int) $check->id);
 
             return null;
@@ -706,12 +743,16 @@ class DebtLedgerService
         $sellerId = $check->seller_id ? (int) $check->seller_id : null;
 
         if (! $customerId && ! $sellerId) {
+            $this->deleteSourceLedger('outgoing_check', (int) $check->id);
+
             return null;
         }
 
         $currency = $this->normalizeCurrency($check->currency);
         $amount = (float) $check->total;
-        $note = $this->outgoingCheckLedgerNote($check, 'بعد صرف الشيك');
+        $note = $this->isOutgoingCheckDisposed($check->status)
+            ? $this->outgoingCheckLedgerNote($check, 'بعد صرف الشيك')
+            : $this->outgoingCheckLedgerNote($check, 'شيك صادر');
 
         return $this->upsertSourceLedgerEntry(
             'outgoing_check',
@@ -851,6 +892,55 @@ class DebtLedgerService
     public function deleteInstantSaleLedger(InstantSale $sale): void
     {
         $this->deleteSourceLedger('instant_sale', $sale->id);
+    }
+
+    /**
+     * إنشاء زبون/مورد تلقائياً عند بيع فوري عليه دين ولم يُربَط بشخص في النظام.
+     */
+    public function ensureInstantSalePersonForLedger(InstantSale $sale): InstantSale
+    {
+        [$customerId, $sellerId] = $this->resolveInstantSalePersonIds($sale);
+        if ($customerId || $sellerId) {
+            return $sale;
+        }
+
+        if ($this->instantSaleDebtAmount($sale) <= 0) {
+            return $sale;
+        }
+
+        $name = trim((string) ($sale->buyer_name ?? ''));
+        if ($name === '' || $name === '-') {
+            return $sale;
+        }
+
+        $phone = trim((string) ($sale->buyer_phone ?? ''));
+        $address = trim((string) ($sale->buyer_address ?? ''));
+        $isSeller = in_array($sale->buyer_type, ['seller', 'trader'], true);
+
+        $payload = ['name' => $name];
+        if ($phone !== '') {
+            $payload['phone'] = $phone;
+        }
+        if ($address !== '') {
+            $payload['address'] = $address;
+        }
+        $payload['type'] = $isSeller ? 'wholesale' : 'retail';
+
+        if ($isSeller) {
+            $seller = Seller::create($payload);
+            $sale->update([
+                'seller_id' => $seller->id,
+                'buyer_type' => 'seller',
+            ]);
+        } else {
+            $customer = Customer::create($payload);
+            $sale->update([
+                'buyer_id' => $customer->id,
+                'buyer_type' => 'customer',
+            ]);
+        }
+
+        return $sale->fresh();
     }
 
     /**
