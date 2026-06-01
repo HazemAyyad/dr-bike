@@ -77,7 +77,10 @@ private function hasCompleteData($query, $fields)
         return $this->getPersons('customer', function () {
 
 
-        $query = Customer::select('id','phone','job_title','name','is_canceled','ID_image');
+        $query = Customer::select('id','phone','job_title','name','is_canceled','ID_image','type')
+            ->where(function ($q) {
+                $q->whereNull('is_canceled')->orWhere('is_canceled', 0);
+            });
 
         return $query->get();
     });
@@ -90,7 +93,10 @@ private function hasCompleteData($query, $fields)
         return $this->getPersons('seller', function () {
 
 
-        $query = Seller::select('id','phone','job_title','name','is_canceled','ID_image');
+        $query = Seller::select('id','phone','job_title','name','is_canceled','ID_image','type')
+            ->where(function ($q) {
+                $q->whereNull('is_canceled')->orWhere('is_canceled', 0);
+            });
 
         return $query->get();
     });
@@ -106,7 +112,10 @@ public function getIncompletePersons()
     ];
 
     // Customers
-    $incompleteCustomers = Customer::select('id','phone','job_title','name','is_canceled','ID_image')
+    $incompleteCustomers = Customer::select('id','phone','job_title','name','is_canceled','ID_image','type')
+        ->where(function ($q) {
+            $q->whereNull('is_canceled')->orWhere('is_canceled', 0);
+        })
         ->where(function ($q) use ($fields) {
             foreach ($fields as $field) {
                 $q->orWhereNull($field)->orWhere($field, '');
@@ -126,7 +135,10 @@ public function getIncompletePersons()
         });
 
     // Sellers
-    $incompleteSellers = Seller::select('id','phone','job_title','name','is_canceled','ID_image')
+    $incompleteSellers = Seller::select('id','phone','job_title','name','is_canceled','ID_image','type')
+        ->where(function ($q) {
+            $q->whereNull('is_canceled')->orWhere('is_canceled', 0);
+        })
         ->where(function ($q) use ($fields) {
             foreach ($fields as $field) {
                 $q->orWhereNull($field)->orWhere($field,'');
@@ -599,7 +611,11 @@ public function getIncompletePersons()
     public function allCustomers(){
 
         try {
-            $customers = Customer::get();
+            $customers = Customer::query()
+                ->where(function ($q) {
+                    $q->whereNull('is_canceled')->orWhere('is_canceled', 0);
+                })
+                ->get();
 
             return response()->json([
                 'status' => 'success',
@@ -625,7 +641,11 @@ public function getIncompletePersons()
     public function allSellers(){
 
         try {
-            $sellers = Seller::get();
+            $sellers = Seller::query()
+                ->where(function ($q) {
+                    $q->whereNull('is_canceled')->orWhere('is_canceled', 0);
+                })
+                ->get();
 
             return response()->json([
                 'status' => 'success',
