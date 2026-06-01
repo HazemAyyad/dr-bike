@@ -76,6 +76,87 @@ class EmployeeTasks extends Controller
         $task->subTasks()->update($payload);
     }
 
+    private function resetEmployeeTaskCompletion(EmployeeTask $task): void
+    {
+        $task->update([
+            'status' => EmployeeTaskStatus::Pending->value,
+            'completed_by_employee_id' => null,
+            'employee_img' => null,
+            'started_at' => null,
+            'submitted_at' => null,
+            'reviewed_at' => null,
+            'rejection_notes' => null,
+        ]);
+
+        $this->resetEmployeeTaskSubtasksCompletion($task->fresh());
+    }
+
+    private function syncTaskSeriesAfterReassignment(EmployeeTask $parentTask, array $assigneeIds): void
+    {
+        $ids = collect($assigneeIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($ids === []) {
+            return;
+        }
+
+        $primaryEmployeeId = $ids[0];
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+
+        EmployeeTask::query()
+            ->where('id', $parentTask->id)
+            ->orWhere('parent_id', $parentTask->id)
+            ->get()
+            ->each(function (EmployeeTask $task) use ($ids, $primaryEmployeeId, $assigneeService) {
+                if ((int) $task->employee_id !== $primaryEmployeeId) {
+                    $task->update(['employee_id' => $primaryEmployeeId]);
+                }
+
+                $assigneeService->syncForTask($task->fresh(), $ids);
+
+                if (in_array(EmployeeTaskStatus::normalize($task->status), [
+                    EmployeeTaskStatus::WaitingReview,
+                    EmployeeTaskStatus::Completed,
+                ], true)) {
+                    $this->resetEmployeeTaskCompletion($task->fresh());
+                }
+            });
+    }
+
+    private function taskSeriesNeedsAssigneeSync(EmployeeTask $parentTask, array $oldAssigneeIds, array $targetAssigneeIds): bool
+    {
+        if (! $this->sameAssigneeSet($oldAssigneeIds, $targetAssigneeIds)) {
+            return true;
+        }
+
+        $ids = collect($targetAssigneeIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($ids === []) {
+            return false;
+        }
+
+        $primaryEmployeeId = $ids[0];
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+
+        return EmployeeTask::query()
+            ->where('id', $parentTask->id)
+            ->orWhere('parent_id', $parentTask->id)
+            ->get()
+            ->contains(function (EmployeeTask $task) use ($ids, $primaryEmployeeId, $assigneeService) {
+                return (int) $task->employee_id !== $primaryEmployeeId
+                    || ! $this->sameAssigneeSet($assigneeService->idsForTask($task), $ids);
+            });
+    }
+
 //     private function getTasks($status){
 //    try {
 //         $tasks = EmployeeTask::with('employee')
@@ -1109,6 +1190,17 @@ public function updateEmployeeTask(Request $request)
             $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id],
             $employeeTask->occurrence_id
         );
+
+        if ($this->taskSeriesNeedsAssigneeSync(
+            $employeeTask->fresh(),
+            $oldAssigneeIds,
+            $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]
+        )) {
+            $this->syncTaskSeriesAfterReassignment(
+                $employeeTask->fresh(),
+                $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]
+            );
+        }
 
         if ($request->has('sub_employee_tasks')) {
 
