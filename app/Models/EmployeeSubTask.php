@@ -17,6 +17,7 @@ class EmployeeSubTask extends Model
         'employee_task_id',
         'occurrence_id',
         'is_forced_to_upload_img',
+        'proof_media_type',
         'bonus_points',
         'admin_img',
         'status',

@@ -9,6 +9,7 @@ use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTaskTemplate;
 use App\Support\TaskReminderConfig;
+use App\Support\TaskProofMediaType;
 use Illuminate\Support\Facades\Schema;
 
 class EmployeeTaskDetailsService
@@ -42,6 +43,10 @@ class EmployeeTaskDetailsService
             : 'no audio';
         $taskData['status'] = EmployeeTaskStatus::normalize($employeeTask->status)->value;
         $taskData['priority'] = $employeeTask->priority ?? 'medium';
+        $taskData['proof_media_type'] = $this->proofMediaType(
+            $employeeTask->proof_media_type ?? null,
+            (bool) $employeeTask->is_forced_to_upload_img
+        );
         $taskData['requires_admin_review'] = (bool) ($employeeTask->requires_admin_review ?? true);
         $taskData['progress'] = $this->progressFromSubtasks($employeeTask->subTasks, $employeeTask->status);
         $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
@@ -98,6 +103,10 @@ class EmployeeTaskDetailsService
             'status' => EmployeeTaskStatus::normalize($occurrence->status)->value,
             'is_canceled' => (bool) $occurrence->is_canceled,
             'is_forced_to_upload_img' => (bool) $occurrence->is_forced_to_upload_img,
+            'proof_media_type' => $this->proofMediaType(
+                $occurrence->proof_media_type ?? null,
+                (bool) $occurrence->is_forced_to_upload_img
+            ),
             'not_shown_for_employee' => (bool) $occurrence->not_shown_for_employee,
             'start_time' => $occurrence->start_time,
             'end_time' => $occurrence->end_time,
@@ -259,6 +268,11 @@ class EmployeeTaskDetailsService
         return 'public/'.$directory.'/'.$filename;
     }
 
+    private function proofMediaType(?string $value, bool $required): string
+    {
+        return TaskProofMediaType::normalize($value, $required);
+    }
+
     /**
      * @param  \Illuminate\Support\Collection<int, mixed>  $subTasks
      */
@@ -284,6 +298,7 @@ class EmployeeTaskDetailsService
             'description' => $sub->description,
             'status' => $sub->status,
             'is_forced_to_upload_img' => (bool) $sub->is_forced_to_upload_img,
+            'proof_media_type' => $this->proofMediaType($sub->proof_media_type ?? null, (bool) $sub->is_forced_to_upload_img),
             'bonus_points' => (int) ($sub->bonus_points ?? 0),
             'sort_order' => (int) ($sub->sort_order ?? 0),
             'admin_img' => $this->formatSubtaskAdminImages($sub->admin_img),
@@ -306,6 +321,7 @@ class EmployeeTaskDetailsService
             'description' => $sub->description,
             'status' => $sub->status,
             'is_forced_to_upload_img' => (bool) $sub->requires_image,
+            'proof_media_type' => $this->proofMediaType($sub->proof_media_type ?? null, (bool) $sub->requires_image),
             'bonus_points' => (int) $sub->bonus_points,
             'sort_order' => (int) $sub->sort_order,
             'admin_img' => $this->formatSubtaskAdminImages($sub->admin_img),

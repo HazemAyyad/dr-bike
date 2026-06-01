@@ -6,6 +6,7 @@ use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
+use App\Support\TaskProofMediaType;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -194,6 +195,7 @@ class EmployeeVisibleTasks
             'task_recurrence' => $task->task_recurrence,
             'task_recurrence_time' => $task->task_recurrence_time,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
+            'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'occurrence_id' => $task->occurrence_id,
             'source' => 'legacy',
             'has_sub_tasks' => $subCount > 0,
@@ -239,6 +241,7 @@ class EmployeeVisibleTasks
             'task_recurrence' => $task->template?->recurrence_type ?? 'noRepeat',
             'task_recurrence_time' => [],
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
+            'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'occurrence_id' => $task->id,
             'source' => 'occurrence',
             'has_sub_tasks' => $subCount > 0,

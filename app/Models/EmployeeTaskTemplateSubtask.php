@@ -13,6 +13,7 @@ class EmployeeTaskTemplateSubtask extends Model
         'description',
         'sort_order',
         'requires_image',
+        'proof_media_type',
         'bonus_points',
         'admin_img',
     ];

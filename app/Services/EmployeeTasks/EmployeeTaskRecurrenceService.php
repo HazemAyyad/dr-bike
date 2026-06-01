@@ -118,6 +118,7 @@ class EmployeeTaskRecurrenceService
             'admin_img' => $template->admin_img,
             'audio' => $template->audio,
             'is_forced_to_upload_img' => $template->is_forced_to_upload_img,
+            'proof_media_type' => $template->proof_media_type,
             'not_shown_for_employee' => $template->not_shown_for_employee,
             'requires_admin_review' => $template->requires_admin_review ?? true,
         ];
@@ -137,6 +138,7 @@ class EmployeeTaskRecurrenceService
                 'description' => $sub->description,
                 'sort_order' => $sub->sort_order,
                 'requires_image' => $sub->requires_image,
+                'proof_media_type' => $sub->proof_media_type,
                 'bonus_points' => $sub->bonus_points,
                 'status' => 'pending',
                 'admin_img' => $sub->admin_img,

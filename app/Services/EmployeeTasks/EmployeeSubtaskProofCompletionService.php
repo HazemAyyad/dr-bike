@@ -36,7 +36,11 @@ class EmployeeSubtaskProofCompletionService
             return $meta;
         }
 
-        if ($subTask->is_forced_to_upload_img && ! TaskMediaFiles::hasProof($subTask->employee_img)) {
+        if (! TaskMediaFiles::hasRequiredProof(
+            $subTask->employee_img,
+            $subTask->proof_media_type ?? null,
+            (bool) $subTask->is_forced_to_upload_img
+        )) {
             return $meta;
         }
 
@@ -58,8 +62,11 @@ class EmployeeSubtaskProofCompletionService
             $meta['subtask_completed'] = true;
             $meta['all_subtasks_done'] = true;
 
-            if ($employeeTask->is_forced_to_upload_img
-                && ! TaskMediaFiles::hasProof($employeeTask->employee_img)) {
+            if (! TaskMediaFiles::hasRequiredProof(
+                $employeeTask->employee_img,
+                $employeeTask->proof_media_type ?? null,
+                (bool) $employeeTask->is_forced_to_upload_img
+            )) {
                 $meta['needs_main_proof'] = true;
 
                 return $meta;
@@ -92,7 +99,11 @@ class EmployeeSubtaskProofCompletionService
             return $meta;
         }
 
-        if ($subTask->requires_image && ! TaskMediaFiles::hasProof($subTask->employee_img)) {
+        if (! TaskMediaFiles::hasRequiredProof(
+            $subTask->employee_img,
+            $subTask->proof_media_type ?? null,
+            (bool) $subTask->requires_image
+        )) {
             return $meta;
         }
 
@@ -105,8 +116,11 @@ class EmployeeSubtaskProofCompletionService
         if (! $pending) {
             $meta['all_subtasks_done'] = true;
 
-            if ($occurrence->is_forced_to_upload_img
-                && ! TaskMediaFiles::hasProof($occurrence->employee_img)) {
+            if (! TaskMediaFiles::hasRequiredProof(
+                $occurrence->employee_img,
+                $occurrence->proof_media_type ?? null,
+                (bool) $occurrence->is_forced_to_upload_img
+            )) {
                 $meta['needs_main_proof'] = true;
 
                 return $meta;

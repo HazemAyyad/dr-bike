@@ -14,6 +14,12 @@ return new class extends Migration
     public function up(): void
     {
         if (Schema::hasTable('sub_employee_tasks')) {
+            if (! Schema::hasColumn('sub_employee_tasks', 'status')) {
+                Schema::table('sub_employee_tasks', function (Blueprint $table) {
+                    $table->string('status')->default('pending');
+                });
+            }
+
             if (! Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
                 Schema::table('sub_employee_tasks', function (Blueprint $table) {
                     $table->unsignedBigInteger('completed_by_employee_id')->nullable()->after('status');

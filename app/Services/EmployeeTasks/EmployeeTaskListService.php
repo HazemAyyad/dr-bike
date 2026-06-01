@@ -5,6 +5,7 @@ namespace App\Services\EmployeeTasks;
 use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
+use App\Support\TaskProofMediaType;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
@@ -32,6 +33,7 @@ class EmployeeTaskListService
             'progress' => $subTotal > 0 ? round(($subDone / $subTotal) * 100) : ($task->status === 'completed' ? 100 : 0),
             'is_canceled' => (bool) $task->is_canceled,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
+            'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'employee_img' => $task->employee_img
                 ? 'public/EmployeeTasksImages/'.$task->employee_img[0]
                 : 'no employee image',
@@ -67,6 +69,7 @@ class EmployeeTaskListService
             'progress' => $subTotal > 0 ? round(($subDone / $subTotal) * 100) : ($task->status === 'completed' ? 100 : 0),
             'is_canceled' => (bool) $task->is_canceled,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
+            'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'employee_img' => $task->employee_img
                 ? 'public/EmployeeTasksImages/'.$task->employee_img[0]
                 : 'no employee image',

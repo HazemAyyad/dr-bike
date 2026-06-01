@@ -251,8 +251,9 @@ class EmployeeTaskWorkflowService
 
     public function completeSubtask(EmployeeSubTask $subTask): EmployeeSubTask
     {
-        if ($subTask->requires_image ?? $subTask->is_forced_to_upload_img) {
-            if (! \App\Support\TaskMediaFiles::hasProof($subTask->employee_img)) {
+        $requiresProof = (bool) ($subTask->requires_image ?? $subTask->is_forced_to_upload_img);
+        if ($requiresProof) {
+            if (! \App\Support\TaskMediaFiles::hasRequiredProof($subTask->employee_img, $subTask->proof_media_type ?? null, $requiresProof)) {
                 throw new \RuntimeException(__('messages.employee_image_required'));
             }
         }
@@ -284,7 +285,11 @@ class EmployeeTaskWorkflowService
 
     public function completeOccurrenceSubtask(EmployeeTaskOccurrenceSubtask $subTask): EmployeeTaskOccurrenceSubtask
     {
-        if ($subTask->requires_image && ! \App\Support\TaskMediaFiles::hasProof($subTask->employee_img)) {
+        if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+            $subTask->employee_img,
+            $subTask->proof_media_type ?? null,
+            (bool) $subTask->requires_image
+        )) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
 
@@ -342,14 +347,22 @@ class EmployeeTaskWorkflowService
 
     private function assertProofIfRequired(EmployeeTask $task): void
     {
-        if ($task->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($task->employee_img)) {
+        if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+            $task->employee_img,
+            $task->proof_media_type ?? null,
+            (bool) $task->is_forced_to_upload_img
+        )) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
     }
 
     private function assertOccurrenceProofIfRequired(EmployeeTaskOccurrence $occurrence): void
     {
-        if ($occurrence->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($occurrence->employee_img)) {
+        if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+            $occurrence->employee_img,
+            $occurrence->proof_media_type ?? null,
+            (bool) $occurrence->is_forced_to_upload_img
+        )) {
             throw new \RuntimeException(__('messages.employee_image_required'));
         }
     }

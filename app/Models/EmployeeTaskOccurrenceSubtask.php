@@ -15,6 +15,7 @@ class EmployeeTaskOccurrenceSubtask extends Model
         'description',
         'sort_order',
         'requires_image',
+        'proof_media_type',
         'bonus_points',
         'status',
         'completed_by_employee_id',

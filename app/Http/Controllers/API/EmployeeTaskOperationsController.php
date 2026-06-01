@@ -18,6 +18,7 @@ use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
 use App\Services\AdminNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
+use App\Support\TaskProofMediaType;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -30,6 +31,13 @@ class EmployeeTaskOperationsController extends Controller
         private readonly EmployeeTaskRecurrenceService $recurrence,
         private readonly EmployeeTaskPerformanceService $performance
     ) {}
+
+    private function proofMediaTypeFromInput(array|Request $input, string $key, bool $required): string
+    {
+        $value = $input instanceof Request ? $input->input($key) : ($input[$key] ?? null);
+
+        return TaskProofMediaType::fromRequestValue($value, $required);
+    }
 
     private function shouldResetOccurrenceCompletion(
         EmployeeTaskOccurrence $occurrence,
@@ -245,11 +253,13 @@ class EmployeeTaskOperationsController extends Controller
                 'recurrence_config' => 'nullable|array',
                 'not_shown_for_employee' => 'nullable|boolean',
                 'is_forced_to_upload_img' => 'nullable|boolean',
+                'proof_media_type' => 'nullable|string|in:none,image,video,both',
                 'requires_admin_review' => 'nullable|boolean',
                 'sub_employee_tasks' => 'nullable|array',
                 'sub_employee_tasks.*.name' => 'required|string|max:255',
                 'sub_employee_tasks.*.description' => 'nullable|string',
                 'sub_employee_tasks.*.is_forced_to_upload_img' => 'nullable|boolean',
+                'sub_employee_tasks.*.proof_media_type' => 'nullable|string|in:none,image,video,both',
                 'sub_employee_tasks.*.bonus_points' => 'nullable|integer|min:0',
                 'sub_employee_tasks.*.sort_order' => 'nullable|integer|min:0',
                 'reminder_before_minutes' => 'nullable|integer|min:0|max:10080',
@@ -292,6 +302,8 @@ class EmployeeTaskOperationsController extends Controller
             }
 
             $data['employee_id'] = $assigneeIds[0] ?? (int) $data['employee_id'];
+            $proofRequired = $request->boolean('is_forced_to_upload_img');
+            $proofMediaType = $this->proofMediaTypeFromInput($request, 'proof_media_type', $proofRequired);
 
             $template = EmployeeTaskTemplate::create([
                 'employee_id' => $data['employee_id'],
@@ -300,7 +312,8 @@ class EmployeeTaskOperationsController extends Controller
                 'notes' => $data['notes'] ?? null,
                 'points' => $data['points'],
                 'priority' => $data['priority'] ?? 'medium',
-                'is_forced_to_upload_img' => $request->boolean('is_forced_to_upload_img'),
+                'is_forced_to_upload_img' => $proofRequired,
+                'proof_media_type' => $proofMediaType,
                 'requires_admin_review' => $request->boolean('requires_admin_review', true),
                 'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
                 'recurrence_type' => $data['task_recurrence'],
@@ -316,6 +329,11 @@ class EmployeeTaskOperationsController extends Controller
                         'description' => $sub['description'] ?? null,
                         'sort_order' => $sub['sort_order'] ?? $index,
                         'requires_image' => (bool) ($sub['is_forced_to_upload_img'] ?? false),
+                        'proof_media_type' => $this->proofMediaTypeFromInput(
+                            $sub,
+                            'proof_media_type',
+                            (bool) ($sub['is_forced_to_upload_img'] ?? false)
+                        ),
                         'bonus_points' => (int) ($sub['bonus_points'] ?? 0),
                     ]);
                 }
@@ -373,12 +391,14 @@ class EmployeeTaskOperationsController extends Controller
                 'recurrence_config' => 'nullable|array',
                 'not_shown_for_employee' => 'nullable|boolean',
                 'is_forced_to_upload_img' => 'nullable|boolean',
+                'proof_media_type' => 'nullable|string|in:none,image,video,both',
                 'requires_admin_review' => 'nullable|boolean',
                 'sub_employee_tasks' => 'nullable|array',
                 'sub_employee_tasks.*.id' => 'nullable|integer',
                 'sub_employee_tasks.*.name' => 'nullable|string|max:255',
                 'sub_employee_tasks.*.description' => 'nullable|string',
                 'sub_employee_tasks.*.is_forced_to_upload_img' => 'nullable|in:0,1,true,false',
+                'sub_employee_tasks.*.proof_media_type' => 'nullable|string|in:none,image,video,both',
                 'admin_img' => 'nullable|array',
                 'admin_img.*' => 'nullable',
                 'audio' => 'nullable',
@@ -413,6 +433,8 @@ class EmployeeTaskOperationsController extends Controller
             }
 
             $template = EmployeeTaskTemplate::findOrFail($data['template_id']);
+            $proofRequired = $request->boolean('is_forced_to_upload_img');
+            $proofMediaType = $this->proofMediaTypeFromInput($request, 'proof_media_type', $proofRequired);
             $reminderMinutes = \App\Support\TaskReminderConfig::minutesFromRequest($request);
             $reminderChannel = \App\Support\TaskReminderConfig::channelFromRequest($request);
 
@@ -455,7 +477,8 @@ class EmployeeTaskOperationsController extends Controller
                 'notes' => $data['notes'] ?? null,
                 'points' => $data['points'],
                 'priority' => $data['priority'] ?? 'medium',
-                'is_forced_to_upload_img' => $request->boolean('is_forced_to_upload_img'),
+                'is_forced_to_upload_img' => $proofRequired,
+                'proof_media_type' => $proofMediaType,
                 'requires_admin_review' => $request->boolean('requires_admin_review', true),
                 'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
                 'recurrence_type' => $data['task_recurrence'],
@@ -486,7 +509,8 @@ class EmployeeTaskOperationsController extends Controller
                     'notes' => $data['notes'] ?? null,
                     'points' => $data['points'],
                     'priority' => $data['priority'] ?? 'medium',
-                    'is_forced_to_upload_img' => $request->boolean('is_forced_to_upload_img'),
+                    'is_forced_to_upload_img' => $proofRequired,
+                    'proof_media_type' => $proofMediaType,
                     'requires_admin_review' => $request->boolean('requires_admin_review', true),
                     'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
                     'start_time' => $data['start_time'],
@@ -590,6 +614,11 @@ class EmployeeTaskOperationsController extends Controller
                         $subTaskData['is_forced_to_upload_img'] ?? false,
                         FILTER_VALIDATE_BOOLEAN
                     ),
+                    'proof_media_type' => $this->proofMediaTypeFromInput(
+                        $subTaskData,
+                        'proof_media_type',
+                        filter_var($subTaskData['is_forced_to_upload_img'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                    ),
                     'bonus_points' => (int) ($subTaskData['bonus_points'] ?? 0),
                 ];
 
@@ -636,6 +665,11 @@ class EmployeeTaskOperationsController extends Controller
                 'requires_image' => filter_var(
                     $subTaskData['is_forced_to_upload_img'] ?? false,
                     FILTER_VALIDATE_BOOLEAN
+                ),
+                'proof_media_type' => $this->proofMediaTypeFromInput(
+                    $subTaskData,
+                    'proof_media_type',
+                    filter_var($subTaskData['is_forced_to_upload_img'] ?? false, FILTER_VALIDATE_BOOLEAN)
                 ),
                 'bonus_points' => (int) ($subTaskData['bonus_points'] ?? 0),
             ];
@@ -702,8 +736,11 @@ class EmployeeTaskOperationsController extends Controller
             $pending = $occurrence->subtasks()->where('status', '!=', 'completed')->exists();
 
             if (! $pending) {
-                if ($occurrence->is_forced_to_upload_img
-                    && ! \App\Support\TaskMediaFiles::hasProof($occurrence->employee_img)) {
+                if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+                    $occurrence->employee_img,
+                    $occurrence->proof_media_type,
+                    (bool) $occurrence->is_forced_to_upload_img
+                )) {
                     return response()->json([
                         'status' => 'success',
                         'message' => __('messages.subtask_completed_upload_proof'),

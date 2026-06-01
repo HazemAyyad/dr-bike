@@ -29,6 +29,7 @@ class EmployeeTask extends Model
         'status',
         'admin_img',
         'is_forced_to_upload_img',
+        'proof_media_type',
         'requires_admin_review',
         'task_recurrence',
         'task_recurrence_time',

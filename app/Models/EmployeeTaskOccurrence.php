@@ -28,6 +28,7 @@ class EmployeeTaskOccurrence extends Model
         'admin_img',
         'audio',
         'is_forced_to_upload_img',
+        'proof_media_type',
         'requires_admin_review',
         'not_shown_for_employee',
         'rejection_notes',

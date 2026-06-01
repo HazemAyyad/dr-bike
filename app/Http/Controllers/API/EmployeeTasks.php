@@ -11,6 +11,7 @@ use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
+use App\Support\TaskProofMediaType;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use App\Models\EmployeeSubTask;
@@ -59,6 +60,13 @@ class EmployeeTasks extends Controller
             EmployeeTaskStatus::WaitingReview,
             EmployeeTaskStatus::Completed,
         ], true);
+    }
+
+    private function proofMediaTypeFromInput(array|Request $input, string $key, bool $required): string
+    {
+        $value = $input instanceof Request ? $input->input($key) : ($input[$key] ?? null);
+
+        return TaskProofMediaType::fromRequestValue($value, $required);
     }
 
     private function resetEmployeeTaskSubtasksCompletion(EmployeeTask $task): void
@@ -740,6 +748,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             'start_time' => ['required', 'date', 'before_or_equal:end_time'],
             'end_time' => ['required', 'date', 'after_or_equal:start_time'],
             'task_recurrence' => ['required', 'string','in:noRepeat,daily,weekly,monthly'],
+            'proof_media_type' => ['nullable', 'string', 'in:none,image,video,both'],
           
             'task_recurrence_time' => [
                 'nullable',
@@ -756,6 +765,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             'sub_employee_tasks.*.name' => ['required', 'string', 'max:255'],
             'sub_employee_tasks.*.description' => ['nullable', 'string'],
             'sub_employee_tasks.*.is_forced_to_upload_img' => ['boolean','in:0,1'],
+            'sub_employee_tasks.*.proof_media_type' => ['nullable', 'string', 'in:none,image,video,both'],
             'sub_employee_tasks.*.admin_subtask__img' => ['nullable', 'array'],
             'sub_employee_tasks.*.admin_subtask__img.*' => ['nullable'],
 
@@ -776,6 +786,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 
         $data['not_shown_for_employee'] = $request->boolean('not_shown_for_employee');
         $data['is_forced_to_upload_img'] = $request->boolean('is_forced_to_upload_img');
+        $data['proof_media_type'] = $this->proofMediaTypeFromInput($request, 'proof_media_type', $data['is_forced_to_upload_img']);
         $data['requires_admin_review'] = $request->boolean('requires_admin_review', true);
         
         if ($request->hasFile('audio')) {
@@ -869,6 +880,11 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                             'description' => $subTask['description'] ?? null,
                             'employee_task_id' => $employeeTask->id,
                             'is_forced_to_upload_img' => $subTask['is_forced_to_upload_img'] ?? 0,
+                            'proof_media_type' => $this->proofMediaTypeFromInput(
+                                $subTask,
+                                'proof_media_type',
+                                filter_var($subTask['is_forced_to_upload_img'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                            ),
                             'bonus_points' => (int) ($subTask['bonus_points'] ?? 0),
                             'status' => 'pending',
                             'admin_img' => $subImagesNames,
@@ -1030,6 +1046,7 @@ public function updateEmployeeTask(Request $request)
             'start_time' => ['required', 'date', 'before_or_equal:end_time'],
             'end_time' => ['required', 'date', 'after_or_equal:start_time'],
             'task_recurrence' => ['required', 'string','in:noRepeat,daily,weekly,monthly'],
+            'proof_media_type' => ['nullable', 'string', 'in:none,image,video,both'],
 
             'task_recurrence_time' => [
                 'nullable',
@@ -1049,6 +1066,7 @@ public function updateEmployeeTask(Request $request)
             'sub_employee_tasks.*.name' => ['nullable', 'string', 'max:255'],
             'sub_employee_tasks.*.description' => ['nullable', 'string'],
             'sub_employee_tasks.*.is_forced_to_upload_img' => ['nullable', 'in:0,1,true,false'],
+            'sub_employee_tasks.*.proof_media_type' => ['nullable', 'string', 'in:none,image,video,both'],
             'sub_employee_tasks.*.admin_subtask__img' => ['nullable', 'array'],
             'sub_employee_tasks.*.admin_subtask__img.*' => ['nullable'],
  
@@ -1087,6 +1105,7 @@ public function updateEmployeeTask(Request $request)
         );
         $finalData['not_shown_for_employee'] = $request->boolean('not_shown_for_employee');
         $finalData['is_forced_to_upload_img'] = $request->boolean('is_forced_to_upload_img');
+        $finalData['proof_media_type'] = $this->proofMediaTypeFromInput($request, 'proof_media_type', $finalData['is_forced_to_upload_img']);
 
         $reminderMinutes = \App\Support\TaskReminderConfig::minutesFromRequest($request);
         $reminderChannel = \App\Support\TaskReminderConfig::channelFromRequest($request);
@@ -1114,6 +1133,8 @@ public function updateEmployeeTask(Request $request)
                     'description' => $data['description'] ?? null,
                     'notes' => $data['notes'] ?? null,
                     'points' => $data['points'],
+                    'is_forced_to_upload_img' => $finalData['is_forced_to_upload_img'],
+                    'proof_media_type' => $finalData['proof_media_type'],
                     'recurrence_config' => $config,
                 ]);
             }
@@ -1226,6 +1247,17 @@ public function updateEmployeeTask(Request $request)
                             }
                             if (isset($subTaskData['is_forced_to_upload_img'])) {
                                 $updatePayload['is_forced_to_upload_img'] = $subTaskData['is_forced_to_upload_img'];
+                                $updatePayload['proof_media_type'] = $this->proofMediaTypeFromInput(
+                                    $subTaskData,
+                                    'proof_media_type',
+                                    filter_var($subTaskData['is_forced_to_upload_img'], FILTER_VALIDATE_BOOLEAN)
+                                );
+                            } elseif (array_key_exists('proof_media_type', $subTaskData)) {
+                                $updatePayload['proof_media_type'] = $this->proofMediaTypeFromInput(
+                                    $subTaskData,
+                                    'proof_media_type',
+                                    (bool) $subTask->is_forced_to_upload_img
+                                );
                             }
 
                             $subImagesNames = $subTask->admin_img ?? [];
@@ -1256,6 +1288,11 @@ public function updateEmployeeTask(Request $request)
                             'name' => $subTaskData['name'],
                             'description' => $subTaskData['description'] ?? null,
                             'is_forced_to_upload_img' => $subTaskData['is_forced_to_upload_img'],
+                            'proof_media_type' => $this->proofMediaTypeFromInput(
+                                $subTaskData,
+                                'proof_media_type',
+                                filter_var($subTaskData['is_forced_to_upload_img'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                            ),
                             'admin_img' => $subImagesNames,
                         ];
                         if (Schema::hasColumn('sub_employee_tasks', 'sort_order')) {
@@ -1492,7 +1529,11 @@ public function updateEmployeeTask(Request $request)
             ], 200);
         }
 
-        if ($subTask->is_forced_to_upload_img && ! \App\Support\TaskMediaFiles::hasProof($subTask->employee_img)) {
+        if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+            $subTask->employee_img,
+            $subTask->proof_media_type,
+            (bool) $subTask->is_forced_to_upload_img
+        )) {
                 return response()->json([
                 'status' => 'error',
                 'message' => __('messages.employee_image_required'),
@@ -1516,8 +1557,11 @@ public function updateEmployeeTask(Request $request)
             }
 
             // إثبات المهمة الرئيسية منفصل — لا يمنع إكمال آخر فرعية
-            if ($employeeTask->is_forced_to_upload_img
-                && ! \App\Support\TaskMediaFiles::hasProof($employeeTask->employee_img)) {
+            if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+                $employeeTask->employee_img,
+                $employeeTask->proof_media_type,
+                (bool) $employeeTask->is_forced_to_upload_img
+            )) {
                 return response()->json([
                     'status' => 'success',
                     'message' => __('messages.subtask_completed_upload_proof'),
