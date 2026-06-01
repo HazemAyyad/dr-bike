@@ -266,6 +266,7 @@ return [
     'one_extra_hours_should_filled' => 'you should either add extra normal hours or overtime hours',
     //profit sales
     'profit_sale_created_successfully' => 'profit sale was created successfully',
+    'profit_sale_cancelled_successfully' => 'Profit sale cancelled successfully',
 
     //instant sales
     'instant_sale_created_successfully' => 'instant sale was created successfully',

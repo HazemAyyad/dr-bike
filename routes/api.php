@@ -336,6 +336,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/all/profit/sales' , [ProfitSales::class,'getProfitSales']);
       Route::get('/show/profit/sale' , [ProfitSales::class,'showProfitSale']);
       Route::post('/create/profit/sale' , [ProfitSales::class,'store']);
+      Route::post('/cancel/profit/sale' , [ProfitSales::class,'cancel']);
       Route::post('/edit/profit/sale' , [ProfitSales::class,'edit']);
 
 });

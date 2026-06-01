@@ -22,11 +22,32 @@ class ProfitSale extends Model
         'payment_box_id',
         'payment_box_name',
         'payment_box_value',
+        'status',
+        'cancelled_at',
+    ];
+
+    protected $casts = [
+        'cancelled_at' => 'datetime',
     ];
 
     public function paymentBox(): BelongsTo
     {
         return $this->belongsTo(Box::class, 'payment_box_id');
+    }
+
+    public function customer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'customer_id');
+    }
+
+    public function seller(): BelongsTo
+    {
+        return $this->belongsTo(Seller::class, 'seller_id');
+    }
+
+    public function isCancelled(): bool
+    {
+        return $this->status === 'cancelled' || $this->cancelled_at !== null;
     }
 
 }

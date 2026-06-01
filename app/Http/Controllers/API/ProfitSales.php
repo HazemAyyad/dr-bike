@@ -9,6 +9,7 @@ use App\Models\Customer;
 use App\Models\ProfitSale;
 use App\Services\DebtLedgerService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Validation\ValidationException;
@@ -42,6 +43,45 @@ class ProfitSales extends Controller
         $file->move(public_path($this->profitSaleMediaPath), $name);
 
         return 'public/'.$this->profitSaleMediaPath.'/'.$name;
+    }
+
+    private function reverseBoxForCancelledProfitSale(ProfitSale $sale): void
+    {
+        $boxId = $sale->payment_box_id;
+        if (! $boxId && ! empty($sale->payment_box_name)) {
+            $boxId = Box::where('name', $sale->payment_box_name)->value('id');
+        }
+
+        $amount = (float) ($sale->payment_box_value ?? 0);
+        if (! $boxId || $amount <= 0) {
+            return;
+        }
+
+        $box = Box::lockForUpdate()->findOrFail($boxId);
+        $box->total = (float) ($box->total ?? 0) - $amount;
+        $box->save();
+
+        BoxLogs::createBoxLog(
+            $box,
+            'سحب — عكس قبض بيع ربحي',
+            'minus',
+            -$amount,
+            'إلغاء بيع ربحي #'.$sale->id.' بقيمة '.number_format($amount, 2, '.', '')
+        );
+    }
+
+    private function markProfitSaleCancelled(ProfitSale $sale): void
+    {
+        $payload = [];
+        if (Schema::hasColumn('profit_sales', 'cancelled_at')) {
+            $payload['cancelled_at'] = now();
+        }
+        if (Schema::hasColumn('profit_sales', 'status')) {
+            $payload['status'] = 'cancelled';
+        }
+        if (! empty($payload)) {
+            $sale->update($payload);
+        }
     }
 
     public function store(Request $request)
@@ -82,6 +122,7 @@ class ProfitSales extends Controller
         if ($buyerType === 'customer') {
             if ($request->filled('buyer_id')) {
                 $data['customer_id'] = (int) $request->input('buyer_id');
+                unset($data['buyer_name']);
             } elseif ($buyerName !== '') {
                 $customer = Customer::firstOrCreate(
                     $buyerPhone !== '' ? ['phone' => $buyerPhone] : ['name' => $buyerName],
@@ -97,6 +138,7 @@ class ProfitSales extends Controller
             }
         } elseif ($buyerType === 'seller' && $request->filled('seller_id')) {
             $data['seller_id'] = (int) $request->input('seller_id');
+            unset($data['buyer_name']);
         } else {
             unset($data['customer_id'], $data['seller_id']);
             $data['buyer_type'] = 'unknown';
@@ -105,6 +147,8 @@ class ProfitSales extends Controller
         $data['payment_box_value'] = (float) ($data['payment_box_value'] ?? 0);
         if (! $request->filled('payment_box_id')) {
             unset($data['payment_box_id'], $data['payment_box_name']);
+        } else {
+            unset($data['payment_box_name']);
         }
 
         $profitSale = ProfitSale::create($data);
@@ -166,7 +210,19 @@ class ProfitSales extends Controller
 public function getProfitSales()
 {
     try {
-        $profitSales = ProfitSale::all();
+        $profitSales = ProfitSale::with(['customer:id,name', 'seller:id,name', 'paymentBox:id,name'])->get();
+        $profitSales->transform(function (ProfitSale $sale) {
+            if ($sale->customer && empty($sale->buyer_name)) {
+                $sale->buyer_name = $sale->customer->name;
+            } elseif ($sale->seller && empty($sale->buyer_name)) {
+                $sale->buyer_name = $sale->seller->name;
+            }
+            if ($sale->paymentBox && empty($sale->payment_box_name)) {
+                $sale->payment_box_name = $sale->paymentBox->name;
+            }
+
+            return $sale;
+        });
         return response()->json([
             'status' => 'success',
             'profit_sales' => $profitSales,
@@ -183,6 +239,65 @@ public function getProfitSales()
         ], 200);
     }
 }
+
+    public function cancel(Request $request)
+    {
+        try {
+            $request->validate([
+                'profit_sale_id' => 'required|integer|exists:profit_sales,id',
+            ]);
+
+            DB::transaction(function () use ($request) {
+                $profitSale = ProfitSale::query()
+                    ->lockForUpdate()
+                    ->findOrFail($request->profit_sale_id);
+
+                if ($profitSale->isCancelled()) {
+                    throw ValidationException::withMessages([
+                        'profit_sale_id' => [__('messages.instant_sale_already_cancelled')],
+                    ]);
+                }
+
+                $this->reverseBoxForCancelledProfitSale($profitSale);
+                $this->markProfitSaleCancelled($profitSale);
+                app(DebtLedgerService::class)->deleteSourceLedger('profit_sale', (int) $profitSale->id);
+
+                Logs::createLog(
+                    'إلغاء بيع ربحي',
+                    'تم إلغاء بيع ربحي #'.$profitSale->id,
+                    'profit_sales'
+                );
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.profit_sale_cancelled_successfully'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.create_data_error'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 200);
+        }
+    }
 
     public function showProfitSale(Request $request){
         try{

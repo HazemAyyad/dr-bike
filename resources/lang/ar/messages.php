@@ -275,6 +275,7 @@ return [
     'one_extra_hours_should_filled' => 'عليك اضافة اما ساعات عمل عادية او اوفرتايم',
        //profit sales
     'profit_sale_created_successfully' => 'تم انشاء ربح نقدي جديد',
+    'profit_sale_cancelled_successfully' => 'تم إلغاء البيع الربحي',
 
     //instant sales
     'instant_sale_created_successfully' => 'تم انشاء بيع فوري جديد',
