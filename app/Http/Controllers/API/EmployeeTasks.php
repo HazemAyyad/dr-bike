@@ -41,6 +41,41 @@ class EmployeeTasks extends Controller
         return 'public/EmployeeImages/'.$employee->employee_img[0];
     }
 
+    private function sameAssigneeSet(array $oldIds, array $newIds): bool
+    {
+        $old = collect($oldIds)->map(fn ($id) => (int) $id)->filter()->unique()->sort()->values()->all();
+        $new = collect($newIds)->map(fn ($id) => (int) $id)->filter()->unique()->sort()->values()->all();
+
+        return $old === $new;
+    }
+
+    private function shouldResetCompletionForReassignment(EmployeeTask $task, array $oldAssigneeIds, array $newAssigneeIds): bool
+    {
+        if ($newAssigneeIds === [] || $this->sameAssigneeSet($oldAssigneeIds, $newAssigneeIds)) {
+            return false;
+        }
+
+        return in_array(EmployeeTaskStatus::normalize($task->status), [
+            EmployeeTaskStatus::WaitingReview,
+            EmployeeTaskStatus::Completed,
+        ], true);
+    }
+
+    private function resetEmployeeTaskSubtasksCompletion(EmployeeTask $task): void
+    {
+        $payload = ['status' => EmployeeTaskStatus::Pending->value];
+
+        if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = null;
+        }
+
+        if (Schema::hasColumn('sub_employee_tasks', 'employee_img')) {
+            $payload['employee_img'] = null;
+        }
+
+        $task->subTasks()->update($payload);
+    }
+
 //     private function getTasks($status){
 //    try {
 //         $tasks = EmployeeTask::with('employee')
@@ -958,7 +993,17 @@ public function updateEmployeeTask(Request $request)
             $employeeTask = EmployeeTask::findOrFail($employeeTask->parent_id);
         }
 
+        $oldAssigneeIds = $assigneeService->idsForTask($employeeTask);
         $finalData = $request->except(['employee_task_id','sub_employee_tasks']);
+        unset(
+            $finalData['status'],
+            $finalData['completed_by_employee_id'],
+            $finalData['employee_img'],
+            $finalData['started_at'],
+            $finalData['submitted_at'],
+            $finalData['reviewed_at'],
+            $finalData['rejection_notes']
+        );
         $finalData['not_shown_for_employee'] = $request->boolean('not_shown_for_employee');
         $finalData['is_forced_to_upload_img'] = $request->boolean('is_forced_to_upload_img');
 
@@ -1040,6 +1085,22 @@ public function updateEmployeeTask(Request $request)
             $finalData['employee_id'] = $assigneeIds[0];
         }
         unset($finalData['employee_ids']);
+
+        $shouldResetCompletion = $this->shouldResetCompletionForReassignment(
+            $employeeTask,
+            $oldAssigneeIds,
+            $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]
+        );
+
+        if ($shouldResetCompletion) {
+            $finalData['status'] = EmployeeTaskStatus::Pending->value;
+            $finalData['completed_by_employee_id'] = null;
+            $finalData['employee_img'] = null;
+            $finalData['started_at'] = null;
+            $finalData['submitted_at'] = null;
+            $finalData['reviewed_at'] = null;
+            $finalData['rejection_notes'] = null;
+        }
 
         $employeeTask->update($finalData);
 
@@ -1157,6 +1218,9 @@ public function updateEmployeeTask(Request $request)
             }
         }
 
+        if ($shouldResetCompletion) {
+            $this->resetEmployeeTaskSubtasksCompletion($employeeTask->fresh());
+        }
 
         $newRecurrence = $finalData['task_recurrence'] ?? $employeeTask->task_recurrence;
         $recurrenceTimesChanged = json_encode($employeeTask->task_recurrence_time ?? [])

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
@@ -29,6 +30,61 @@ class EmployeeTaskOperationsController extends Controller
         private readonly EmployeeTaskRecurrenceService $recurrence,
         private readonly EmployeeTaskPerformanceService $performance
     ) {}
+
+    private function shouldResetOccurrenceCompletion(
+        EmployeeTaskOccurrence $occurrence,
+        int $oldEmployeeId,
+        int $newEmployeeId
+    ): bool {
+        if ($oldEmployeeId <= 0 || $newEmployeeId <= 0 || $oldEmployeeId === $newEmployeeId) {
+            return false;
+        }
+
+        return in_array(EmployeeTaskStatus::normalize($occurrence->status), [
+            EmployeeTaskStatus::WaitingReview,
+            EmployeeTaskStatus::Completed,
+        ], true);
+    }
+
+    private function resetOccurrenceSubtasksCompletion(EmployeeTaskOccurrence $occurrence): void
+    {
+        $payload = ['status' => EmployeeTaskStatus::Pending->value];
+
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = null;
+        }
+
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'employee_img')) {
+            $payload['employee_img'] = null;
+        }
+
+        $occurrence->subtasks()->update($payload);
+    }
+
+    private function resetLegacyTaskCompletion(EmployeeTask $task): void
+    {
+        $task->update([
+            'status' => EmployeeTaskStatus::Pending->value,
+            'completed_by_employee_id' => null,
+            'employee_img' => null,
+            'started_at' => null,
+            'submitted_at' => null,
+            'reviewed_at' => null,
+            'rejection_notes' => null,
+        ]);
+
+        $payload = ['status' => EmployeeTaskStatus::Pending->value];
+
+        if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = null;
+        }
+
+        if (Schema::hasColumn('sub_employee_tasks', 'employee_img')) {
+            $payload['employee_img'] = null;
+        }
+
+        $task->subTasks()->update($payload);
+    }
 
     public function startTask(Request $request)
     {
@@ -417,8 +473,13 @@ class EmployeeTaskOperationsController extends Controller
                     ->firstOrFail();
 
                 $oldOccurrenceEmployeeId = (int) $occurrence->employee_id;
+                $shouldResetCompletion = $this->shouldResetOccurrenceCompletion(
+                    $occurrence,
+                    $oldOccurrenceEmployeeId,
+                    (int) $data['employee_id']
+                );
 
-                $occurrence->update([
+                $occurrencePayload = [
                     'employee_id' => $data['employee_id'],
                     'name' => $data['name'],
                     'description' => $data['description'] ?? null,
@@ -432,11 +493,29 @@ class EmployeeTaskOperationsController extends Controller
                     'end_time' => $data['end_time'],
                     'admin_img' => $adminImg,
                     'audio' => $audio,
-                ]);
+                ];
+
+                if ($shouldResetCompletion) {
+                    $occurrencePayload['status'] = EmployeeTaskStatus::Pending->value;
+                    $occurrencePayload['completed_by_employee_id'] = null;
+                    $occurrencePayload['employee_img'] = null;
+                    $occurrencePayload['started_at'] = null;
+                    $occurrencePayload['submitted_at'] = null;
+                    $occurrencePayload['reviewed_at'] = null;
+                    $occurrencePayload['completed_at'] = null;
+                    $occurrencePayload['rejection_notes'] = null;
+                    $occurrencePayload['employee_notes'] = null;
+                }
+
+                $occurrence->update($occurrencePayload);
 
                 if ($occurrence->legacy_task_id) {
                     $legacy = EmployeeTask::find($occurrence->legacy_task_id);
                     if ($legacy) {
+                        if ($shouldResetCompletion) {
+                            $this->resetLegacyTaskCompletion($legacy);
+                        }
+
                         $assigneeService->syncForTaskAndNotifyNewAssignees(
                             $legacy,
                             $assigneeIds !== [] ? $assigneeIds : [(int) $data['employee_id']],
@@ -462,6 +541,10 @@ class EmployeeTaskOperationsController extends Controller
                 if ($occurrence) {
                     $this->syncOccurrenceSubtasks($request, $occurrence);
                 }
+            }
+
+            if ($occurrence && isset($shouldResetCompletion) && $shouldResetCompletion) {
+                $this->resetOccurrenceSubtasksCompletion($occurrence->fresh());
             }
 
             $template->load('employee.user');
