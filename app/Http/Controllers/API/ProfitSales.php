@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\ProfitSale;
+use App\Services\DebtLedgerService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Validation\ValidationException;
@@ -34,13 +35,32 @@ class ProfitSales extends Controller
         'notes' => 'nullable|string',
         'image' => 'nullable|image|max:10240',
         'video' => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/x-matroska|max:51200',
+        'buyer_type' => 'nullable|string|in:customer,seller,unknown',
+        'buyer_id' => 'nullable|integer|exists:customers,id',
+        'seller_id' => 'nullable|integer|exists:sellers,id',
+        'buyer_name' => 'nullable|string|max:255',
+        'payment_box_id' => 'nullable|integer|exists:boxes,id',
+        'payment_box_name' => 'nullable|string|max:255',
+        'payment_box_value' => 'nullable|numeric|min:0',
     ]);
 
     unset($data['image'], $data['video']);
     $data['image_path'] = $this->storeProfitSaleFile($request, 'image');
     $data['video_path'] = $this->storeProfitSaleFile($request, 'video');
+    $buyerType = $request->input('buyer_type');
+    if ($buyerType === 'customer' && $request->filled('buyer_id')) {
+        $data['customer_id'] = (int) $request->input('buyer_id');
+        unset($data['buyer_id']);
+    } elseif ($buyerType === 'seller' && $request->filled('seller_id')) {
+        $data['seller_id'] = (int) $request->input('seller_id');
+        unset($data['buyer_id']);
+    } else {
+        unset($data['buyer_id'], $data['seller_id']);
+    }
+    $data['payment_box_value'] = (float) ($data['payment_box_value'] ?? 0);
 
-    ProfitSale::create($data);
+    $profitSale = ProfitSale::create($data);
+    app(DebtLedgerService::class)->syncProfitSaleToLedger($profitSale->fresh(['paymentBox']));
 
 
         Logs::createLog('اضافة ربح نقدي جديد','اضافة ربح نقدي جديد','profit_sales');

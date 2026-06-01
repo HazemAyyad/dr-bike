@@ -10,6 +10,7 @@ use App\Models\DebtTransaction;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
 use App\Models\OutgoingCheck;
+use App\Models\ProfitSale;
 use App\Models\Seller;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -39,6 +40,7 @@ class DebtLedgerService
     {
         return match ((string) $source) {
             'instant_sale' => 'بيع فوري',
+            'profit_sale' => 'بيع ربحي',
             'incoming_check' => 'شيك وارد',
             'outgoing_check' => 'شيك صادر',
             'manual', '' => 'إدخال يدوي',
@@ -625,6 +627,38 @@ class DebtLedgerService
             'given',
             $debtAmount,
             $note,
+            $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            $currency
+        );
+    }
+
+    public function syncProfitSaleToLedger(ProfitSale $sale): ?DebtTransaction
+    {
+        $customerId = $sale->customer_id ? (int) $sale->customer_id : null;
+        $sellerId = $sale->seller_id ? (int) $sale->seller_id : null;
+
+        if (! $customerId && ! $sellerId) {
+            $this->deleteSourceLedger('profit_sale', (int) $sale->id);
+
+            return null;
+        }
+
+        $sale->loadMissing('paymentBox');
+        $currency = $sale->paymentBox
+            ? $this->normalizeCurrency($sale->paymentBox->currency)
+            : 'شيكل';
+        $total = (float) ($sale->total_cost ?? 0);
+        $paid = max(0, (float) ($sale->payment_box_value ?? 0));
+        $debtAmount = max(0, round($total - $paid, 2));
+
+        return $this->upsertSourceLedgerEntry(
+            'profit_sale',
+            (int) $sale->id,
+            $customerId,
+            $sellerId,
+            'given',
+            $debtAmount,
+            'بيع ربحي #'.$sale->id,
             $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
             $currency
         );

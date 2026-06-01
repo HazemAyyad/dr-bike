@@ -21,7 +21,7 @@ class AppSettingsController extends Controller
                     ),
                     'admin_fab_options' => AppSetting::get(
                         AppSetting::KEY_ADMIN_FAB_OPTIONS,
-                        'newInvoice,newEmployee,newExpense,newCustomer,createNewEmployeeTask'
+                        'newInvoice,newEmployee,newExpense,newCustomer'
                     ),
                 ],
             ], 200);
