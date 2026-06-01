@@ -9,6 +9,6 @@ class ProfitSale extends Model
 {
     use HasFactory;
     protected $table = 'profit_sales';
-    protected $fillable = ['total_cost','notes'];
+    protected $fillable = ['total_cost','notes','image_path','video_path'];
 
 }

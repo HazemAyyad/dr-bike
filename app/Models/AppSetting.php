@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Cache;
 class AppSetting extends Model
 {
     public const KEY_SUBTASK_BONUS_DEFAULT = 'employee_task_subtask_bonus_default';
+    public const KEY_ADMIN_FAB_OPTIONS = 'admin_fab_options';
 
     protected $fillable = [
         'key',

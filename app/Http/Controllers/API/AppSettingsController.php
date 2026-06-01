@@ -19,6 +19,10 @@ class AppSettingsController extends Controller
                         AppSetting::KEY_SUBTASK_BONUS_DEFAULT,
                         5
                     ),
+                    'admin_fab_options' => AppSetting::get(
+                        AppSetting::KEY_ADMIN_FAB_OPTIONS,
+                        'newInvoice,newEmployee,newExpense,newCustomer,createNewEmployeeTask'
+                    ),
                 ],
             ], 200);
         } catch (\Throwable $e) {
@@ -44,18 +48,26 @@ class AppSettingsController extends Controller
 
             $data = $request->validate([
                 'employee_task_subtask_bonus_default' => 'required|integer|min:0|max:9999',
+                'admin_fab_options' => 'nullable|string|max:500',
             ]);
 
             AppSetting::set(
                 AppSetting::KEY_SUBTASK_BONUS_DEFAULT,
                 (int) $data['employee_task_subtask_bonus_default']
             );
+            if ($request->has('admin_fab_options')) {
+                AppSetting::set(
+                    AppSetting::KEY_ADMIN_FAB_OPTIONS,
+                    (string) ($data['admin_fab_options'] ?? '')
+                );
+            }
 
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.settings_updated'),
                 'settings' => [
                     'employee_task_subtask_bonus_default' => (int) $data['employee_task_subtask_bonus_default'],
+                    'admin_fab_options' => AppSetting::get(AppSetting::KEY_ADMIN_FAB_OPTIONS, ''),
                 ],
             ], 200);
         } catch (\Illuminate\Validation\ValidationException $e) {

@@ -11,14 +11,34 @@ use Illuminate\Validation\ValidationException;
 
 class ProfitSales extends Controller
 {
+    private string $profitSaleMediaPath = 'profit-sale-media';
+
+    private function storeProfitSaleFile(Request $request, string $field): ?string
+    {
+        if (! $request->hasFile($field)) {
+            return null;
+        }
+
+        $file = $request->file($field);
+        $name = uniqid($field.'_').'.'.$file->getClientOriginalExtension();
+        $file->move(public_path($this->profitSaleMediaPath), $name);
+
+        return 'public/'.$this->profitSaleMediaPath.'/'.$name;
+    }
+
     public function store(Request $request)
  {
     try{
     $data = $request->validate([
         'total_cost' => 'required|numeric|min:0',
         'notes' => 'nullable|string',
+        'image' => 'nullable|image|max:10240',
+        'video' => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/x-matroska|max:51200',
     ]);
 
+    unset($data['image'], $data['video']);
+    $data['image_path'] = $this->storeProfitSaleFile($request, 'image');
+    $data['video_path'] = $this->storeProfitSaleFile($request, 'video');
 
     ProfitSale::create($data);
 
