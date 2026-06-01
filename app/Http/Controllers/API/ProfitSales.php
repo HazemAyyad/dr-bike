@@ -17,6 +17,20 @@ class ProfitSales extends Controller
 {
     private string $profitSaleMediaPath = 'profit-sale-media';
 
+    private function normalizeNumericInput($value): string
+    {
+        $text = trim((string) ($value ?? ''));
+        $text = strtr($text, [
+            '٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4',
+            '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9',
+            '۰' => '0', '۱' => '1', '۲' => '2', '۳' => '3', '۴' => '4',
+            '۵' => '5', '۶' => '6', '۷' => '7', '۸' => '8', '۹' => '9',
+            ',' => '', '،' => '', ' ' => '',
+        ]);
+
+        return $text === '' ? '0' : $text;
+    }
+
     private function storeProfitSaleFile(Request $request, string $field): ?string
     {
         if (! $request->hasFile($field)) {
@@ -33,6 +47,13 @@ class ProfitSales extends Controller
     public function store(Request $request)
  {
     try{
+    if ($request->has('total_cost')) {
+        $request->merge(['total_cost' => $this->normalizeNumericInput($request->input('total_cost'))]);
+    }
+    if ($request->has('payment_box_value')) {
+        $request->merge(['payment_box_value' => $this->normalizeNumericInput($request->input('payment_box_value'))]);
+    }
+
     $data = $request->validate([
         'total_cost' => 'required|numeric|min:0',
         'notes' => 'nullable|string',
