@@ -9,6 +9,7 @@ use App\Models\ContactCategoryAssignment;
 use App\Models\DebtTransaction;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
+use App\Models\Log;
 use App\Models\OutgoingCheck;
 use App\Models\ProfitSale;
 use App\Models\Seller;
@@ -106,12 +107,63 @@ class DebtLedgerService
     {
         $filterCurrency = $currency ? $this->normalizeCurrency($currency) : null;
 
-        return $this->activity()->getPersonActivity(
+        $ledgerActivity = $this->activity()->getPersonActivity(
             $customerId,
             $sellerId,
             80,
             $filterCurrency
         );
+
+        $person = $customerId
+            ? Customer::find($customerId)
+            : ($sellerId ? Seller::find($sellerId) : null);
+
+        if (! $person) {
+            return $ledgerActivity;
+        }
+
+        $terms = collect([
+            trim((string) ($person->name ?? '')),
+            trim((string) ($person->phone ?? '')),
+            trim((string) ($person->sub_phone ?? '')),
+        ])->filter(fn ($value) => $value !== '')->unique()->values();
+
+        if ($terms->isEmpty()) {
+            return $ledgerActivity;
+        }
+
+        $appLogs = Log::query()
+            ->where(function ($q) {
+                $q->whereNull('is_canceled')->orWhere('is_canceled', 0);
+            })
+            ->where(function ($q) use ($terms) {
+                foreach ($terms as $term) {
+                    $q->orWhere('name', 'like', '%'.$term.'%')
+                        ->orWhere('description', 'like', '%'.$term.'%');
+                }
+            })
+            ->orderByDesc('id')
+            ->limit(80)
+            ->get()
+            ->map(fn (Log $log) => [
+                'id' => -1 * (int) $log->id,
+                'action' => 'app_log',
+                'action_label' => 'سجل التطبيق',
+                'title' => $log->name ?? 'سجل التطبيق',
+                'description' => $log->description ?? '',
+                'meta' => ['type' => $log->type],
+                'debt_transaction_id' => null,
+                'created_by' => null,
+                'created_by_name' => null,
+                'created_at' => $log->created_at?->format('Y-m-d H:i:s'),
+            ])
+            ->all();
+
+        return collect(array_merge($ledgerActivity, $appLogs))
+            ->sortByDesc(fn ($entry) => $entry['created_at'] ?? '')
+            ->take(120)
+            ->values()
+            ->all();
     }
 
     public function validatePerson(?int $customerId, ?int $sellerId): ?string

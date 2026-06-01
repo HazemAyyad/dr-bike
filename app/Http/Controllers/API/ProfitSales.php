@@ -84,6 +84,23 @@ class ProfitSales extends Controller
         }
     }
 
+    private function profitSalePersonLabel(ProfitSale $sale): string
+    {
+        $sale->loadMissing(['customer:id,name', 'seller:id,name']);
+        if ($sale->customer) {
+            return 'للزبون '.$sale->customer->name;
+        }
+        if ($sale->seller) {
+            return 'للتاجر '.$sale->seller->name;
+        }
+        $name = trim((string) ($sale->buyer_name ?? ''));
+        if ($name !== '') {
+            return 'للشخص '.$name;
+        }
+
+        return 'بدون زبون';
+    }
+
     public function store(Request $request)
  {
     try{
@@ -174,8 +191,12 @@ class ProfitSales extends Controller
         return $profitSale;
     });
 
-
-        Logs::createLog('اضافة ربح نقدي جديد','اضافة ربح نقدي جديد','profit_sales');
+        $freshProfitSale = $profitSale->fresh(['customer:id,name', 'seller:id,name']);
+        Logs::createLog(
+            'اضافة ربح نقدي جديد',
+            'اضافة ربح نقدي جديد '.$this->profitSalePersonLabel($freshProfitSale).' بقيمة '.$freshProfitSale->total_cost,
+            'profit_sales'
+        );
         return response()->json([
                     'status' => 'success',
                     'message' => __('messages.profit_sale_created_successfully')
@@ -264,7 +285,7 @@ public function getProfitSales()
 
                 Logs::createLog(
                     'إلغاء بيع ربحي',
-                    'تم إلغاء بيع ربحي #'.$profitSale->id,
+                    'تم إلغاء بيع ربحي #'.$profitSale->id.' '.$this->profitSalePersonLabel($profitSale),
                     'profit_sales'
                 );
             });
