@@ -18,6 +18,7 @@ class InstantSale extends Model
         'total_cost',
         'cost',
         'notes',
+        'additional_notes',
         'quantity',
         'discount',
         'project_id',
@@ -40,6 +41,7 @@ class InstantSale extends Model
 
     protected $casts = [
         'payment_box_value' => 'float',
+        'additional_notes' => 'array',
         'cancelled_at' => 'datetime',
         'stock_restored' => 'boolean',
     ];

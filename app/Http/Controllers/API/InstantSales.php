@@ -545,6 +545,67 @@ class InstantSales extends Controller
     }
 
     /**
+     * @return array<int, array{text: string, amount: float}>
+     */
+    private function normalizeInstantSaleNotes(mixed $raw): array
+    {
+        if (is_string($raw)) {
+            $decoded = json_decode($raw, true);
+            $raw = json_last_error() === JSON_ERROR_NONE ? $decoded : [];
+        }
+
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $notes = [];
+        foreach ($raw as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $text = trim((string) ($item['text'] ?? $item['note'] ?? $item['description'] ?? ''));
+            $amount = max(0, (float) ($item['amount'] ?? $item['price'] ?? $item['value'] ?? 0));
+            if ($text === '' && $amount <= 0) {
+                continue;
+            }
+
+            $notes[] = [
+                'text' => $text,
+                'amount' => round($amount, 2),
+            ];
+        }
+
+        return $notes;
+    }
+
+    private function instantSaleNotesTotal(array $notes): float
+    {
+        return round(array_reduce(
+            $notes,
+            fn (float $sum, array $note) => $sum + (float) ($note['amount'] ?? 0),
+            0.0
+        ), 2);
+    }
+
+    private function instantSaleNotesText(array $notes, ?string $fallback = null): ?string
+    {
+        $parts = collect($notes)
+            ->map(fn (array $note) => trim((string) ($note['text'] ?? '')))
+            ->filter()
+            ->values()
+            ->all();
+
+        if ($parts !== []) {
+            return implode("\n", $parts);
+        }
+
+        $fallback = trim((string) $fallback);
+
+        return $fallback !== '' ? $fallback : null;
+    }
+
+    /**
      * @return array{type: string, type_label_ar: string, name: string, phone: ?string, address: ?string, id: int|null}
      */
     private function resolveInvoiceBuyer(InstantSale $sale): array
@@ -631,6 +692,9 @@ public function store(Request $request)
         'total_cost' => 'required|numeric|min:0',
 
         'notes' => 'nullable|string',
+        'additional_notes' => 'nullable',
+        'additional_notes.*.text' => 'nullable|string|max:500',
+        'additional_notes.*.amount' => 'nullable|numeric|min:0',
 
         'type' => 'required|string|in:normal,project',
         'project_id' => 'nullable|exists:projects,id',
@@ -666,8 +730,13 @@ public function store(Request $request)
             $data['type'] ?? null
         );
         $paymentBoxPayload = $this->resolvePaymentBoxForStorage($request);
+        $additionalNotes = $this->normalizeInstantSaleNotes($request->input('additional_notes', []));
+        $additionalNotesTotal = $this->instantSaleNotesTotal($additionalNotes);
 
         if (! empty($data['offer_package_id'])) {
+            $data['additional_notes'] = $additionalNotes;
+            $data['additional_notes_total'] = $additionalNotesTotal;
+
             return $this->storeOfferPackageSale(
                 $request,
                 $data,
@@ -690,11 +759,24 @@ public function store(Request $request)
                     'payment_box_name',
                     'payment_box_value',
                     'seller_id',
+                    'additional_notes',
                 ])
                 ->merge($buyerPayload)
                 ->merge($paymentBoxPayload)
                 ->merge($this->auditFieldsForCreate())
                 ->toArray()
+        );
+        $mainData['additional_notes'] = $additionalNotes;
+        $mainData['notes'] = $this->instantSaleNotesText($additionalNotes, $mainData['notes'] ?? null);
+
+        $mainLineTotal = (float) $mainData['cost'] * (float) $mainData['quantity'];
+        $otherProductsTotal = 0.0;
+        foreach ($data['other_products'] ?? [] as $item) {
+            $otherProductsTotal += (float) $item['cost'] * (float) $item['quantity'];
+        }
+        $mainData['total_cost'] = max(
+            0,
+            round($mainLineTotal + $otherProductsTotal + $additionalNotesTotal - (float) ($mainData['discount'] ?? 0), 2)
         );
 
         $mainProduct = Product::findOrFail($mainData['product_id']);
@@ -883,14 +965,28 @@ public function store(Request $request)
             }
 
             $unitPrice = (float) $package->price;
+            $otherProductsTotal = 0.0;
+            foreach ($data['other_products'] ?? [] as $item) {
+                $otherProductsTotal += (float) $item['cost'] * (float) $item['quantity'];
+            }
             $mainData = $this->sanitizeInstantSaleAttributes(array_merge([
                 'offer_package_id' => $package->id,
                 'product_id' => null,
                 'quantity' => $packagesSold,
                 'cost' => $unitPrice,
                 'discount' => (float) ($data['discount'] ?? 0),
-                'total_cost' => (float) $data['total_cost'],
-                'notes' => $data['notes'] ?? null,
+                'total_cost' => max(
+                    0,
+                    round(
+                        ($unitPrice * $packagesSold)
+                        + $otherProductsTotal
+                        + (float) ($data['additional_notes_total'] ?? 0)
+                        - (float) ($data['discount'] ?? 0),
+                        2
+                    )
+                ),
+                'notes' => $this->instantSaleNotesText($data['additional_notes'] ?? [], $data['notes'] ?? null),
+                'additional_notes' => $data['additional_notes'] ?? [],
                 'type' => $data['type'],
                 'project_id' => $data['project_id'] ?? null,
             ], $buyerPayload, $paymentBoxPayload, $this->auditFieldsForCreate()));
@@ -1323,11 +1419,14 @@ public function store(Request $request)
             $data = $request->validate([
                 'instant_sale_id' => 'required|exists:instant_sales,id',
             'cost' => 'required|numeric|min:0',
-                'quantity' => 'required|numeric|min:1',
+            'quantity' => 'required|numeric|min:1',
             'total_cost' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
+            'additional_notes' => 'nullable',
+            'additional_notes.*.text' => 'nullable|string|max:500',
+            'additional_notes.*.amount' => 'nullable|numeric|min:0',
             'payment_box_value' => 'nullable|numeric|min:0',
-            ]);
+        ]);
 
             DB::transaction(function () use ($request, $data) {
                 $instantSale = InstantSale::query()
@@ -1362,6 +1461,21 @@ public function store(Request $request)
                 }
 
                 $newTotal = (float) $data['total_cost'];
+                if ($request->has('additional_notes')) {
+                    $additionalNotes = $this->normalizeInstantSaleNotes($request->input('additional_notes', []));
+                    $data['additional_notes'] = $additionalNotes;
+                    $data['notes'] = $this->instantSaleNotesText($additionalNotes, $data['notes'] ?? $instantSale->notes);
+                    $newTotal = max(
+                        0,
+                        round(
+                            ((float) $data['cost'] * (float) $data['quantity'])
+                            + $this->instantSaleNotesTotal($additionalNotes)
+                            - (float) ($instantSale->discount ?? 0),
+                            2
+                        )
+                    );
+                    $data['total_cost'] = $newTotal;
+                }
                 $oldPaid = (float) ($instantSale->payment_box_value ?? 0);
                 $newPaid = $request->has('payment_box_value')
                     ? max(0, (float) $request->input('payment_box_value'))
@@ -1549,6 +1663,8 @@ public function store(Request $request)
             $subtotalBeforeDiscount = (float) $sale->cost * (float) $sale->quantity;
             $discount = (float) ($sale->discount ?? 0);
             $totalCost = (float) $sale->total_cost;
+            $additionalNotes = $this->normalizeInstantSaleNotes($sale->additional_notes ?? []);
+            $additionalNotesTotal = $this->instantSaleNotesTotal($additionalNotes);
             $isPackageSale = $sale->offer_package_id !== null;
             $hasAdditionalProducts = $isPackageSale && $sale->subProducts->contains(
                 fn ($sub) => (float) $sub->cost > 0
@@ -1577,6 +1693,8 @@ public function store(Request $request)
                 'quantity' => $sale->quantity,
                 'subtotal' => $subtotalBeforeDiscount,
                 'total_cost' => $totalCost,
+                'additional_notes' => $additionalNotes,
+                'additional_notes_total' => $additionalNotesTotal,
                 'discount' => $discount,
                 'tax' => 0,
                 ...$this->instantSalePaymentAmounts($sale),
