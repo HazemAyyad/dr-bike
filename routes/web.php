@@ -36,6 +36,8 @@ Route::get('/', function () {
 /** ZKTeco ADMS / Push (no CSRF — called by fingerprint device) */
 Route::match(['GET', 'POST'], '/iclock/cdata', [FingerprintPushController::class, 'iclockCdata']);
 Route::match(['GET', 'POST'], '/iclock/getrequest', [FingerprintPushController::class, 'iclockGetRequest']);
+Route::match(['GET', 'POST'], '/iclock/devicecmd', [FingerprintPushController::class, 'iclockDevicecmd']);
+Route::get('/iclock/test', [FingerprintPushController::class, 'iclockTest']);
 
 Route::get('/debt-ledger/share/{token}', [DebtLedgerShareWebController::class, 'show'])
     ->name('debt-ledger.public-share');

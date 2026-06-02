@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\AttendanceDevice;
 use App\Models\FingerprintRawLog;
+use App\Support\AdmsDebugLogger;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -17,31 +18,85 @@ class FingerprintPushController extends Controller
      */
     public function iclockCdata(Request $request)
     {
+        AdmsDebugLogger::log($request, 'iclock/cdata');
+
         $sn = (string) ($request->query('SN') ?? $request->query('sn') ?? '');
         $options = $request->query('options');
-        $table = (string) ($request->query('table') ?? '');
+        $table = strtoupper((string) ($request->query('table') ?? ''));
 
-        if ($request->isMethod('GET') && ($options !== null || $table === '')) {
+        if ($request->isMethod('GET') && $options !== null) {
+            $this->touchDeviceLastSeen($sn);
+            AdmsDebugLogger::logOutcome('iclock/cdata', [
+                'branch' => 'handshake',
+                'sn' => $sn,
+                'options' => $options,
+            ]);
+
             return $this->iclockHandshakeResponse($sn !== '' ? $sn : 'unknown');
         }
 
         if ($table === 'ATTLOG' || $table === 'OPERLOG' || $request->isMethod('POST')) {
+            AdmsDebugLogger::logOutcome('iclock/cdata', [
+                'branch' => 'attendance',
+                'sn' => $sn,
+                'table' => $table,
+            ]);
+
             return $this->attendance($request);
         }
+
+        AdmsDebugLogger::logOutcome('iclock/cdata', [
+            'branch' => 'noop_ok',
+            'sn' => $sn,
+            'table' => $table,
+            'method' => $request->method(),
+        ]);
 
         return response('OK', 200)->header('Content-Type', 'text/plain');
     }
 
     public function iclockGetRequest(Request $request)
     {
+        AdmsDebugLogger::log($request, 'iclock/getrequest');
+
         $sn = (string) ($request->query('SN') ?? $request->query('sn') ?? '');
-        if ($sn !== '') {
-            AttendanceDevice::query()
-                ->where('serial_number', $sn)
-                ->update(['last_seen_at' => now()]);
-        }
+        $this->touchDeviceLastSeen($sn);
+
+        AdmsDebugLogger::logOutcome('iclock/getrequest', ['sn' => $sn]);
 
         return response('OK', 200)->header('Content-Type', 'text/plain');
+    }
+
+    public function iclockDevicecmd(Request $request)
+    {
+        AdmsDebugLogger::log($request, 'iclock/devicecmd');
+
+        return response('OK', 200)->header('Content-Type', 'text/plain');
+    }
+
+    public function iclockTest(Request $request)
+    {
+        AdmsDebugLogger::log($request, 'iclock/test');
+
+        $body = implode("\n", [
+            'OK',
+            'Time: '.now()->toDateTimeString(),
+            'Environment: '.app()->environment(),
+            'Request IP: '.$request->ip(),
+        ]);
+
+        return response($body, 200)->header('Content-Type', 'text/plain');
+    }
+
+    protected function touchDeviceLastSeen(string $sn): void
+    {
+        if ($sn === '') {
+            return;
+        }
+
+        AttendanceDevice::query()
+            ->where('serial_number', $sn)
+            ->update(['last_seen_at' => now()]);
     }
 
     protected function iclockHandshakeResponse(string $sn): \Illuminate\Http\Response
@@ -66,14 +121,20 @@ class FingerprintPushController extends Controller
 
     public function attendance(Request $request)
     {
+        AdmsDebugLogger::log($request, 'attendance');
+
         try {
             if (! AppSetting::getBool(AppSetting::KEY_ATTENDANCE_FINGERPRINT_ENABLED, false)) {
-                return response('disabled', 200);
+                AdmsDebugLogger::logOutcome('attendance', ['stop' => 'disabled']);
+
+                return response('disabled', 200)->header('Content-Type', 'text/plain');
             }
 
             $syncMode = (string) AppSetting::get(AppSetting::KEY_FINGERPRINT_SYNC_MODE, 'disabled');
             if ($syncMode !== 'push') {
-                return response('mode_not_push', 200);
+                AdmsDebugLogger::logOutcome('attendance', ['stop' => 'mode_not_push', 'mode' => $syncMode]);
+
+                return response('mode_not_push', 200)->header('Content-Type', 'text/plain');
             }
 
             $configuredToken = trim((string) AppSetting::get(AppSetting::KEY_FINGERPRINT_PUSH_TOKEN, ''));
@@ -94,8 +155,9 @@ class FingerprintPushController extends Controller
                     'ip' => $request->ip(),
                     'query' => $request->query(),
                 ]);
+                AdmsDebugLogger::logOutcome('attendance', ['stop' => 'missing_sn', 'rows_parsed' => count($rows)]);
 
-                return response('missing_sn', 200);
+                return response('missing_sn', 200)->header('Content-Type', 'text/plain');
             }
 
             $device = AttendanceDevice::query()
@@ -106,8 +168,9 @@ class FingerprintPushController extends Controller
                     'sn' => $sn,
                     'ip' => $request->ip(),
                 ]);
+                AdmsDebugLogger::logOutcome('attendance', ['stop' => 'unknown_device', 'sn' => $sn]);
 
-                return response('unknown_device', 200);
+                return response('unknown_device', 200)->header('Content-Type', 'text/plain');
             }
 
             $device->forceFill(['last_seen_at' => now()])->save();
@@ -156,10 +219,23 @@ class FingerprintPushController extends Controller
                 $inserted++;
             }
 
+            AdmsDebugLogger::logOutcome('attendance', [
+                'stop' => 'ok',
+                'sn' => $sn,
+                'device_id' => (int) $device->id,
+                'rows_parsed' => count($rows),
+                'inserted' => $inserted,
+                'ignored' => $ignored,
+            ]);
+
             // ADMS devices typically require a simple plain-text "OK"
             return response('OK', 200)->header('Content-Type', 'text/plain');
         } catch (\Throwable $e) {
             Log::error('fingerprint_push.failed', [
+                'message' => $e->getMessage(),
+            ]);
+            AdmsDebugLogger::logOutcome('attendance', [
+                'stop' => 'exception',
                 'message' => $e->getMessage(),
             ]);
 
