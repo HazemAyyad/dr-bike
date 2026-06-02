@@ -12,6 +12,58 @@ use Illuminate\Support\Facades\Log;
 
 class FingerprintPushController extends Controller
 {
+    /**
+     * ZKTeco / ADMS standard endpoint (device calls /iclock/cdata).
+     */
+    public function iclockCdata(Request $request)
+    {
+        $sn = (string) ($request->query('SN') ?? $request->query('sn') ?? '');
+        $options = $request->query('options');
+        $table = (string) ($request->query('table') ?? '');
+
+        if ($request->isMethod('GET') && ($options !== null || $table === '')) {
+            return $this->iclockHandshakeResponse($sn !== '' ? $sn : 'unknown');
+        }
+
+        if ($table === 'ATTLOG' || $table === 'OPERLOG' || $request->isMethod('POST')) {
+            return $this->attendance($request);
+        }
+
+        return response('OK', 200)->header('Content-Type', 'text/plain');
+    }
+
+    public function iclockGetRequest(Request $request)
+    {
+        $sn = (string) ($request->query('SN') ?? $request->query('sn') ?? '');
+        if ($sn !== '') {
+            AttendanceDevice::query()
+                ->where('serial_number', $sn)
+                ->update(['last_seen_at' => now()]);
+        }
+
+        return response('OK', 200)->header('Content-Type', 'text/plain');
+    }
+
+    protected function iclockHandshakeResponse(string $sn): \Illuminate\Http\Response
+    {
+        $body = implode("\n", [
+            "GET OPTION FROM: {$sn}",
+            'ATTLOGStamp=0',
+            'OPERLOGStamp=0',
+            'ATTPHOTOStamp=0',
+            'ErrorDelay=60',
+            'Delay=30',
+            'TransTimes=00:00;23:59',
+            'TransInterval=1',
+            'TransFlag=TransData AttLog OpLog AttPhoto EnrollUser ChgUser NewUser',
+            'Realtime=1',
+            'Encrypt=0',
+            '',
+        ]);
+
+        return response($body, 200)->header('Content-Type', 'text/plain');
+    }
+
     public function attendance(Request $request)
     {
         try {
@@ -81,7 +133,6 @@ class FingerprintPushController extends Controller
                 $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
                 $deviceLogUid = isset($row['UID']) ? (string) $row['UID'] : (isset($row['uid']) ? (string) $row['uid'] : null);
 
-                $created = false;
                 FingerprintRawLog::query()->firstOrCreate(
                     [
                         'attendance_device_id' => $device->id,
@@ -102,9 +153,7 @@ class FingerprintPushController extends Controller
                     ]
                 );
 
-                // firstOrCreate does not tell us if created; we count best-effort by checking uniqueness beforehand
-                // (avoid extra query per row)
-                $inserted += $created ? 1 : 0;
+                $inserted++;
             }
 
             // ADMS devices typically require a simple plain-text "OK"
@@ -159,6 +208,18 @@ class FingerprintPushController extends Controller
             }
             if ($row) {
                 $rows[] = $row;
+                continue;
+            }
+
+            // Some firmware: "PIN\tTime\tStatus\tVerify\t..."
+            $cols = preg_split("/\t+/", $line) ?: [];
+            if (count($cols) >= 2 && ! str_contains($line, '=')) {
+                $rows[] = [
+                    'PIN' => trim($cols[0]),
+                    'Time' => trim($cols[1]),
+                    'Status' => isset($cols[2]) ? trim($cols[2]) : null,
+                    'Verify' => isset($cols[3]) ? trim($cols[3]) : null,
+                ];
             }
         }
 

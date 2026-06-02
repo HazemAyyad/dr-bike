@@ -18,6 +18,14 @@ class FingerprintSyncService
      */
     public function syncDeviceUsers(AttendanceDevice $device): array
     {
+        if ($this->isPushModeDevice($device)) {
+            return [
+                'ok' => false,
+                'message' => 'الجهاز على وضع Push/ADMS. مزامنة المستخدمين تتم من الجهاز للسيرفر وليس العكس.',
+                'synced' => 0,
+            ];
+        }
+
         $result = $this->pullService->fetchUsers($device);
         if (! ($result['ok'] ?? false)) {
             return [
@@ -68,6 +76,14 @@ class FingerprintSyncService
      */
     public function syncAttendanceLogs(AttendanceDevice $device): array
     {
+        if ($this->isPushModeDevice($device)) {
+            return [
+                'ok' => false,
+                'message' => 'الجهاز على وضع Push/ADMS. مزامنة السجلات تتم من الجهاز للسيرفر وليس العكس.',
+                'synced' => 0,
+            ];
+        }
+
         $result = $this->pullService->fetchAttendanceLogs($device);
         if (! ($result['ok'] ?? false)) {
             return [
@@ -129,6 +145,11 @@ class FingerprintSyncService
         } catch (\Throwable $e) {
             Log::error('fingerprint.device_sync_status_update_failed', ['message' => $e->getMessage()]);
         }
+    }
+
+    protected function isPushModeDevice(AttendanceDevice $device): bool
+    {
+        return strtolower((string) ($device->sync_mode ?? '')) === 'push';
     }
 }
 

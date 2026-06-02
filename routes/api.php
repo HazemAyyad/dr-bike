@@ -92,6 +92,8 @@ use Illuminate\Support\Facades\Route;
 
     // Fingerprint ADMS / Push receiver (public)
     Route::match(['GET', 'POST'], '/fingerprint/push/attendance', [FingerprintPushController::class, 'attendance']);
+    Route::match(['GET', 'POST'], '/iclock/cdata', [FingerprintPushController::class, 'iclockCdata']);
+    Route::match(['GET', 'POST'], '/iclock/getrequest', [FingerprintPushController::class, 'iclockGetRequest']);
 
     //auth
     Route::post('/register' , [Authentication::class,'register']);

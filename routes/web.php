@@ -13,6 +13,7 @@ use App\Http\Controllers\CronJobWebController;
 use App\Http\Controllers\SmsTestWebController;
 use App\Http\Controllers\StoreSyncTestController;
 use App\Http\Controllers\UserSessionsWebController;
+use App\Http\Controllers\API\FingerprintPushController;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -31,6 +32,10 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return view('welcome');
 });
+
+/** ZKTeco ADMS / Push (no CSRF — called by fingerprint device) */
+Route::match(['GET', 'POST'], '/iclock/cdata', [FingerprintPushController::class, 'iclockCdata']);
+Route::match(['GET', 'POST'], '/iclock/getrequest', [FingerprintPushController::class, 'iclockGetRequest']);
 
 Route::get('/debt-ledger/share/{token}', [DebtLedgerShareWebController::class, 'show'])
     ->name('debt-ledger.public-share');

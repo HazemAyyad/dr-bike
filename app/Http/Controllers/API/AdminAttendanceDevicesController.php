@@ -115,6 +115,12 @@ class AdminAttendanceDevicesController extends Controller
     {
         try {
             $device = AttendanceDevice::query()->findOrFail($id);
+            if ($this->isPushModeDevice($device)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'هذا الجهاز على وضع Push/ADMS. اختبار الاتصال من السيرفر غير متاح (الجهاز يرسل للسيرفر). تأكد من إعداد Cloud Server على الجهاز.',
+                ], 200);
+            }
             $result = $service->testConnection($device);
 
             if ($result['ok']) {
@@ -186,6 +192,11 @@ class AdminAttendanceDevicesController extends Controller
         }
 
         return $data;
+    }
+
+    protected function isPushModeDevice(AttendanceDevice $device): bool
+    {
+        return strtolower((string) ($device->sync_mode ?? '')) === 'push';
     }
 }
 
