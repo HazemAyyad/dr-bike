@@ -1307,6 +1307,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             $days[] = array_merge([
                 'date' => $dateStr,
+                'source' => $dayScans->isNotEmpty()
+                    ? 'qr'
+                    : ((string) ($legacy?->source ?? 'manual')),
                 'first_check_in' => $firstCheckIn?->toIso8601String(),
                 'last_check_out' => $lastCheckOut?->toIso8601String(),
                 'currently_in' => $currentlyIn,
