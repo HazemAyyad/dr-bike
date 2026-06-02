@@ -14,7 +14,11 @@ return new class extends Migration
             }
 
             if (! Schema::hasColumn('incoming_checks', 'batch_number')) {
-                $table->string('batch_number', 60)->nullable()->after('notes')->index();
+                $col = $table->string('batch_number', 60)->nullable();
+                if (Schema::hasColumn('incoming_checks', 'notes')) {
+                    $col->after('notes');
+                }
+                $col->index();
             }
         });
     }

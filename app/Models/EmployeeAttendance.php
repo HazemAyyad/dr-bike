@@ -19,6 +19,10 @@ class EmployeeAttendance extends Model
         'required_minutes',
         'normal_minutes',
         'overtime_minutes',
+        'source',
+        'attendance_device_id',
+        'device_user_id',
+        'fingerprint_raw_log_id',
     ];
 
     protected $casts = [
@@ -34,5 +38,15 @@ class EmployeeAttendance extends Model
     public function employee()
     {
         return $this->belongsTo(EmployeeDetail::class, 'employee_id');
+    }
+
+    public function attendanceDevice()
+    {
+        return $this->belongsTo(AttendanceDevice::class, 'attendance_device_id');
+    }
+
+    public function fingerprintRawLog()
+    {
+        return $this->belongsTo(FingerprintRawLog::class, 'fingerprint_raw_log_id');
     }
 }

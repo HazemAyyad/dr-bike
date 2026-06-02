@@ -7,6 +7,9 @@ use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\AppSettingsController;
+use App\Http\Controllers\API\AdminAttendanceSettingsController;
+use App\Http\Controllers\API\AdminAttendanceDevicesController;
+use App\Http\Controllers\API\AdminFingerprintDevicesController;
 use App\Http\Controllers\API\Authentication;
 use App\Http\Controllers\API\BanksController;
 use App\Http\Controllers\API\Bills;
@@ -776,6 +779,21 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     Route::get('/app/settings', [AppSettingsController::class, 'show']);
     Route::put('/app/settings', [AppSettingsController::class, 'update']);
+
+    // Attendance settings (QR/Fingerprint)
+    Route::get('/admin/settings/attendance', [AdminAttendanceSettingsController::class, 'show']);
+    Route::post('/admin/settings/attendance', [AdminAttendanceSettingsController::class, 'update']);
+
+    // Attendance devices (fingerprint)
+    Route::get('/admin/attendance-devices', [AdminAttendanceDevicesController::class, 'index']);
+    Route::post('/admin/attendance-devices', [AdminAttendanceDevicesController::class, 'store']);
+    Route::put('/admin/attendance-devices/{id}', [AdminAttendanceDevicesController::class, 'update'])->whereNumber('id');
+    Route::delete('/admin/attendance-devices/{id}', [AdminAttendanceDevicesController::class, 'destroy'])->whereNumber('id');
+    Route::post('/admin/attendance-devices/{id}/test-connection', [AdminAttendanceDevicesController::class, 'testConnection'])->whereNumber('id');
+    Route::post('/admin/attendance-devices/{id}/sync-users', [AdminFingerprintDevicesController::class, 'syncUsers'])->whereNumber('id');
+    Route::post('/admin/attendance-devices/{id}/sync-logs', [AdminFingerprintDevicesController::class, 'syncLogs'])->whereNumber('id');
+    Route::get('/admin/attendance-devices/{id}/users', [AdminFingerprintDevicesController::class, 'users'])->whereNumber('id');
+    Route::get('/admin/attendance-devices/{id}/logs', [AdminFingerprintDevicesController::class, 'logs'])->whereNumber('id');
 
 });
 

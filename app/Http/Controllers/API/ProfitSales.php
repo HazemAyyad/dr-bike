@@ -194,7 +194,7 @@ class ProfitSales extends Controller
         $freshProfitSale = $profitSale->fresh(['customer:id,name', 'seller:id,name']);
         Logs::createLog(
             'اضافة ربح نقدي جديد',
-            'اضافة ربح نقدي جديد '.$this->profitSalePersonLabel($freshProfitSale).' بقيمة '.$freshProfitSale->total_cost,
+            'اضافة ربح نقدي جديد رقم الفاتورة #'.$freshProfitSale->id.' '.$this->profitSalePersonLabel($freshProfitSale).' بقيمة '.$freshProfitSale->total_cost,
             'profit_sales'
         );
         return response()->json([

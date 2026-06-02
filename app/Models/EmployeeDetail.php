@@ -13,6 +13,8 @@ class EmployeeDetail extends Model
 
     protected $fillable = [
         'user_id',
+        'device_user_id',
+        'fingerprint_enabled',
         'points',
         'hour_work_price',
         'overtime_work_price',

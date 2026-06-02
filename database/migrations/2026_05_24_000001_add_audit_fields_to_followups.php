@@ -10,12 +10,18 @@ return new class extends Migration
     {
         Schema::table('followups', function (Blueprint $table) {
             if (! Schema::hasColumn('followups', 'created_by_user_id')) {
-                $table->unsignedBigInteger('created_by_user_id')->nullable()->after('seller_id');
+                $col = $table->unsignedBigInteger('created_by_user_id')->nullable();
+                if (Schema::hasColumn('followups', 'seller_id')) {
+                    $col->after('seller_id');
+                }
                 $table->foreign('created_by_user_id')->references('id')->on('users')->onDelete('set null');
             }
 
             if (! Schema::hasColumn('followups', 'admin_only')) {
-                $table->boolean('admin_only')->default(false)->after('created_by_user_id');
+                $col = $table->boolean('admin_only')->default(false);
+                if (Schema::hasColumn('followups', 'created_by_user_id')) {
+                    $col->after('created_by_user_id');
+                }
             }
         });
     }
