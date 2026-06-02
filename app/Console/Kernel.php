@@ -38,6 +38,10 @@ class Kernel extends ConsoleKernel
         $schedule->command('employees:mark-overdue-tasks')
             ->hourly()
             ->timezone('Asia/Hebron');
+
+        $schedule->command('fingerprint:process-pending')
+            ->everyMinute()
+            ->timezone('Asia/Hebron');
     }
 
     /**

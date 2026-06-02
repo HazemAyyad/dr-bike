@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Models\AttendanceDevice;
 use App\Models\FingerprintRawLog;
+use App\Services\FingerprintAttendanceProcessor;
 use App\Support\AdmsDebugLogger;
+use App\Models\FingerprintDeviceUser;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -196,7 +198,15 @@ class FingerprintPushController extends Controller
                 $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
                 $deviceLogUid = isset($row['UID']) ? (string) $row['UID'] : (isset($row['uid']) ? (string) $row['uid'] : null);
 
-                FingerprintRawLog::query()->firstOrCreate(
+                FingerprintDeviceUser::query()->firstOrCreate(
+                    [
+                        'attendance_device_id' => $device->id,
+                        'device_user_id' => $deviceUserId,
+                    ],
+                    ['last_synced_at' => now()]
+                );
+
+                $rawLog = FingerprintRawLog::query()->firstOrCreate(
                     [
                         'attendance_device_id' => $device->id,
                         'device_user_id' => $deviceUserId,
@@ -215,6 +225,10 @@ class FingerprintPushController extends Controller
                         'processing_status' => 'pending',
                     ]
                 );
+
+                if ($rawLog->processing_status === 'pending') {
+                    app(FingerprintAttendanceProcessor::class)->processRawLog($rawLog);
+                }
 
                 $inserted++;
             }

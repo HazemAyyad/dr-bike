@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources;
 
+use App\Models\EmployeeAttendance;
+use App\Models\FingerprintRawLog;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -29,6 +31,17 @@ class EmployeeDetailResource extends JsonResource
 
             'fingerprint_enabled' => (bool) ($this->fingerprint_enabled ?? false),
             'device_user_id' => $this->device_user_id ? (string) $this->device_user_id : null,
+            'last_fingerprint_scan_at' => $this->device_user_id
+                ? FingerprintRawLog::query()
+                    ->where('device_user_id', (string) $this->device_user_id)
+                    ->orderByDesc('scan_time')
+                    ->value('scan_time')
+                : null,
+            'last_fingerprint_attendance_at' => EmployeeAttendance::query()
+                ->where('employee_id', $this->id)
+                ->where('source', 'fingerprint')
+                ->orderByDesc('date')
+                ->value('date'),
 
             'weekly_days_off' => collect(is_array($this->weekly_days_off) ? $this->weekly_days_off : [])
                 ->filter(fn ($v) => is_string($v))

@@ -4,7 +4,10 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\AttendanceDevice;
+use App\Models\FingerprintDeviceUser;
+use App\Models\FingerprintRawLog;
 use App\Services\AttendanceDeviceService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
@@ -153,6 +156,22 @@ class AdminAttendanceDevicesController extends Controller
      */
     protected function deviceRow(AttendanceDevice $d): array
     {
+        $usersCount = FingerprintDeviceUser::query()
+            ->where('attendance_device_id', $d->id)
+            ->count();
+        $linkedCount = FingerprintDeviceUser::query()
+            ->where('attendance_device_id', $d->id)
+            ->whereNotNull('linked_employee_id')
+            ->count();
+        $logsCount = FingerprintRawLog::query()
+            ->where('attendance_device_id', $d->id)
+            ->count();
+
+        $online = false;
+        if ($d->last_seen_at) {
+            $online = Carbon::parse($d->last_seen_at)->gte(now()->subMinutes(5));
+        }
+
         return [
             'id' => (int) $d->id,
             'name' => (string) ($d->name ?? ''),
@@ -167,6 +186,12 @@ class AdminAttendanceDevicesController extends Controller
             'last_sync_at' => $d->last_sync_at?->toIso8601String(),
             'last_sync_status' => $d->last_sync_status,
             'last_sync_error' => $d->last_sync_error,
+            'is_online' => $online,
+            'users_count' => $usersCount,
+            'linked_users_count' => $linkedCount,
+            'fingerprint_logs_count' => $logsCount,
+            'fingerprint_count' => $usersCount,
+            'face_count' => 0,
         ];
     }
 

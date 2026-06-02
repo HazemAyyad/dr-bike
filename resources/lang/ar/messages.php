@@ -466,5 +466,6 @@ return [
 
     'task_completed_without_review' => 'تم إنهاء المهمة مباشرة دون مراجعة.',
     'settings_updated' => 'تم تحديث الإعدادات بنجاح.',
+    'fingerprint_user_id_taken' => 'رقم مستخدم البصمة مستخدم لموظف آخر.',
     'task_completion_points' => 'نقاط إتمام المهمة: :task',
 ];

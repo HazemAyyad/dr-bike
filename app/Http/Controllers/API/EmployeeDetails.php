@@ -54,6 +54,16 @@ class EmployeeDetails extends Controller
         return array_values(array_unique($out));
     }
 
+    private function normalizeDeviceUserId(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $s = trim((string) $value);
+
+        return $s === '' ? null : $s;
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -600,7 +610,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             // Fingerprint (optional)
             'fingerprint_enabled' => ['nullable', 'boolean'],
-            'device_user_id' => ['nullable', 'string', 'max:120'],
+            'device_user_id' => [
+                'nullable',
+                'string',
+                'max:120',
+                Rule::unique('employee_details', 'device_user_id')
+                    ->whereNotNull('device_user_id'),
+            ],
 
         ]);
 
@@ -634,7 +650,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             'employee_img' => $employeeImage,
             'document_img' => $documentImage,
             'fingerprint_enabled' => (bool) ($data['fingerprint_enabled'] ?? false),
-            'device_user_id' => $data['device_user_id'] ?? null,
+            'device_user_id' => $this->normalizeDeviceUserId($data['device_user_id'] ?? null),
 
         ]);
 
@@ -728,7 +744,14 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             // Fingerprint (optional)
             'fingerprint_enabled' => ['nullable', 'boolean'],
-            'device_user_id' => ['nullable', 'string', 'max:120'],
+            'device_user_id' => [
+                'nullable',
+                'string',
+                'max:120',
+                Rule::unique('employee_details', 'device_user_id')
+                    ->whereNotNull('device_user_id')
+                    ->ignore($request->input('employee_id')),
+            ],
         ]);
     
         $employee = EmployeeDetail::findOrFail($request['employee_id']);
@@ -758,6 +781,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $employee->document_img ?? []
         );
         
+        if (array_key_exists('device_user_id', $updateData)) {
+            $updateData['device_user_id'] = $this->normalizeDeviceUserId($updateData['device_user_id']);
+        }
+
         $finalData = array_merge($updateData,
         ['employee_img'=> $finalEmployeeImages],
         ['document_img'=> $finalDocumentImages]);
@@ -1308,7 +1335,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $days[] = array_merge([
                 'date' => $dateStr,
                 'source' => $dayScans->isNotEmpty()
-                    ? 'qr'
+                    ? (string) ($legacy?->source ?? 'qr')
                     : ((string) ($legacy?->source ?? 'manual')),
                 'first_check_in' => $firstCheckIn?->toIso8601String(),
                 'last_check_out' => $lastCheckOut?->toIso8601String(),

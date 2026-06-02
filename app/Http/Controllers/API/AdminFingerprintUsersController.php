@@ -7,8 +7,10 @@ use App\Models\AttendanceDevice;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeDeviceMapping;
 use App\Models\FingerprintDeviceUser;
+use App\Models\FingerprintRawLog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class AdminFingerprintUsersController extends Controller
@@ -21,6 +23,35 @@ class AdminFingerprintUsersController extends Controller
                 throw ValidationException::withMessages(['device_id' => 'device_id is required.']);
             }
             $device = AttendanceDevice::query()->findOrFail((int) $deviceId);
+
+            $users = FingerprintDeviceUser::query()
+                ->where('attendance_device_id', $device->id)
+                ->with(['linkedEmployee.user:id,name'])
+                ->orderBy('device_user_id')
+                ->get();
+
+            $logUserIds = FingerprintRawLog::query()
+                ->where('attendance_device_id', $device->id)
+                ->select('device_user_id')
+                ->distinct()
+                ->pluck('device_user_id');
+
+            foreach ($logUserIds as $logUserId) {
+                $logUserId = trim((string) $logUserId);
+                if ($logUserId === '') {
+                    continue;
+                }
+                if ($users->firstWhere('device_user_id', $logUserId)) {
+                    continue;
+                }
+                FingerprintDeviceUser::query()->firstOrCreate(
+                    [
+                        'attendance_device_id' => $device->id,
+                        'device_user_id' => $logUserId,
+                    ],
+                    ['last_synced_at' => now()]
+                );
+            }
 
             $users = FingerprintDeviceUser::query()
                 ->where('attendance_device_id', $device->id)
@@ -78,6 +109,17 @@ class AdminFingerprintUsersController extends Controller
                 ->firstOrFail();
 
             $employee = EmployeeDetail::query()->with('user:id,name')->findOrFail($employeeId);
+
+            $duplicate = EmployeeDetail::query()
+                ->where('device_user_id', (string) $deviceUserId)
+                ->where('id', '!=', $employeeId)
+                ->exists();
+            if ($duplicate) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.fingerprint_user_id_taken'),
+                ], 200);
+            }
 
             // Ensure 1 mapping per employee per device (unique constraint).
             EmployeeDeviceMapping::query()->updateOrCreate(
