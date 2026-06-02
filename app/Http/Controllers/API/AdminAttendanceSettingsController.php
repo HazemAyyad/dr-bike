@@ -40,6 +40,7 @@ class AdminAttendanceSettingsController extends Controller
                 'fingerprint_sync_interval_minutes' => ['required', 'integer', Rule::in([1, 5, 10, 15])],
                 'fingerprint_auto_create_unknown_users' => ['required', 'boolean'],
                 'fingerprint_deduplicate_minutes' => ['required', 'integer', 'min:0', 'max:60'],
+                'fingerprint_push_token' => ['nullable', 'string', 'max:100'],
             ]);
 
             AppSetting::set(AppSetting::KEY_ATTENDANCE_QR_ENABLED, $data['attendance_qr_enabled'] ? '1' : '0');
@@ -52,6 +53,7 @@ class AdminAttendanceSettingsController extends Controller
             AppSetting::set(AppSetting::KEY_FINGERPRINT_SYNC_INTERVAL_MINUTES, (string) ((int) $data['fingerprint_sync_interval_minutes']));
             AppSetting::set(AppSetting::KEY_FINGERPRINT_AUTO_CREATE_UNKNOWN_USERS, $data['fingerprint_auto_create_unknown_users'] ? '1' : '0');
             AppSetting::set(AppSetting::KEY_FINGERPRINT_DEDUPLICATE_MINUTES, (string) ((int) $data['fingerprint_deduplicate_minutes']));
+            AppSetting::set(AppSetting::KEY_FINGERPRINT_PUSH_TOKEN, (string) ($data['fingerprint_push_token'] ?? ''));
 
             return response()->json([
                 'status' => 'success',
@@ -106,6 +108,7 @@ class AdminAttendanceSettingsController extends Controller
             'fingerprint_sync_interval_minutes' => $interval,
             'fingerprint_auto_create_unknown_users' => $autoCreate,
             'fingerprint_deduplicate_minutes' => $dedup,
+            'fingerprint_push_token' => trim((string) AppSetting::get(AppSetting::KEY_FINGERPRINT_PUSH_TOKEN, '')),
         ];
     }
 }

@@ -11,6 +11,7 @@ use App\Http\Controllers\API\AdminAttendanceSettingsController;
 use App\Http\Controllers\API\AdminAttendanceDevicesController;
 use App\Http\Controllers\API\AdminFingerprintDevicesController;
 use App\Http\Controllers\API\AdminFingerprintUsersController;
+use App\Http\Controllers\API\FingerprintPushController;
 use App\Http\Controllers\API\Authentication;
 use App\Http\Controllers\API\BanksController;
 use App\Http\Controllers\API\Bills;
@@ -88,6 +89,9 @@ use Illuminate\Support\Facades\Route;
 
     /** صور المتجر القديم (.NET) — بروكسي لـ Flutter Web (CORS) */
     Route::get('/legacy-store-image', [LegacyStoreImageController::class, 'show']);
+
+    // Fingerprint ADMS / Push receiver (public)
+    Route::match(['GET', 'POST'], '/fingerprint/push/attendance', [FingerprintPushController::class, 'attendance']);
 
     //auth
     Route::post('/register' , [Authentication::class,'register']);
