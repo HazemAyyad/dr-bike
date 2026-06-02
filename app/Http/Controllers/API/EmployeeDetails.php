@@ -598,6 +598,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             'weekly_days_off' => ['nullable', 'array'],
             'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
 
+            // Fingerprint (optional)
+            'fingerprint_enabled' => ['nullable', 'boolean'],
+            'device_user_id' => ['nullable', 'string', 'max:120'],
 
         ]);
 
@@ -630,6 +633,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             'weekly_days_off' => $this->normalizeWeeklyDaysOff($data['weekly_days_off'] ?? null),
             'employee_img' => $employeeImage,
             'document_img' => $documentImage,
+            'fingerprint_enabled' => (bool) ($data['fingerprint_enabled'] ?? false),
+            'device_user_id' => $data['device_user_id'] ?? null,
 
         ]);
 
@@ -645,7 +650,11 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
        
         Logs::createLog('اضافة موظف جديد','اضافة الموظف'.' '.$request->name,'employees');
 
-        return response(['status' => 'success', 'message' => __('messages.employee_created_successfully')], 200);
+        return response([
+            'status' => 'success',
+            'message' => __('messages.employee_created_successfully'),
+            'employee_id' => $employee->id,
+        ], 200);
         } catch (ValidationException $e) {
             return response(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
         } catch (QueryException $e) {
@@ -716,6 +725,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             'weekly_days_off' => ['nullable', 'array'],
             'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
+
+            // Fingerprint (optional)
+            'fingerprint_enabled' => ['nullable', 'boolean'],
+            'device_user_id' => ['nullable', 'string', 'max:120'],
         ]);
     
         $employee = EmployeeDetail::findOrFail($request['employee_id']);

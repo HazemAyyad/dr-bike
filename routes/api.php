@@ -10,6 +10,7 @@ use App\Http\Controllers\API\AppSettingsController;
 use App\Http\Controllers\API\AdminAttendanceSettingsController;
 use App\Http\Controllers\API\AdminAttendanceDevicesController;
 use App\Http\Controllers\API\AdminFingerprintDevicesController;
+use App\Http\Controllers\API\AdminFingerprintUsersController;
 use App\Http\Controllers\API\Authentication;
 use App\Http\Controllers\API\BanksController;
 use App\Http\Controllers\API\Bills;
@@ -794,6 +795,11 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/attendance-devices/{id}/sync-logs', [AdminFingerprintDevicesController::class, 'syncLogs'])->whereNumber('id');
     Route::get('/admin/attendance-devices/{id}/users', [AdminFingerprintDevicesController::class, 'users'])->whereNumber('id');
     Route::get('/admin/attendance-devices/{id}/logs', [AdminFingerprintDevicesController::class, 'logs'])->whereNumber('id');
+
+    // Fingerprint device users mapping
+    Route::get('/admin/fingerprint/users', [AdminFingerprintUsersController::class, 'index']);
+    Route::post('/admin/fingerprint/users/{deviceUserId}/link', [AdminFingerprintUsersController::class, 'link']);
+    Route::post('/admin/fingerprint/users/{deviceUserId}/unlink', [AdminFingerprintUsersController::class, 'unlink']);
 
 });
 

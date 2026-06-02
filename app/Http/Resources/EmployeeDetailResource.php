@@ -27,6 +27,9 @@ class EmployeeDetailResource extends JsonResource
             'start_work_time' => $this->start_work_time,
             'end_work_time' => $this->end_work_time,
 
+            'fingerprint_enabled' => (bool) ($this->fingerprint_enabled ?? false),
+            'device_user_id' => $this->device_user_id ? (string) $this->device_user_id : null,
+
             'weekly_days_off' => collect(is_array($this->weekly_days_off) ? $this->weekly_days_off : [])
                 ->filter(fn ($v) => is_string($v))
                 ->map(fn ($v) => strtolower(trim($v)))
