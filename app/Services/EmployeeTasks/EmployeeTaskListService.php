@@ -44,6 +44,10 @@ class EmployeeTaskListService
                 ? 'public/employeeTasksAudio/'.$task->audio
                 : 'no audio',
             'parent_id' => $task->parent_id,
+            'task_recurrence' => $task->task_recurrence ?? 'noRepeat',
+            'task_recurrence_time' => is_array($task->task_recurrence_time)
+                ? $task->task_recurrence_time
+                : [],
             'source' => 'legacy',
         ];
     }
