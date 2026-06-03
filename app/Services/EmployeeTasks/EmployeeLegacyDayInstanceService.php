@@ -155,4 +155,47 @@ class EmployeeLegacyDayInstanceService
             ->timezone(EmployeeVisibleTasks::TIMEZONE)
             ->startOfDay();
     }
+
+    /**
+     * Reset parent template when completion was stored on the wrong row/day.
+     */
+    public function repairTemplateIfNeeded(EmployeeTask $parent): void
+    {
+        if (! $this->isRecurringParent($parent)) {
+            return;
+        }
+
+        if (! in_array($parent->status, [
+            EmployeeTaskStatus::Completed->value,
+            EmployeeTaskStatus::WaitingReview->value,
+        ], true)) {
+            return;
+        }
+
+        $anchor = Carbon::parse($parent->start_time)
+            ->timezone(EmployeeVisibleTasks::TIMEZONE)
+            ->startOfDay();
+
+        $actionDay = null;
+        if (! empty($parent->submitted_at)) {
+            $actionDay = Carbon::parse($parent->submitted_at)
+                ->timezone(EmployeeVisibleTasks::TIMEZONE)
+                ->startOfDay();
+        } elseif (! empty($parent->reviewed_at)) {
+            $actionDay = Carbon::parse($parent->reviewed_at)
+                ->timezone(EmployeeVisibleTasks::TIMEZONE)
+                ->startOfDay();
+        }
+
+        if ($actionDay && $actionDay->equalTo($anchor)) {
+            return;
+        }
+
+        $parent->update([
+            'status' => EmployeeTaskStatus::Ongoing->value,
+            'completed_by_employee_id' => null,
+            'submitted_at' => null,
+            'reviewed_at' => null,
+        ]);
+    }
 }

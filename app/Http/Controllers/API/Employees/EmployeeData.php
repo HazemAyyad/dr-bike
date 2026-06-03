@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API\Employees;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
 use App\Support\EmployeeVisibleTasks;
+use App\Support\EmployeeWorkingDays;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -22,7 +23,7 @@ class EmployeeData extends Controller
             $employee = EmployeeDetail::where('id', $user->employee->id)
             ->with('user:id,name')
             ->with(['permissions.permission:id,name'])
-            ->first(['id', 'user_id', 'number_of_work_hours', 'hour_work_price', 'debts', 'salary', 'points']);
+            ->first(['id', 'user_id', 'number_of_work_hours', 'hour_work_price', 'debts', 'salary', 'points', 'weekly_days_off']);
 
             $employee->permissions = $employee->permissions->map(function ($perm) {
                     return [
@@ -31,6 +32,9 @@ class EmployeeData extends Controller
                     ];
                 });
             $employee->unsetRelation('permissions');
+
+            $weeklyOff = EmployeeWorkingDays::weeklyDaysOff($employee);
+            $employee['weekly_days_off'] = array_values($weeklyOff);
 
             $employee['tasks'] = EmployeeVisibleTasks::dashboardPayload($employee->id);
             $employee['today_tasks_summary'] = EmployeeVisibleTasks::todaySummaryForEmployee($employee->id);

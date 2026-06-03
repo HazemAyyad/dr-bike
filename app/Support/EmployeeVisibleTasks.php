@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Enums\EmployeeTaskStatus;
+use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
@@ -35,7 +36,32 @@ class EmployeeVisibleTasks
             })
             ->get()
             ->filter(fn (EmployeeTask $task) => self::isVisibleToEmployee($task))
+            ->filter(fn (EmployeeTask $task) => self::includeLegacyRowInEmployeePayload($task))
             ->values();
+    }
+
+    /**
+     * V1 recurrence pre-generates child rows; only send rows the employee actually interacted with.
+     * Pending copies are rendered virtually from the parent in the app.
+     */
+    public static function includeLegacyRowInEmployeePayload(EmployeeTask $task): bool
+    {
+        if (empty($task->parent_id)) {
+            return true;
+        }
+
+        $status = EmployeeTaskStatus::normalize($task->status)->value;
+
+        if (in_array($status, ['in_progress', 'overdue', 'started'], true)) {
+            return true;
+        }
+
+        if (in_array($status, ['completed', 'waiting_review'], true)) {
+            return (int) ($task->completed_by_employee_id ?? 0) > 0
+                || ! empty($task->submitted_at);
+        }
+
+        return false;
     }
 
     public static function occurrencesForEmployee(int $employeeId): Collection
@@ -63,8 +89,17 @@ class EmployeeVisibleTasks
 
     public static function dashboardPayload(int $employeeId): Collection
     {
-        $legacy = self::legacyForEmployee($employeeId)
-            ->map(fn (EmployeeTask $task) => self::mapLegacyForDashboard($task, $employeeId));
+        $legacyRows = self::legacyForEmployee($employeeId);
+        $dayInstance = app(\App\Services\EmployeeTasks\EmployeeLegacyDayInstanceService::class);
+
+        foreach ($legacyRows as $task) {
+            if (empty($task->parent_id) && $dayInstance->isRecurringParent($task)) {
+                $dayInstance->repairTemplateIfNeeded($task);
+            }
+        }
+
+        $legacy = $legacyRows
+            ->map(fn (EmployeeTask $task) => self::mapLegacyForDashboard($task->fresh(), $employeeId));
 
         $occurrences = self::occurrencesForEmployee($employeeId)
             ->filter(fn (EmployeeTaskOccurrence $task) => self::passesOccurrenceDayFilter($task))
@@ -256,8 +291,9 @@ class EmployeeVisibleTasks
     public static function todaySummaryForEmployee(int $employeeId): array
     {
         $today = Carbon::now()->timezone(self::TIMEZONE)->startOfDay();
-        $tasks = self::dashboardPayload($employeeId)->filter(function ($row) use ($today) {
-            return self::taskAppliesOnDate($row, $today);
+        $employee = EmployeeDetail::find($employeeId);
+        $tasks = self::dashboardPayload($employeeId)->filter(function ($row) use ($today, $employee) {
+            return self::taskAppliesOnDate($row, $today, $employee);
         });
 
         $total = $tasks->count();
@@ -278,7 +314,7 @@ class EmployeeVisibleTasks
     /**
      * @param  array<string, mixed>  $row
      */
-    public static function taskAppliesOnDate(array $row, Carbon $date): bool
+    public static function taskAppliesOnDate(array $row, Carbon $date, ?EmployeeDetail $employee = null): bool
     {
         $start = $row['start_time'] ?? null;
         if (empty($start)) {
@@ -288,6 +324,12 @@ class EmployeeVisibleTasks
         $startCarbon = Carbon::parse($start)->timezone(self::TIMEZONE)->startOfDay();
         $check = $date->copy()->timezone(self::TIMEZONE)->startOfDay();
 
+        $recurrence = $row['task_recurrence'] ?? 'noRepeat';
+
+        if ($recurrence === 'daily' && ! EmployeeWorkingDays::isWorkingDay($employee, $check)) {
+            return false;
+        }
+
         if ($check->toDateString() === $startCarbon->toDateString()) {
             return true;
         }
@@ -296,7 +338,6 @@ class EmployeeVisibleTasks
             return false;
         }
 
-        $recurrence = $row['task_recurrence'] ?? 'noRepeat';
         if ($recurrence === 'noRepeat' || $recurrence === null || $recurrence === '') {
             return false;
         }
