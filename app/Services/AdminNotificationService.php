@@ -23,6 +23,8 @@ class AdminNotificationService
 
     public const TYPE_EMPLOYEE_LOGIN = 'employee_login';
 
+    public const TYPE_EMPLOYEE_LOGOUT = 'employee_logout';
+
     public const TYPE_EMPLOYEE_TASK_COMPLETED = 'employee_task_completed';
 
     public const TYPE_EMPLOYEE_TASK_SUBMITTED = 'employee_task_submitted';
@@ -64,23 +66,58 @@ class AdminNotificationService
         return $notification;
     }
 
-    public function notifyEmployeeLogin(EmployeeDetail $employee, ?int $attendanceId = null): AdminNotification
-    {
+    public function notifyEmployeeLogin(
+        EmployeeDetail $employee,
+        ?int $attendanceId = null,
+        string $source = 'qr'
+    ): AdminNotification {
         $employee->loadMissing('user');
         $name = $employee->user->name ?? 'Employee';
         $time = now()->format('Y-m-d H:i:s');
+        $via = $source === 'fingerprint' ? ' (fingerprint)' : '';
 
         $data = [
             'employee_id' => (string) $employee->id,
             'employee_name' => $name,
             'login_time' => $time,
             'attendance_id' => $attendanceId !== null ? (string) $attendanceId : '',
+            'source' => $source,
         ];
 
         return $this->create(
             self::TYPE_EMPLOYEE_LOGIN,
             'Employee Logged In',
-            "{$name} logged in at {$time}.",
+            "{$name} checked in{$via} at {$time}.",
+            $data,
+            $employee->id,
+            $attendanceId !== null ? 'employee_attendance' : null,
+            $attendanceId,
+            true
+        );
+    }
+
+    public function notifyEmployeeLogout(
+        EmployeeDetail $employee,
+        ?int $attendanceId,
+        string $logoutTime,
+        string $source = 'qr'
+    ): AdminNotification {
+        $employee->loadMissing('user');
+        $name = $employee->user->name ?? 'Employee';
+        $via = $source === 'fingerprint' ? ' (fingerprint)' : '';
+
+        $data = [
+            'employee_id' => (string) $employee->id,
+            'employee_name' => $name,
+            'logout_time' => $logoutTime,
+            'attendance_id' => $attendanceId !== null ? (string) $attendanceId : '',
+            'source' => $source,
+        ];
+
+        return $this->create(
+            self::TYPE_EMPLOYEE_LOGOUT,
+            'Employee Logged Out',
+            "{$name} checked out{$via} at {$logoutTime}.",
             $data,
             $employee->id,
             $attendanceId !== null ? 'employee_attendance' : null,

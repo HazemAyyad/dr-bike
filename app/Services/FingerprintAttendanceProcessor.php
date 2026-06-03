@@ -206,7 +206,11 @@ class FingerprintAttendanceProcessor
             $attendance->save();
 
             try {
-                app(AdminNotificationService::class)->notifyEmployeeLogin($employee, (int) $attendance->id);
+                app(AdminNotificationService::class)->notifyEmployeeLogin(
+                    $employee,
+                    (int) $attendance->id,
+                    'fingerprint'
+                );
             } catch (\Throwable $e) {
                 Log::error('fingerprint.notify_login_failed', ['message' => $e->getMessage()]);
             }
@@ -241,8 +245,15 @@ class FingerprintAttendanceProcessor
         $attendance->save();
 
         try {
+            $notifier = app(AdminNotificationService::class);
+            $notifier->notifyEmployeeLogout(
+                $employee,
+                (int) $attendance->id,
+                $scanAt->toIso8601String(),
+                'fingerprint'
+            );
             $pending = \App\Support\EmployeePendingTasksForToday::forEmployee($employeeId);
-            app(AdminNotificationService::class)->notifyEmployeeLogoutWithPendingTasks(
+            $notifier->notifyEmployeeLogoutWithPendingTasks(
                 $employee,
                 (int) $attendance->id,
                 $pending,
