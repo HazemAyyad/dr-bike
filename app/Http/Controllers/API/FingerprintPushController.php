@@ -37,7 +37,18 @@ class FingerprintPushController extends Controller
             return $this->iclockHandshakeResponse($sn !== '' ? $sn : 'unknown');
         }
 
-        if ($table === 'ATTLOG' || $table === 'OPERLOG' || $request->isMethod('POST')) {
+        // OPERLOG / OPLOG = سجل عمليات الجهاز (إعدادات، تشغيل، إلخ) — ليس حضوراً.
+        if ($table === 'OPERLOG') {
+            $this->touchDeviceLastSeen($sn);
+            AdmsDebugLogger::logOutcome('iclock/cdata', [
+                'branch' => 'operlog_ack_only',
+                'sn' => $sn,
+            ]);
+
+            return response('OK', 200)->header('Content-Type', 'text/plain');
+        }
+
+        if ($table === 'ATTLOG' || $request->isMethod('POST')) {
             AdmsDebugLogger::logOutcome('iclock/cdata', [
                 'branch' => 'attendance',
                 'sn' => $sn,
@@ -183,7 +194,7 @@ class FingerprintPushController extends Controller
             foreach ($rows as $row) {
                 $deviceUserId = trim((string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''));
                 $timeRaw = trim((string) ($row['Time'] ?? $row['time'] ?? $row['DateTime'] ?? $row['datetime'] ?? ''));
-                if ($deviceUserId === '' || $timeRaw === '') {
+                if ($deviceUserId === '' || $timeRaw === '' || strtoupper($deviceUserId) === 'OPLOG') {
                     $ignored++;
                     continue;
                 }
@@ -285,6 +296,22 @@ class FingerprintPushController extends Controller
                 continue;
             }
 
+            // سجل عمليات الجهاز — ليس بصمة حضور (مثال: OPLOG 30 0 2026-06-02 17:50:33 ...)
+            if (preg_match('/^OPLOG\b/i', $line) || preg_match('/^USER\b/i', $line) || preg_match('/^FP\b/i', $line)) {
+                continue;
+            }
+
+            // ATTLOG شائع: "PIN 2026-06-02 08:00:00 0 1" (مسافات)
+            if (preg_match('/^(\d+)\s+(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})\s+(\d+)\s+(\d+)/', $line, $m)) {
+                $rows[] = [
+                    'PIN' => $m[1],
+                    'Time' => $m[2],
+                    'Status' => $m[3],
+                    'Verify' => $m[4],
+                ];
+                continue;
+            }
+
             // Try tab separated key=val pairs
             $row = [];
             $parts = preg_split("/\t+/", $line) ?: [];
@@ -304,8 +331,12 @@ class FingerprintPushController extends Controller
             // Some firmware: "PIN\tTime\tStatus\tVerify\t..."
             $cols = preg_split("/\t+/", $line) ?: [];
             if (count($cols) >= 2 && ! str_contains($line, '=')) {
+                $pin = trim($cols[0]);
+                if (preg_match('/^OPLOG$/i', $pin)) {
+                    continue;
+                }
                 $rows[] = [
-                    'PIN' => trim($cols[0]),
+                    'PIN' => $pin,
                     'Time' => trim($cols[1]),
                     'Status' => isset($cols[2]) ? trim($cols[2]) : null,
                     'Verify' => isset($cols[3]) ? trim($cols[3]) : null,
