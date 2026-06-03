@@ -8,6 +8,7 @@ use App\Models\AttendanceDevice;
 use App\Models\FingerprintRawLog;
 use App\Services\FingerprintAttendanceProcessor;
 use App\Support\AdmsDebugLogger;
+use App\Support\FingerprintAttendanceLogFilter;
 use App\Models\FingerprintDeviceUser;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -38,11 +39,12 @@ class FingerprintPushController extends Controller
         }
 
         // OPERLOG / OPLOG = سجل عمليات الجهاز (إعدادات، تشغيل، إلخ) — ليس حضوراً.
-        if ($table === 'OPERLOG') {
+        if (in_array($table, ['OPERLOG', 'OPLOG'], true)) {
             $this->touchDeviceLastSeen($sn);
             AdmsDebugLogger::logOutcome('iclock/cdata', [
                 'branch' => 'operlog_ack_only',
                 'sn' => $sn,
+                'table' => $table,
             ]);
 
             return response('OK', 200)->header('Content-Type', 'text/plain');
@@ -202,7 +204,7 @@ class FingerprintPushController extends Controller
                 $verifyType = isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null);
                 $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
 
-                if (! $this->isAttendanceRow($deviceUserId, $verifyType, $status)) {
+                if (! FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $row)) {
                     $ignored++;
                     continue;
                 }
@@ -302,19 +304,31 @@ class FingerprintPushController extends Controller
                 continue;
             }
 
-            // سجل عمليات الجهاز — ليس بصمة حضور (مثال: OPLOG 30 0 2026-06-02 17:50:33 ...)
-            if (preg_match('/^OPLOG\b/i', $line) || preg_match('/^USER\b/i', $line) || preg_match('/^FP\b/i', $line)) {
+            // سجل عمليات الجهاز — ليس بصمة حضور (قد يكون بدون كلمة OPLOG في السطر)
+            if (preg_match('/^OPLOG\b/i', $line)
+                || preg_match('/\bOPLOG\b/i', $line)
+                || preg_match('/\bOPERLOG\b/i', $line)
+                || preg_match('/^USER\b/i', $line)
+                || preg_match('/^FP\b/i', $line)) {
                 continue;
             }
 
             // ATTLOG شائع: "PIN 2026-06-02 08:00:00 0 1" (مسافات)
             if (preg_match('/^(\d+)\s+(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})\s+(\d+)\s+(\d+)/', $line, $m)) {
-                $rows[] = [
+                $candidate = [
                     'PIN' => $m[1],
                     'Time' => $m[2],
                     'Status' => $m[3],
                     'Verify' => $m[4],
                 ];
+                if (FingerprintAttendanceLogFilter::isAttendanceRow(
+                    $candidate['PIN'],
+                    $candidate['Verify'],
+                    $candidate['Status'],
+                    $candidate
+                )) {
+                    $rows[] = $candidate;
+                }
                 continue;
             }
 
@@ -329,7 +343,12 @@ class FingerprintPushController extends Controller
                 [$k, $v] = explode('=', $p, 2);
                 $row[trim($k)] = trim($v);
             }
-            if ($row) {
+            if ($row && FingerprintAttendanceLogFilter::isAttendanceRow(
+                (string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''),
+                isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null),
+                isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null),
+                $row
+            )) {
                 $rows[] = $row;
                 continue;
             }
@@ -338,15 +357,24 @@ class FingerprintPushController extends Controller
             $cols = preg_split("/\t+/", $line) ?: [];
             if (count($cols) >= 2 && ! str_contains($line, '=')) {
                 $pin = trim($cols[0]);
-                if (preg_match('/^OPLOG$/i', $pin)) {
+                if (! FingerprintAttendanceLogFilter::isValidDeviceUserPin($pin)) {
                     continue;
                 }
-                $rows[] = [
+                $candidate = [
                     'PIN' => $pin,
                     'Time' => trim($cols[1]),
                     'Status' => isset($cols[2]) ? trim($cols[2]) : null,
                     'Verify' => isset($cols[3]) ? trim($cols[3]) : null,
                 ];
+                if (! FingerprintAttendanceLogFilter::isAttendanceRow(
+                    $pin,
+                    $candidate['Verify'],
+                    $candidate['Status'],
+                    $candidate
+                )) {
+                    continue;
+                }
+                $rows[] = $candidate;
             }
         }
 
@@ -354,28 +382,16 @@ class FingerprintPushController extends Controller
         if (! $rows) {
             $maybeRow = array_filter($request->all(), fn ($v) => $v !== null && $v !== '');
             if ($maybeRow) {
-                $rows[] = $maybeRow;
+                $pin = trim((string) ($maybeRow['PIN'] ?? $maybeRow['pin'] ?? $maybeRow['UserID'] ?? $maybeRow['user_id'] ?? ''));
+                $verify = isset($maybeRow['Verify']) ? (string) $maybeRow['Verify'] : (isset($maybeRow['verify']) ? (string) $maybeRow['verify'] : null);
+                $status = isset($maybeRow['Status']) ? (string) $maybeRow['Status'] : (isset($maybeRow['status']) ? (string) $maybeRow['status'] : null);
+                if (FingerprintAttendanceLogFilter::isAttendanceRow($pin, $verify, $status, $maybeRow)) {
+                    $rows[] = $maybeRow;
+                }
             }
         }
 
         return [(string) $sn, $rows];
-    }
-
-    protected function isAttendanceRow(string $deviceUserId, ?string $verifyType, ?string $status): bool
-    {
-        $pin = strtoupper(trim($deviceUserId));
-        if ($pin === '' || $pin === '0' || in_array($pin, ['OPLOG', 'USER', 'FP'], true)) {
-            return false;
-        }
-
-        $verify = trim((string) ($verifyType ?? ''));
-        if ($verify === '') {
-            return false;
-        }
-
-        $stat = trim((string) ($status ?? ''));
-
-        return in_array($stat, ['0', '1'], true);
     }
 
     protected function parseScanTime(string $timeRaw): ?Carbon

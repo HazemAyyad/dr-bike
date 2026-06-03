@@ -56,6 +56,11 @@ $allowedCommands = [
         'params' => ['--force' => true],
         'label' => '=== تشغيل migrations (php artisan migrate --force) ===',
     ],
+    [
+        'name' => 'fingerprint:purge-operlog',
+        'params' => [],
+        'label' => '=== تنظيف سجلات OPLOG الخاطئة (php artisan fingerprint:purge-operlog) ===',
+    ],
     ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'cache:clear', 'params' => []],
     ['name' => 'images:generate-legacy-thumbs', 'params' => []],

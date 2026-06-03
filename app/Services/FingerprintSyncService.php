@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AttendanceDevice;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Support\FingerprintAttendanceLogFilter;
 use Illuminate\Support\Facades\Log;
 
 class FingerprintSyncService
@@ -101,7 +102,12 @@ class FingerprintSyncService
             }
             $deviceUserId = (string) ($l['device_user_id'] ?? $l['uid'] ?? $l['id'] ?? '');
             $scanTime = $l['scan_time'] ?? $l['timestamp'] ?? $l['time'] ?? null;
+            $verifyType = isset($l['verify_type']) ? (string) $l['verify_type'] : null;
+            $status = isset($l['status']) ? (string) $l['status'] : null;
             if ($deviceUserId === '' || $scanTime === null) {
+                continue;
+            }
+            if (! FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $l)) {
                 continue;
             }
             try {

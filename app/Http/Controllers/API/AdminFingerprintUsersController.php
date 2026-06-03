@@ -61,7 +61,11 @@ class AdminFingerprintUsersController extends Controller
                 ->orderBy('device_user_id')
                 ->get();
 
-            $rows = $users->map(function (FingerprintDeviceUser $u) {
+            $rows = $users
+                ->filter(fn (FingerprintDeviceUser $u) => FingerprintAttendanceLogFilter::isValidDeviceUserPin(
+                    (string) $u->device_user_id
+                ))
+                ->map(function (FingerprintDeviceUser $u) {
                 $emp = $u->linkedEmployee;
 
                 return [

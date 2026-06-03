@@ -5,6 +5,7 @@ namespace App\Http\Resources;
 use App\Models\EmployeeAttendance;
 use App\Models\FingerprintRawLog;
 use App\Services\EmployeeAttendanceCheckoutService;
+use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -35,8 +36,9 @@ class EmployeeDetailResource extends JsonResource
             'device_user_id' => $this->device_user_id ? (string) $this->device_user_id : null,
             'last_fingerprint_scan_at' => $this->formatFingerprintTimestamp(
                 $this->device_user_id
-                    ? FingerprintRawLog::query()
-                        ->where('device_user_id', (string) $this->device_user_id)
+                    ? FingerprintAttendanceLogFilter::apply(
+                        FingerprintRawLog::query()->where('device_user_id', (string) $this->device_user_id)
+                    )
                         ->orderByDesc('scan_time')
                         ->value('scan_time')
                     : null
@@ -80,9 +82,11 @@ class EmployeeDetailResource extends JsonResource
     protected function lastFingerprintAttendanceAtIso(): ?string
     {
         if ($this->device_user_id) {
-            $processed = FingerprintRawLog::query()
-                ->where('device_user_id', (string) $this->device_user_id)
-                ->where('processing_status', 'processed')
+            $processed = FingerprintAttendanceLogFilter::apply(
+                FingerprintRawLog::query()
+                    ->where('device_user_id', (string) $this->device_user_id)
+                    ->where('processing_status', 'processed')
+            )
                 ->orderByDesc('scan_time')
                 ->value('scan_time');
 

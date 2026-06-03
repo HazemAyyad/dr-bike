@@ -11,6 +11,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeDeviceMapping;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
@@ -24,6 +25,12 @@ class FingerprintAttendanceProcessor
     {
         $rawLog->refresh();
         if ($rawLog->processing_status !== 'pending') {
+            return;
+        }
+
+        if (! FingerprintAttendanceLogFilter::isAttendanceLog($rawLog)) {
+            $this->mark($rawLog, 'ignored', 'operlog_not_attendance');
+
             return;
         }
 
