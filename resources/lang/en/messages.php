@@ -119,6 +119,9 @@ return [
     'departure_time' => 'Departure time recorded',
     'already_scanned' => 'Already scanned in and out today',
     'must_check_in_first' => 'You must scan check-in before check-out',
+    'manual_checkout_success' => 'Employee check-out recorded manually',
+    'checkout_time_must_match_work_date' => 'Check-out time must be on the same work day',
+    'checkout_time_before_check_in' => 'Check-out time cannot be before check-in',
     'salary_paid' => 'Salary was paid successfully',
     'points_updated' => 'employee points were updated successfully',
     //projects

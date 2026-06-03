@@ -8,6 +8,7 @@ use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\AppSettingsController;
 use App\Http\Controllers\API\AdminAttendanceSettingsController;
+use App\Http\Controllers\API\AdminEmployeeAttendanceController;
 use App\Http\Controllers\API\AdminAttendanceDevicesController;
 use App\Http\Controllers\API\AdminFingerprintDevicesController;
 use App\Http\Controllers\API\AdminFingerprintUsersController;
@@ -189,6 +190,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
 
     Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs']);
     Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory']);
+    Route::post('/admin/employees/{employeeId}/attendance/manual-checkout', [AdminEmployeeAttendanceController::class, 'manualCheckout'])
+        ->whereNumber('employeeId');
     Route::get('/employee-attendance/reports', [EmployeeAttendanceReportController::class, 'index']);
 
     // Employee points and rewards (manual management)

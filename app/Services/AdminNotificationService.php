@@ -74,7 +74,11 @@ class AdminNotificationService
         $employee->loadMissing('user');
         $name = $employee->user->name ?? 'Employee';
         $time = now()->format('Y-m-d H:i:s');
-        $via = $source === 'fingerprint' ? ' (fingerprint)' : '';
+        $via = match ($source) {
+            'fingerprint' => ' (fingerprint)',
+            'manual' => ' (manual)',
+            default => '',
+        };
 
         $data = [
             'employee_id' => (string) $employee->id,
@@ -104,7 +108,11 @@ class AdminNotificationService
     ): AdminNotification {
         $employee->loadMissing('user');
         $name = $employee->user->name ?? 'Employee';
-        $via = $source === 'fingerprint' ? ' (fingerprint)' : '';
+        $via = match ($source) {
+            'fingerprint' => ' (fingerprint)',
+            'manual' => ' (manual)',
+            default => '',
+        };
 
         $data = [
             'employee_id' => (string) $employee->id,

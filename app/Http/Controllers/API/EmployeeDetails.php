@@ -1386,12 +1386,15 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         $monthlyOverMinutes = max(0, (int) $periodMonthly['monthly_overtime_minutes']);
         $monthlySalaryFull = $salaryService->calculateSalary($employee, $monthlyNormalMinutes, $monthlyOverMinutes);
 
+        $checkoutService = app(\App\Services\EmployeeAttendanceCheckoutService::class);
+
         return [
             'employee' => [
                 'id' => $employee->id,
                 'name' => $employee->user?->name,
                 'start_work_time' => $employee->start_work_time,
                 'number_of_work_hours' => $employee->number_of_work_hours,
+                'currently_in_today' => $checkoutService->isCurrentlyIn((int) $employee->id),
                 'weekly_days_off' => collect(is_array($employee->weekly_days_off) ? $employee->weekly_days_off : [])
                     ->filter(fn ($v) => is_string($v))
                     ->map(fn ($v) => strtolower(trim($v)))

@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Models\EmployeeAttendance;
 use App\Models\FingerprintRawLog;
+use App\Services\EmployeeAttendanceCheckoutService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -42,6 +43,9 @@ class EmployeeDetailResource extends JsonResource
                 ->where('source', 'fingerprint')
                 ->orderByDesc('date')
                 ->value('date'),
+
+            'currently_in_today' => app(EmployeeAttendanceCheckoutService::class)
+                ->isCurrentlyIn((int) $this->id),
 
             'weekly_days_off' => collect(is_array($this->weekly_days_off) ? $this->weekly_days_off : [])
                 ->filter(fn ($v) => is_string($v))

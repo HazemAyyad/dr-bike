@@ -116,6 +116,9 @@ return [
     'departure_time' => 'تم تسجيل وقت الرحيل',
     'already_scanned' => 'تم المسح بالفعل اليوم',
     'must_check_in_first' => 'يجب مسح الدخول أولاً قبل مسح الخروج',
+    'manual_checkout_success' => 'تم تسجيل خروج الموظف يدوياً',
+    'checkout_time_must_match_work_date' => 'وقت الخروج يجب أن يكون في نفس يوم الدوام',
+    'checkout_time_before_check_in' => 'وقت الخروج لا يمكن أن يكون قبل وقت الدخول',
     'salary_paid' => 'تم دفع الراتب بنجاح',
     'points_updated' => 'تم تعديل نقاط الموظف بنجاح',
 
