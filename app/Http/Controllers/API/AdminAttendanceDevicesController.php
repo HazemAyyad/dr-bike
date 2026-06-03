@@ -15,14 +15,53 @@ use Illuminate\Validation\Rule;
 
 class AdminAttendanceDevicesController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
+        $minimal = $request->boolean('minimal');
+
         $devices = AttendanceDevice::query()
             ->orderByDesc('is_active')
             ->orderBy('name')
-            ->get();
+            ->get(['id', 'name', 'is_active', 'model', 'serial_number', 'ip_address', 'port', 'communication_password', 'sync_mode', 'last_seen_at', 'last_sync_at', 'last_sync_status', 'last_sync_error']);
 
-        $rows = $devices->map(fn (AttendanceDevice $d) => $this->deviceRow($d))->values();
+        if ($minimal) {
+            $rows = $devices->map(fn (AttendanceDevice $d) => [
+                'id' => (int) $d->id,
+                'name' => (string) ($d->name ?? ''),
+                'is_active' => (bool) $d->is_active,
+            ])->values();
+
+            return response()->json([
+                'status' => 'success',
+                'devices' => $rows,
+            ], 200);
+        }
+
+        $deviceIds = $devices->pluck('id');
+        $usersCounts = FingerprintDeviceUser::query()
+            ->whereIn('attendance_device_id', $deviceIds)
+            ->selectRaw('attendance_device_id, COUNT(*) as aggregate')
+            ->groupBy('attendance_device_id')
+            ->pluck('aggregate', 'attendance_device_id');
+        $linkedCounts = FingerprintDeviceUser::query()
+            ->whereIn('attendance_device_id', $deviceIds)
+            ->whereNotNull('linked_employee_id')
+            ->selectRaw('attendance_device_id, COUNT(*) as aggregate')
+            ->groupBy('attendance_device_id')
+            ->pluck('aggregate', 'attendance_device_id');
+        $logsCounts = FingerprintAttendanceLogFilter::apply(
+            FingerprintRawLog::query()->whereIn('attendance_device_id', $deviceIds)
+        )
+            ->selectRaw('attendance_device_id, COUNT(*) as aggregate')
+            ->groupBy('attendance_device_id')
+            ->pluck('aggregate', 'attendance_device_id');
+
+        $rows = $devices->map(fn (AttendanceDevice $d) => $this->deviceRow(
+            $d,
+            (int) ($usersCounts[$d->id] ?? 0),
+            (int) ($linkedCounts[$d->id] ?? 0),
+            (int) ($logsCounts[$d->id] ?? 0),
+        ))->values();
 
         return response()->json([
             'status' => 'success',
@@ -155,18 +194,28 @@ class AdminAttendanceDevicesController extends Controller
     /**
      * @return array<string, mixed>
      */
-    protected function deviceRow(AttendanceDevice $d): array
-    {
-        $usersCount = FingerprintDeviceUser::query()
-            ->where('attendance_device_id', $d->id)
-            ->count();
-        $linkedCount = FingerprintDeviceUser::query()
-            ->where('attendance_device_id', $d->id)
-            ->whereNotNull('linked_employee_id')
-            ->count();
-        $logsCount = FingerprintAttendanceLogFilter::apply(
-            FingerprintRawLog::query()->where('attendance_device_id', $d->id)
-        )->count();
+    protected function deviceRow(
+        AttendanceDevice $d,
+        ?int $usersCount = null,
+        ?int $linkedCount = null,
+        ?int $logsCount = null,
+    ): array {
+        if ($usersCount === null) {
+            $usersCount = FingerprintDeviceUser::query()
+                ->where('attendance_device_id', $d->id)
+                ->count();
+        }
+        if ($linkedCount === null) {
+            $linkedCount = FingerprintDeviceUser::query()
+                ->where('attendance_device_id', $d->id)
+                ->whereNotNull('linked_employee_id')
+                ->count();
+        }
+        if ($logsCount === null) {
+            $logsCount = FingerprintAttendanceLogFilter::apply(
+                FingerprintRawLog::query()->where('attendance_device_id', $d->id)
+            )->count();
+        }
 
         $online = false;
         if ($d->last_seen_at) {
