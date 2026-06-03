@@ -63,20 +63,24 @@ class ChecksDispatchSmsNotifications extends Command
 
             return IncomingCheck::query()
                 ->whereDate('due_date', $dueOn)
-                ->where('status', 'not_cashed')
+                ->where(function ($q) {
+                    $this->applyNotCashedScope($q);
+                })
                 ->with(['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller'])
                 ->get()
                 ->concat(
                     OutgoingCheck::query()
                         ->whereDate('due_date', $dueOn)
-                        ->where('status', 'not_cashed')
+                        ->where(function ($q) {
+                            $this->applyNotCashedScope($q);
+                        })
                         ->with(['customer', 'seller'])
                         ->get()
                 );
         }
 
         $statuses = $rule->type === 'cashed'
-            ? ['cashed', 'cashed_to_box', 'cashed_to_person']
+            ? ['cashed', 'cashed_to_box', 'cashed_to_person', 'cashed_from_box']
             : ['returned'];
         $actionDate = now()->copy()->subDays($rule->days)->toDateString();
 
@@ -92,5 +96,12 @@ class ChecksDispatchSmsNotifications extends Command
                     ->with(['customer', 'seller'])
                     ->get()
             );
+    }
+
+    private function applyNotCashedScope($query): void
+    {
+        $query->where(function ($q) {
+            $q->where('status', 'not_cashed')->orWhereNull('status');
+        });
     }
 }

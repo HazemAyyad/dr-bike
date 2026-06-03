@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\AdminDeviceToken;
 use App\Models\CheckNotificationLog;
 use App\Models\CheckNotificationRule;
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
+use App\Models\User;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -13,6 +15,8 @@ class CheckSmsNotificationService
 {
     public function dispatchForAction(IncomingCheck|OutgoingCheck $check, string $eventType): void
     {
+        $check->loadMissing($this->relationsFor($check));
+
         $rules = CheckNotificationRule::query()
             ->where('type', $eventType)
             ->where('trigger_mode', 'on_action')
@@ -26,9 +30,12 @@ class CheckSmsNotificationService
 
     public function sendForCheck(CheckNotificationRule $rule, IncomingCheck|OutgoingCheck $check, string $eventType): CheckNotificationLog
     {
+        $check->loadMissing($this->relationsFor($check));
+
         $checkType = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
-        $phone = $this->resolvePhone($check);
+        $phones = $this->resolveRecipientPhones($check, $eventType);
         $message = $this->renderMessage($rule->message, $check);
+        $phoneLabel = implode(', ', $phones);
 
         $log = CheckNotificationLog::firstOrCreate(
             [
@@ -38,7 +45,7 @@ class CheckSmsNotificationService
                 'event_type' => $eventType,
             ],
             [
-                'phone' => $phone,
+                'phone' => $phoneLabel ?: null,
                 'message' => $message,
                 'status' => 'pending',
             ]
@@ -49,15 +56,18 @@ class CheckSmsNotificationService
         }
 
         $log->fill([
-            'phone' => $phone,
+            'phone' => $phoneLabel ?: null,
             'message' => $message,
         ]);
 
-        if (! $phone) {
+        if ($phones === []) {
             $log->fill([
                 'status' => 'no_phone',
-                'response' => 'No phone number found for check owner.',
+                'response' => $eventType === 'before_due'
+                    ? 'No admin phone number found for check reminder SMS.'
+                    : 'No phone number found for check owner or admin.',
             ])->save();
+
             return $log;
         }
 
@@ -70,43 +80,125 @@ class CheckSmsNotificationService
                 'status' => 'skipped',
                 'response' => 'Twilio SMS configuration is missing.',
             ])->save();
+
             return $log;
         }
 
-        try {
-            $response = Http::timeout(15)
-                ->asForm()
-                ->withBasicAuth($accountSid, $authToken)
-                ->post("https://api.twilio.com/2010-04-01/Accounts/{$accountSid}/Messages.json", [
-                    'From' => $from,
-                    'To' => $phone,
-                    'Body' => $message,
-                ]);
+        $responses = [];
+        $sentAny = false;
 
-            $log->fill([
-                'status' => $response->successful() ? 'sent' : 'failed',
-                'response' => Str::limit($response->body(), 1000, ''),
-                'sent_at' => $response->successful() ? now() : null,
-            ])->save();
-        } catch (\Throwable $e) {
-            $log->fill([
-                'status' => 'failed',
-                'response' => $e->getMessage(),
-            ])->save();
+        foreach ($phones as $phone) {
+            try {
+                $response = Http::timeout(15)
+                    ->asForm()
+                    ->withBasicAuth($accountSid, $authToken)
+                    ->post("https://api.twilio.com/2010-04-01/Accounts/{$accountSid}/Messages.json", [
+                        'From' => $from,
+                        'To' => $phone,
+                        'Body' => $message,
+                    ]);
+
+                $responses[] = "{$phone}: ".$response->status();
+                if ($response->successful()) {
+                    $sentAny = true;
+                }
+            } catch (\Throwable $e) {
+                $responses[] = "{$phone}: ".$e->getMessage();
+            }
         }
+
+        $log->fill([
+            'status' => $sentAny ? 'sent' : 'failed',
+            'response' => Str::limit(implode(' | ', $responses), 1000, ''),
+            'sent_at' => $sentAny ? now() : null,
+        ])->save();
 
         return $log;
     }
 
-    private function resolvePhone(IncomingCheck|OutgoingCheck $check): ?string
+    /**
+     * @return array<int, string>
+     */
+    private function resolveRecipientPhones(IncomingCheck|OutgoingCheck $check, string $eventType): array
+    {
+        if ($eventType === 'before_due') {
+            return $this->resolveAdminPhones();
+        }
+
+        $personPhone = $this->resolveCheckPersonPhone($check);
+        if ($personPhone) {
+            return [$personPhone];
+        }
+
+        return $this->resolveAdminPhones();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function resolveAdminPhones(): array
+    {
+        $phones = [];
+
+        $adminUserIds = AdminDeviceToken::query()
+            ->whereNotNull('user_id')
+            ->distinct()
+            ->pluck('user_id');
+
+        if ($adminUserIds->isNotEmpty()) {
+            User::query()
+                ->whereIn('id', $adminUserIds)
+                ->get(['phone', 'sub_phone'])
+                ->each(function (User $user) use (&$phones) {
+                    foreach ([$user->phone, $user->sub_phone] as $phone) {
+                        $normalized = $this->normalizePhone($phone);
+                        if ($normalized) {
+                            $phones[] = $normalized;
+                        }
+                    }
+                });
+        }
+
+        $fallback = $this->normalizePhone(config('services.twilio.admin_phone'));
+        if ($fallback) {
+            $phones[] = $fallback;
+        }
+
+        return array_values(array_unique($phones));
+    }
+
+    private function resolveCheckPersonPhone(IncomingCheck|OutgoingCheck $check): ?string
     {
         if ($check instanceof IncomingCheck) {
             $person = $check->fromCustomer ?: $check->fromSeller ?: $check->toCustomer ?: $check->toSeller;
-            return $person?->phone ?: $person?->sub_phone;
+        } else {
+            $person = $check->customer ?: $check->seller;
         }
 
-        $person = $check->customer ?: $check->seller;
-        return $person?->phone ?: $person?->sub_phone;
+        return $this->normalizePhone($person?->phone ?: $person?->sub_phone);
+    }
+
+    private function normalizePhone(?string $phone): ?string
+    {
+        if ($phone === null) {
+            return null;
+        }
+
+        $normalized = preg_replace('/\s+/', '', trim($phone));
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function relationsFor(IncomingCheck|OutgoingCheck $check): array
+    {
+        if ($check instanceof IncomingCheck) {
+            return ['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller'];
+        }
+
+        return ['customer', 'seller'];
     }
 
     private function renderMessage(string $template, IncomingCheck|OutgoingCheck $check): string
@@ -115,6 +207,8 @@ class CheckSmsNotificationService
             ? ($check->fromCustomer ?: $check->fromSeller ?: $check->toCustomer ?: $check->toSeller)
             : ($check->customer ?: $check->seller);
 
+        $direction = $check instanceof IncomingCheck ? 'واردة' : 'صادرة';
+
         return strtr($template, [
             '{name}' => (string) ($person?->name ?? ''),
             '{check_number}' => (string) ($check->check_id ?? ''),
@@ -122,6 +216,7 @@ class CheckSmsNotificationService
             '{currency}' => (string) ($check->currency ?? ''),
             '{due_date}' => $check->due_date ? (string) $check->due_date : '',
             '{bank}' => (string) ($check->bank_name ?? ''),
+            '{check_type}' => $direction,
         ]);
     }
 }
