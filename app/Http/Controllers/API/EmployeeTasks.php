@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeTaskOccurrence;
+use App\Services\EmployeeTasks\EmployeeLegacyDayInstanceService;
 use App\Services\EmployeeTasks\EmployeeTaskDetailsService;
 use App\Services\EmployeeTasks\EmployeeTaskListService;
 use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
@@ -1412,9 +1413,17 @@ public function updateEmployeeTask(Request $request)
         $request->validate([
             'employee_task_id'=>'required|exists:employee_tasks,id',
             'employee_notes' => 'nullable|string',
+            'task_date' => 'nullable|date',
         ]);
 
-        $task = EmployeeTask::findOrFail($request->employee_task_id);
+        $legacyDay = app(EmployeeLegacyDayInstanceService::class);
+        $requested = EmployeeTask::findOrFail($request->employee_task_id);
+        $taskDate = $legacyDay->parseTaskDate($request->input('task_date'), $requested);
+        $task = $legacyDay->resolveForDate($requested, $taskDate);
+        $parentTemplate = ! empty($requested->parent_id)
+            ? EmployeeTask::find($requested->parent_id)
+            : ($legacyDay->isRecurringParent($requested) ? $requested : null);
+
         $user = auth()->user();
         $isManager = $user && ! $user->employee;
         $actorEmployeeId = (int) ($user?->employee?->id ?? 0);
@@ -1456,6 +1465,9 @@ public function updateEmployeeTask(Request $request)
                 $task->refresh();
             }
             $this->workflow->submitTaskForReview($task, $request->employee_notes);
+            if ($parentTemplate) {
+                $legacyDay->keepParentTemplateActive($parentTemplate, $task);
+            }
             Logs::createLog('تسليم مهمة للمراجعة', 'تسليم مهمة باسم '.$task->name, 'employee_tasks');
 
             return response()->json([
