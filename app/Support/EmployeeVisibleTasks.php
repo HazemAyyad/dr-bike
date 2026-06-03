@@ -192,6 +192,7 @@ class EmployeeVisibleTasks
             'start_time' => $task->start_time,
             'end_time' => $task->end_time,
             'status' => EmployeeTaskStatus::normalize($task->status)->value,
+            'parent_id' => $task->parent_id,
             'task_recurrence' => $task->task_recurrence,
             'task_recurrence_time' => $task->task_recurrence_time,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
@@ -255,14 +256,9 @@ class EmployeeVisibleTasks
      */
     public static function todaySummaryForEmployee(int $employeeId): array
     {
-        $today = self::todayDateString();
+        $today = Carbon::now()->timezone(self::TIMEZONE)->startOfDay();
         $tasks = self::dashboardPayload($employeeId)->filter(function ($row) use ($today) {
-            $start = $row['start_time'] ?? null;
-            if (empty($start)) {
-                return false;
-            }
-
-            return Carbon::parse($start)->timezone(self::TIMEZONE)->toDateString() === $today;
+            return self::taskAppliesOnDate($row, $today);
         });
 
         $total = $tasks->count();
@@ -278,6 +274,48 @@ class EmployeeVisibleTasks
             'completed' => $completed,
             'progress_percent' => (int) round($progressSum / $total),
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    public static function taskAppliesOnDate(array $row, Carbon $date): bool
+    {
+        $start = $row['start_time'] ?? null;
+        if (empty($start)) {
+            return false;
+        }
+
+        $startCarbon = Carbon::parse($start)->timezone(self::TIMEZONE)->startOfDay();
+        $check = $date->copy()->timezone(self::TIMEZONE)->startOfDay();
+
+        if ($check->toDateString() === $startCarbon->toDateString()) {
+            return true;
+        }
+
+        if (! empty($row['parent_id'])) {
+            return false;
+        }
+
+        $recurrence = $row['task_recurrence'] ?? 'noRepeat';
+        if ($recurrence === 'noRepeat' || $recurrence === null || $recurrence === '') {
+            return false;
+        }
+
+        if ($check->lt($startCarbon)) {
+            return false;
+        }
+
+        $times = is_array($row['task_recurrence_time'] ?? null)
+            ? $row['task_recurrence_time']
+            : [];
+
+        return match ($recurrence) {
+            'daily' => true,
+            'weekly' => in_array(strtolower($check->format('l')), array_map('strtolower', $times), true),
+            'monthly' => in_array((string) $check->format('j'), $times, true),
+            default => false,
+        };
     }
 
     public static function canEmployeeExecuteTask(EmployeeTask $task, int $viewerEmployeeId): bool
