@@ -64,7 +64,6 @@ class EmployeeVisibleTasks
     public static function dashboardPayload(int $employeeId): Collection
     {
         $legacy = self::legacyForEmployee($employeeId)
-            ->filter(fn (EmployeeTask $task) => self::passesRecurrenceFilter($task))
             ->map(fn (EmployeeTask $task) => self::mapLegacyForDashboard($task, $employeeId));
 
         $occurrences = self::occurrencesForEmployee($employeeId)
@@ -304,6 +303,14 @@ class EmployeeVisibleTasks
 
         if ($check->lt($startCarbon)) {
             return false;
+        }
+
+        $end = $row['end_time'] ?? null;
+        if (! empty($end)) {
+            $endCarbon = Carbon::parse($end)->timezone(self::TIMEZONE)->startOfDay();
+            if ($check->gt($endCarbon)) {
+                return false;
+            }
         }
 
         $times = is_array($row['task_recurrence_time'] ?? null)
