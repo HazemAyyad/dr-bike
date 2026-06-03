@@ -10,6 +10,9 @@ class AppSetting extends Model
     public const KEY_SUBTASK_BONUS_DEFAULT = 'employee_task_subtask_bonus_default';
     public const KEY_ADMIN_FAB_OPTIONS = 'admin_fab_options';
 
+    /** JSON array of preset size labels for product add/edit dropdown. */
+    public const KEY_PRODUCT_SIZE_OPTIONS = 'product_size_options';
+
     // Attendance settings
     public const KEY_ATTENDANCE_QR_ENABLED = 'attendance_qr_enabled';
     public const KEY_ATTENDANCE_FINGERPRINT_ENABLED = 'attendance_fingerprint_enabled';

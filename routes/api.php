@@ -648,6 +648,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::post('/products/import-csv/preview' , [Stocks::class,'previewProductsCsvImport']);
     Route::post('/products/import-csv' , [Stocks::class,'importProductsCsv']);
     Route::get('/get/product/size-options' , [Stocks::class,'productSizeOptions']);
+    Route::get('/stock/size-option-presets' , [Stocks::class,'sizeOptionPresets']);
+    Route::put('/stock/size-option-presets' , [Stocks::class,'updateSizeOptionPresets']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
     Route::post('/edit/product' , [Stocks::class,'editProduct']);
     /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */

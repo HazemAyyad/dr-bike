@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\AppSetting;
 use App\Models\Category;
 use App\Models\Closeout;
 use App\Models\Combination;
@@ -702,7 +703,7 @@ class Stocks extends Controller
                 $product->setRelation('sizes', collect());
             }
 
-            $fromConfig = collect(config('store.size_options', []))->filter(fn ($s) => $s !== null && $s !== '');
+            $fromConfig = collect($this->configuredSizeOptionPresets())->filter(fn ($s) => $s !== null && $s !== '');
 
             $fromDb = Size::query()
                 ->whereNotNull('size')
@@ -1513,5 +1514,97 @@ class Stocks extends Controller
         return response()->json([
             'max_execution_time' => ini_get('max_execution_time'),
         ]);
+    }
+
+    /**
+     * Preset size labels for dropdowns (admin settings — stored in app_settings).
+     */
+    public function sizeOptionPresets(Request $request)
+    {
+        try {
+            return response()->json([
+                'status' => 'success',
+                'sizes' => $this->configuredSizeOptionPresets(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function updateSizeOptionPresets(Request $request)
+    {
+        try {
+            $admin = $request->user();
+            if (! $admin || $admin->type !== 'admin') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Unauthorized. Admins only.',
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'sizes' => ['required', 'array'],
+                'sizes.*' => ['required', 'string', 'max:50'],
+            ]);
+
+            $normalized = collect($data['sizes'])
+                ->map(fn ($s) => trim((string) $s))
+                ->filter(fn ($s) => $s !== '')
+                ->unique()
+                ->values()
+                ->all();
+
+            AppSetting::set(
+                AppSetting::KEY_PRODUCT_SIZE_OPTIONS,
+                json_encode($normalized, JSON_UNESCAPED_UNICODE)
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.settings_updated'),
+                'sizes' => $normalized,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function configuredSizeOptionPresets(): array
+    {
+        $raw = AppSetting::get(AppSetting::KEY_PRODUCT_SIZE_OPTIONS, '');
+        if (is_string($raw) && $raw !== '') {
+            $decoded = json_decode($raw, true);
+            if (is_array($decoded)) {
+                $fromDb = collect($decoded)
+                    ->map(fn ($s) => trim((string) $s))
+                    ->filter(fn ($s) => $s !== '')
+                    ->unique()
+                    ->values()
+                    ->all();
+                if ($fromDb !== []) {
+                    return $fromDb;
+                }
+            }
+        }
+
+        return array_values(array_filter(array_map(
+            'trim',
+            (array) config('store.size_options', ['صغير', 'متوسط', 'كبير'])
+        )));
     }
 }

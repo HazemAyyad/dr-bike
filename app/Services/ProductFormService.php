@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Image3dProduct;
 use App\Models\NormalImageProduct;
 use App\Models\Product;
+use App\Models\PurchaseProduct;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SubCategoryProduct;
@@ -55,6 +56,7 @@ class ProductFormService
             'min_sale_price' => ['nullable', 'numeric', 'min:0'],
             'rotation_date' => ['nullable', 'date'],
             'price' => ['nullable', 'numeric', 'min:0'],
+            'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'sub_categories' => ['nullable', 'array'],
             'sub_categories.*' => ['integer', 'exists:sub_categories,id'],
@@ -175,6 +177,7 @@ class ProductFormService
 
             Product::query()->create(array_merge($insert, ['id' => $newId]));
             $trace('تم إنشاء المنتج محلياً (بدون متجر)', ['product_id' => $newId]);
+            $this->applyPurchasePriceFromRequest($request, $newId);
 
             foreach ($subIds as $sid) {
                 SubCategoryProduct::create([
@@ -255,6 +258,7 @@ class ProductFormService
 
         Product::query()->create(array_merge($insert, ['id' => $newId]));
         $trace('تم إنشاء المنتج محلياً', ['product_id' => $newId]);
+        $this->applyPurchasePriceFromRequest($request, $newId);
 
         foreach ($subIds as $sid) {
             SubCategoryProduct::create([
@@ -346,6 +350,7 @@ class ProductFormService
 
         $product->update($update);
         $trace('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
+        $this->applyPurchasePriceFromRequest($request, (int) $product->id);
 
         $mainCatId = (int) $validated['category_id'];
         $pruned = SubCategoryProduct::deleteForProductOutsideMain((int) $product->id, $mainCatId);
@@ -687,5 +692,37 @@ class ProductFormService
                 }
             }
         }
+    }
+
+    /**
+     * حفظ سعر التكلفة في purchase_products (بدون بائع — مثل الاستيراد).
+     */
+    private function applyPurchasePriceFromRequest(Request $request, int $productId): void
+    {
+        if (! $request->filled('purchase_price')) {
+            return;
+        }
+
+        $price = (float) $request->input('purchase_price');
+        if ($price < 0) {
+            return;
+        }
+
+        $row = PurchaseProduct::query()
+            ->where('product_id', $productId)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($row !== null) {
+            $row->update(['price' => $price]);
+
+            return;
+        }
+
+        PurchaseProduct::create([
+            'product_id' => $productId,
+            'seller_id' => null,
+            'price' => $price,
+        ]);
     }
 }
