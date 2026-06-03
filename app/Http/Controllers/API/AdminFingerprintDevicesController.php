@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AttendanceDevice;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Services\FingerprintActivityLogService;
 use App\Services\FingerprintSyncService;
 use App\Support\FingerprintAttendanceLogFilter;
 use Illuminate\Http\Request;
@@ -89,41 +90,60 @@ class AdminFingerprintDevicesController extends Controller
         }
     }
 
-    public function logs(int $id, Request $request)
+    public function logs(int $id, Request $request, FingerprintActivityLogService $activityLog)
     {
         try {
             $device = AttendanceDevice::query()->findOrFail($id);
-            $limit = (int) $request->input('limit', 200);
-            $limit = max(10, min(1000, $limit));
+            $days = (int) $request->input('days', 60);
+            $limit = (int) $request->input('limit', 800);
 
-            $rows = FingerprintAttendanceLogFilter::apply(
-                FingerprintRawLog::query()->where('attendance_device_id', $device->id)
-            )
-                ->orderByDesc('scan_time')
-                ->limit($limit)
-                ->get()
-                ->map(function (FingerprintRawLog $l) {
-                    return [
-                        'id' => (int) $l->id,
-                        'device_user_id' => (string) $l->device_user_id,
-                        'scan_time' => $l->scan_time?->toIso8601String(),
-                        'verify_type' => $l->verify_type,
-                        'status' => $l->status,
-                        'processing_status' => $l->processing_status,
-                        'processed_at' => $l->processed_at?->toIso8601String(),
-                    ];
-                })
-                ->values();
+            $grouped = $activityLog->buildGroupedDays($days, (int) $device->id, $limit);
+
+            $flatLogs = [];
+            foreach ($grouped['days'] as $day) {
+                foreach ($day['scans'] as $scan) {
+                    $flatLogs[] = $scan;
+                }
+            }
 
             return response()->json([
                 'status' => 'success',
                 'device' => ['id' => (int) $device->id, 'name' => (string) $device->name],
-                'logs' => $rows,
+                'days' => $grouped['days'],
+                'logs' => $flatLogs,
+                'total_scans' => $grouped['total_scans'],
+                'range_from' => $grouped['range_from'],
+                'range_to' => $grouped['range_to'],
             ], 200);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['status' => 'error', 'message' => 'Device not found.'], 200);
         } catch (\Throwable $e) {
             Log::error('fingerprint.device_logs_failed', ['message' => $e->getMessage()]);
+
+            return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function activityLog(Request $request, FingerprintActivityLogService $activityLog)
+    {
+        try {
+            $days = (int) $request->input('days', 60);
+            $limit = (int) $request->input('limit', 800);
+            $deviceId = $request->filled('device_id') ? (int) $request->input('device_id') : null;
+
+            if ($deviceId !== null) {
+                AttendanceDevice::query()->findOrFail($deviceId);
+            }
+
+            $grouped = $activityLog->buildGroupedDays($days, $deviceId, $limit);
+
+            return response()->json(array_merge([
+                'status' => 'success',
+            ], $grouped), 200);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['status' => 'error', 'message' => 'Device not found.'], 200);
+        } catch (\Throwable $e) {
+            Log::error('fingerprint.activity_log_failed', ['message' => $e->getMessage()]);
 
             return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
         }

@@ -806,6 +806,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/attendance-devices/{id}/sync-logs', [AdminFingerprintDevicesController::class, 'syncLogs'])->whereNumber('id');
     Route::get('/admin/attendance-devices/{id}/users', [AdminFingerprintDevicesController::class, 'users'])->whereNumber('id');
     Route::get('/admin/attendance-devices/{id}/logs', [AdminFingerprintDevicesController::class, 'logs'])->whereNumber('id');
+    Route::get('/admin/fingerprint/activity-log', [AdminFingerprintDevicesController::class, 'activityLog']);
 
     // Fingerprint device users mapping
     Route::get('/admin/fingerprint/users', [AdminFingerprintUsersController::class, 'index']);
