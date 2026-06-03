@@ -19,10 +19,10 @@ class EmployeeDetailResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            'name' => $this->user->name,
-            'email' => $this->user->email,
-            'phone' => $this->user->phone ?? 'no phone number',
-            'sub_phone' => $this->user->sub_phone ?? 'no sub phone number',
+            'name' => $this->user?->name ?? '',
+            'email' => $this->user?->email ?? '',
+            'phone' => $this->user?->phone ?? 'no phone number',
+            'sub_phone' => $this->user?->sub_phone ?? 'no sub phone number',
 
             'hour_work_price' => $this->hour_work_price,
             'overtime_work_price' => $this->overtime_work_price,

@@ -923,7 +923,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'employee_id'=>'required|exists:employee_details,id',
             ]);
 
-            $employee = EmployeeDetail::findOrFail($request->employee_id);
+            $employee = EmployeeDetail::with('user')->findOrFail($request->employee_id);
 
             $employeePermissions = $employee->permissions->map(function($permission){
 
@@ -944,7 +944,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             });
 
             return response()->json(['status'=>'success',
-            'employee_details' => new EmployeeDetailResource($employee),
+            'employee_details' => (new EmployeeDetailResource($employee))->resolve($request),
 
 
             'permissions'=>$employeePermissions,

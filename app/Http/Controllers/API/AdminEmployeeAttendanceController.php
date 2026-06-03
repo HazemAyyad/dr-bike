@@ -1,0 +1,81 @@
+<?php
+
+namespace App\Http\Controllers\API;
+
+use App\Http\Controllers\Controller;
+use App\Models\EmployeeDetail;
+use App\Services\AttendanceSalaryService;
+use App\Services\EmployeeAttendanceCheckoutService;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
+
+class AdminEmployeeAttendanceController extends Controller
+{
+    public function manualCheckout(Request $request, int $employeeId)
+    {
+        try {
+            $request->validate([
+                'checkout_at' => 'nullable|date',
+                'work_date' => 'nullable|date_format:Y-m-d',
+            ]);
+
+            $employee = EmployeeDetail::query()->findOrFail($employeeId);
+
+            $checkoutAt = $request->filled('checkout_at')
+                ? Carbon::parse($request->input('checkout_at'))
+                : now();
+
+            $workDate = $request->input('work_date') ?? $checkoutAt->toDateString();
+
+            $result = app(EmployeeAttendanceCheckoutService::class)->checkout(
+                $employee,
+                $checkoutAt,
+                $workDate,
+                'manual'
+            );
+
+            $attendance = $result['attendance'];
+            $salaryService = app(AttendanceSalaryService::class);
+            $salary = $salaryService->calculateSalary(
+                $employee,
+                (int) ($attendance->normal_minutes ?? 0),
+                (int) ($attendance->overtime_minutes ?? 0)
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.manual_checkout_success'),
+                'scan' => 'out',
+                'source' => 'manual',
+                'segment_minutes' => $result['segment_minutes'],
+                'day_worked_minutes' => $result['day_worked_minutes'],
+                'checkout_at' => $checkoutAt->toIso8601String(),
+                'worked_hours' => $salaryService->formatHours((int) ($attendance->worked_minutes ?? 0)),
+                'normal_salary' => number_format((float) $salary['normal_salary'], 2, '.', ''),
+                'overtime_salary' => number_format((float) $salary['overtime_salary'], 2, '.', ''),
+                'total_salary' => number_format((float) $salary['total_salary'], 2, '.', ''),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response(['status' => 'error', 'message' => __('messages.employee_not_found')], 200);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+                'error' => $e->getMessage(),
+            ], 200);
+        }
+    }
+}
