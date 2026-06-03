@@ -32,6 +32,7 @@ class EmployeeTaskTimeline extends Model
     public const EVENT_SUBMITTED = 'task_submitted';
     public const EVENT_APPROVED = 'task_approved';
     public const EVENT_REJECTED = 'task_rejected';
+    public const EVENT_REOPENED = 'task_reopened';
     public const EVENT_OVERDUE = 'task_overdue';
     public const EVENT_CANCELED = 'task_canceled';
     public const EVENT_SUBTASK_COMPLETED = 'subtask_completed';

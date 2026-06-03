@@ -249,6 +249,216 @@ class EmployeeTaskWorkflowService
         return $fresh;
     }
 
+    public function reopenTask(EmployeeTask $task, ?string $adminNotes = null): EmployeeTask
+    {
+        $status = EmployeeTaskStatus::normalize($task->status);
+        if (! in_array($status, [EmployeeTaskStatus::Completed, EmployeeTaskStatus::WaitingReview], true)) {
+            throw new \RuntimeException(__('messages.task_cannot_be_reopened'));
+        }
+
+        if ($status === EmployeeTaskStatus::Completed) {
+            $this->reverseCompletionPointsForTask($task);
+        }
+
+        $this->resetLegacyTaskCompletionState($task);
+
+        $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_REOPENED, $adminNotes);
+
+        $fresh = $task->fresh(['employee']);
+        $this->notifyAssigneesTaskReopened($fresh, $adminNotes, null);
+
+        return $fresh;
+    }
+
+    public function reopenOccurrence(EmployeeTaskOccurrence $occurrence, ?string $adminNotes = null): EmployeeTaskOccurrence
+    {
+        $status = EmployeeTaskStatus::normalize($occurrence->status);
+        if (! in_array($status, [EmployeeTaskStatus::Completed, EmployeeTaskStatus::WaitingReview], true)) {
+            throw new \RuntimeException(__('messages.task_cannot_be_reopened'));
+        }
+
+        if ($status === EmployeeTaskStatus::Completed) {
+            $this->reverseCompletionPointsForOccurrence($occurrence);
+        }
+
+        $this->resetOccurrenceCompletionState($occurrence);
+
+        $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_REOPENED, $adminNotes);
+
+        $fresh = $occurrence->fresh(['employee']);
+        $legacy = $this->legacyTaskForOccurrence($fresh);
+        if ($legacy) {
+            $this->notifyAssigneesTaskReopened($legacy, $adminNotes, (int) $fresh->id);
+        } else {
+            $this->notifyEmployeeTaskReopened($fresh->employee, $fresh->name, $adminNotes, null, (int) $fresh->id);
+        }
+
+        return $fresh;
+    }
+
+    private function resetLegacyTaskCompletionState(EmployeeTask $task): void
+    {
+        $task->update([
+            'status' => EmployeeTaskStatus::Pending->value,
+            'completed_by_employee_id' => null,
+            'employee_img' => null,
+            'started_at' => null,
+            'submitted_at' => null,
+            'reviewed_at' => null,
+            'rejection_notes' => null,
+        ]);
+
+        $payload = ['status' => EmployeeTaskStatus::Pending->value];
+        if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = null;
+        }
+        if (Schema::hasColumn('sub_employee_tasks', 'employee_img')) {
+            $payload['employee_img'] = null;
+        }
+        $task->subTasks()->update($payload);
+    }
+
+    private function resetOccurrenceCompletionState(EmployeeTaskOccurrence $occurrence): void
+    {
+        $payload = [
+            'status' => EmployeeTaskStatus::Pending->value,
+            'completed_by_employee_id' => null,
+            'employee_img' => null,
+            'started_at' => null,
+            'submitted_at' => null,
+            'reviewed_at' => null,
+            'completed_at' => null,
+            'rejection_notes' => null,
+        ];
+
+        $occurrence->update($payload);
+
+        $subPayload = ['status' => EmployeeTaskStatus::Pending->value];
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')) {
+            $subPayload['completed_by_employee_id'] = null;
+        }
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'employee_img')) {
+            $subPayload['employee_img'] = null;
+        }
+        $occurrence->subtasks()->update($subPayload);
+    }
+
+    private function reverseCompletionPointsForTask(EmployeeTask $task): void
+    {
+        $recipient = $this->resolvePointsRecipient($task, null);
+        if (! $recipient) {
+            return;
+        }
+
+        $total = (int) $task->points + $this->calculateSubtaskBonus($task);
+        $this->deductEmployeeTaskPoints(
+            $recipient,
+            $total,
+            $task->name,
+            (int) $task->id
+        );
+    }
+
+    private function reverseCompletionPointsForOccurrence(EmployeeTaskOccurrence $occurrence): void
+    {
+        $recipient = $this->resolvePointsRecipient(null, $occurrence);
+        if (! $recipient) {
+            return;
+        }
+
+        $total = (int) $occurrence->points
+            + (int) $occurrence->subtasks()->where('status', 'completed')->sum('bonus_points');
+        $this->deductEmployeeTaskPoints(
+            $recipient,
+            $total,
+            $occurrence->name,
+            (int) ($occurrence->legacy_task_id ?? $occurrence->id)
+        );
+    }
+
+    private function deductEmployeeTaskPoints(
+        EmployeeDetail $recipient,
+        int $total,
+        string $taskName,
+        int $taskRefId
+    ): void {
+        if ($total < 1) {
+            return;
+        }
+
+        $recipient->refresh();
+        $recipient->update([
+            'points' => max(0, (int) $recipient->points - $total),
+        ]);
+
+        try {
+            app(EmployeePointsService::class)->deductPoints($recipient->id, [
+                'points' => $total,
+                'source' => EmployeePointsLog::SOURCE_EMPLOYEE_TASK,
+                'reason' => __('messages.employee_task_reopened_points_reason', ['name' => $taskName]),
+                'notes' => 'employee_task_id:'.$taskRefId,
+                'category' => 'extra_tasks',
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('employee_task.points_reversal_failed', [
+                'employee_id' => $recipient->id,
+                'points' => $total,
+                'task_ref' => $taskRefId,
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyAssigneesTaskReopened(
+        EmployeeTask $task,
+        ?string $adminNotes,
+        ?int $occurrenceId
+    ): void {
+        $assigneeIds = app(EmployeeTaskAssigneeService::class)->idsForTask($task);
+        if ($assigneeIds === []) {
+            $assigneeIds = [(int) $task->employee_id];
+        }
+
+        foreach ($assigneeIds as $employeeId) {
+            $employee = EmployeeDetail::with('user')->find($employeeId);
+            if (! $employee) {
+                continue;
+            }
+            $this->notifyEmployeeTaskReopened(
+                $employee,
+                $task->name,
+                $adminNotes,
+                (int) $task->id,
+                $occurrenceId
+            );
+        }
+    }
+
+    private function notifyEmployeeTaskReopened(
+        ?EmployeeDetail $employee,
+        string $taskName,
+        ?string $adminNotes,
+        ?int $legacyTaskId,
+        ?int $occurrenceId
+    ): void {
+        if (! $employee) {
+            return;
+        }
+        try {
+            app(EmployeeTaskNotificationService::class)->notifyTaskReopened(
+                $employee,
+                $taskName,
+                $adminNotes ?? '',
+                $legacyTaskId,
+                $occurrenceId
+            );
+        } catch (\Throwable $e) {
+            Log::warning('employee_notification.task_reopened_failed', [
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
     public function completeSubtask(EmployeeSubTask $subTask): EmployeeSubTask
     {
         $requiresProof = (bool) ($subTask->requires_image ?? $subTask->is_forced_to_upload_img);

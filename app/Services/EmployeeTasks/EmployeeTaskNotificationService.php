@@ -255,6 +255,45 @@ class EmployeeTaskNotificationService
         });
     }
 
+    public function notifyTaskReopened(
+        EmployeeDetail $employee,
+        string $taskName,
+        string $adminNotes,
+        ?int $legacyTaskId,
+        ?int $occurrenceId
+    ): void {
+        $this->withArabicLocale(function () use ($employee, $taskName, $adminNotes, $legacyTaskId, $occurrenceId) {
+            try {
+                $body = $adminNotes !== ''
+                    ? __('messages.employee_task_reopened_body_with_notes', [
+                        'name' => $taskName,
+                        'notes' => $adminNotes,
+                    ])
+                    : __('messages.employee_task_reopened_body', ['name' => $taskName]);
+
+                $this->notifications->create(
+                    $employee,
+                    'employee_task_reopened',
+                    __('messages.employee_task_reopened_title'),
+                    $body,
+                    array_filter([
+                        'task_id' => $legacyTaskId ? (string) $legacyTaskId : '',
+                        'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
+                        'task_name' => $taskName,
+                        'admin_notes' => $adminNotes !== '' ? $adminNotes : null,
+                    ]),
+                    $occurrenceId ? 'employee_task_occurrence' : 'employee_task',
+                    $occurrenceId ?? $legacyTaskId,
+                    true
+                );
+            } catch (\Throwable $e) {
+                Log::error('Employee task reopened notification failed: '.$e->getMessage(), [
+                    'employee_id' => $employee->id,
+                ]);
+            }
+        });
+    }
+
     private function notifyCoAssignees(
         EmployeeTask $task,
         int $actorEmployeeId,

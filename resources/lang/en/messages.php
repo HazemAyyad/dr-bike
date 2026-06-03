@@ -73,6 +73,12 @@ return [
     'employee_task_approved_body' => 'Admin approved your task «:name».',
     'employee_task_rejected_title' => 'Task rejected',
     'employee_task_rejected_body' => 'Admin rejected your task «:name». Reason: :notes',
+    'task_reopened' => 'Task reopened and employee notified',
+    'task_cannot_be_reopened' => 'This task cannot be reopened',
+    'employee_task_reopened_title' => 'Task reopened',
+    'employee_task_reopened_body' => 'Admin reopened your task «:name» — please complete it again.',
+    'employee_task_reopened_body_with_notes' => 'Admin reopened your task «:name». Note: :notes',
+    'employee_task_reopened_points_reason' => 'Points deducted after reopening task: :name',
 
     'employee_hourly_reminder_tasks_title' => 'Reminder: your tasks today',
     'employee_hourly_reminder_tasks_body_one' => 'You still have 1 task — open the app and complete it',

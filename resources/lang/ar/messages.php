@@ -70,6 +70,12 @@ return [
     'employee_task_approved_body' => 'اعتمد الأدمن مهمتك «:name».',
     'employee_task_rejected_title' => 'تم رفض المهمة',
     'employee_task_rejected_body' => 'رفض الأدمن مهمتك «:name». السبب: :notes',
+    'task_reopened' => 'تمت إعادة فتح المهمة وإبلاغ الموظف',
+    'task_cannot_be_reopened' => 'لا يمكن إعادة فتح هذه المهمة',
+    'employee_task_reopened_title' => 'إعادة فتح مهمة',
+    'employee_task_reopened_body' => 'أعاد الأدمن فتح مهمتك «:name» — يرجى إنجازها من جديد.',
+    'employee_task_reopened_body_with_notes' => 'أعاد الأدمن فتح مهمتك «:name». ملاحظة: :notes',
+    'employee_task_reopened_points_reason' => 'خصم نقاط بعد إعادة فتح المهمة: :name',
 
     'employee_hourly_reminder_tasks_title' => 'تذكير: مهامك لليوم',
     'employee_hourly_reminder_tasks_body_one' => 'لديك مهمة واحدة لم تُنجَز بعد — ادخل وأكملها',

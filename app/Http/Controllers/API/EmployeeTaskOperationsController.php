@@ -208,6 +208,41 @@ class EmployeeTaskOperationsController extends Controller
         }
     }
 
+    public function reopenTask(Request $request)
+    {
+        try {
+            $request->validate([
+                'employee_task_id' => 'nullable|exists:employee_tasks,id',
+                'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
+                'admin_notes' => 'nullable|string|max:2000',
+            ]);
+
+            if ($request->occurrence_id) {
+                $occurrence = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
+                $this->workflow->reopenOccurrence($occurrence, $request->admin_notes);
+                Logs::createLog(
+                    'إعادة فتح مهمة موظف',
+                    'إعادة فتح مهمة: '.$occurrence->name,
+                    'employee_tasks'
+                );
+
+                return response()->json(['status' => 'success', 'message' => __('messages.task_reopened')], 200);
+            }
+
+            $task = EmployeeTask::findOrFail($request->employee_task_id);
+            $this->workflow->reopenTask($task, $request->admin_notes);
+            Logs::createLog(
+                'إعادة فتح مهمة موظف',
+                'إعادة فتح مهمة: '.$task->name,
+                'employee_tasks'
+            );
+
+            return response()->json(['status' => 'success', 'message' => __('messages.task_reopened')], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
+        }
+    }
+
     public function getTimeline(Request $request)
     {
         $request->validate([
