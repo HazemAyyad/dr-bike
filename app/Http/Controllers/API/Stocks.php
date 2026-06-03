@@ -690,8 +690,8 @@ class Stocks extends Controller
     }
 
     /**
-     * خيارات حجم المنتج (config + جدول sizes + أحجام المنتج الحالي إن وُجد).
-     * يطابق منطق صفحة الاختبار test/product-edit.
+     * خيارات حجم المنتج: قائمة الإعدادات (app_settings) فقط.
+     * عند التعديل يُضاف أحجام هذا المنتج الحالية إن لم تكن في القائمة (لعدم فقدان قيم قديمة).
      */
     public function productSizeOptions(Request $request)
     {
@@ -703,20 +703,13 @@ class Stocks extends Controller
                 $product->setRelation('sizes', collect());
             }
 
-            $fromConfig = collect($this->configuredSizeOptionPresets())->filter(fn ($s) => $s !== null && $s !== '');
-
-            $fromDb = Size::query()
-                ->whereNotNull('size')
-                ->where('size', '!=', '')
-                ->distinct()
-                ->orderBy('size')
-                ->pluck('size');
-
-            $merged = $fromConfig->merge($fromDb)->unique();
+            $merged = collect($this->configuredSizeOptionPresets())
+                ->filter(fn ($s) => $s !== null && $s !== '');
 
             foreach ($product->sizes as $s) {
-                if ($s->size && ! $merged->contains($s->size)) {
-                    $merged->push($s->size);
+                $label = trim((string) ($s->size ?? ''));
+                if ($label !== '' && ! $merged->contains($label)) {
+                    $merged->push($label);
                 }
             }
 
