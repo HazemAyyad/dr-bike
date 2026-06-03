@@ -7,6 +7,7 @@ use App\Models\AttendanceDevice;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
 use App\Services\AttendanceDeviceService;
+use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -163,9 +164,9 @@ class AdminAttendanceDevicesController extends Controller
             ->where('attendance_device_id', $d->id)
             ->whereNotNull('linked_employee_id')
             ->count();
-        $logsCount = FingerprintRawLog::query()
-            ->where('attendance_device_id', $d->id)
-            ->count();
+        $logsCount = FingerprintAttendanceLogFilter::apply(
+            FingerprintRawLog::query()->where('attendance_device_id', $d->id)
+        )->count();
 
         $online = false;
         if ($d->last_seen_at) {

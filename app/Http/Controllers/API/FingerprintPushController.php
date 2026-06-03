@@ -199,14 +199,20 @@ class FingerprintPushController extends Controller
                     continue;
                 }
 
+                $verifyType = isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null);
+                $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
+
+                if (! $this->isAttendanceRow($deviceUserId, $verifyType, $status)) {
+                    $ignored++;
+                    continue;
+                }
+
                 $scanTime = $this->parseScanTime($timeRaw);
                 if (! $scanTime) {
                     $ignored++;
                     continue;
                 }
 
-                $verifyType = isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null);
-                $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
                 $deviceLogUid = isset($row['UID']) ? (string) $row['UID'] : (isset($row['uid']) ? (string) $row['uid'] : null);
 
                 FingerprintDeviceUser::query()->firstOrCreate(
@@ -353,6 +359,23 @@ class FingerprintPushController extends Controller
         }
 
         return [(string) $sn, $rows];
+    }
+
+    protected function isAttendanceRow(string $deviceUserId, ?string $verifyType, ?string $status): bool
+    {
+        $pin = strtoupper(trim($deviceUserId));
+        if ($pin === '' || $pin === '0' || in_array($pin, ['OPLOG', 'USER', 'FP'], true)) {
+            return false;
+        }
+
+        $verify = trim((string) ($verifyType ?? ''));
+        if ($verify === '') {
+            return false;
+        }
+
+        $stat = trim((string) ($status ?? ''));
+
+        return in_array($stat, ['0', '1'], true);
     }
 
     protected function parseScanTime(string $timeRaw): ?Carbon

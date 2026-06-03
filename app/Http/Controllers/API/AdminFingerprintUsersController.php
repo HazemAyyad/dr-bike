@@ -8,6 +8,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeDeviceMapping;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Support\FingerprintAttendanceLogFilter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
@@ -30,8 +31,9 @@ class AdminFingerprintUsersController extends Controller
                 ->orderBy('device_user_id')
                 ->get();
 
-            $logUserIds = FingerprintRawLog::query()
-                ->where('attendance_device_id', $device->id)
+            $logUserIds = FingerprintAttendanceLogFilter::apply(
+                FingerprintRawLog::query()->where('attendance_device_id', $device->id)
+            )
                 ->select('device_user_id')
                 ->distinct()
                 ->pluck('device_user_id');

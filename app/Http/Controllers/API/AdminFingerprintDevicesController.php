@@ -7,6 +7,7 @@ use App\Models\AttendanceDevice;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
 use App\Services\FingerprintSyncService;
+use App\Support\FingerprintAttendanceLogFilter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -95,8 +96,9 @@ class AdminFingerprintDevicesController extends Controller
             $limit = (int) $request->input('limit', 200);
             $limit = max(10, min(1000, $limit));
 
-            $rows = FingerprintRawLog::query()
-                ->where('attendance_device_id', $device->id)
+            $rows = FingerprintAttendanceLogFilter::apply(
+                FingerprintRawLog::query()->where('attendance_device_id', $device->id)
+            )
                 ->orderByDesc('scan_time')
                 ->limit($limit)
                 ->get()
