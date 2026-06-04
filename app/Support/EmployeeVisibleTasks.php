@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
@@ -195,6 +196,10 @@ class EmployeeVisibleTasks
     public static function progressForTask(string $status, int $subCount, int $subDone): int
     {
         if ($subCount > 0) {
+            if ($subDone >= $subCount) {
+                return 100;
+            }
+
             return (int) round(($subDone / $subCount) * 100);
         }
 
@@ -208,9 +213,10 @@ class EmployeeVisibleTasks
 
     public static function mapLegacyForDashboard(EmployeeTask $task, int $viewerEmployeeId): array
     {
-        $task->loadMissing(['subTasks', 'completedByEmployee.user']);
-        $subCount = $task->subTasks->count();
-        $subDone = $task->subTasks->where('status', 'completed')->count();
+        $task->loadMissing(['completedByEmployee.user']);
+        $base = EmployeeSubTask::query()->forLegacyTask($task);
+        $subCount = (int) (clone $base)->count();
+        $subDone = (int) (clone $base)->where('status', 'completed')->count();
         $completedByName = $task->completedByEmployee?->user?->name;
         $assigneeService = app(EmployeeTaskAssigneeService::class);
 
