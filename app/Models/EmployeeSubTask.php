@@ -45,8 +45,13 @@ class EmployeeSubTask extends Model
             $query->whereNull('occurrence_id');
         }
 
-        $anchor = $task->legacySubtaskAnchorAt();
-        if ($anchor !== null && Schema::hasColumn('sub_employee_tasks', 'created_at')) {
+        // Only filter by time when the parent row has a reliable created_at (not start_time).
+        if (
+            Schema::hasColumn($task->getTable(), 'created_at')
+            && $task->created_at !== null
+            && Schema::hasColumn('sub_employee_tasks', 'created_at')
+        ) {
+            $anchor = $task->created_at;
             $query->where('sub_employee_tasks.created_at', '>=', $anchor);
         }
 

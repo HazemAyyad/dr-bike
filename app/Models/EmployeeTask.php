@@ -81,9 +81,12 @@ class EmployeeTask extends Model
         }
 
         $subTable = $relation->getRelated()->getTable();
-        $anchor = $this->legacySubtaskAnchorAt();
-        if ($anchor !== null && Schema::hasColumn($subTable, 'created_at')) {
-            $relation->where("{$subTable}.created_at", '>=', $anchor);
+        if (
+            Schema::hasColumn($this->getTable(), 'created_at')
+            && $this->created_at !== null
+            && Schema::hasColumn($subTable, 'created_at')
+        ) {
+            $relation->where("{$subTable}.created_at", '>=', $this->created_at);
         }
 
         return $relation;
@@ -101,8 +104,8 @@ class EmployeeTask extends Model
                 fn ($q) => $q->whereNull('occurrence_id')
             )
             ->when(
-                $this->legacySubtaskAnchorAt(),
-                fn ($q, Carbon $anchor) => $q->where('created_at', '<', $anchor)
+                Schema::hasColumn($this->getTable(), 'created_at') && $this->created_at !== null,
+                fn ($q) => $q->where('created_at', '<', $this->created_at)
             )
             ->delete();
     }
