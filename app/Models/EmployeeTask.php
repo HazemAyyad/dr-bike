@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\Schema;
 
 class EmployeeTask extends Model
 {
@@ -52,7 +53,13 @@ class EmployeeTask extends Model
     ];
 
     public function subTasks(){
-        return $this->hasMany(EmployeeSubTask::class);
+        $relation = $this->hasMany(EmployeeSubTask::class);
+
+        if (Schema::hasColumn('sub_employee_tasks', 'occurrence_id')) {
+            $relation->whereNull('occurrence_id');
+        }
+
+        return $relation;
     }
 
     public function employee(){

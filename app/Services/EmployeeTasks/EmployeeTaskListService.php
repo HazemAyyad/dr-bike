@@ -20,7 +20,7 @@ class EmployeeTaskListService
 
         return [
             'task_id' => $task->id,
-            'occurrence_id' => $task->occurrence_id,
+            'occurrence_id' => null,
             'task_name' => $task->name,
             'employee_id' => $task->employee_id,
             'employee_name' => $task->employee->user->name ?? 'unknown',

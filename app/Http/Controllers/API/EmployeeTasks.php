@@ -704,6 +704,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
     $data['parent_id'] = $task->id;
     $data['start_time'] = $newStart->format('Y-m-d H:i:s');
     $data['end_time'] = $mainEnd->format('Y-m-d H:i:s'); // always same as main
+    unset($data['occurrence_id'], $data['template_id']);
     $newTask= $task::create($data);
 
     if ($task instanceof EmployeeTask && $newTask instanceof EmployeeTask) {
@@ -715,6 +716,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
     foreach ($subtasks as $subtask) {
             $subData = $subtask->replicate()->toArray();
             $subData['employee_task_id'] = $newTask->id; // link to new recurrent task
+            unset($subData['occurrence_id']);
             EmployeeSubTask::create($subData);
         }
 }
@@ -962,9 +964,23 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         $details = app(EmployeeTaskDetailsService::class);
         $photo = fn ($employee) => $this->employeeProfilePhoto($employee);
 
-        if ($request->occurrence_id) {
+        if ($request->filled('employee_task_id') && ! $request->filled('occurrence_id')) {
+            $employeeTask = EmployeeTask::findOrFail($request->employee_task_id);
+            $taskData = $details->formatLegacy($employeeTask, $photo);
+        } elseif ($request->filled('occurrence_id')) {
             $occurrence = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
-            $taskData = $details->formatOccurrence($occurrence, $photo);
+            if ($request->filled('employee_task_id')) {
+                $legacyId = (int) $request->employee_task_id;
+                $linkedLegacy = (int) ($occurrence->legacy_task_id ?? 0);
+                if ($linkedLegacy > 0 && $linkedLegacy !== $legacyId) {
+                    $employeeTask = EmployeeTask::findOrFail($legacyId);
+                    $taskData = $details->formatLegacy($employeeTask, $photo);
+                } else {
+                    $taskData = $details->formatOccurrence($occurrence, $photo);
+                }
+            } else {
+                $taskData = $details->formatOccurrence($occurrence, $photo);
+            }
         } else {
             $employeeTask = EmployeeTask::findOrFail($request->employee_task_id);
             $taskData = $details->formatLegacy($employeeTask, $photo);

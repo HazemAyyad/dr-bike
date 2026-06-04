@@ -32,8 +32,10 @@ class EmployeeTaskDetailsService
 
         $employeeTask->makeHidden(['admin_img', 'employee_img', 'audio']);
         $taskData = $employeeTask->toArray();
+        unset($taskData['occurrence_id']);
         $taskData['id'] = $employeeTask->id;
         $taskData['task_id'] = $employeeTask->id;
+        $taskData['source'] = 'legacy';
         $taskData['employee_name'] = $employeeTask->employee?->user?->name ?? '';
         $taskData['employee_photo'] = $photoResolver($employeeTask->employee);
         $taskData['admin_img'] = $this->formatAdminImages($employeeTask->admin_img);
