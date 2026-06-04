@@ -858,6 +858,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         unset($data['employee_ids']);
 
         $employeeTask = EmployeeTask::create($data);
+        $employeeTask->purgeOrphanSubtasks();
         $assigneeService->syncForTask(
             $employeeTask,
             $assigneeIds !== [] ? $assigneeIds : [(int) $employeeTask->employee_id]

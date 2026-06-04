@@ -51,13 +51,25 @@ class EmployeeTaskTimelineService
             ->where('occurrence_id', $occurrenceId)
             ->orderBy('created_at')
             ->get()
-            ->map(fn ($e) => [
-                'event_type' => $e->event_type,
-                'notes' => $e->notes,
-                'metadata' => $e->metadata,
-                'created_at' => $e->created_at?->toIso8601String(),
-            ])
+            ->map(fn ($e) => $this->mapTimelineRow($e))
             ->all();
+    }
+
+    /**
+     * Timeline rows for a legacy task (skips orphan events after employee_tasks.id reuse).
+     */
+    public function listForLegacyTask(EmployeeTask $task): array
+    {
+        $query = EmployeeTaskTimeline::query()
+            ->where('employee_task_id', $task->id)
+            ->whereNull('occurrence_id')
+            ->orderBy('created_at');
+
+        if ($task->created_at) {
+            $query->where('created_at', '>=', $task->created_at);
+        }
+
+        return $query->get()->map(fn ($e) => $this->mapTimelineRow($e))->all();
     }
 
     public function listCombined(?int $taskId, ?int $occurrenceId): array
@@ -77,11 +89,19 @@ class EmployeeTaskTimelineService
             return [];
         }
 
-        return $query->get()->map(fn ($e) => [
+        return $query->get()->map(fn ($e) => $this->mapTimelineRow($e))->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function mapTimelineRow(EmployeeTaskTimeline $e): array
+    {
+        return [
             'event_type' => $e->event_type,
             'notes' => $e->notes,
             'metadata' => $e->metadata,
             'created_at' => $e->created_at?->toIso8601String(),
-        ])->all();
+        ];
     }
 }

@@ -59,7 +59,33 @@ class EmployeeTask extends Model
             $relation->whereNull('occurrence_id');
         }
 
+        if ($this->created_at) {
+            $relation->where(
+                $relation->getRelated()->getTable().'.created_at',
+                '>=',
+                $this->created_at
+            );
+        }
+
         return $relation;
+    }
+
+    /**
+     * Remove subtasks left on a reused employee_tasks.id (deleted task without cascade).
+     */
+    public function purgeOrphanSubtasks(): void
+    {
+        EmployeeSubTask::query()
+            ->where('employee_task_id', $this->id)
+            ->when(
+                Schema::hasColumn('sub_employee_tasks', 'occurrence_id'),
+                fn ($q) => $q->whereNull('occurrence_id')
+            )
+            ->when(
+                $this->created_at,
+                fn ($q) => $q->where('created_at', '<', $this->created_at)
+            )
+            ->delete();
     }
 
     public function employee(){

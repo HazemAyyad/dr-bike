@@ -23,12 +23,17 @@ class EmployeeTaskDetailsService
      */
     public function formatLegacy(EmployeeTask $employeeTask, callable $photoResolver): array
     {
+        $legacySubtasks = EmployeeSubTask::query()
+            ->forLegacyTask($employeeTask)
+            ->with('completedByEmployee.user')
+            ->orderBy('sort_order')
+            ->get();
+
         $employeeTask->loadMissing([
-            'subTasks' => fn ($q) => $q->orderBy('sort_order'),
-            'subTasks.completedByEmployee.user',
             'employee.user',
             'completedByEmployee.user',
         ]);
+        $employeeTask->setRelation('subTasks', $legacySubtasks);
 
         $employeeTask->makeHidden(['admin_img', 'employee_img', 'audio']);
         $taskData = $employeeTask->toArray();
@@ -51,7 +56,7 @@ class EmployeeTaskDetailsService
         );
         $taskData['requires_admin_review'] = (bool) ($employeeTask->requires_admin_review ?? true);
         $taskData['progress'] = $this->progressFromSubtasks($employeeTask->subTasks, $employeeTask->status);
-        $taskData['timeline'] = $this->timeline->listCombined($employeeTask->id, $employeeTask->occurrence_id);
+        $taskData['timeline'] = $this->timeline->listForLegacyTask($employeeTask);
         $taskData['sub_tasks'] = $employeeTask->subTasks
             ->map(fn (EmployeeSubTask $sub) => $this->formatLegacySubtask($sub))
             ->values()
