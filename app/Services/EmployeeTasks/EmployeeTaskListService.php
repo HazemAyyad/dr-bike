@@ -3,6 +3,7 @@
 namespace App\Services\EmployeeTasks;
 
 use App\Enums\EmployeeTaskStatus;
+use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Support\TaskProofMediaType;
@@ -14,9 +15,7 @@ class EmployeeTaskListService
 {
     public function formatLegacyTask(EmployeeTask $task, callable $photoResolver): array
     {
-        $subTotal = $task->subTasks_count ?? $task->subTasks()->count();
-        $subDone = $task->subtasks_completed_count
-            ?? $task->subTasks()->where('status', 'completed')->count();
+        [$subTotal, $subDone, $progress] = $this->legacySubtaskProgress($task);
 
         return [
             'task_id' => $task->id,
@@ -30,7 +29,7 @@ class EmployeeTaskListService
             'status' => EmployeeTaskStatus::normalize($task->status)->value,
             'priority' => $task->priority ?? 'medium',
             'points' => (int) ($task->points ?? 0),
-            'progress' => $subTotal > 0 ? round(($subDone / $subTotal) * 100) : ($task->status === 'completed' ? 100 : 0),
+            'progress' => $progress,
             'is_canceled' => (bool) $task->is_canceled,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
@@ -54,9 +53,10 @@ class EmployeeTaskListService
 
     public function formatOccurrence(EmployeeTaskOccurrence $task, callable $photoResolver): array
     {
-        $subTotal = $task->subtasks_count ?? $task->subtasks()->count();
-        $subDone = $task->subtasks_completed_count
-            ?? $task->subtasks()->where('status', 'completed')->count();
+        $subTotal = (int) ($task->subtasks_count ?? $task->subtasks()->count());
+        $subDone = (int) ($task->subtasks_completed_count
+            ?? $task->subtasks()->where('status', 'completed')->count());
+        $progress = $this->calcProgressPercent($task, $subTotal, $subDone);
 
         return [
             'task_id' => $task->legacy_task_id ?? $task->id,
@@ -70,7 +70,7 @@ class EmployeeTaskListService
             'status' => EmployeeTaskStatus::normalize($task->status)->value,
             'priority' => $task->priority ?? 'medium',
             'points' => (int) ($task->points ?? 0),
-            'progress' => $subTotal > 0 ? round(($subDone / $subTotal) * 100) : ($task->status === 'completed' ? 100 : 0),
+            'progress' => $progress,
             'is_canceled' => (bool) $task->is_canceled,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
@@ -87,6 +87,41 @@ class EmployeeTaskListService
             'template_id' => $task->template_id,
             'source' => 'occurrence',
         ];
+    }
+
+    /**
+     * @return array{0: int, 1: int, 2: int}
+     */
+    private function legacySubtaskProgress(EmployeeTask $task): array
+    {
+        if (isset($task->subTasks_count, $task->subtasks_completed_count)) {
+            $subTotal = (int) $task->subTasks_count;
+            $subDone = (int) $task->subtasks_completed_count;
+        } else {
+            $base = EmployeeSubTask::query()->forLegacyTask($task);
+            $subTotal = (int) (clone $base)->count();
+            $subDone = (int) (clone $base)->where('status', 'completed')->count();
+        }
+
+        return [$subTotal, $subDone, $this->calcProgressPercent($task, $subTotal, $subDone)];
+    }
+
+    private function calcProgressPercent(
+        EmployeeTask|EmployeeTaskOccurrence $task,
+        int $subTotal,
+        int $subDone
+    ): int {
+        if ($subTotal > 0) {
+            if ($subDone >= $subTotal) {
+                return 100;
+            }
+
+            return (int) round(($subDone / $subTotal) * 100);
+        }
+
+        return EmployeeTaskStatus::normalize($task->status) === EmployeeTaskStatus::Completed
+            ? 100
+            : 0;
     }
 
     public function getOngoingItems(callable $photoResolver): Collection
@@ -125,6 +160,10 @@ class EmployeeTaskListService
     public function getCompletedItems(callable $photoResolver): Collection
     {
         $legacy = EmployeeTask::with('employee.user')
+            ->withCount([
+                'subTasks',
+                'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
+            ])
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')

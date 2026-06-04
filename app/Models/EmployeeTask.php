@@ -59,13 +59,8 @@ class EmployeeTask extends Model
             $relation->whereNull('occurrence_id');
         }
 
-        if ($this->created_at) {
-            $relation->where(
-                $relation->getRelated()->getTable().'.created_at',
-                '>=',
-                $this->created_at
-            );
-        }
+        $subTable = $relation->getRelated()->getTable();
+        $relation->whereColumn("{$subTable}.created_at", '>=', "{$this->getTable()}.created_at");
 
         return $relation;
     }
