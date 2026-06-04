@@ -914,9 +914,19 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         ,'employee_tasks');
 
 
+            $employeeTask->load(['subTasks' => fn ($q) => $q->orderBy('sort_order')]);
+
             return response()->json([
                 'status' => 'success',
-                'message' => __('messages.employee_task_created_successfully')],200);
+                'message' => __('messages.employee_task_created_successfully'),
+                'employee_task_id' => $employeeTask->id,
+                'subtasks_count' => $employeeTask->subTasks->count(),
+                'subtasks' => $employeeTask->subTasks->map(fn ($s) => [
+                    'id' => $s->id,
+                    'name' => $s->name,
+                    'employee_task_id' => $s->employee_task_id,
+                ])->values()->all(),
+            ], 200);
     }
     catch (ValidationException $e) {
             return response()->json([
