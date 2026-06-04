@@ -12,6 +12,7 @@ use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
+use App\Support\SubtaskAdminMediaStorage;
 use App\Support\TaskProofMediaType;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
@@ -72,18 +73,7 @@ class EmployeeTasks extends Controller
 
     private function storeSubtaskAdminUpload(\Illuminate\Http\UploadedFile $file): string
     {
-        $dir = public_path('EmployeeSubTasks/AdminImages/');
-        if (! is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        $ext = $file->getClientOriginalExtension() ?: $file->guessExtension() ?: 'bin';
-        $base = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-        $safe = preg_replace('/[^\w\-]+/u', '_', $base) ?: 'file';
-        $fullName = $safe.'_'.uniqid('', true).'.'.$ext;
-        $file->move($dir, $fullName);
-
-        return $fullName;
+        return SubtaskAdminMediaStorage::store($file);
     }
 
     private function resetEmployeeTaskSubtasksCompletion(EmployeeTask $task): void
@@ -883,15 +873,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 
         if ($request->has('sub_employee_tasks')) {
                 foreach ($request->sub_employee_tasks as $index => $subTask) {
-                        $subImagesNames = [];
-
-                        // Check if THIS subtask has an image
-                        if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
-
-                            foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
-                                $subImagesNames[] = $this->storeSubtaskAdminUpload($file);
-                            }
-                        }
+                        $subImagesNames = SubtaskAdminMediaStorage::collectFromRequest($request, (int) $index);
 
                         $subCreate = [
                             'name' => $subTask['name'],
@@ -1303,10 +1285,12 @@ public function updateEmployeeTask(Request $request)
                             }
 
                             $subImagesNames = $subTask->admin_img ?? [];
-                            if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
-                                foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
-                                    $subImagesNames[] = $this->storeSubtaskAdminUpload($file);
-                                }
+                            $uploaded = SubtaskAdminMediaStorage::collectFromRequest(
+                                $request,
+                                (int) $index
+                            );
+                            if ($uploaded !== []) {
+                                $subImagesNames = array_merge($subImagesNames, $uploaded);
                                 $updatePayload['admin_img'] = $subImagesNames;
                             }
 
@@ -1314,12 +1298,10 @@ public function updateEmployeeTask(Request $request)
                             $keepIds[] = $subTask->id;
                         }
                     } else {
-                        $subImagesNames = [];
-                        if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
-                            foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
-                                $subImagesNames[] = $this->storeSubtaskAdminUpload($file);
-                            }
-                        }
+                        $subImagesNames = SubtaskAdminMediaStorage::collectFromRequest(
+                            $request,
+                            (int) $index
+                        );
                         // New subtask → create
                         $newSubPayload = [
                             'employee_task_id' => $empT->id,

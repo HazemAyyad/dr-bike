@@ -358,6 +358,11 @@ class EmployeeTaskOperationsController extends Controller
 
             if ($request->has('sub_employee_tasks')) {
                 foreach ($request->sub_employee_tasks as $index => $sub) {
+                    $subImagesNames = \App\Support\SubtaskAdminMediaStorage::collectFromRequest(
+                        $request,
+                        (int) $index
+                    );
+
                     EmployeeTaskTemplateSubtask::create([
                         'template_id' => $template->id,
                         'name' => $sub['name'],
@@ -370,6 +375,7 @@ class EmployeeTaskOperationsController extends Controller
                             (bool) ($sub['is_forced_to_upload_img'] ?? false)
                         ),
                         'bonus_points' => (int) ($sub['bonus_points'] ?? 0),
+                        'admin_img' => $subImagesNames !== [] ? $subImagesNames : null,
                     ]);
                 }
             }
@@ -663,11 +669,27 @@ class EmployeeTaskOperationsController extends Controller
                         ->where('template_id', $template->id)
                         ->first();
                     if ($sub) {
+                        $adminImg = $sub->admin_img ?? [];
+                        $uploaded = \App\Support\SubtaskAdminMediaStorage::collectFromRequest(
+                            $request,
+                            (int) $index
+                        );
+                        if ($uploaded !== []) {
+                            $payload['admin_img'] = array_merge($adminImg, $uploaded);
+                        }
                         $sub->update($payload);
                         $keepIds[] = $sub->id;
 
                         continue;
                     }
+                }
+
+                $uploaded = \App\Support\SubtaskAdminMediaStorage::collectFromRequest(
+                    $request,
+                    (int) $index
+                );
+                if ($uploaded !== []) {
+                    $payload['admin_img'] = $uploaded;
                 }
 
                 $created = EmployeeTaskTemplateSubtask::create(array_merge($payload, [
@@ -717,12 +739,12 @@ class EmployeeTaskOperationsController extends Controller
                     ->first();
                 if ($sub) {
                     $subImagesNames = $sub->admin_img ?? [];
-                    if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
-                        foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
-                            $fullName = $file->getClientOriginalName();
-                            $file->move(public_path('EmployeeSubTasks/AdminImages/'), $fullName);
-                            $subImagesNames[] = $fullName;
-                        }
+                    $uploaded = \App\Support\SubtaskAdminMediaStorage::collectFromRequest(
+                        $request,
+                        (int) $index
+                    );
+                    if ($uploaded !== []) {
+                        $subImagesNames = array_merge($subImagesNames, $uploaded);
                         $payload['admin_img'] = $subImagesNames;
                     }
                     $sub->update($payload);
@@ -732,14 +754,12 @@ class EmployeeTaskOperationsController extends Controller
                 }
             }
 
-            if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
-                $subImagesNames = [];
-                foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
-                    $fullName = $file->getClientOriginalName();
-                    $file->move(public_path('EmployeeSubTasks/AdminImages/'), $fullName);
-                    $subImagesNames[] = $fullName;
-                }
-                $payload['admin_img'] = $subImagesNames;
+            $uploaded = \App\Support\SubtaskAdminMediaStorage::collectFromRequest(
+                $request,
+                (int) $index
+            );
+            if ($uploaded !== []) {
+                $payload['admin_img'] = $uploaded;
             }
 
             $created = EmployeeTaskOccurrenceSubtask::create(array_merge($payload, [
