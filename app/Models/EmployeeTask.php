@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 
 class EmployeeTask extends Model
@@ -52,6 +53,26 @@ class EmployeeTask extends Model
 
     ];
 
+    /**
+     * Anchor for orphan subtask filtering when employee_tasks lacks created_at.
+     */
+    public function legacySubtaskAnchorAt(): ?Carbon
+    {
+        if (Schema::hasColumn($this->getTable(), 'created_at') && $this->created_at) {
+            return $this->created_at instanceof Carbon
+                ? $this->created_at
+                : Carbon::parse($this->created_at);
+        }
+
+        if (! empty($this->start_time)) {
+            return $this->start_time instanceof Carbon
+                ? $this->start_time
+                : Carbon::parse($this->start_time);
+        }
+
+        return null;
+    }
+
     public function subTasks(){
         $relation = $this->hasMany(EmployeeSubTask::class);
 
@@ -60,7 +81,10 @@ class EmployeeTask extends Model
         }
 
         $subTable = $relation->getRelated()->getTable();
-        $relation->whereColumn("{$subTable}.created_at", '>=', "{$this->getTable()}.created_at");
+        $anchor = $this->legacySubtaskAnchorAt();
+        if ($anchor !== null && Schema::hasColumn($subTable, 'created_at')) {
+            $relation->where("{$subTable}.created_at", '>=', $anchor);
+        }
 
         return $relation;
     }
@@ -77,8 +101,8 @@ class EmployeeTask extends Model
                 fn ($q) => $q->whereNull('occurrence_id')
             )
             ->when(
-                $this->created_at,
-                fn ($q) => $q->where('created_at', '<', $this->created_at)
+                $this->legacySubtaskAnchorAt(),
+                fn ($q, Carbon $anchor) => $q->where('created_at', '<', $anchor)
             )
             ->delete();
     }

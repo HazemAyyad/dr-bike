@@ -65,8 +65,9 @@ class EmployeeTaskTimelineService
             ->whereNull('occurrence_id')
             ->orderBy('created_at');
 
-        if ($task->created_at) {
-            $query->where('created_at', '>=', $task->created_at);
+        $anchor = $task->legacySubtaskAnchorAt();
+        if ($anchor !== null) {
+            $query->where('created_at', '>=', $anchor);
         }
 
         return $query->get()->map(fn ($e) => $this->mapTimelineRow($e))->all();

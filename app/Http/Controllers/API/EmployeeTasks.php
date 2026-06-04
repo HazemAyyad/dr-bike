@@ -70,6 +70,22 @@ class EmployeeTasks extends Controller
         return TaskProofMediaType::fromRequestValue($value, $required);
     }
 
+    private function storeSubtaskAdminUpload(\Illuminate\Http\UploadedFile $file): string
+    {
+        $dir = public_path('EmployeeSubTasks/AdminImages/');
+        if (! is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $ext = $file->getClientOriginalExtension() ?: $file->guessExtension() ?: 'bin';
+        $base = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
+        $safe = preg_replace('/[^\w\-]+/u', '_', $base) ?: 'file';
+        $fullName = $safe.'_'.uniqid('', true).'.'.$ext;
+        $file->move($dir, $fullName);
+
+        return $fullName;
+    }
+
     private function resetEmployeeTaskSubtasksCompletion(EmployeeTask $task): void
     {
         $payload = ['status' => EmployeeTaskStatus::Pending->value];
@@ -872,11 +888,9 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                         // Check if THIS subtask has an image
                         if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
 
-                            foreach($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file){
-                                $fullName = $file->getClientOriginalName();
-                                $file->move(public_path('EmployeeSubTasks/AdminImages/'), $fullName);
-                                $subImagesNames[] = $fullName;
-                                   }
+                            foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
+                                $subImagesNames[] = $this->storeSubtaskAdminUpload($file);
+                            }
                         }
 
                         $subCreate = [
@@ -1291,9 +1305,7 @@ public function updateEmployeeTask(Request $request)
                             $subImagesNames = $subTask->admin_img ?? [];
                             if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
                                 foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
-                                    $fullName = $file->getClientOriginalName();
-                                    $file->move(public_path('EmployeeSubTasks/AdminImages/'), $fullName);
-                                    $subImagesNames[] = $fullName;
+                                    $subImagesNames[] = $this->storeSubtaskAdminUpload($file);
                                 }
                                 $updatePayload['admin_img'] = $subImagesNames;
                             }
@@ -1305,9 +1317,7 @@ public function updateEmployeeTask(Request $request)
                         $subImagesNames = [];
                         if ($request->hasFile("sub_employee_tasks.$index.admin_subtask__img")) {
                             foreach ($request->file("sub_employee_tasks.$index.admin_subtask__img") as $file) {
-                                $fullName = $file->getClientOriginalName();
-                                $file->move(public_path('EmployeeSubTasks/AdminImages/'), $fullName);
-                                $subImagesNames[] = $fullName;
+                                $subImagesNames[] = $this->storeSubtaskAdminUpload($file);
                             }
                         }
                         // New subtask → create
