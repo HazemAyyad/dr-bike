@@ -74,6 +74,7 @@ class ProductDevelopmentApi extends Controller
             return response()->json([
                 'status'=>'success',
                 'message'=>__('messages.prodev_created'),
+                'product_development_id' => $prodev->id,
             ],200);
         }
 
@@ -158,18 +159,29 @@ class ProductDevelopmentApi extends Controller
 
             $data = $request->validate([
                 'product_development_id'=>'required|integer|exists:product_development,id',
-                'step'=>'required|integer|in:2,3,4,5,6,7',
+                'step'=>'required|integer|min:1|max:7',
+                'description'=>'nullable|string',
             ]);
 
             $prodev = ProductDevelopment::findOrFail($data['product_development_id']);
             $oldStep = $prodev->step;
-            $prodev->update(['step'=>$data['step']]);
+            $oldDescription = $prodev->description;
+            $updateData = ['step' => $data['step']];
+            if (array_key_exists('description', $data)) {
+                $updateData['description'] = $data['description'];
+            }
+            $prodev->update($updateData);
+
+            $changes = ['step' => ['old' => $oldStep, 'new' => $data['step']]];
+            if (array_key_exists('description', $data) && $oldDescription !== $data['description']) {
+                $changes['description'] = ['old' => $oldDescription, 'new' => $data['description']];
+            }
             $this->logActivity(
                 $request,
                 $prodev,
                 'updated',
                 'تم تحديث مرحلة تطوير المنتج',
-                ['step' => ['old' => $oldStep, 'new' => $data['step']]]
+                $changes
             );
             Logs::createLog(
                 'تحديث خطوة تطوير منتج',
