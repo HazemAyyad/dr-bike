@@ -33,8 +33,9 @@ class Products extends Controller
             ->get(['id', 'nameAr', 'stock', 'normailPrice', 'wholesalePrice', 'price', 'min_sale_price', 'rate']);
 
         $formatted = $products->map(function ($product) {
-            $image = $product->viewImages->first()
-                ?? $product->normalImages->first();
+            $viewImage = $product->viewImages->first();
+            $normalImage = $product->normalImages->first();
+            $image = $viewImage ?? $normalImage;
             $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
             if ($unitPrice <= 0) {
                 $unitPrice = (float) ($product->min_sale_price ?? 0);
@@ -50,6 +51,12 @@ class Products extends Controller
                 'product_image' => $image
                     ? \App\Support\ApiImageUrl::normalize($image->imageUrl)
                     : 'no image',
+                'product_viewImages' => $product->viewImages
+                    ->map(fn ($img) => \App\Support\ApiImageUrl::normalize($img->imageUrl))
+                    ->values(),
+                'product_normalImages' => $product->normalImages
+                    ->map(fn ($img) => \App\Support\ApiImageUrl::normalize($img->imageUrl))
+                    ->values(),
                 'projects' => $product->projects->pluck('project_id')->toArray(),
             ];
         })->values();

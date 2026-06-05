@@ -119,6 +119,8 @@ class ProductDevelopmentApi extends Controller
             'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
             'description' => $prodev->description,
             'current_step' => $prodev->step,
+            'created_at' => optional($prodev->created_at)->format('Y-m-d'),
+            'updated_at' => optional($prodev->updated_at)->format('Y-m-d'),
             'activity_logs' => $this->formatActivityLogs($prodev),
 
         ];
@@ -305,6 +307,8 @@ class ProductDevelopmentApi extends Controller
                     'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
                     'current_step' => $dev->step,  
                     'description' => $dev->description,
+                    'created_at' => optional($dev->created_at)->format('Y-m-d'),
+                    'updated_at' => optional($dev->updated_at)->format('Y-m-d'),
                     'activity_logs' => $this->formatActivityLogs($dev),
                               ];
             });
