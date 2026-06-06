@@ -7,6 +7,19 @@ use Illuminate\Support\Collection;
 
 class ProductImageResolver
 {
+    private const INVALID_TOKENS = [
+        'no image',
+        'no img',
+        'no images',
+        'no image files',
+        'no admin image',
+        'null',
+        'undefined',
+        'none',
+        '-',
+        'n/a',
+    ];
+
     public static function isValidUrl(?string $url): bool
     {
         $url = trim((string) $url);
@@ -15,9 +28,40 @@ class ProductImageResolver
             return false;
         }
 
-        $lower = strtolower($url);
+        return ! in_array(strtolower($url), self::INVALID_TOKENS, true);
+    }
 
-        return ! in_array($lower, ['no image', 'null', 'undefined', 'none'], true);
+    public static function urlFromRecord(mixed $img): string
+    {
+        if ($img === null) {
+            return '';
+        }
+
+        if (is_string($img)) {
+            return trim($img);
+        }
+
+        $candidates = [
+            $img->imageUrl ?? null,
+            $img->image_url ?? null,
+            $img->ImageUrl ?? null,
+            is_object($img) && method_exists($img, 'getAttribute')
+                ? $img->getAttribute('image_url')
+                : null,
+            is_object($img) && method_exists($img, 'getAttribute')
+                ? $img->getAttribute('ImageUrl')
+                : null,
+            $img->url ?? null,
+        ];
+
+        foreach ($candidates as $candidate) {
+            $url = trim((string) $candidate);
+            if (self::isValidUrl($url)) {
+                return $url;
+            }
+        }
+
+        return '';
     }
 
     public static function preferredUrl(?Product $product): string
@@ -28,7 +72,7 @@ class ProductImageResolver
 
         foreach ([$product->viewImages, $product->normalImages, $product->image3d] as $images) {
             foreach ($images as $img) {
-                $url = trim((string) ($img->imageUrl ?? ''));
+                $url = self::urlFromRecord($img);
                 if (self::isValidUrl($url)) {
                     return ApiImageUrl::normalize($url);
                 }
@@ -54,7 +98,7 @@ class ProductImageResolver
     private static function mapValidUrls(Collection $images): Collection
     {
         return $images
-            ->map(fn ($img) => trim((string) ($img->imageUrl ?? '')))
+            ->map(fn ($img) => self::urlFromRecord($img))
             ->filter(fn ($url) => self::isValidUrl($url))
             ->map(fn ($url) => ApiImageUrl::normalize($url))
             ->values();
