@@ -896,7 +896,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                     }
         }
 
-        $this->createHelper($employeeTask,$request->task_recurrence);
+        // Recurring copies are created lazily per day (EmployeeLegacyDayInstanceService), not in bulk.
 
         app(EmployeeTaskNotificationService::class)->notifyAssignedToEmployeeIds(
             $employeeTask->fresh(),
@@ -1378,8 +1378,10 @@ public function updateEmployeeTask(Request $request)
             && ($oldRecurrence !== $newRecurrence || $recurrenceTimesChanged);
 
         if ($shouldRebuildChildren) {
-            EmployeeTask::where('parent_id', $employeeTask->id)->delete();
-            $this->createHelper($employeeTask->fresh(), $newRecurrence);
+            EmployeeTask::query()
+                ->where('parent_id', $employeeTask->id)
+                ->where('status', EmployeeTaskStatus::Pending->value)
+                ->delete();
         }
 
         Logs::createLog(

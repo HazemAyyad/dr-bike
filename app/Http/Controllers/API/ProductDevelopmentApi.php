@@ -104,19 +104,20 @@ class ProductDevelopmentApi extends Controller
         ]);
 
         $prodev = ProductDevelopment::with([
-            'product:id,nameAr,rate',
+            'product.viewImages',
+            'product.normalImages',
+            'product.image3d',
             'activityLogs.user:id,name,type',
         ])
         ->findOrFail($request->product_development_id);
 
-        $image = $prodev->product->viewImages->first();
         $formatted = [
             'id' => $prodev->id,
             'product_id' => $prodev->product_id,
 
             'product_name' => $prodev->product->nameAr??'no name',
             'rate' => (float) ($prodev->product->rate ?? 0),
-            'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
+            'product_image' => \App\Support\ProductImageResolver::preferredUrl($prodev->product),
             'description' => $prodev->description,
             'current_step' => $prodev->step,
             'created_at' => optional($prodev->created_at)->format('Y-m-d'),
@@ -289,7 +290,9 @@ class ProductDevelopmentApi extends Controller
         try{
 
             $proDevs = ProductDevelopment::with([
-                'product:id,nameAr,rate',
+                'product.viewImages',
+                'product.normalImages',
+                'product.image3d',
                 'activityLogs.user:id,name,type',
             ])
             ->orderByDesc('step')
@@ -297,14 +300,12 @@ class ProductDevelopmentApi extends Controller
             ->get();
 
             $formatted = $proDevs->map(function($dev){
-                $image = $dev->product?->viewImages->first();
-
                 return [
                     'id'=> $dev->id,
                     'product_id' => $dev->product_id,
                     'product_name' => $dev->product->nameAr??'no name',
                     'rate' => (float) ($dev->product->rate ?? 0),
-                    'product_image' => $image ? \App\Support\ApiImageUrl::normalize($image->imageUrl) : 'no image',
+                    'product_image' => \App\Support\ProductImageResolver::preferredUrl($dev->product),
                     'current_step' => $dev->step,  
                     'description' => $dev->description,
                     'created_at' => optional($dev->created_at)->format('Y-m-d'),

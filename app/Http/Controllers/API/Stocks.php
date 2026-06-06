@@ -61,7 +61,7 @@ class Stocks extends Controller
             };
 
             $query = Product::query()
-                ->with(['viewImages', 'normalImages', 'tags' => function ($q) {
+                ->with(['viewImages', 'normalImages', 'image3d', 'tags' => function ($q) {
                     $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                 }])
                 ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'created_at', 'updated_at');
@@ -513,8 +513,7 @@ class Stocks extends Controller
 
     private function formatProductListItem(Product $product): array
     {
-        $image = $product->viewImages->first()
-            ?? $product->normalImages->first();
+        $images = \App\Support\ProductImageResolver::formatForList($product);
 
         return [
             'product_id' => $product->id,
@@ -522,7 +521,10 @@ class Stocks extends Controller
             'product_name' => $product->nameAr,
             'product_stock' => $product->stock,
             'product_code' => $product->product_code,
-            'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
+            'product_image' => $images['product_image'],
+            'product_viewImages' => $images['product_viewImages'],
+            'product_normalImages' => $images['product_normalImages'],
+            'product_image3d' => $images['product_image3d'],
             'tags' => $product->tags->map(fn ($t) => [
                 'id' => $t->id,
                 'name' => $t->name,

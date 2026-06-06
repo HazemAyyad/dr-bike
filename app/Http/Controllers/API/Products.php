@@ -29,36 +29,28 @@ class Products extends Controller
                 'projects:product_id,project_id',
                 'viewImages',
                 'normalImages',
+                'image3d',
             ])
             ->get(['id', 'nameAr', 'stock', 'normailPrice', 'wholesalePrice', 'price', 'min_sale_price', 'rate']);
 
         $formatted = $products->map(function ($product) {
-            $viewImage = $product->viewImages->first();
-            $normalImage = $product->normalImages->first();
-            $image = $viewImage ?? $normalImage;
             $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
             if ($unitPrice <= 0) {
                 $unitPrice = (float) ($product->min_sale_price ?? 0);
             }
 
-            return [
-                'id' => $product->id,
-                'nameAr' => $product->nameAr,
-                'stock' => $product->stock,
-                'normail_price' => $unitPrice,
-                'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
-                'rate' => (float) ($product->rate ?? 0),
-                'product_image' => $image
-                    ? \App\Support\ApiImageUrl::normalize($image->imageUrl)
-                    : 'no image',
-                'product_viewImages' => $product->viewImages
-                    ->map(fn ($img) => \App\Support\ApiImageUrl::normalize($img->imageUrl))
-                    ->values(),
-                'product_normalImages' => $product->normalImages
-                    ->map(fn ($img) => \App\Support\ApiImageUrl::normalize($img->imageUrl))
-                    ->values(),
-                'projects' => $product->projects->pluck('project_id')->toArray(),
-            ];
+            return array_merge(
+                [
+                    'id' => $product->id,
+                    'nameAr' => $product->nameAr,
+                    'stock' => $product->stock,
+                    'normail_price' => $unitPrice,
+                    'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
+                    'rate' => (float) ($product->rate ?? 0),
+                    'projects' => $product->projects->pluck('project_id')->toArray(),
+                ],
+                \App\Support\ProductImageResolver::formatForList($product),
+            );
         })->values();
 
             return response()->json([

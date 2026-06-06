@@ -6,6 +6,7 @@ use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
+use App\Support\EmployeeVisibleTasks;
 use App\Support\TaskProofMediaType;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -137,6 +138,7 @@ class EmployeeTaskListService
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')
             ->get()
+            ->filter(fn ($task) => EmployeeVisibleTasks::includeLegacyRowInEmployeePayload($task))
             ->filter(fn ($task) => $this->passesRecurrenceFilter($task))
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
 
@@ -168,6 +170,7 @@ class EmployeeTaskListService
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')
             ->get()
+            ->filter(fn ($task) => EmployeeVisibleTasks::includeLegacyRowInEmployeePayload($task))
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
 
         if (! Schema::hasTable('employee_task_occurrences')) {
@@ -188,6 +191,7 @@ class EmployeeTaskListService
         $legacy = EmployeeTask::with('employee.user')
             ->where('is_canceled', 1)
             ->get()
+            ->filter(fn ($task) => EmployeeVisibleTasks::includeLegacyRowInEmployeePayload($task))
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
 
         if (! Schema::hasTable('employee_task_occurrences')) {
