@@ -755,6 +755,11 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             $subData = $subtask->replicate()->toArray();
             $subData['employee_task_id'] = $newTask->id; // link to new recurrent task
             unset($subData['occurrence_id']);
+            $subData['status'] = 'pending';
+            $subData['employee_img'] = null;
+            if (array_key_exists('completed_by_employee_id', $subData)) {
+                $subData['completed_by_employee_id'] = null;
+            }
             EmployeeSubTask::create($subData);
         }
 }
@@ -1002,6 +1007,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                 'integer',
                 Rule::exists('employee_tasks', 'id'),
             ],
+            'task_date' => 'nullable|date',
         ]);
 
         if (! $request->employee_task_id && ! $request->occurrence_id) {
@@ -1017,7 +1023,10 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
 
         if ($request->filled('employee_task_id') && ! $request->filled('occurrence_id')) {
             $employeeTask = EmployeeTask::findOrFail($request->employee_task_id);
-            $taskData = $details->formatLegacy($employeeTask, $photo);
+            $legacyDay = app(\App\Services\EmployeeTasks\EmployeeLegacyDayInstanceService::class);
+            $taskDate = $legacyDay->parseTaskDate($request->input('task_date'), $employeeTask);
+            $resolvedTask = $legacyDay->resolveForDate($employeeTask, $taskDate);
+            $taskData = $details->formatLegacy($resolvedTask, $photo);
         } elseif ($request->filled('occurrence_id')) {
             $occurrence = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
             if ($request->filled('employee_task_id')) {
