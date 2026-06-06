@@ -474,6 +474,16 @@ return [
     'admin_notify_subtask_completed_body' => ':employee أنجز «:subtask» ضمن «:task».',
     'admin_notify_subtask_completed_body_progress' => ':employee أنجز «:subtask» ضمن «:task» (:done/:total).',
 
+    'admin_notify_login_title' => 'تسجيل دخول',
+    'admin_notify_login_body' => 'دخل :employee:source — :time',
+    'admin_notify_logout_title' => 'تسجيل خروج',
+    'admin_notify_logout_body' => 'خرج :employee:source — :time',
+    'admin_notify_logout_pending_title' => 'خروج مع مهام معلّقة',
+    'admin_notify_logout_pending_body' => 'خرج :employee ولم يُنهِ :count مهمة.',
+    'admin_notify_source_fingerprint' => ' (بصمة)',
+    'admin_notify_source_manual' => ' (يدوي)',
+    'employee_default_name' => 'موظف',
+
     'task_completed_without_review' => 'تم إنهاء المهمة مباشرة دون مراجعة.',
     'settings_updated' => 'تم تحديث الإعدادات بنجاح.',
     'fingerprint_user_id_taken' => 'رقم مستخدم البصمة مستخدم لموظف آخر.',

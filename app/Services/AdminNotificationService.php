@@ -76,13 +76,9 @@ class AdminNotificationService
         string $source = 'qr'
     ): AdminNotification {
         $employee->loadMissing('user');
-        $name = $employee->user->name ?? 'Employee';
-        $time = now()->format('Y-m-d H:i:s');
-        $via = match ($source) {
-            'fingerprint' => ' (fingerprint)',
-            'manual' => ' (manual)',
-            default => '',
-        };
+        $name = $employee->user->name ?? __('messages.employee_default_name');
+        $time = $this->serverNotificationTime();
+        $sourceLabel = $this->attendanceSourceLabel($source);
 
         $data = [
             'employee_id' => (string) $employee->id,
@@ -94,8 +90,12 @@ class AdminNotificationService
 
         return $this->create(
             self::TYPE_EMPLOYEE_LOGIN,
-            'Employee Logged In',
-            "{$name} checked in{$via} at {$time}.",
+            __('messages.admin_notify_login_title'),
+            __('messages.admin_notify_login_body', [
+                'employee' => $name,
+                'source' => $sourceLabel,
+                'time' => $time,
+            ]),
             $data,
             $employee->id,
             $attendanceId !== null ? 'employee_attendance' : null,
@@ -107,29 +107,30 @@ class AdminNotificationService
     public function notifyEmployeeLogout(
         EmployeeDetail $employee,
         ?int $attendanceId,
-        string $logoutTime,
+        ?string $logoutTime = null,
         string $source = 'qr'
     ): AdminNotification {
         $employee->loadMissing('user');
-        $name = $employee->user->name ?? 'Employee';
-        $via = match ($source) {
-            'fingerprint' => ' (fingerprint)',
-            'manual' => ' (manual)',
-            default => '',
-        };
+        $name = $employee->user->name ?? __('messages.employee_default_name');
+        $time = $this->serverNotificationTime();
+        $sourceLabel = $this->attendanceSourceLabel($source);
 
         $data = [
             'employee_id' => (string) $employee->id,
             'employee_name' => $name,
-            'logout_time' => $logoutTime,
+            'logout_time' => $time,
             'attendance_id' => $attendanceId !== null ? (string) $attendanceId : '',
             'source' => $source,
         ];
 
         return $this->create(
             self::TYPE_EMPLOYEE_LOGOUT,
-            'Employee Logged Out',
-            "{$name} checked out{$via} at {$logoutTime}.",
+            __('messages.admin_notify_logout_title'),
+            __('messages.admin_notify_logout_body', [
+                'employee' => $name,
+                'source' => $sourceLabel,
+                'time' => $time,
+            ]),
             $data,
             $employee->id,
             $attendanceId !== null ? 'employee_attendance' : null,
@@ -374,7 +375,7 @@ class AdminNotificationService
         EmployeeDetail $employee,
         ?int $attendanceId,
         $pendingTasks,
-        string $logoutTime
+        ?string $logoutTime = null
     ): ?AdminNotification {
         if ($pendingTasks->isEmpty()) {
             return null;
@@ -385,8 +386,9 @@ class AdminNotificationService
         }
 
         $employee->loadMissing('user');
-        $name = $employee->user->name ?? 'Employee';
+        $name = $employee->user->name ?? __('messages.employee_default_name');
         $count = $pendingTasks->count();
+        $time = $this->serverNotificationTime();
 
         $pendingList = $pendingTasks->map(fn (EmployeeTask $t) => [
             'id' => $t->id,
@@ -400,19 +402,36 @@ class AdminNotificationService
             'attendance_id' => $attendanceId !== null ? (string) $attendanceId : '',
             'pending_tasks_count' => (string) $count,
             'pending_tasks' => $pendingList,
-            'logout_time' => $logoutTime,
+            'logout_time' => $time,
         ];
 
         return $this->create(
             self::TYPE_EMPLOYEE_LOGOUT_PENDING_TASKS,
-            'Employee Logged Out With Pending Tasks',
-            "{$name} logged out without completing {$count} assigned tasks.",
+            __('messages.admin_notify_logout_pending_title'),
+            __('messages.admin_notify_logout_pending_body', [
+                'employee' => $name,
+                'count' => (string) $count,
+            ]),
             $data,
             $employee->id,
             $attendanceId !== null ? 'employee_attendance' : null,
             $attendanceId,
             true
         );
+    }
+
+    protected function serverNotificationTime(): string
+    {
+        return now()->format('Y-m-d H:i:s');
+    }
+
+    protected function attendanceSourceLabel(string $source): string
+    {
+        return match ($source) {
+            'fingerprint' => __('messages.admin_notify_source_fingerprint'),
+            'manual' => __('messages.admin_notify_source_manual'),
+            default => '',
+        };
     }
 
     public function notifyCheckDueSoon(IncomingCheck|OutgoingCheck $check, string $direction, string $reminderDate): ?AdminNotification

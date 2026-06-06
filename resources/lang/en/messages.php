@@ -461,6 +461,17 @@ return [
     'admin_notify_subtask_completed_title' => 'Subtask completed',
     'admin_notify_subtask_completed_body' => ':employee completed «:subtask» in «:task».',
     'admin_notify_subtask_completed_body_progress' => ':employee completed «:subtask» in «:task» (:done/:total).',
+
+    'admin_notify_login_title' => 'Check-in',
+    'admin_notify_login_body' => ':employee checked in:source at :time',
+    'admin_notify_logout_title' => 'Check-out',
+    'admin_notify_logout_body' => ':employee checked out:source at :time',
+    'admin_notify_logout_pending_title' => 'Check-out with pending tasks',
+    'admin_notify_logout_pending_body' => ':employee logged out with :count unfinished task(s).',
+    'admin_notify_source_fingerprint' => ' (fingerprint)',
+    'admin_notify_source_manual' => ' (manual)',
+    'employee_default_name' => 'Employee',
+
     'settings_updated' => 'Settings updated successfully.',
     'fingerprint_user_id_taken' => 'This fingerprint user ID is already assigned to another employee.',
     'task_completion_points' => 'Task completion points: :task',

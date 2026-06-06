@@ -21,23 +21,47 @@ class FirebaseService
     /** Employee task FCM — must match Flutter [kDrBikeTaskNotificationChannelId] and res/raw/task_sos_alert. */
     public const EMPLOYEE_TASK_CHANNEL_ID = 'dr_bike_task_notifications';
 
+    /** Task completion / success — must match Flutter and res/raw/task_success. */
+    public const TASK_SUCCESS_CHANNEL_ID = 'dr_bike_task_success_notifications';
+
+    /** Admin attendance (login/logout) — must match Flutter and res/raw/task_sos_alert. */
+    public const ADMIN_ATTENDANCE_CHANNEL_ID = 'dr_bike_admin_attendance_alerts';
+
     public const EMPLOYEE_TASK_SOUND_ANDROID = 'task_sos_alert';
 
     public const EMPLOYEE_TASK_SOUND_IOS = 'task_sos_alert.mp3';
 
+    public const TASK_SUCCESS_SOUND_ANDROID = 'task_success';
+
+    public const TASK_SUCCESS_SOUND_IOS = 'task_success.wav';
+
     /** @var list<string> */
-    private const EMPLOYEE_TASK_NOTIFICATION_TYPES = [
+    private const EMPLOYEE_TASK_URGENT_NOTIFICATION_TYPES = [
         'employee_task_assigned',
-        'employee_task_approved',
         'employee_task_rejected',
-        'employee_task_co_subtask_done',
-        'employee_task_co_main_done',
-        'employee_task_co_main_completed',
         'employee_task_scheduled_reminder',
         'employee_daily_tasks',
         'employee_hourly_reminder',
-        'employee_daily_tasks_complete',
         'employee_operational_reminder',
+    ];
+
+    /** @var list<string> */
+    private const TASK_SUCCESS_NOTIFICATION_TYPES = [
+        'employee_task_approved',
+        'employee_task_co_subtask_done',
+        'employee_task_co_main_done',
+        'employee_task_co_main_completed',
+        'employee_daily_tasks_complete',
+        'employee_task_completed',
+        'employee_task_submitted',
+        'employee_subtask_completed',
+    ];
+
+    /** @var list<string> */
+    private const ADMIN_ATTENDANCE_NOTIFICATION_TYPES = [
+        'employee_login',
+        'employee_logout',
+        'employee_logout_pending_tasks',
     ];
 
     protected ?Messaging $messaging = null;
@@ -461,7 +485,23 @@ class FirebaseService
     {
         $type = (string) ($data['type'] ?? '');
 
-        if (in_array($type, self::EMPLOYEE_TASK_NOTIFICATION_TYPES, true)) {
+        if (in_array($type, self::ADMIN_ATTENDANCE_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::ADMIN_ATTENDANCE_CHANNEL_ID,
+                'sound' => self::EMPLOYEE_TASK_SOUND_ANDROID,
+                'ios_sound' => self::EMPLOYEE_TASK_SOUND_IOS,
+            ];
+        }
+
+        if (in_array($type, self::TASK_SUCCESS_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::TASK_SUCCESS_CHANNEL_ID,
+                'sound' => self::TASK_SUCCESS_SOUND_ANDROID,
+                'ios_sound' => self::TASK_SUCCESS_SOUND_IOS,
+            ];
+        }
+
+        if (in_array($type, self::EMPLOYEE_TASK_URGENT_NOTIFICATION_TYPES, true)) {
             return [
                 'channel_id' => self::EMPLOYEE_TASK_CHANNEL_ID,
                 'sound' => self::EMPLOYEE_TASK_SOUND_ANDROID,
