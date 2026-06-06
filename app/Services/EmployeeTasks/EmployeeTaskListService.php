@@ -232,7 +232,11 @@ class EmployeeTaskListService
      */
     private function applyAdminLegacyVisibilityScope($query): void
     {
-        $query->where(function ($q) {
+        $today = Carbon::now()->timezone(EmployeeVisibleTasks::TIMEZONE)->startOfDay();
+        $min = $today->copy()->subDays(EmployeeVisibleTasks::OCCURRENCE_VISIBILITY_DAYS_BACK);
+        $max = $today->copy()->addDays(EmployeeVisibleTasks::OCCURRENCE_VISIBILITY_DAYS_FORWARD);
+
+        $query->where(function ($q) use ($min, $max) {
             $q->whereNull('parent_id')
                 ->orWhereIn('status', [
                     EmployeeTaskStatus::InProgress->value,
@@ -249,6 +253,12 @@ class EmployeeTaskListService
                                 ->where('completed_by_employee_id', '>', 0);
                         })->orWhereNotNull('submitted_at');
                     });
+                })
+                ->orWhere(function ($q5) use ($min, $max) {
+                    $q5->where('status', EmployeeTaskStatus::Pending->value)
+                        ->whereNotNull('parent_id')
+                        ->whereDate('start_time', '>=', $min->toDateString())
+                        ->whereDate('start_time', '<=', $max->toDateString());
                 });
         });
     }

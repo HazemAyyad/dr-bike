@@ -1043,7 +1043,10 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             }
         } else {
             $employeeTask = EmployeeTask::findOrFail($request->employee_task_id);
-            $taskData = $details->formatLegacy($employeeTask, $photo);
+            $legacyDay = app(\App\Services\EmployeeTasks\EmployeeLegacyDayInstanceService::class);
+            $taskDate = $legacyDay->parseTaskDate($request->input('task_date'), $employeeTask);
+            $resolvedTask = $legacyDay->resolveForDate($employeeTask, $taskDate);
+            $taskData = $details->formatLegacy($resolvedTask, $photo);
         }
 
             return response([

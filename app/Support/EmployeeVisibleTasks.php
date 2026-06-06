@@ -68,7 +68,25 @@ class EmployeeVisibleTasks
                 || ! empty($task->submitted_at);
         }
 
+        if ($status === 'pending' && self::legacyChildInVisibilityWindow($task)) {
+            return true;
+        }
+
         return false;
+    }
+
+    public static function legacyChildInVisibilityWindow(EmployeeTask $task): bool
+    {
+        if (empty($task->start_time)) {
+            return false;
+        }
+
+        $day = Carbon::parse($task->start_time)->timezone(self::TIMEZONE)->startOfDay();
+        $today = Carbon::now()->timezone(self::TIMEZONE)->startOfDay();
+        $min = $today->copy()->subDays(self::OCCURRENCE_VISIBILITY_DAYS_BACK);
+        $max = $today->copy()->addDays(self::OCCURRENCE_VISIBILITY_DAYS_FORWARD);
+
+        return $day->betweenIncluded($min, $max);
     }
 
     public static function occurrencesForEmployee(int $employeeId): Collection
@@ -319,7 +337,7 @@ class EmployeeVisibleTasks
         }
 
         $completed = $tasks->filter(fn ($row) => in_array($row['status'], ['completed', 'waiting_review'], true))->count();
-        $progressSum = $tasks->sum(fn ($row) => (int) ($row['progress'] ?? 0));
+        $progressSum = $tasks->sum(fn ($row) => self::effectiveProgressForDate($row, $today));
 
         return [
             'total' => $total,
@@ -381,6 +399,35 @@ class EmployeeVisibleTasks
             'monthly' => in_array((string) $check->format('j'), $times, true),
             default => false,
         };
+    }
+
+    /**
+     * Recurring parent templates carry anchor-day subtask proof; other calendar days start at 0%.
+     *
+     * @param  array<string, mixed>  $row
+     */
+    public static function effectiveProgressForDate(array $row, Carbon $date): int
+    {
+        $progress = (int) ($row['progress'] ?? 0);
+        $recurrence = $row['task_recurrence'] ?? 'noRepeat';
+
+        if (! empty($row['parent_id']) || $recurrence === 'noRepeat' || $recurrence === '') {
+            return $progress;
+        }
+
+        $start = $row['start_time'] ?? null;
+        if (empty($start)) {
+            return $progress;
+        }
+
+        $anchor = Carbon::parse($start)->timezone(self::TIMEZONE)->startOfDay();
+        $check = $date->copy()->timezone(self::TIMEZONE)->startOfDay();
+
+        if ($check->toDateString() === $anchor->toDateString()) {
+            return $progress;
+        }
+
+        return 0;
     }
 
     public static function canEmployeeExecuteTask(EmployeeTask $task, int $viewerEmployeeId): bool
