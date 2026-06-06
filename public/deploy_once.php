@@ -61,6 +61,15 @@ $allowedCommands = [
         'params' => [],
         'label' => '=== تنظيف سجلات OPLOG الخاطئة (php artisan fingerprint:purge-operlog) ===',
     ],
+    [
+        'name' => 'employee-tasks:cleanup-duplicate-legacy',
+        'params' => [
+            '--parent' => 7650,
+            '--fix-assignee-task' => 331,
+            '--wrong-employee' => 10,
+        ],
+        'label' => '=== إلغاء سلسلة legacy المكررة (7650) + إصلاح assignee خاطئ (331/10) ===',
+    ],
     ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'cache:clear', 'params' => []],
     ['name' => 'images:generate-legacy-thumbs', 'params' => []],

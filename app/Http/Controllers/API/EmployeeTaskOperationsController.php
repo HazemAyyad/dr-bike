@@ -330,12 +330,6 @@ class EmployeeTaskOperationsController extends Controller
                 (int) ($data['employee_id'] ?? 0)
             );
 
-            if (count($assigneeIds) > 1) {
-                $request->merge(['use_v2_recurrence' => false]);
-
-                return app(EmployeeTasks::class)->createEmployeeTask($request);
-            }
-
             $data['employee_id'] = $assigneeIds[0] ?? (int) $data['employee_id'];
             $proofRequired = $request->boolean('is_forced_to_upload_img');
             $proofMediaType = $this->proofMediaTypeFromInput($request, 'proof_media_type', $proofRequired);
@@ -382,7 +376,34 @@ class EmployeeTaskOperationsController extends Controller
 
             $template->load('subtasks');
 
+            $legacyAnchor = null;
+            if (count($assigneeIds) > 1) {
+                $legacyAnchor = EmployeeTask::create([
+                    'name' => $data['name'],
+                    'description' => $data['description'] ?? null,
+                    'notes' => $data['notes'] ?? null,
+                    'points' => $data['points'],
+                    'priority' => $data['priority'] ?? 'medium',
+                    'employee_id' => $data['employee_id'],
+                    'start_time' => $data['start_time'],
+                    'end_time' => $data['end_time'],
+                    'task_recurrence' => 'noRepeat',
+                    'status' => EmployeeTaskStatus::Pending->value,
+                    'is_forced_to_upload_img' => $proofRequired,
+                    'proof_media_type' => $proofMediaType,
+                    'requires_admin_review' => $request->boolean('requires_admin_review', true),
+                    'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
+                    'template_id' => $template->id,
+                ]);
+                $assigneeService->syncForTask($legacyAnchor, $assigneeIds);
+            }
+
             $occurrences = $this->recurrence->ensureOccurrences($template);
+            if ($legacyAnchor) {
+                EmployeeTaskOccurrence::query()
+                    ->where('template_id', $template->id)
+                    ->update(['legacy_task_id' => $legacyAnchor->id]);
+            }
             $summary = $this->recurrence->buildRecurrenceSummary($template);
             $notifier = app(EmployeeTaskNotificationService::class);
 

@@ -58,6 +58,7 @@ return [
     'employee_task_not_found' => 'لم يتم العثور على مهمة الموظف',
     'employee_task_canceled' => 'تم إلغاء مهمة الموظف',
     'employee_task_created_successfully' => 'تم إنشاء مهمة الموظف بنجاح',
+    'recurring_template_already_exists' => 'يوجد بالفعل قالب مهمة متكررة لهذا الموظف. عدّل المهمة الحالية بدلاً من إنشاء نسخة جديدة.',
     'employee_task_assigned_title' => 'مهمة جديدة',
     'employee_task_assigned_body' => 'تم تعيين مهمة جديدة لك: :name',
     'employee_task_co_subtask_done_title' => 'تحديث مهمة مشتركة',

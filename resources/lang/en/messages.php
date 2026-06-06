@@ -61,6 +61,7 @@ return [
     'employee_task_not_found' => 'Employee task not found',
     'employee_task_canceled' => 'Employee task has been canceled',
     'employee_task_created_successfully' => 'Employee task was created successfully',
+    'recurring_template_already_exists' => 'A recurring task template already exists for this employee. Edit the existing task instead.',
     'employee_task_assigned_title' => 'New task assigned',
     'employee_task_assigned_body' => 'A new task was assigned to you: :name',
     'employee_task_co_subtask_done_title' => 'Shared task update',

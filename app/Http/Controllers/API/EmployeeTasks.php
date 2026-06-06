@@ -637,6 +637,28 @@ private function getTasks($status)
 //     }
 // }
 
+    /**
+     * @param  array<int>  $assigneeIds
+     */
+    public static function activeRecurringTemplateExists(array $assigneeIds, string $name): bool
+    {
+        if (! Schema::hasTable('employee_task_templates')) {
+            return false;
+        }
+
+        $query = EmployeeTaskTemplate::query()
+            ->where('is_active', true)
+            ->where('name', $name);
+
+        if ($assigneeIds !== []) {
+            $query->whereIn('employee_id', $assigneeIds);
+        }
+
+        return $query->exists();
+    }
+
+public const LEGACY_PREFILL_HORIZON_DAYS = 14;
+
 public static function createHelper(Model $task, string $recurrence): void
 {
     $start = Carbon::parse($task->start_time);
@@ -647,9 +669,14 @@ public static function createHelper(Model $task, string $recurrence): void
         return; // invalid range
     }
 
+    $horizonEnd = $start->copy()->addDays(self::LEGACY_PREFILL_HORIZON_DAYS);
+    if ($horizonEnd->greaterThan($end)) {
+        $horizonEnd = $end->copy();
+    }
+
     $current = $start->copy();
 
-    while ($current->lessThanOrEqualTo($end)) {
+    while ($current->lessThanOrEqualTo($horizonEnd)) {
         switch ($recurrence) {
             case 'daily':
                 $current->addDay();
@@ -706,6 +733,11 @@ public static function createHelper(Model $task, string $recurrence): void
  */
 protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $mainEnd): void
 {
+    $anchorDay = Carbon::parse($task->start_time)->startOfDay();
+    if ($newStart->copy()->startOfDay()->equalTo($anchorDay)) {
+        return;
+    }
+
     $data = $task->replicate()->toArray();
     $data['parent_id'] = $task->id;
     $data['start_time'] = $newStart->format('Y-m-d H:i:s');
@@ -848,8 +880,18 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             (int) ($data['employee_id'] ?? 0)
         );
 
-        if ($request->boolean('use_v2_recurrence') && count($assigneeIdsForRoute) <= 1) {
+        if ($request->boolean('use_v2_recurrence')) {
             return app(EmployeeTaskOperationsController::class)->createWithTemplate($request);
+        }
+
+        if (
+            $request->task_recurrence !== 'noRepeat'
+            && self::activeRecurringTemplateExists($assigneeIdsForRoute, $data['name'])
+        ) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.recurring_template_already_exists'),
+            ], 200);
         }
 
         if ($reminderMinutes !== null) {
@@ -896,7 +938,9 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                     }
         }
 
-        $this->createHelper($employeeTask,$request->task_recurrence);
+        if ($request->task_recurrence !== 'noRepeat' && count($assigneeIds) <= 1) {
+            self::createHelper($employeeTask, $request->task_recurrence);
+        }
 
         app(EmployeeTaskNotificationService::class)->notifyAssignedToEmployeeIds(
             $employeeTask->fresh(),
