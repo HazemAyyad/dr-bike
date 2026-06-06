@@ -131,16 +131,15 @@ class FingerprintActivityLogService
             ->filter(fn ($p) => FingerprintAttendanceLogFilter::isValidDeviceUserPin($p))
             ->values();
 
-        $linkedFdUsers = FingerprintDeviceUser::query()
+        $deviceUsers = FingerprintDeviceUser::query()
             ->whereIn('attendance_device_id', $deviceIds)
-            ->whereNotNull('linked_employee_id')
             ->get(['attendance_device_id', 'device_user_id']);
 
         $out = [];
         foreach ($deviceIds as $devId) {
             $devId = (int) $devId;
             $pins = $employeePins->all();
-            foreach ($linkedFdUsers as $u) {
+            foreach ($deviceUsers as $u) {
                 if ((int) $u->attendance_device_id === $devId) {
                     $pins[] = trim((string) $u->device_user_id);
                 }

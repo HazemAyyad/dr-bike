@@ -88,10 +88,16 @@ final class FingerprintAttendanceLogFilter
             return false;
         }
 
+        // Real ATTLOG saved but not mapped to an employee yet — always show in activity log.
+        if ($err === 'employee_not_mapped') {
+            return true;
+        }
+
         $employeeName = trim((string) ($resolvedEmployeeName ?? ''));
         $isProcessed = trim((string) ($log->processing_status ?? '')) === 'processed';
+        $isPending = trim((string) ($log->processing_status ?? '')) === 'pending';
 
-        if ($isProcessed || $employeeName !== '') {
+        if ($isProcessed || $isPending || $employeeName !== '') {
             return true;
         }
 
@@ -99,7 +105,7 @@ final class FingerprintAttendanceLogFilter
             return true;
         }
 
-        // Unmapped 0–100 codes are almost always OPLOG operation codes in old data.
+        // Unmapped 0–100 codes with no device-user record are almost always OPLOG junk in old data.
         if (self::isOperlogOperationCodePin($pin)) {
             return false;
         }
