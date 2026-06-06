@@ -1203,13 +1203,13 @@ class Stocks extends Controller
             $closeouts = Closeout::with(
                 'product:id,nameAr,min_sale_price,stock',
                 'product.viewImages:id,itemId,imageUrl',
-                'product.normalImages:id,itemId,imageUrl'
+                'product.normalImages:id,itemId,imageUrl',
+                'product.image3d:id,itemId,imageUrl',
             )
                 ->where('status', $status)->get(['id', 'status', 'product_id']);
 
             $formatted = $closeouts->map(function ($closeout) {
-                $image = $closeout->product->viewImages->first()
-                    ?? $closeout->product->normalImages->first();
+                $images = \App\Support\ProductImageResolver::formatForList($closeout->product);
 
                 return [
                     'closeout_id' => $closeout->id,
@@ -1218,8 +1218,10 @@ class Stocks extends Controller
                     'product_name' => $closeout->product->nameAr,
                     'product_stock' => $closeout->product->stock,
                     'product_min_sale_price' => $closeout->product->min_sale_price,
-
-                    'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
+                    'product_image' => $images['product_image'],
+                    'product_viewImages' => $images['product_viewImages'],
+                    'product_normalImages' => $images['product_normalImages'],
+                    'product_image3d' => $images['product_image3d'],
                 ];
             });
 
@@ -1332,7 +1334,9 @@ class Stocks extends Controller
                      ->from('combinations');
              })
                  ->with([
+                     'viewImages:id,itemId,imageUrl',
                      'normalImages:id,itemId,imageUrl',
+                     'image3d:id,itemId,imageUrl',
                      'tags' => function ($q) {
                          $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                      },
@@ -1341,15 +1345,17 @@ class Stocks extends Controller
                  ->get(['id', 'nameAr', 'stock', 'product_code']); // select only needed columns
 
             $formatted = $productsWithCombinations->map(function ($product) {
-                $image = $product->normalImages->first();
+                $images = \App\Support\ProductImageResolver::formatForList($product);
 
                 return [
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
                     'product_stock' => $product->stock,
                     'product_code' => $product->product_code,
-                    'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
-
+                    'product_image' => $images['product_image'],
+                    'product_viewImages' => $images['product_viewImages'],
+                    'product_normalImages' => $images['product_normalImages'],
+                    'product_image3d' => $images['product_image3d'],
                     'number_of_used_products' => $product->combinations_count,
                     'tags' => $product->tags->map(fn ($t) => [
                         'id' => $t->id,
@@ -1461,6 +1467,7 @@ class Stocks extends Controller
                 ->with([
                     'viewImages:id,itemId,imageUrl',
                     'normalImages:id,itemId,imageUrl',
+                    'image3d:id,itemId,imageUrl',
                     'tags' => function ($q) {
                         $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                     },
@@ -1468,8 +1475,7 @@ class Stocks extends Controller
                 ->get(['id', 'nameAr', 'stock', 'product_code', 'normailPrice']);
 
             $formatted = $products->map(function ($product) {
-                $image = $product->viewImages->first()
-                    ?? $product->normalImages->first();
+                $images = \App\Support\ProductImageResolver::formatForList($product);
 
                 return [
                     'product_id' => $product->id,
@@ -1477,7 +1483,10 @@ class Stocks extends Controller
                     'product_stock' => $product->stock,
                     'product_normail_price' => (float) ($product->normailPrice ?? 0),
                     'product_code' => $product->product_code,
-                    'product_image' => $image ? $this->publicImagePath($image->imageUrl) : 'no image',
+                    'product_image' => $images['product_image'],
+                    'product_viewImages' => $images['product_viewImages'],
+                    'product_normalImages' => $images['product_normalImages'],
+                    'product_image3d' => $images['product_image3d'],
                     'tags' => $product->tags->map(fn ($t) => [
                         'id' => $t->id,
                         'name' => $t->name,

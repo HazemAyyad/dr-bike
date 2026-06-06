@@ -89,9 +89,9 @@ class ProductImageResolver
     {
         return [
             'product_image' => self::preferredUrl($product),
-            'product_viewImages' => self::mapValidUrls($product->viewImages),
-            'product_normalImages' => self::mapValidUrls($product->normalImages),
-            'product_image3d' => self::mapValidUrls($product->image3d),
+            'product_viewImages' => self::mapValidUrls($product->viewImages)->all(),
+            'product_normalImages' => self::mapValidUrls($product->normalImages)->all(),
+            'product_image3d' => self::mapValidUrls($product->image3d)->all(),
         ];
     }
 
