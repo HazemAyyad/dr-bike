@@ -15,6 +15,12 @@ class CheckSmsNotificationService
 {
     public function dispatchForAction(IncomingCheck|OutgoingCheck $check, string $eventType): void
     {
+        if ($check instanceof OutgoingCheck) {
+            app(CheckPushNotificationService::class)->dispatchForAction($check, $eventType);
+
+            return;
+        }
+
         $check->loadMissing($this->relationsFor($check));
 
         $rules = CheckNotificationRule::query()
@@ -30,6 +36,10 @@ class CheckSmsNotificationService
 
     public function sendForCheck(CheckNotificationRule $rule, IncomingCheck|OutgoingCheck $check, string $eventType): CheckNotificationLog
     {
+        if ($check instanceof OutgoingCheck) {
+            return app(CheckPushNotificationService::class)->sendForCheck($rule, $check, $eventType);
+        }
+
         $check->loadMissing($this->relationsFor($check));
 
         $checkType = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
@@ -201,7 +211,7 @@ class CheckSmsNotificationService
         return ['customer', 'seller'];
     }
 
-    private function renderMessage(string $template, IncomingCheck|OutgoingCheck $check): string
+    public function renderMessageForCheck(string $template, IncomingCheck|OutgoingCheck $check): string
     {
         $person = $check instanceof IncomingCheck
             ? ($check->fromCustomer ?: $check->fromSeller ?: $check->toCustomer ?: $check->toSeller)
@@ -218,5 +228,10 @@ class CheckSmsNotificationService
             '{bank}' => (string) ($check->bank_name ?? ''),
             '{check_type}' => $direction,
         ]);
+    }
+
+    private function renderMessage(string $template, IncomingCheck|OutgoingCheck $check): string
+    {
+        return $this->renderMessageForCheck($template, $check);
     }
 }

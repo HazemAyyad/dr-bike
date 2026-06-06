@@ -23,13 +23,96 @@ final class FingerprintAttendanceLogFilter
 
     public static function isValidDeviceUserPin(string $pin): bool
     {
+        return self::isStorableRawPin($pin);
+    }
+
+    /**
+     * Minimal check for persisting a row in fingerprint_raw_logs (ingest).
+     * Does not require verify/status — those are validated later for attendance.
+     */
+    public static function isStorableRawPin(string $pin): bool
+    {
         $pin = trim($pin);
 
         if ($pin === '' || self::containsOperlogMarker($pin)) {
             return false;
         }
 
+        if (in_array(strtoupper($pin), self::BLOCKED_PINS, true)) {
+            return false;
+        }
+
         return preg_match('/^[1-9][0-9]{0,7}$/', $pin) === 1;
+    }
+
+    /**
+     * @param  mixed  $row
+     */
+    public static function isStorableRawRow(string $deviceUserId, ?string $timeRaw, mixed $row = null): bool
+    {
+        if (! self::isStorableRawPin($deviceUserId)) {
+            return false;
+        }
+
+        if ($timeRaw === null || trim($timeRaw) === '') {
+            return false;
+        }
+
+        if ($row !== null && self::lineLooksLikeOperlog($row)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Persisted raw log eligible for activity-log UI (hide confirmed OPLOG junk only).
+     */
+    public static function isStorableRawLog(FingerprintRawLog $log): bool
+    {
+        if (! self::isStorableRawPin((string) $log->device_user_id)) {
+            return false;
+        }
+
+        if ($log->scan_time === null) {
+            return false;
+        }
+
+        if (self::payloadContainsOperlog($log->raw_payload) && ! self::isAttendanceLog($log)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * @param  mixed  $row
+     */
+    public static function lineLooksLikeOperlog(mixed $row): bool
+    {
+        if ($row === null) {
+            return false;
+        }
+
+        if (is_string($row)) {
+            $upper = strtoupper(trim($row));
+
+            return str_contains($upper, 'OPLOG')
+                || str_contains($upper, 'OPERLOG')
+                || preg_match('/^USER\b/i', $row) === 1
+                || preg_match('/^FP\b/i', $row) === 1;
+        }
+
+        if (is_array($row)) {
+            foreach (['PIN', 'pin', 'UserID', 'user_id'] as $key) {
+                $pin = strtoupper(trim((string) ($row[$key] ?? '')));
+                if ($pin === 'OPLOG' || $pin === 'OPERLOG' || $pin === 'USER' || $pin === 'FP') {
+                    return true;
+                }
+            }
+        }
+
+        return self::payloadContainsOperlog($row);
     }
 
     public static function containsOperlogMarker(string $value): bool
@@ -70,7 +153,7 @@ final class FingerprintAttendanceLogFilter
         ?string $resolvedEmployeeName = null,
         ?array $registeredPinsForDevice = null
     ): bool {
-        if (! self::isAttendanceLog($log)) {
+        if (! self::isStorableRawLog($log)) {
             return false;
         }
 
@@ -80,33 +163,13 @@ final class FingerprintAttendanceLogFilter
         }
 
         $err = strtolower(trim((string) ($log->processing_error ?? '')));
-        if ($err !== '' && (str_contains($err, 'oplog') || str_contains($err, 'operlog'))) {
-            return false;
-        }
 
+        // Confirmed device-operation log — hide from attendance activity UI only.
         if ($log->processing_status === 'ignored' && $err === 'operlog_not_attendance') {
             return false;
         }
 
-        // Real ATTLOG saved but not mapped to an employee yet — always show in activity log.
-        if ($err === 'employee_not_mapped') {
-            return true;
-        }
-
-        $employeeName = trim((string) ($resolvedEmployeeName ?? ''));
-        $isProcessed = trim((string) ($log->processing_status ?? '')) === 'processed';
-        $isPending = trim((string) ($log->processing_status ?? '')) === 'pending';
-
-        if ($isProcessed || $isPending || $employeeName !== '') {
-            return true;
-        }
-
-        if ($registeredPinsForDevice !== null && in_array($pin, $registeredPinsForDevice, true)) {
-            return true;
-        }
-
-        // Unmapped 0–100 codes with no device-user record are almost always OPLOG junk in old data.
-        if (self::isOperlogOperationCodePin($pin)) {
+        if ($err !== '' && str_contains($err, 'operlog_not_attendance')) {
             return false;
         }
 

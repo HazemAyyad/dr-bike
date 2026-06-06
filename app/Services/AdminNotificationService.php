@@ -35,6 +35,10 @@ class AdminNotificationService
 
     public const TYPE_CHECK_DUE_REMINDER = 'check_due_reminder';
 
+    public const TYPE_CHECK_CASHED = 'check_cashed';
+
+    public const TYPE_CHECK_RETURNED = 'check_returned';
+
     /**
      * @param  array<string, mixed>  $data
      */
@@ -545,7 +549,9 @@ class AdminNotificationService
             );
         }
 
-        if ($row->type === self::TYPE_CHECK_DUE_REMINDER) {
+        if ($row->type === self::TYPE_CHECK_DUE_REMINDER
+            || $row->type === self::TYPE_CHECK_CASHED
+            || $row->type === self::TYPE_CHECK_RETURNED) {
             $merged['check_id'] = (string) ($merged['check_id'] ?? $row->related_id ?? '');
         }
 

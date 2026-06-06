@@ -190,13 +190,14 @@ class FingerprintPushController extends Controller
 
             $device->forceFill(['last_seen_at' => now()])->save();
 
-            $inserted = 0;
+            $saved = 0;
             $ignored = 0;
 
             foreach ($rows as $row) {
                 $deviceUserId = trim((string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''));
                 $timeRaw = trim((string) ($row['Time'] ?? $row['time'] ?? $row['DateTime'] ?? $row['datetime'] ?? ''));
-                if ($deviceUserId === '' || $timeRaw === '' || strtoupper($deviceUserId) === 'OPLOG') {
+
+                if (! FingerprintAttendanceLogFilter::isStorableRawRow($deviceUserId, $timeRaw, $row)) {
                     $ignored++;
                     continue;
                 }
@@ -204,17 +205,13 @@ class FingerprintPushController extends Controller
                 $verifyType = isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null);
                 $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
 
-                if (! FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $row)) {
-                    $ignored++;
-                    continue;
-                }
-
                 $scanTime = $this->parseScanTime($timeRaw);
                 if (! $scanTime) {
                     $ignored++;
                     continue;
                 }
 
+                $isAttendance = FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $row);
                 $deviceLogUid = isset($row['UID']) ? (string) $row['UID'] : (isset($row['uid']) ? (string) $row['uid'] : null);
 
                 FingerprintDeviceUser::query()->firstOrCreate(
@@ -241,15 +238,16 @@ class FingerprintPushController extends Controller
                             'ip' => $request->ip(),
                             'ua' => (string) $request->userAgent(),
                         ],
-                        'processing_status' => 'pending',
+                        'processing_status' => $isAttendance ? 'pending' : 'ignored',
+                        'processing_error' => $isAttendance ? null : 'incomplete_attlog',
                     ]
                 );
 
-                if ($rawLog->processing_status === 'pending') {
+                if ($isAttendance && $rawLog->processing_status === 'pending') {
                     app(FingerprintAttendanceProcessor::class)->processRawLog($rawLog);
                 }
 
-                $inserted++;
+                $saved++;
             }
 
             AdmsDebugLogger::logOutcome('attendance', [
@@ -257,7 +255,7 @@ class FingerprintPushController extends Controller
                 'sn' => $sn,
                 'device_id' => (int) $device->id,
                 'rows_parsed' => count($rows),
-                'inserted' => $inserted,
+                'saved' => $saved,
                 'ignored' => $ignored,
             ]);
 
@@ -321,10 +319,25 @@ class FingerprintPushController extends Controller
                     'Status' => $m[3],
                     'Verify' => $m[4],
                 ];
-                if (FingerprintAttendanceLogFilter::isAttendanceRow(
+                if (FingerprintAttendanceLogFilter::isStorableRawRow(
                     $candidate['PIN'],
-                    $candidate['Verify'],
-                    $candidate['Status'],
+                    $candidate['Time'],
+                    $candidate
+                )) {
+                    $rows[] = $candidate;
+                }
+                continue;
+            }
+
+            // ATTLOG بدون verify/status: "PIN 2026-06-02 08:00:00"
+            if (preg_match('/^(\d+)\s+(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})/', $line, $m)) {
+                $candidate = [
+                    'PIN' => $m[1],
+                    'Time' => $m[2],
+                ];
+                if (FingerprintAttendanceLogFilter::isStorableRawRow(
+                    $candidate['PIN'],
+                    $candidate['Time'],
                     $candidate
                 )) {
                     $rows[] = $candidate;
@@ -343,13 +356,12 @@ class FingerprintPushController extends Controller
                 [$k, $v] = explode('=', $p, 2);
                 $row[trim($k)] = trim($v);
             }
-            if ($row && FingerprintAttendanceLogFilter::isAttendanceRow(
-                (string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''),
-                isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null),
-                isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null),
-                $row
-            )) {
-                $rows[] = $row;
+            if ($row) {
+                $pin = trim((string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''));
+                $timeRaw = trim((string) ($row['Time'] ?? $row['time'] ?? $row['DateTime'] ?? $row['datetime'] ?? ''));
+                if (FingerprintAttendanceLogFilter::isStorableRawRow($pin, $timeRaw, $row)) {
+                    $rows[] = $row;
+                }
                 continue;
             }
 
@@ -357,24 +369,19 @@ class FingerprintPushController extends Controller
             $cols = preg_split("/\t+/", $line) ?: [];
             if (count($cols) >= 2 && ! str_contains($line, '=')) {
                 $pin = trim($cols[0]);
-                if (! FingerprintAttendanceLogFilter::isValidDeviceUserPin($pin)) {
-                    continue;
-                }
                 $candidate = [
                     'PIN' => $pin,
                     'Time' => trim($cols[1]),
                     'Status' => isset($cols[2]) ? trim($cols[2]) : null,
                     'Verify' => isset($cols[3]) ? trim($cols[3]) : null,
                 ];
-                if (! FingerprintAttendanceLogFilter::isAttendanceRow(
+                if (FingerprintAttendanceLogFilter::isStorableRawRow(
                     $pin,
-                    $candidate['Verify'],
-                    $candidate['Status'],
+                    $candidate['Time'],
                     $candidate
                 )) {
-                    continue;
+                    $rows[] = $candidate;
                 }
-                $rows[] = $candidate;
             }
         }
 
@@ -383,9 +390,8 @@ class FingerprintPushController extends Controller
             $maybeRow = array_filter($request->all(), fn ($v) => $v !== null && $v !== '');
             if ($maybeRow) {
                 $pin = trim((string) ($maybeRow['PIN'] ?? $maybeRow['pin'] ?? $maybeRow['UserID'] ?? $maybeRow['user_id'] ?? ''));
-                $verify = isset($maybeRow['Verify']) ? (string) $maybeRow['Verify'] : (isset($maybeRow['verify']) ? (string) $maybeRow['verify'] : null);
-                $status = isset($maybeRow['Status']) ? (string) $maybeRow['Status'] : (isset($maybeRow['status']) ? (string) $maybeRow['status'] : null);
-                if (FingerprintAttendanceLogFilter::isAttendanceRow($pin, $verify, $status, $maybeRow)) {
+                $timeRaw = trim((string) ($maybeRow['Time'] ?? $maybeRow['time'] ?? $maybeRow['DateTime'] ?? $maybeRow['datetime'] ?? ''));
+                if (FingerprintAttendanceLogFilter::isStorableRawRow($pin, $timeRaw, $maybeRow)) {
                     $rows[] = $maybeRow;
                 }
             }

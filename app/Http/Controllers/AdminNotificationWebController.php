@@ -205,6 +205,8 @@ class AdminNotificationWebController extends Controller
             AdminNotificationService::TYPE_EMPLOYEE_TASK_COMPLETED => 'مهمة مكتملة',
             AdminNotificationService::TYPE_EMPLOYEE_LOGOUT_PENDING_TASKS => 'خروج بمهام معلقة',
             AdminNotificationService::TYPE_CHECK_DUE_REMINDER => 'شيك يستحق قريباً',
+            AdminNotificationService::TYPE_CHECK_CASHED => 'صرف شيك صادر',
+            AdminNotificationService::TYPE_CHECK_RETURNED => 'إرجاع شيك صادر',
         ];
     }
 }
