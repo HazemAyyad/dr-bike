@@ -190,11 +190,30 @@ class FingerprintPushController extends Controller
 
             $device->forceFill(['last_seen_at' => now()])->save();
 
+            $rawBody = (string) $request->getContent();
             $saved = 0;
             foreach ($rows as $row) {
                 if ($this->saveRawLogRow($device, $sn, $row, $request, $pushTable)) {
                     $saved++;
                 }
+            }
+
+            if ($saved === 0 && trim($rawBody) !== '') {
+                $fallback = $this->fallbackRowFromLine(trim($rawBody), $pushTable);
+                if ($this->saveRawLogRow($device, $sn, $fallback, $request, $pushTable)) {
+                    $saved = 1;
+                }
+            }
+
+            if ($saved === 0) {
+                Log::warning('fingerprint_push.no_rows_saved', [
+                    'sn' => $sn,
+                    'device_id' => (int) $device->id,
+                    'table' => $pushTable,
+                    'rows_parsed' => count($rows),
+                    'raw_length' => strlen($rawBody),
+                    'raw_preview' => substr($rawBody, 0, 500),
+                ]);
             }
 
             AdmsDebugLogger::logOutcome('attendance', [

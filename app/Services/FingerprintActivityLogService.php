@@ -30,7 +30,10 @@ class FingerprintActivityLogService
         $from = now()->subDays($days - 1)->startOfDay();
         $to = now()->endOfDay();
 
-        $query = FingerprintRawLog::query()->whereBetween('scan_time', [$from, $to]);
+        $query = FingerprintRawLog::query()->where(function ($q) use ($from, $to) {
+            $q->whereBetween('scan_time', [$from, $to])
+                ->orWhereBetween('created_at', [$from, $to]);
+        });
 
         if ($deviceId !== null) {
             $query->where('attendance_device_id', $deviceId);
@@ -38,7 +41,7 @@ class FingerprintActivityLogService
 
         /** @var Collection<int, FingerprintRawLog> $logs */
         $logs = $query
-            ->orderByDesc('scan_time')
+            ->orderByRaw('COALESCE(created_at, scan_time) DESC')
             ->limit($limit)
             ->get();
 
@@ -50,13 +53,10 @@ class FingerprintActivityLogService
 
         $byDate = [];
         foreach ($logs as $log) {
-            if (! $log->scan_time) {
-                continue;
-            }
-
-            $dateKey = $log->scan_time->toDateString();
+            $dateKey = $this->displayDateForLog($log);
             $pin = (string) $log->device_user_id;
             $devId = (int) $log->attendance_device_id;
+            $scanAt = $log->scan_time ?? $log->created_at ?? now();
 
             $byDate[$dateKey][] = [
                 'id' => (int) $log->id,
@@ -64,7 +64,7 @@ class FingerprintActivityLogService
                 'device_name' => (string) ($deviceNames[$devId] ?? ''),
                 'device_user_id' => $pin,
                 'employee_name' => $nameResolver($devId, $pin),
-                'scan_time' => $log->scan_time->toIso8601String(),
+                'scan_time' => $scanAt->toIso8601String(),
                 'action' => $this->actionFromStatus($log->status),
                 'verify_type' => $log->verify_type,
                 'status' => $log->status,
@@ -138,6 +138,18 @@ class FingerprintActivityLogService
 
             return null;
         };
+    }
+
+    protected function displayDateForLog(FingerprintRawLog $log): string
+    {
+        if ($log->scan_time) {
+            $scan = Carbon::parse($log->scan_time);
+            if ($scan->between(now()->subYear(), now()->addDay())) {
+                return $scan->toDateString();
+            }
+        }
+
+        return ($log->created_at ?? now())->toDateString();
     }
 
     protected function actionFromStatus(mixed $status): string
