@@ -20,6 +20,12 @@ class EmployeeVisibleTasks
 {
     public const TIMEZONE = 'Asia/Hebron';
 
+    /** Match lazy occurrence generation in EmployeeTaskRecurrenceService. */
+    public const OCCURRENCE_VISIBILITY_DAYS_FORWARD = 14;
+
+    /** Allow overdue / previous week navigation in the employee app. */
+    public const OCCURRENCE_VISIBILITY_DAYS_BACK = 7;
+
     public static function legacyForEmployee(int $employeeId): Collection
     {
         return EmployeeTask::query()
@@ -163,26 +169,15 @@ class EmployeeVisibleTasks
 
     public static function passesOccurrenceDayFilter(EmployeeTaskOccurrence $task): bool
     {
-        $today = self::todayDateString();
-        $scheduled = $task->scheduled_date
-            ? Carbon::parse($task->scheduled_date)->toDateString()
-            : Carbon::parse($task->start_time)->toDateString();
+        $today = Carbon::now()->timezone(self::TIMEZONE)->startOfDay();
+        $scheduled = Carbon::parse($task->scheduled_date ?? $task->start_time)
+            ->timezone(self::TIMEZONE)
+            ->startOfDay();
 
-        if ($scheduled === $today) {
-            return true;
-        }
+        $from = $today->copy()->subDays(self::OCCURRENCE_VISIBILITY_DAYS_BACK);
+        $to = $today->copy()->addDays(self::OCCURRENCE_VISIBILITY_DAYS_FORWARD);
 
-        $task->loadMissing('template');
-        $type = $task->template?->recurrence_type ?? 'noRepeat';
-
-        return match ($type) {
-            'daily' => true,
-            'weekly' => strtolower(Carbon::parse($task->start_time)->format('l'))
-                === strtolower(now()->timezone(self::TIMEZONE)->format('l')),
-            'monthly' => (int) Carbon::parse($task->start_time)->format('d')
-                === (int) now()->timezone(self::TIMEZONE)->format('d'),
-            default => $scheduled === $today,
-        };
+        return $scheduled->betweenIncluded($from, $to);
     }
 
     public static function todayDateString(): string
@@ -238,6 +233,7 @@ class EmployeeVisibleTasks
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'occurrence_id' => $task->occurrence_id,
+            'template_id' => $task->template_id,
             'source' => 'legacy',
             'has_sub_tasks' => $subCount > 0,
             'sub_tasks_count' => $subCount,
@@ -284,6 +280,7 @@ class EmployeeVisibleTasks
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'occurrence_id' => $task->id,
+            'template_id' => $task->template_id,
             'source' => 'occurrence',
             'has_sub_tasks' => $subCount > 0,
             'sub_tasks_count' => $subCount,
