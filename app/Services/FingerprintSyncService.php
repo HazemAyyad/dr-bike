@@ -119,23 +119,19 @@ class FingerprintSyncService
 
             $isAttendance = FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $l);
 
-            $rawLog = FingerprintRawLog::query()->firstOrCreate(
-                [
-                    'attendance_device_id' => $device->id,
-                    'device_user_id' => $deviceUserId,
-                    'scan_time' => $scanAt,
-                ],
-                [
-                    'device_log_uid' => $l['device_log_uid'] ?? null,
-                    'verify_type' => $verifyType,
-                    'status' => $status,
-                    'raw_payload' => $l,
-                    'processing_status' => $isAttendance ? 'pending' : 'ignored',
-                    'processing_error' => $isAttendance ? null : 'not_processed_for_attendance',
-                ]
-            );
+            $rawLog = FingerprintRawLog::query()->create([
+                'attendance_device_id' => $device->id,
+                'device_user_id' => $deviceUserId,
+                'scan_time' => $scanAt,
+                'device_log_uid' => $l['device_log_uid'] ?? null,
+                'verify_type' => $verifyType,
+                'status' => $status,
+                'raw_payload' => array_merge($l, ['received_at' => now()->toIso8601String()]),
+                'processing_status' => $isAttendance ? 'pending' : 'ignored',
+                'processing_error' => $isAttendance ? null : 'not_processed_for_attendance',
+            ]);
 
-            if ($isAttendance && $rawLog->processing_status === 'pending') {
+            if ($isAttendance) {
                 app(FingerprintAttendanceProcessor::class)->processRawLog($rawLog);
             }
             $synced++;

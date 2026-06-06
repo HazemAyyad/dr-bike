@@ -264,29 +264,26 @@ class FingerprintPushController extends Controller
 
         $isAttendance = FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $row);
 
-        $rawLog = FingerprintRawLog::query()->firstOrCreate(
-            [
-                'attendance_device_id' => $device->id,
-                'device_user_id' => $deviceUserId,
-                'scan_time' => $scanTime->toDateTimeString(),
+        $rawLog = FingerprintRawLog::query()->create([
+            'attendance_device_id' => $device->id,
+            'device_user_id' => $deviceUserId,
+            'scan_time' => $scanTime->toDateTimeString(),
+            'device_log_uid' => $deviceLogUid,
+            'verify_type' => $verifyType,
+            'status' => $status,
+            'raw_payload' => [
+                'sn' => $sn,
+                'table' => $pushTable,
+                'row' => $row,
+                'ip' => $request->ip(),
+                'ua' => (string) $request->userAgent(),
+                'received_at' => now()->toIso8601String(),
             ],
-            [
-                'device_log_uid' => $deviceLogUid,
-                'verify_type' => $verifyType,
-                'status' => $status,
-                'raw_payload' => [
-                    'sn' => $sn,
-                    'table' => $pushTable,
-                    'row' => $row,
-                    'ip' => $request->ip(),
-                    'ua' => (string) $request->userAgent(),
-                ],
-                'processing_status' => $isAttendance ? 'pending' : 'ignored',
-                'processing_error' => $isAttendance ? null : 'not_processed_for_attendance',
-            ]
-        );
+            'processing_status' => $isAttendance ? 'pending' : 'ignored',
+            'processing_error' => $isAttendance ? null : 'not_processed_for_attendance',
+        ]);
 
-        if ($isAttendance && $rawLog->processing_status === 'pending') {
+        if ($isAttendance) {
             app(FingerprintAttendanceProcessor::class)->processRawLog($rawLog);
         }
 
