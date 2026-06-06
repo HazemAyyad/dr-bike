@@ -91,6 +91,8 @@ class OutgoingChecks extends Controller
                 'status'=>'success',
                 'checks_status' =>$status,
                 'checks_images_path' => 'public/OutgoingChecksImages',
+                'front_checks_images_path' => 'public/OutgoingChecksImages',
+                'back_checks_images_path' => 'public/OutgoingChecksImages/back',
                 $status.'_'.'checks' => $checks,
 
 
@@ -181,6 +183,8 @@ class OutgoingChecks extends Controller
                 'status'=>'success',
                 'archived_checks' =>$checks,
                 'checks_images_path' => 'public/OutgoingChecksImages',
+                'front_checks_images_path' => 'public/OutgoingChecksImages',
+                'back_checks_images_path' => 'public/OutgoingChecksImages/back',
                 'checks_count' => OutgoingCheck::whereIn('status', [
                         'cancelled',
                         'returned',
@@ -550,10 +554,13 @@ class OutgoingChecks extends Controller
 
             $data = $request->validate([
                 'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
+                'total' => 'required|numeric|min:1',
                 'due_date' => 'required|date',
+                'currency' => 'required|string',
                 'check_id' => 'required|string',
                 'bank_name' => 'required|string',
                 'img'   => 'nullable',
+                'back_image' => 'nullable',
                 'notes' => 'nullable|string',
 
             ]);
@@ -563,9 +570,12 @@ class OutgoingChecks extends Controller
 
             $data = IncomingChecks::handleImages($request, $data, [
                 'img' => 'OutgoingChecksImages',
-            ], $outgoingCheck);     
+                'back_image' => 'OutgoingChecksImages/back',
+            ], $outgoingCheck);
 
             $outgoingCheck->update($data);
+
+            app(DebtLedgerService::class)->syncOutgoingCheckToLedger($outgoingCheck->fresh());
 
             return response()->json([
                 'status'=>'success',

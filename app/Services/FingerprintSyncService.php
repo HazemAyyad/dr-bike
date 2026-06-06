@@ -100,20 +100,21 @@ class FingerprintSyncService
             if (! is_array($l)) {
                 continue;
             }
-            $deviceUserId = (string) ($l['device_user_id'] ?? $l['uid'] ?? $l['id'] ?? '');
-            $scanTime = $l['scan_time'] ?? $l['timestamp'] ?? $l['time'] ?? null;
-            $verifyType = isset($l['verify_type']) ? (string) $l['verify_type'] : null;
-            $status = isset($l['status']) ? (string) $l['status'] : null;
-            if ($deviceUserId === '' || $scanTime === null) {
-                continue;
+            $deviceUserId = trim((string) ($l['device_user_id'] ?? $l['uid'] ?? $l['id'] ?? $l['PIN'] ?? $l['pin'] ?? ''));
+            $scanTime = $l['scan_time'] ?? $l['timestamp'] ?? $l['time'] ?? $l['Time'] ?? null;
+            $verifyType = isset($l['verify_type']) ? (string) $l['verify_type'] : (isset($l['Verify']) ? (string) $l['Verify'] : null);
+            $status = isset($l['status']) ? (string) $l['status'] : (isset($l['Status']) ? (string) $l['Status'] : null);
+
+            if ($deviceUserId === '') {
+                $deviceUserId = 'RAW';
             }
-            if (! FingerprintAttendanceLogFilter::isStorableRawRow($deviceUserId, is_string($scanTime) ? $scanTime : null, $l)) {
-                continue;
-            }
+
             try {
-                $scanAt = is_string($scanTime) ? now()->parse($scanTime) : $scanTime;
+                $scanAt = $scanTime !== null
+                    ? (is_string($scanTime) ? now()->parse($scanTime) : $scanTime)
+                    : now();
             } catch (\Throwable $e) {
-                continue;
+                $scanAt = now();
             }
 
             $isAttendance = FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $l);
@@ -130,7 +131,7 @@ class FingerprintSyncService
                     'status' => $status,
                     'raw_payload' => $l,
                     'processing_status' => $isAttendance ? 'pending' : 'ignored',
-                    'processing_error' => $isAttendance ? null : 'incomplete_attlog',
+                    'processing_error' => $isAttendance ? null : 'not_processed_for_attendance',
                 ]
             );
 

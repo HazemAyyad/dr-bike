@@ -38,16 +38,16 @@ class FingerprintPushController extends Controller
             return $this->iclockHandshakeResponse($sn !== '' ? $sn : 'unknown');
         }
 
-        // OPERLOG / OPLOG = سجل عمليات الجهاز (إعدادات، تشغيل، إلخ) — ليس حضوراً.
+        // OPERLOG / OPLOG — save to raw log; attendance processing stays separate.
         if (in_array($table, ['OPERLOG', 'OPLOG'], true)) {
             $this->touchDeviceLastSeen($sn);
             AdmsDebugLogger::logOutcome('iclock/cdata', [
-                'branch' => 'operlog_ack_only',
+                'branch' => 'operlog_persist',
                 'sn' => $sn,
                 'table' => $table,
             ]);
 
-            return response('OK', 200)->header('Content-Type', 'text/plain');
+            return $this->attendance($request, $table);
         }
 
         if ($table === 'ATTLOG' || $request->isMethod('POST')) {
@@ -57,7 +57,7 @@ class FingerprintPushController extends Controller
                 'table' => $table,
             ]);
 
-            return $this->attendance($request);
+            return $this->attendance($request, $table !== '' ? $table : 'ATTLOG');
         }
 
         AdmsDebugLogger::logOutcome('iclock/cdata', [
@@ -134,7 +134,7 @@ class FingerprintPushController extends Controller
         return response($body, 200)->header('Content-Type', 'text/plain');
     }
 
-    public function attendance(Request $request)
+    public function attendance(Request $request, ?string $pushTable = null)
     {
         AdmsDebugLogger::log($request, 'attendance');
 
@@ -164,7 +164,7 @@ class FingerprintPushController extends Controller
                 }
             }
 
-            [$sn, $rows] = $this->parseZkPushPayload($request);
+            [$sn, $rows] = $this->parseZkPushPayload($request, $pushTable);
             if ($sn === null || $sn === '') {
                 Log::warning('fingerprint_push.missing_sn', [
                     'ip' => $request->ip(),
@@ -191,75 +191,21 @@ class FingerprintPushController extends Controller
             $device->forceFill(['last_seen_at' => now()])->save();
 
             $saved = 0;
-            $ignored = 0;
-
             foreach ($rows as $row) {
-                $deviceUserId = trim((string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''));
-                $timeRaw = trim((string) ($row['Time'] ?? $row['time'] ?? $row['DateTime'] ?? $row['datetime'] ?? ''));
-
-                if (! FingerprintAttendanceLogFilter::isStorableRawRow($deviceUserId, $timeRaw, $row)) {
-                    $ignored++;
-                    continue;
+                if ($this->saveRawLogRow($device, $sn, $row, $request, $pushTable)) {
+                    $saved++;
                 }
-
-                $verifyType = isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null);
-                $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
-
-                $scanTime = $this->parseScanTime($timeRaw);
-                if (! $scanTime) {
-                    $ignored++;
-                    continue;
-                }
-
-                $isAttendance = FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $row);
-                $deviceLogUid = isset($row['UID']) ? (string) $row['UID'] : (isset($row['uid']) ? (string) $row['uid'] : null);
-
-                FingerprintDeviceUser::query()->firstOrCreate(
-                    [
-                        'attendance_device_id' => $device->id,
-                        'device_user_id' => $deviceUserId,
-                    ],
-                    ['last_synced_at' => now()]
-                );
-
-                $rawLog = FingerprintRawLog::query()->firstOrCreate(
-                    [
-                        'attendance_device_id' => $device->id,
-                        'device_user_id' => $deviceUserId,
-                        'scan_time' => $scanTime->toDateTimeString(),
-                    ],
-                    [
-                        'device_log_uid' => $deviceLogUid,
-                        'verify_type' => $verifyType,
-                        'status' => $status,
-                        'raw_payload' => [
-                            'sn' => $sn,
-                            'row' => $row,
-                            'ip' => $request->ip(),
-                            'ua' => (string) $request->userAgent(),
-                        ],
-                        'processing_status' => $isAttendance ? 'pending' : 'ignored',
-                        'processing_error' => $isAttendance ? null : 'incomplete_attlog',
-                    ]
-                );
-
-                if ($isAttendance && $rawLog->processing_status === 'pending') {
-                    app(FingerprintAttendanceProcessor::class)->processRawLog($rawLog);
-                }
-
-                $saved++;
             }
 
             AdmsDebugLogger::logOutcome('attendance', [
                 'stop' => 'ok',
                 'sn' => $sn,
                 'device_id' => (int) $device->id,
+                'table' => $pushTable,
                 'rows_parsed' => count($rows),
                 'saved' => $saved,
-                'ignored' => $ignored,
             ]);
 
-            // ADMS devices typically require a simple plain-text "OK"
             return response('OK', 200)->header('Content-Type', 'text/plain');
         } catch (\Throwable $e) {
             Log::error('fingerprint_push.failed', [
@@ -275,9 +221,120 @@ class FingerprintPushController extends Controller
     }
 
     /**
+     * Persist one parsed push row — no ingest filtering (filter in app UI only).
+     *
+     * @param  array<string, mixed>  $row
+     */
+    protected function saveRawLogRow(
+        AttendanceDevice $device,
+        string $sn,
+        array $row,
+        Request $request,
+        ?string $pushTable = null
+    ): bool {
+        $deviceUserId = trim((string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''));
+        $timeRaw = trim((string) ($row['Time'] ?? $row['time'] ?? $row['DateTime'] ?? $row['datetime'] ?? ''));
+
+        if ($deviceUserId === '' && isset($row['_raw_line'])) {
+            $deviceUserId = $this->guessPinFromLine((string) $row['_raw_line']);
+        }
+        if ($deviceUserId === '') {
+            $deviceUserId = 'RAW';
+        }
+
+        if ($timeRaw === '' && isset($row['_raw_line'])) {
+            $timeRaw = $this->guessTimeFromLine((string) $row['_raw_line']) ?? '';
+        }
+        $scanTime = $timeRaw !== '' ? $this->parseScanTime($timeRaw) : null;
+        $scanTime ??= now();
+
+        $verifyType = isset($row['Verify']) ? (string) $row['Verify'] : (isset($row['verify']) ? (string) $row['verify'] : null);
+        $status = isset($row['Status']) ? (string) $row['Status'] : (isset($row['status']) ? (string) $row['status'] : null);
+        $deviceLogUid = isset($row['UID']) ? (string) $row['UID'] : (isset($row['uid']) ? (string) $row['uid'] : null);
+
+        if (FingerprintAttendanceLogFilter::isValidDeviceUserPin($deviceUserId)) {
+            FingerprintDeviceUser::query()->firstOrCreate(
+                [
+                    'attendance_device_id' => $device->id,
+                    'device_user_id' => $deviceUserId,
+                ],
+                ['last_synced_at' => now()]
+            );
+        }
+
+        $isAttendance = FingerprintAttendanceLogFilter::isAttendanceRow($deviceUserId, $verifyType, $status, $row);
+
+        $rawLog = FingerprintRawLog::query()->firstOrCreate(
+            [
+                'attendance_device_id' => $device->id,
+                'device_user_id' => $deviceUserId,
+                'scan_time' => $scanTime->toDateTimeString(),
+            ],
+            [
+                'device_log_uid' => $deviceLogUid,
+                'verify_type' => $verifyType,
+                'status' => $status,
+                'raw_payload' => [
+                    'sn' => $sn,
+                    'table' => $pushTable,
+                    'row' => $row,
+                    'ip' => $request->ip(),
+                    'ua' => (string) $request->userAgent(),
+                ],
+                'processing_status' => $isAttendance ? 'pending' : 'ignored',
+                'processing_error' => $isAttendance ? null : 'not_processed_for_attendance',
+            ]
+        );
+
+        if ($isAttendance && $rawLog->processing_status === 'pending') {
+            app(FingerprintAttendanceProcessor::class)->processRawLog($rawLog);
+        }
+
+        return true;
+    }
+
+    protected function guessPinFromLine(string $line): string
+    {
+        $line = trim($line);
+        if ($line === '') {
+            return 'RAW';
+        }
+
+        if (preg_match('/^OPLOG[\s\t]+(\d+)/i', $line, $m)) {
+            return 'OPLOG-'.$m[1];
+        }
+        if (preg_match('/^OPLOG\b/i', $line)) {
+            return 'OPLOG';
+        }
+        if (preg_match('/^USER\b/i', $line)) {
+            return 'USER';
+        }
+        if (preg_match('/^FP\b/i', $line)) {
+            return 'FP';
+        }
+        if (preg_match('/^(\d+)/', $line, $m)) {
+            return $m[1];
+        }
+        if (preg_match('/^(\S+)/', $line, $m)) {
+            return $m[1];
+        }
+
+        return 'RAW';
+    }
+
+    protected function guessTimeFromLine(string $line): ?string
+    {
+        if (preg_match('/(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})/', $line, $m)) {
+            return $m[1];
+        }
+
+        return null;
+    }
+
+    /**
      * @return array{0: string|null, 1: array<int, array<string, mixed>>}
      */
-    protected function parseZkPushPayload(Request $request): array
+    protected function parseZkPushPayload(Request $request, ?string $pushTable = null): array
     {
         $sn = $request->query('SN')
             ?? $request->query('sn')
@@ -286,13 +343,11 @@ class FingerprintPushController extends Controller
 
         $raw = (string) $request->getContent();
 
-        // Some firmwares send "SN=...&..." in body as form-url-encoded
         if (($sn === null || $sn === '') && $raw !== '' && str_contains($raw, 'SN=')) {
             parse_str(str_replace("\n", '&', $raw), $parsed);
             $sn = $parsed['SN'] ?? $parsed['sn'] ?? $sn;
         }
 
-        // Rows can arrive as multiple lines: "PIN=1\tTime=2026-06-02 08:00:00\tStatus=0\tVerify=1"
         $lines = preg_split("/\r\n|\n|\r/", $raw) ?: [];
         $rows = [];
 
@@ -302,102 +357,102 @@ class FingerprintPushController extends Controller
                 continue;
             }
 
-            // سجل عمليات الجهاز — ليس بصمة حضور (قد يكون بدون كلمة OPLOG في السطر)
-            if (preg_match('/^OPLOG\b/i', $line)
-                || preg_match('/\bOPLOG\b/i', $line)
-                || preg_match('/\bOPERLOG\b/i', $line)
-                || preg_match('/^USER\b/i', $line)
-                || preg_match('/^FP\b/i', $line)) {
-                continue;
-            }
-
-            // ATTLOG شائع: "PIN 2026-06-02 08:00:00 0 1" (مسافات)
-            if (preg_match('/^(\d+)\s+(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})\s+(\d+)\s+(\d+)/', $line, $m)) {
-                $candidate = [
-                    'PIN' => $m[1],
-                    'Time' => $m[2],
-                    'Status' => $m[3],
-                    'Verify' => $m[4],
-                ];
-                if (FingerprintAttendanceLogFilter::isStorableRawRow(
-                    $candidate['PIN'],
-                    $candidate['Time'],
-                    $candidate
-                )) {
-                    $rows[] = $candidate;
-                }
-                continue;
-            }
-
-            // ATTLOG بدون verify/status: "PIN 2026-06-02 08:00:00"
-            if (preg_match('/^(\d+)\s+(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})/', $line, $m)) {
-                $candidate = [
-                    'PIN' => $m[1],
-                    'Time' => $m[2],
-                ];
-                if (FingerprintAttendanceLogFilter::isStorableRawRow(
-                    $candidate['PIN'],
-                    $candidate['Time'],
-                    $candidate
-                )) {
-                    $rows[] = $candidate;
-                }
-                continue;
-            }
-
-            // Try tab separated key=val pairs
-            $row = [];
-            $parts = preg_split("/\t+/", $line) ?: [];
-            foreach ($parts as $p) {
-                $p = trim($p);
-                if ($p === '' || ! str_contains($p, '=')) {
-                    continue;
-                }
-                [$k, $v] = explode('=', $p, 2);
-                $row[trim($k)] = trim($v);
-            }
-            if ($row) {
-                $pin = trim((string) ($row['PIN'] ?? $row['pin'] ?? $row['UserID'] ?? $row['user_id'] ?? ''));
-                $timeRaw = trim((string) ($row['Time'] ?? $row['time'] ?? $row['DateTime'] ?? $row['datetime'] ?? ''));
-                if (FingerprintAttendanceLogFilter::isStorableRawRow($pin, $timeRaw, $row)) {
-                    $rows[] = $row;
-                }
-                continue;
-            }
-
-            // Some firmware: "PIN\tTime\tStatus\tVerify\t..."
-            $cols = preg_split("/\t+/", $line) ?: [];
-            if (count($cols) >= 2 && ! str_contains($line, '=')) {
-                $pin = trim($cols[0]);
-                $candidate = [
-                    'PIN' => $pin,
-                    'Time' => trim($cols[1]),
-                    'Status' => isset($cols[2]) ? trim($cols[2]) : null,
-                    'Verify' => isset($cols[3]) ? trim($cols[3]) : null,
-                ];
-                if (FingerprintAttendanceLogFilter::isStorableRawRow(
-                    $pin,
-                    $candidate['Time'],
-                    $candidate
-                )) {
-                    $rows[] = $candidate;
-                }
+            $parsed = $this->parsePushLine($line, $pushTable);
+            if ($parsed !== null) {
+                $rows[] = $parsed;
             }
         }
 
-        // If no per-line rows were detected, fall back to request params as a single row
         if (! $rows) {
             $maybeRow = array_filter($request->all(), fn ($v) => $v !== null && $v !== '');
             if ($maybeRow) {
-                $pin = trim((string) ($maybeRow['PIN'] ?? $maybeRow['pin'] ?? $maybeRow['UserID'] ?? $maybeRow['user_id'] ?? ''));
-                $timeRaw = trim((string) ($maybeRow['Time'] ?? $maybeRow['time'] ?? $maybeRow['DateTime'] ?? $maybeRow['datetime'] ?? ''));
-                if (FingerprintAttendanceLogFilter::isStorableRawRow($pin, $timeRaw, $maybeRow)) {
-                    $rows[] = $maybeRow;
-                }
+                $maybeRow['_table'] = $pushTable;
+                $rows[] = $maybeRow;
+            } elseif ($raw !== '') {
+                $rows[] = $this->fallbackRowFromLine($raw, $pushTable);
             }
         }
 
         return [(string) $sn, $rows];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    protected function parsePushLine(string $line, ?string $pushTable = null): ?array
+    {
+        if (preg_match('/^(\d+)\s+(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})\s+(\d+)\s+(\d+)/', $line, $m)) {
+            return [
+                'PIN' => $m[1],
+                'Time' => $m[2],
+                'Status' => $m[3],
+                'Verify' => $m[4],
+                '_raw_line' => $line,
+                '_table' => $pushTable,
+            ];
+        }
+
+        if (preg_match('/^(\d+)\s+(\d{4}[-\/]\d{2}[-\/]\d{2}\s+\d{2}:\d{2}:\d{2})/', $line, $m)) {
+            return [
+                'PIN' => $m[1],
+                'Time' => $m[2],
+                '_raw_line' => $line,
+                '_table' => $pushTable,
+            ];
+        }
+
+        if (preg_match('/^OPLOG\b/i', $line)) {
+            $row = $this->fallbackRowFromLine($line, $pushTable);
+            $row['_kind'] = 'oplog';
+
+            return $row;
+        }
+
+        $row = [];
+        $parts = preg_split("/\t+/", $line) ?: [];
+        foreach ($parts as $p) {
+            $p = trim($p);
+            if ($p === '' || ! str_contains($p, '=')) {
+                continue;
+            }
+            [$k, $v] = explode('=', $p, 2);
+            $row[trim($k)] = trim($v);
+        }
+        if ($row) {
+            $row['_raw_line'] = $line;
+            $row['_table'] = $pushTable;
+
+            return $row;
+        }
+
+        $cols = preg_split("/\t+/", $line) ?: [];
+        if (count($cols) >= 2 && ! str_contains($line, '=')) {
+            return [
+                'PIN' => trim($cols[0]),
+                'Time' => trim($cols[1]),
+                'Status' => isset($cols[2]) ? trim($cols[2]) : null,
+                'Verify' => isset($cols[3]) ? trim($cols[3]) : null,
+                '_raw_line' => $line,
+                '_table' => $pushTable,
+            ];
+        }
+
+        return $this->fallbackRowFromLine($line, $pushTable);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function fallbackRowFromLine(string $line, ?string $pushTable = null): array
+    {
+        $line = trim($line);
+
+        return [
+            'PIN' => $this->guessPinFromLine($line),
+            'Time' => $this->guessTimeFromLine($line) ?? now()->toDateTimeString(),
+            '_raw_line' => $line,
+            '_table' => $pushTable,
+        ];
     }
 
     protected function parseScanTime(string $timeRaw): ?Carbon

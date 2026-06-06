@@ -6,7 +6,6 @@ use App\Models\AttendanceDevice;
 use App\Models\EmployeeDetail;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
-use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -37,32 +36,11 @@ class FingerprintActivityLogService
             $query->where('attendance_device_id', $deviceId);
         }
 
-        $registeredPinsByDevice = $this->buildRegisteredPinsByDevice($deviceId);
-
-        /** @var Collection<int, FingerprintRawLog> $candidates */
-        $candidates = $query
-            ->orderByDesc('scan_time')
-            ->limit(min($limit * 6, 6000))
-            ->get();
-
-        $nameResolver = $this->buildNameResolver($candidates, $deviceId);
-
         /** @var Collection<int, FingerprintRawLog> $logs */
-        $logs = $candidates
-            ->filter(function (FingerprintRawLog $log) use ($nameResolver, $registeredPinsByDevice) {
-                $devId = (int) $log->attendance_device_id;
-                $pin = (string) $log->device_user_id;
-                $employeeName = $nameResolver($devId, $pin);
-                $registered = $registeredPinsByDevice[$devId] ?? [];
-
-                return FingerprintAttendanceLogFilter::isDisplayableAttendanceLog(
-                    $log,
-                    $employeeName,
-                    $registered
-                );
-            })
-            ->take($limit)
-            ->values();
+        $logs = $query
+            ->orderByDesc('scan_time')
+            ->limit($limit)
+            ->get();
 
         $deviceNames = AttendanceDevice::query()
             ->whereIn('id', $logs->pluck('attendance_device_id')->unique()->filter())
@@ -93,6 +71,9 @@ class FingerprintActivityLogService
                 'processing_status' => $log->processing_status,
                 'processing_error' => $log->processing_error,
                 'processed_at' => $log->processed_at?->toIso8601String(),
+                'raw_kind' => is_array($log->raw_payload)
+                    ? ($log->raw_payload['row']['_kind'] ?? $log->raw_payload['row']['_table'] ?? null)
+                    : null,
             ];
         }
 
@@ -112,42 +93,6 @@ class FingerprintActivityLogService
             'range_from' => $from->toDateString(),
             'range_to' => $to->toDateString(),
         ];
-    }
-
-    /**
-     * @return array<int, array<int, string>>
-     */
-    protected function buildRegisteredPinsByDevice(?int $singleDeviceId): array
-    {
-        $deviceIds = $singleDeviceId !== null
-            ? collect([$singleDeviceId])
-            : AttendanceDevice::query()->pluck('id');
-
-        $employeePins = EmployeeDetail::query()
-            ->whereNotNull('device_user_id')
-            ->where('device_user_id', '!=', '')
-            ->pluck('device_user_id')
-            ->map(fn ($p) => trim((string) $p))
-            ->filter(fn ($p) => FingerprintAttendanceLogFilter::isValidDeviceUserPin($p))
-            ->values();
-
-        $deviceUsers = FingerprintDeviceUser::query()
-            ->whereIn('attendance_device_id', $deviceIds)
-            ->get(['attendance_device_id', 'device_user_id']);
-
-        $out = [];
-        foreach ($deviceIds as $devId) {
-            $devId = (int) $devId;
-            $pins = $employeePins->all();
-            foreach ($deviceUsers as $u) {
-                if ((int) $u->attendance_device_id === $devId) {
-                    $pins[] = trim((string) $u->device_user_id);
-                }
-            }
-            $out[$devId] = array_values(array_unique(array_filter($pins)));
-        }
-
-        return $out;
     }
 
     /**

@@ -20,6 +20,7 @@ class OutgoingCheck extends Model
         'check_id',
         'bank_name',
         'img',
+        'back_image',
         'seller_id',
         'notes',
     ];
