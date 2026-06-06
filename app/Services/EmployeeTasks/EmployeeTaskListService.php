@@ -6,6 +6,7 @@ use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
+use App\Support\EmployeeVisibleTasks;
 use App\Support\TaskProofMediaType;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -57,6 +58,7 @@ class EmployeeTaskListService
         $subDone = (int) ($task->subtasks_completed_count
             ?? $task->subtasks()->where('status', 'completed')->count());
         $progress = $this->calcProgressPercent($task, $subTotal, $subDone);
+        $task->loadMissing('template');
 
         return [
             'task_id' => $task->legacy_task_id ?? $task->id,
@@ -65,8 +67,11 @@ class EmployeeTaskListService
             'employee_id' => $task->employee_id,
             'employee_name' => $task->employee->user->name ?? 'unknown',
             'employee_photo' => $photoResolver($task->employee),
-            'start_time' => $task->start_time,
-            'end_time' => $task->end_time,
+            'start_time' => EmployeeVisibleTasks::localDateTimeString($task->start_time),
+            'end_time' => EmployeeVisibleTasks::localDateTimeString($task->end_time),
+            'scheduled_date' => $task->scheduled_date
+                ? Carbon::parse($task->scheduled_date)->toDateString()
+                : null,
             'status' => EmployeeTaskStatus::normalize($task->status)->value,
             'priority' => $task->priority ?? 'medium',
             'points' => (int) ($task->points ?? 0),
@@ -85,6 +90,7 @@ class EmployeeTaskListService
                 : 'no audio',
             'parent_id' => null,
             'template_id' => $task->template_id,
+            'task_recurrence' => $task->template?->recurrence_type ?? 'noRepeat',
             'source' => 'occurrence',
         ];
     }

@@ -185,6 +185,17 @@ class EmployeeVisibleTasks
         return Carbon::now()->timezone(self::TIMEZONE)->toDateString();
     }
 
+    public static function localDateTimeString(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return Carbon::parse($value)
+            ->timezone(self::TIMEZONE)
+            ->format('Y-m-d H:i:s');
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -272,8 +283,11 @@ class EmployeeVisibleTasks
             'completed_by_name' => $completedByName,
             'can_execute' => self::canEmployeeExecuteOccurrence($task, $viewerEmployeeId),
             'name' => $task->name,
-            'start_time' => $task->start_time,
-            'end_time' => $task->end_time,
+            'start_time' => self::localDateTimeString($task->start_time),
+            'end_time' => self::localDateTimeString($task->end_time),
+            'scheduled_date' => $task->scheduled_date
+                ? Carbon::parse($task->scheduled_date)->toDateString()
+                : null,
             'status' => EmployeeTaskStatus::normalize($task->status)->value,
             'task_recurrence' => $task->template?->recurrence_type ?? 'noRepeat',
             'task_recurrence_time' => [],
