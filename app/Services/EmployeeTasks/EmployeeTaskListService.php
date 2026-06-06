@@ -58,7 +58,6 @@ class EmployeeTaskListService
         $subDone = (int) ($task->subtasks_completed_count
             ?? $task->subtasks()->where('status', 'completed')->count());
         $progress = $this->calcProgressPercent($task, $subTotal, $subDone);
-        $task->loadMissing('template');
 
         return [
             'task_id' => $task->legacy_task_id ?? $task->id,
@@ -142,6 +141,7 @@ class EmployeeTaskListService
             ->whereIn('status', $statuses)
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')
+            ->where(fn ($q) => $this->applyAdminLegacyVisibilityScope($q))
             ->get()
             ->filter(fn ($task) => $this->passesRecurrenceFilter($task))
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
@@ -150,7 +150,7 @@ class EmployeeTaskListService
             return $legacy->values();
         }
 
-        $occurrences = EmployeeTaskOccurrence::with('employee.user')
+        $occurrences = EmployeeTaskOccurrence::with(['employee.user', 'template'])
             ->withCount([
                 'subtasks',
                 'subtasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
@@ -173,6 +173,7 @@ class EmployeeTaskListService
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')
+            ->where(fn ($q) => $this->applyAdminLegacyVisibilityScope($q))
             ->get()
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
 
@@ -180,7 +181,7 @@ class EmployeeTaskListService
             return $legacy->values();
         }
 
-        $occurrences = EmployeeTaskOccurrence::with('employee.user')
+        $occurrences = EmployeeTaskOccurrence::with(['employee.user', 'template'])
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
             ->get()
@@ -193,6 +194,7 @@ class EmployeeTaskListService
     {
         $legacy = EmployeeTask::with('employee.user')
             ->where('is_canceled', 1)
+            ->whereNull('parent_id')
             ->get()
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
 
@@ -200,7 +202,7 @@ class EmployeeTaskListService
             return $legacy->values();
         }
 
-        $occurrences = EmployeeTaskOccurrence::with('employee.user')
+        $occurrences = EmployeeTaskOccurrence::with(['employee.user', 'template'])
             ->where('is_canceled', 1)
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
@@ -221,5 +223,33 @@ class EmployeeTaskListService
             'monthly' => in_array((string) $dayOfMonth, $times),
             default => true,
         };
+    }
+
+    /**
+     * Skip pre-generated pending legacy copies; the app expands parents per day.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<EmployeeTask>  $query
+     */
+    private function applyAdminLegacyVisibilityScope($query): void
+    {
+        $query->where(function ($q) {
+            $q->whereNull('parent_id')
+                ->orWhereIn('status', [
+                    EmployeeTaskStatus::InProgress->value,
+                    EmployeeTaskStatus::Overdue->value,
+                    'started',
+                ])
+                ->orWhere(function ($q2) {
+                    $q2->whereIn('status', [
+                        EmployeeTaskStatus::Completed->value,
+                        EmployeeTaskStatus::WaitingReview->value,
+                    ])->where(function ($q3) {
+                        $q3->where(function ($q4) {
+                            $q4->whereNotNull('completed_by_employee_id')
+                                ->where('completed_by_employee_id', '>', 0);
+                        })->orWhereNotNull('submitted_at');
+                    });
+                });
+        });
     }
 }
