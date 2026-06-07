@@ -53,6 +53,8 @@ class Product extends Model
         'is_sold_with_paper',
         'min_sale_price', 'rotation_date', 'min_stock',
         'project_id', // اسم الشروة فقط
+        'store_section_id',
+        'shelf_number',
     ];
 
     protected $hidden = ['wholesalePrice'];
@@ -183,5 +185,10 @@ class Product extends Model
             'product_id',
             'product_tag_id'
         )->withTimestamps();
+    }
+
+    public function storeSection()
+    {
+        return $this->belongsTo(StoreSection::class, 'store_section_id');
     }
 }

@@ -84,6 +84,8 @@ class ProductFormService
             'delete_video' => ['nullable', 'boolean'],
             'tag_ids' => ['nullable', 'array'],
             'tag_ids.*' => ['integer', 'exists:product_tags,id'],
+            'store_section_id' => ['nullable', 'integer', 'exists:store_sections,id'],
+            'shelf_number' => ['nullable', 'string', 'max:30'],
         ];
 
         if ($forEdit) {
@@ -145,6 +147,7 @@ class ProductFormService
         if ($request->filled('price')) {
             $insert['price'] = $validated['price'];
         }
+        $this->applyStoreLocationToPayload($insert, $request);
 
         $virtual = new Product($insert);
         $virtual->id = 0;
@@ -347,6 +350,7 @@ class ProductFormService
         if ($request->filled('price')) {
             $update['price'] = $validated['price'];
         }
+        $this->applyStoreLocationToPayload($update, $request);
 
         $product->update($update);
         $trace('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
@@ -540,6 +544,23 @@ class ProductFormService
     private function syncProductTagsFromRequest(Request $request, int $productId): void
     {
         $this->productTagService->syncTagsForProduct($productId, (array) $request->input('tag_ids', []));
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function applyStoreLocationToPayload(array &$payload, Request $request): void
+    {
+        if ($request->has('store_section_id')) {
+            $sectionId = $request->input('store_section_id');
+            $payload['store_section_id'] = ($sectionId === null || $sectionId === '')
+                ? null
+                : (int) $sectionId;
+        }
+        if ($request->has('shelf_number')) {
+            $shelf = trim((string) $request->input('shelf_number', ''));
+            $payload['shelf_number'] = $shelf === '' ? null : $shelf;
+        }
     }
 
     private function makeTracer(?callable $step): callable

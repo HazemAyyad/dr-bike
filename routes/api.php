@@ -60,6 +60,7 @@ use App\Http\Controllers\API\Pictures;
 use App\Http\Controllers\API\ProductDevelopmentApi;
 use App\Http\Controllers\API\Products;
 use App\Http\Controllers\API\ProductTagController;
+use App\Http\Controllers\API\StoreSectionController;
 use App\Http\Controllers\API\Profile;
 use App\Http\Controllers\API\ProfitSales;
 use App\Http\Controllers\API\Projects;
@@ -681,6 +682,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::post('/product/tags/attach' , [ProductTagController::class,'attach']);
     Route::post('/product/tags/detach' , [ProductTagController::class,'detach']);
     Route::get('/products/by/tag' , [ProductTagController::class,'productsByTag']);
+
+    Route::get('/store/sections' , [StoreSectionController::class,'index']);
+    Route::post('/store/sections' , [StoreSectionController::class,'store']);
+    Route::post('/store/sections/update' , [StoreSectionController::class,'update']);
+    Route::post('/store/sections/deactivate' , [StoreSectionController::class,'deactivate']);
+    Route::get('/store/sections/shelves' , [StoreSectionController::class,'shelves']);
+    Route::get('/products/by/location' , [StoreSectionController::class,'productsByLocation']);
 
 });
 
