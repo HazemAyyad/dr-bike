@@ -192,6 +192,9 @@ class FingerprintAttendanceProcessor
                 'work_date' => $workDate,
                 'scanned_at' => $scanAt,
                 'direction' => 'in',
+                'source' => 'fingerprint',
+                'server_received_at' => $rawLog->serverReceivedAt(),
+                'fingerprint_raw_log_id' => $rawLog->id,
             ]);
 
             if (! $attendance->exists || $attendance->arrived_at === null) {
@@ -234,6 +237,9 @@ class FingerprintAttendanceProcessor
             'work_date' => $workDate,
             'scanned_at' => $scanAt,
             'direction' => 'out',
+            'source' => 'fingerprint',
+            'server_received_at' => $rawLog->serverReceivedAt(),
+            'fingerprint_raw_log_id' => $rawLog->id,
         ]);
 
         $allScans = EmployeeAttendanceScan::query()

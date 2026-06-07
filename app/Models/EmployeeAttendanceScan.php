@@ -16,16 +16,25 @@ class EmployeeAttendanceScan extends Model
         'work_date',
         'scanned_at',
         'direction',
+        'source',
+        'server_received_at',
+        'fingerprint_raw_log_id',
     ];
 
     protected $casts = [
         'work_date' => 'date',
         'scanned_at' => 'datetime',
+        'server_received_at' => 'datetime',
     ];
 
     public function employee(): BelongsTo
     {
         return $this->belongsTo(EmployeeDetail::class, 'employee_id');
+    }
+
+    public function fingerprintRawLog(): BelongsTo
+    {
+        return $this->belongsTo(FingerprintRawLog::class, 'fingerprint_raw_log_id');
     }
 
     public static function computeWorkedMinutes(Collection $scans): int

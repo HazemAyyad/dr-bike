@@ -156,6 +156,8 @@ class AttendanceController extends Controller
                     'work_date' => $today,
                     'scanned_at' => now(),
                     'direction' => 'in',
+                    'source' => 'qr',
+                    'server_received_at' => now(),
                 ]);
 
                 if (! $attendance->exists || $attendance->arrived_at === null) {
@@ -220,6 +222,8 @@ class AttendanceController extends Controller
                 'work_date' => $today,
                 'scanned_at' => now(),
                 'direction' => 'out',
+                'source' => 'qr',
+                'server_received_at' => now(),
             ]);
 
             $allScans = EmployeeAttendanceScan::query()

@@ -57,6 +57,8 @@ class EmployeeAttendanceCheckoutService
             'work_date' => $workDate,
             'scanned_at' => $checkoutAt,
             'direction' => 'out',
+            'source' => $source === 'fingerprint' ? 'fingerprint' : 'manual',
+            'server_received_at' => now(),
         ]);
 
         $allScans = EmployeeAttendanceScan::query()

@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\EmployeeDetailResource;
 use App\Mail\NewEmployeeAccountMail;
 use App\Models\EmployeeAttendance;
-use App\Models\EmployeeAttendanceScan;
+use App\Support\AttendanceScanPresenter;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
 use App\Models\EmployeePermission;
@@ -1242,6 +1242,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $scansOut = [];
             $firstCheckIn = null;
             $lastCheckOut = null;
+            $firstInScan = null;
+            $lastOutScan = null;
             $currentlyIn = false;
 
             if ($dayScans->isNotEmpty()) {
@@ -1249,10 +1251,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 $awayMinutes = EmployeeAttendanceScan::computeAwayMinutes($dayScans);
 
                 foreach ($dayScans as $s) {
-                    $scansOut[] = [
-                        'at' => $s->scanned_at->toIso8601String(),
-                        'direction' => $s->direction,
-                    ];
+                    $scansOut[] = AttendanceScanPresenter::scanToApi($s);
                 }
 
                 $firstInScan = $dayScans->firstWhere('direction', 'in');
@@ -1269,21 +1268,21 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     if ($s->direction === 'in') {
                         $pendingIn = $s;
                     } elseif ($s->direction === 'out' && $pendingIn !== null) {
-                        $segments[] = [
-                            'check_in_at' => $pendingIn->scanned_at->toIso8601String(),
-                            'check_out_at' => $s->scanned_at->toIso8601String(),
-                            'worked_minutes' => Carbon::parse($pendingIn->scanned_at)->diffInMinutes(Carbon::parse($s->scanned_at)),
-                        ];
+                        $segments[] = AttendanceScanPresenter::segmentToApi(
+                            $pendingIn,
+                            $s,
+                            Carbon::parse($pendingIn->scanned_at)->diffInMinutes(Carbon::parse($s->scanned_at)),
+                        );
                         $pendingIn = null;
                     }
                 }
                 if ($pendingIn !== null) {
-                    $segments[] = [
-                        'check_in_at' => $pendingIn->scanned_at->toIso8601String(),
-                        'check_out_at' => null,
-                        'worked_minutes' => null,
-                        'open' => true,
-                    ];
+                    $segments[] = AttendanceScanPresenter::segmentToApi(
+                        $pendingIn,
+                        null,
+                        null,
+                        true,
+                    );
                 }
             } elseif ($legacy) {
                 $workedMinutes = (int) ($legacy->worked_minutes ?? 0);
@@ -1332,13 +1331,22 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 }
             }
 
+            $firstCheckInApi = AttendanceScanPresenter::checkInSummary($firstInScan ?? null);
+            $lastCheckOutApi = AttendanceScanPresenter::checkInSummary($lastOutScan ?? null);
+
             $days[] = array_merge([
                 'date' => $dateStr,
                 'source' => $dayScans->isNotEmpty()
-                    ? (string) ($legacy?->source ?? 'qr')
+                    ? (string) ($dayScans->contains(fn ($s) => ($s->source ?? '') === 'fingerprint')
+                        ? 'fingerprint'
+                        : ($legacy?->source ?? 'qr'))
                     : ((string) ($legacy?->source ?? 'manual')),
                 'first_check_in' => $firstCheckIn?->toIso8601String(),
+                'first_check_in_server' => $firstCheckInApi['server_at'] ?? null,
+                'first_check_in_source' => $firstInScan?->source,
                 'last_check_out' => $lastCheckOut?->toIso8601String(),
+                'last_check_out_server' => $lastCheckOutApi['server_at'] ?? null,
+                'last_check_out_source' => $lastOutScan?->source,
                 'currently_in' => $currentlyIn,
                 'worked_minutes' => $workedMinutes,
                 'away_minutes' => $awayMinutes,
