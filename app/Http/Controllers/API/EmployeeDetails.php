@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\EmployeeDetailResource;
 use App\Mail\NewEmployeeAccountMail;
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceScan;
 use App\Support\AttendanceScanPresenter;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
