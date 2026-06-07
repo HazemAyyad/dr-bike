@@ -12,6 +12,11 @@ use Illuminate\Validation\ValidationException;
 
 class StoreSectionController extends Controller
 {
+    private function sectionFields(): array
+    {
+        return ['id', 'name', 'description', 'sort_order', 'is_active', 'created_at', 'updated_at'];
+    }
+
     public function index(Request $request)
     {
         try {
@@ -25,7 +30,7 @@ class StoreSectionController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'sections' => $q->get(['id', 'name', 'sort_order', 'is_active', 'created_at', 'updated_at']),
+                'sections' => $q->get($this->sectionFields()),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
@@ -40,17 +45,19 @@ class StoreSectionController extends Controller
         try {
             $data = $request->validate([
                 'name' => ['required', 'string', 'max:120'],
+                'description' => ['nullable', 'string', 'max:2000'],
                 'sort_order' => ['nullable', 'integer', 'min:0', 'max:65535'],
             ]);
             $section = StoreSection::query()->create([
                 'name' => $data['name'],
+                'description' => $data['description'] ?? null,
                 'sort_order' => $data['sort_order'] ?? 0,
                 'is_active' => true,
             ]);
 
             return response()->json([
                 'status' => 'success',
-                'section' => $section->only(['id', 'name', 'sort_order', 'is_active', 'created_at', 'updated_at']),
+                'section' => $section->only($this->sectionFields()),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -77,12 +84,16 @@ class StoreSectionController extends Controller
             $data = $request->validate([
                 'section_id' => ['required', 'integer', 'exists:store_sections,id'],
                 'name' => ['sometimes', 'required', 'string', 'max:120'],
+                'description' => ['nullable', 'string', 'max:2000'],
                 'sort_order' => ['sometimes', 'integer', 'min:0', 'max:65535'],
             ]);
             $section = StoreSection::query()->findOrFail($data['section_id']);
             $updates = [];
             if (array_key_exists('name', $data)) {
                 $updates['name'] = $data['name'];
+            }
+            if (array_key_exists('description', $data)) {
+                $updates['description'] = $data['description'];
             }
             if (array_key_exists('sort_order', $data)) {
                 $updates['sort_order'] = $data['sort_order'];
@@ -93,7 +104,7 @@ class StoreSectionController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'section' => $section->fresh()->only(['id', 'name', 'sort_order', 'is_active', 'created_at', 'updated_at']),
+                'section' => $section->fresh()->only($this->sectionFields()),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -121,7 +132,39 @@ class StoreSectionController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'OK',
-                'section' => $section->only(['id', 'name', 'sort_order', 'is_active']),
+                'section' => $section->only(['id', 'name', 'description', 'sort_order', 'is_active']),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function destroy(Request $request)
+    {
+        try {
+            $request->validate([
+                'section_id' => ['required', 'integer', 'exists:store_sections,id'],
+            ]);
+            $sectionId = $request->integer('section_id');
+            Product::query()
+                ->where('store_section_id', $sectionId)
+                ->update([
+                    'store_section_id' => null,
+                    'shelf_number' => null,
+                ]);
+            StoreSection::query()->whereKey($sectionId)->delete();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'OK',
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -214,7 +257,7 @@ class StoreSectionController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'section' => $section->only(['id', 'name', 'sort_order', 'is_active']),
+                'section' => $section->only(['id', 'name', 'description', 'sort_order', 'is_active']),
                 'products' => $formatted,
                 'pagination' => [
                     'current_page' => $products->currentPage(),

@@ -9,6 +9,7 @@ class StoreSection extends Model
 {
     protected $fillable = [
         'name',
+        'description',
         'sort_order',
         'is_active',
     ];
