@@ -30,8 +30,21 @@ class Products extends Controller
                 'viewImages',
                 'normalImages',
                 'image3d',
+                'storeSection:id,name',
             ])
-            ->get(['id', 'nameAr', 'stock', 'normailPrice', 'wholesalePrice', 'price', 'min_sale_price', 'rate']);
+            ->get([
+                'id',
+                'nameAr',
+                'stock',
+                'normailPrice',
+                'wholesalePrice',
+                'price',
+                'min_sale_price',
+                'rate',
+                'product_code',
+                'store_section_id',
+                'shelf_number',
+            ]);
 
         $formatted = $products->map(function ($product) {
             $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
@@ -47,6 +60,12 @@ class Products extends Controller
                     'normail_price' => $unitPrice,
                     'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
                     'rate' => (float) ($product->rate ?? 0),
+                    'product_code' => $product->product_code,
+                    'store_section_id' => $product->store_section_id !== null
+                        ? (int) $product->store_section_id
+                        : null,
+                    'store_section_name' => $product->storeSection?->name,
+                    'shelf_number' => $product->shelf_number,
                     'projects' => $product->projects->pluck('project_id')->toArray(),
                 ],
                 \App\Support\ProductImageResolver::formatForList($product),

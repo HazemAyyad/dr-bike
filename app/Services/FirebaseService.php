@@ -24,7 +24,10 @@ class FirebaseService
     /** Task completion / success — must match Flutter and res/raw/task_success. */
     public const TASK_SUCCESS_CHANNEL_ID = 'dr_bike_task_success_notifications';
 
-    /** Admin attendance (login/logout) — must match Flutter and res/raw/task_sos_alert. */
+    /** Admin login (check-in) — motivational loud tone, res/raw/admin_login_motivate. */
+    public const ADMIN_LOGIN_CHANNEL_ID = 'dr_bike_admin_login_alerts';
+
+    /** Admin logout — must match Flutter and res/raw/task_sos_alert. */
     public const ADMIN_ATTENDANCE_CHANNEL_ID = 'dr_bike_admin_attendance_alerts';
 
     public const EMPLOYEE_TASK_SOUND_ANDROID = 'task_sos_alert';
@@ -34,6 +37,10 @@ class FirebaseService
     public const TASK_SUCCESS_SOUND_ANDROID = 'task_success';
 
     public const TASK_SUCCESS_SOUND_IOS = 'task_success.wav';
+
+    public const ADMIN_LOGIN_SOUND_ANDROID = 'admin_login_motivate';
+
+    public const ADMIN_LOGIN_SOUND_IOS = 'admin_login_motivate.wav';
 
     /** @var list<string> */
     private const EMPLOYEE_TASK_URGENT_NOTIFICATION_TYPES = [
@@ -58,8 +65,12 @@ class FirebaseService
     ];
 
     /** @var list<string> */
-    private const ADMIN_ATTENDANCE_NOTIFICATION_TYPES = [
+    private const ADMIN_LOGIN_NOTIFICATION_TYPES = [
         'employee_login',
+    ];
+
+    /** @var list<string> */
+    private const ADMIN_LOGOUT_NOTIFICATION_TYPES = [
         'employee_logout',
         'employee_logout_pending_tasks',
     ];
@@ -485,7 +496,15 @@ class FirebaseService
     {
         $type = (string) ($data['type'] ?? '');
 
-        if (in_array($type, self::ADMIN_ATTENDANCE_NOTIFICATION_TYPES, true)) {
+        if (in_array($type, self::ADMIN_LOGIN_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::ADMIN_LOGIN_CHANNEL_ID,
+                'sound' => self::ADMIN_LOGIN_SOUND_ANDROID,
+                'ios_sound' => self::ADMIN_LOGIN_SOUND_IOS,
+            ];
+        }
+
+        if (in_array($type, self::ADMIN_LOGOUT_NOTIFICATION_TYPES, true)) {
             return [
                 'channel_id' => self::ADMIN_ATTENDANCE_CHANNEL_ID,
                 'sound' => self::EMPLOYEE_TASK_SOUND_ANDROID,
