@@ -329,11 +329,11 @@ class StoreSectionController extends Controller
                 'group_a.*' => ['integer', 'exists:products,id', 'distinct'],
                 'group_b' => ['required', 'array', 'min:1'],
                 'group_b.*' => ['integer', 'exists:products,id', 'distinct'],
-                'group_a_target' => ['nullable', 'array'],
-                'group_a_target.store_section_id' => ['required_with:group_a_target', 'integer', 'exists:store_sections,id'],
+                'group_a_target' => ['required', 'array'],
+                'group_a_target.store_section_id' => ['required', 'integer', 'exists:store_sections,id'],
                 'group_a_target.shelf_number' => ['nullable', 'string', 'max:30'],
-                'group_b_target' => ['nullable', 'array'],
-                'group_b_target.store_section_id' => ['required_with:group_b_target', 'integer', 'exists:store_sections,id'],
+                'group_b_target' => ['required', 'array'],
+                'group_b_target.store_section_id' => ['required', 'integer', 'exists:store_sections,id'],
                 'group_b_target.shelf_number' => ['nullable', 'string', 'max:30'],
             ]);
 
@@ -369,50 +369,19 @@ class StoreSectionController extends Controller
                     ]);
                 }
 
-                if ($this->swapGroupNeedsTarget($idsA, $idsB, $productsB) && $targetA === null) {
+                if ($targetA === null || $targetB === null) {
                     throw ValidationException::withMessages([
                         'group_a_target' => [__('messages.product_swap_group_a_target_required')],
                     ]);
                 }
-                if ($this->swapGroupNeedsTarget($idsB, $idsA, $productsA) && $targetB === null) {
-                    throw ValidationException::withMessages([
-                        'group_b_target' => [__('messages.product_swap_group_b_target_required')],
-                    ]);
-                }
-
-                $locsA = [];
-                foreach ($idsA as $id) {
-                    $p = $productsA[$id];
-                    $locsA[] = [
-                        'store_section_id' => $p->store_section_id,
-                        'shelf_number' => $p->shelf_number,
-                    ];
-                }
-                $locsB = [];
-                foreach ($idsB as $id) {
-                    $p = $productsB[$id];
-                    $locsB[] = [
-                        'store_section_id' => $p->store_section_id,
-                        'shelf_number' => $p->shelf_number,
-                    ];
-                }
-
-                $countA = count($idsA);
-                $countB = count($idsB);
 
                 $updatesA = [];
-                foreach ($idsA as $i => $id) {
-                    $updatesA[$id] = $this->resolveSwapDestinationLocation(
-                        $locsB[$i % $countB],
-                        $targetA
-                    );
+                foreach ($idsA as $id) {
+                    $updatesA[$id] = $targetA;
                 }
                 $updatesB = [];
-                foreach ($idsB as $j => $id) {
-                    $updatesB[$id] = $this->resolveSwapDestinationLocation(
-                        $locsA[$j % $countA],
-                        $targetB
-                    );
+                foreach ($idsB as $id) {
+                    $updatesB[$id] = $targetB;
                 }
 
                 foreach ($updatesA as $id => $loc) {
@@ -450,24 +419,6 @@ class StoreSectionController extends Controller
         }
     }
 
-    private function productHasLocation(?Product $product): bool
-    {
-        if ($product === null) {
-            return false;
-        }
-
-        return $product->store_section_id !== null
-            || trim((string) ($product->shelf_number ?? '')) !== '';
-    }
-
-    private function locationFromProduct(Product $product): array
-    {
-        return [
-            'store_section_id' => $product->store_section_id,
-            'shelf_number' => $product->shelf_number,
-        ];
-    }
-
     private function normalizeSwapGroupTarget(?array $target): ?array
     {
         if ($target === null || ! isset($target['store_section_id'])) {
@@ -479,52 +430,6 @@ class StoreSectionController extends Controller
         return [
             'store_section_id' => (int) $target['store_section_id'],
             'shelf_number' => $shelf === '' ? null : $shelf,
-        ];
-    }
-
-    /**
-     * @param  array<int>  $receiverIds
-     * @param  array<int>  $partnerIds
-     * @param  \Illuminate\Support\Collection<int, Product>  $partnerProducts
-     */
-    private function swapGroupNeedsTarget(array $receiverIds, array $partnerIds, $partnerProducts): bool
-    {
-        $countR = count($receiverIds);
-        $countP = count($partnerIds);
-        if ($countR === 0 || $countP === 0) {
-            return false;
-        }
-
-        for ($i = 0; $i < $countR; $i++) {
-            $partnerId = $partnerIds[$i % $countP];
-            $partner = $partnerProducts->get($partnerId);
-            if (! $this->productHasLocation($partner)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private function resolveSwapDestinationLocation(array $partnerLocation, ?array $groupTarget): array
-    {
-        $sectionId = $partnerLocation['store_section_id'] ?? null;
-        $shelf = trim((string) ($partnerLocation['shelf_number'] ?? ''));
-
-        if ($sectionId !== null || $shelf !== '') {
-            return [
-                'store_section_id' => $sectionId,
-                'shelf_number' => $shelf === '' ? null : $shelf,
-            ];
-        }
-
-        if ($groupTarget !== null) {
-            return $groupTarget;
-        }
-
-        return [
-            'store_section_id' => null,
-            'shelf_number' => null,
         ];
     }
 }
