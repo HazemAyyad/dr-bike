@@ -479,4 +479,7 @@ return [
     'products_location_swapped' => 'Product locations swapped successfully',
     'product_swap_same_product' => 'Cannot swap a product with itself',
     'product_swap_overlap' => 'A product cannot belong to both groups',
+    'product_swap_no_locations' => 'Cannot swap: all selected products have no location',
+    'product_swap_group_a_target_required' => 'Specify a destination location for group A',
+    'product_swap_group_b_target_required' => 'Specify a destination location for group B',
 ];

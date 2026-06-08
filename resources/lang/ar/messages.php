@@ -492,4 +492,7 @@ return [
     'products_location_swapped' => 'تم استبدال أماكن المنتجات بنجاح',
     'product_swap_same_product' => 'لا يمكن استبدال المنتج مع نفسه',
     'product_swap_overlap' => 'لا يمكن أن يكون المنتج في المجموعتين معاً',
+    'product_swap_no_locations' => 'لا يمكن الاستبدال: جميع المنتجات المحددة بلا موقع',
+    'product_swap_group_a_target_required' => 'حدّد موقع وجهة للمجموعة أ',
+    'product_swap_group_b_target_required' => 'حدّد موقع وجهة للمجموعة ب',
 ];
