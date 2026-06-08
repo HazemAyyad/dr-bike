@@ -482,4 +482,6 @@ return [
     'product_swap_no_locations' => 'Cannot swap: all selected products have no location',
     'product_swap_group_a_target_required' => 'Specify a destination location for group A',
     'product_swap_group_b_target_required' => 'Specify a destination location for group B',
+    'store_shelf_duplicate' => 'Shelf number already exists in this section',
+    'store_shelf_deleted' => 'Shelf deleted',
 ];

@@ -495,4 +495,6 @@ return [
     'product_swap_no_locations' => 'لا يمكن الاستبدال: جميع المنتجات المحددة بلا موقع',
     'product_swap_group_a_target_required' => 'حدّد موقع وجهة للمجموعة أ',
     'product_swap_group_b_target_required' => 'حدّد موقع وجهة للمجموعة ب',
+    'store_shelf_duplicate' => 'رقم الرف موجود مسبقاً في هذا القسم',
+    'store_shelf_deleted' => 'تم حذف الرف',
 ];

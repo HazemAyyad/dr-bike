@@ -23,4 +23,9 @@ class StoreSection extends Model
     {
         return $this->hasMany(Product::class, 'store_section_id');
     }
+
+    public function shelves(): HasMany
+    {
+        return $this->hasMany(StoreSectionShelf::class, 'store_section_id');
+    }
 }
