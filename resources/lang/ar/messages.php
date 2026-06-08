@@ -488,4 +488,8 @@ return [
     'settings_updated' => 'تم تحديث الإعدادات بنجاح.',
     'fingerprint_user_id_taken' => 'رقم مستخدم البصمة مستخدم لموظف آخر.',
     'task_completion_points' => 'نقاط إتمام المهمة: :task',
+    'products_location_moved' => 'تم نقل المنتجات بنجاح',
+    'products_location_swapped' => 'تم استبدال أماكن المنتجات بنجاح',
+    'product_swap_same_product' => 'لا يمكن استبدال المنتج مع نفسه',
+    'product_swap_overlap' => 'لا يمكن أن يكون المنتج في المجموعتين معاً',
 ];

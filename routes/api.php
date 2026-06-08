@@ -690,6 +690,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::post('/store/sections/delete' , [StoreSectionController::class,'destroy']);
     Route::get('/store/sections/shelves' , [StoreSectionController::class,'shelves']);
     Route::get('/products/by/location' , [StoreSectionController::class,'productsByLocation']);
+    Route::post('/products/location/move' , [StoreSectionController::class,'moveProducts']);
+    Route::post('/products/location/swap' , [StoreSectionController::class,'swapProductLocations']);
 
 });
 

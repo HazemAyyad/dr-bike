@@ -8,6 +8,7 @@ use App\Models\StoreSection;
 use App\Support\ApiImageUrl;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class StoreSectionController extends Controller
@@ -272,6 +273,148 @@ class StoreSectionController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function moveProducts(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'product_ids' => ['required', 'array', 'min:1'],
+                'product_ids.*' => ['integer', 'exists:products,id'],
+                'store_section_id' => ['required', 'integer', 'exists:store_sections,id'],
+                'shelf_number' => ['nullable', 'string', 'max:30'],
+            ]);
+
+            StoreSection::query()->findOrFail((int) $data['store_section_id']);
+
+            $shelf = trim((string) ($data['shelf_number'] ?? ''));
+            $updated = Product::query()
+                ->whereIn('id', $data['product_ids'])
+                ->update([
+                    'store_section_id' => (int) $data['store_section_id'],
+                    'shelf_number' => $shelf === '' ? null : $shelf,
+                ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.products_location_moved'),
+                'updated' => $updated,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function swapProductLocations(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'group_a' => ['required', 'array', 'min:1'],
+                'group_a.*' => ['integer', 'exists:products,id', 'distinct'],
+                'group_b' => ['required', 'array', 'min:1'],
+                'group_b.*' => ['integer', 'exists:products,id', 'distinct'],
+            ]);
+
+            $idsA = array_values(array_unique(array_map('intval', $data['group_a'])));
+            $idsB = array_values(array_unique(array_map('intval', $data['group_b'])));
+
+            if (array_intersect($idsA, $idsB)) {
+                throw ValidationException::withMessages([
+                    'group_b' => [__('messages.product_swap_overlap')],
+                ]);
+            }
+
+            $swapped = 0;
+
+            DB::transaction(function () use ($idsA, $idsB, &$swapped) {
+                $productsA = Product::query()
+                    ->whereIn('id', $idsA)
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id');
+                $productsB = Product::query()
+                    ->whereIn('id', $idsB)
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id');
+
+                if ($productsA->count() !== count($idsA) || $productsB->count() !== count($idsB)) {
+                    throw ValidationException::withMessages([
+                        'group_a' => [__('messages.validation_failed')],
+                    ]);
+                }
+
+                $locsA = [];
+                foreach ($idsA as $id) {
+                    $p = $productsA[$id];
+                    $locsA[] = [
+                        'store_section_id' => $p->store_section_id,
+                        'shelf_number' => $p->shelf_number,
+                    ];
+                }
+                $locsB = [];
+                foreach ($idsB as $id) {
+                    $p = $productsB[$id];
+                    $locsB[] = [
+                        'store_section_id' => $p->store_section_id,
+                        'shelf_number' => $p->shelf_number,
+                    ];
+                }
+
+                $countA = count($idsA);
+                $countB = count($idsB);
+
+                $updatesA = [];
+                foreach ($idsA as $i => $id) {
+                    $updatesA[$id] = $locsB[$i % $countB];
+                }
+                $updatesB = [];
+                foreach ($idsB as $j => $id) {
+                    $updatesB[$id] = $locsA[$j % $countA];
+                }
+
+                foreach ($updatesA as $id => $loc) {
+                    $productsA[$id]->update([
+                        'store_section_id' => $loc['store_section_id'],
+                        'shelf_number' => $loc['shelf_number'],
+                    ]);
+                    $swapped++;
+                }
+                foreach ($updatesB as $id => $loc) {
+                    $productsB[$id]->update([
+                        'store_section_id' => $loc['store_section_id'],
+                        'shelf_number' => $loc['shelf_number'],
+                    ]);
+                    $swapped++;
+                }
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.products_location_swapped'),
+                'swapped' => $swapped,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([

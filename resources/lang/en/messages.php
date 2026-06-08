@@ -475,4 +475,8 @@ return [
     'settings_updated' => 'Settings updated successfully.',
     'fingerprint_user_id_taken' => 'This fingerprint user ID is already assigned to another employee.',
     'task_completion_points' => 'Task completion points: :task',
+    'products_location_moved' => 'Products moved successfully',
+    'products_location_swapped' => 'Product locations swapped successfully',
+    'product_swap_same_product' => 'Cannot swap a product with itself',
+    'product_swap_overlap' => 'A product cannot belong to both groups',
 ];
