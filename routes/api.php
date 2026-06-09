@@ -43,6 +43,7 @@ use App\Http\Controllers\API\FollowupAPI;
 use App\Http\Controllers\API\Goals;
 use App\Http\Controllers\API\IncomingChecks;
 use App\Http\Controllers\API\InstantSales;
+use App\Http\Controllers\API\SalesDailySessionController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
 use App\Http\Controllers\API\LegacyStoreImageController;
@@ -355,6 +356,17 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/create/profit/sale' , [ProfitSales::class,'store']);
       Route::post('/cancel/profit/sale' , [ProfitSales::class,'cancel']);
       Route::post('/edit/profit/sale' , [ProfitSales::class,'edit']);
+
+      // sales daily session / cash drawer
+      Route::get('/sales/daily-session/current', [SalesDailySessionController::class, 'current']);
+      Route::post('/sales/daily-closing/request', [SalesDailySessionController::class, 'requestClosing']);
+      Route::get('/sales/daily-closing/pending', [SalesDailySessionController::class, 'pendingClosing']);
+      Route::post('/sales/daily-closing/approve', [SalesDailySessionController::class, 'approveClosing']);
+      Route::post('/sales/daily-closing/reject', [SalesDailySessionController::class, 'rejectClosing']);
+      Route::post('/sales/cancellation/request', [SalesDailySessionController::class, 'requestCancellation']);
+      Route::get('/sales/cancellation/pending', [SalesDailySessionController::class, 'pendingCancellations']);
+      Route::post('/sales/cancellation/approve', [SalesDailySessionController::class, 'approveCancellation']);
+      Route::post('/sales/cancellation/reject', [SalesDailySessionController::class, 'rejectCancellation']);
 
 });
 

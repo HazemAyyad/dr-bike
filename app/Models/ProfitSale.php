@@ -24,6 +24,7 @@ class ProfitSale extends Model
         'payment_box_value',
         'status',
         'cancelled_at',
+        'sales_daily_session_id',
     ];
 
     protected $casts = [
@@ -50,4 +51,8 @@ class ProfitSale extends Model
         return $this->status === 'cancelled' || $this->cancelled_at !== null;
     }
 
+    public function salesDailySession(): BelongsTo
+    {
+        return $this->belongsTo(SalesDailySession::class, 'sales_daily_session_id');
+    }
 }

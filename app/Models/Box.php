@@ -12,10 +12,16 @@ class Box extends Model
         'name',
         'type',
         'employee_id',
+        'user_id',
         'total',
         'is_shown',
         'currency',
     ];
+
+    public function isDailySalesBox(): bool
+    {
+        return $this->type === config('sales_daily.box_type', 'daily_sales');
+    }
 
     public function employee()
     {

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Services\DebtLedgerService;
 use App\Models\Box;
+use App\Services\SalesDailySessionService;
 use App\Models\Customer;
 use App\Models\Debt;
 use App\Models\Seller;
@@ -99,6 +100,9 @@ class PaymentAndRecieve extends Controller
                     ], 200);
                 }
             $box = Box::findOrFail($request->box_id);
+            if ($type === 'receive' && $box->isDailySalesBox()) {
+                app(SalesDailySessionService::class)->assertSessionAllowsPayment($request->user(), $box);
+            }
             $boxValue = (float) $request->box_value;
             $currentTotal = (float) ($box->total ?? 0);
 

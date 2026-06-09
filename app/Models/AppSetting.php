@@ -13,6 +13,12 @@ class AppSetting extends Model
     /** JSON array of preset size labels for product add/edit dropdown. */
     public const KEY_PRODUCT_SIZE_OPTIONS = 'product_size_options';
 
+  /** Sales daily drawer: alert when |physical − system| ≥ this amount. */
+    public const KEY_SALES_DAILY_VARIANCE_ALERT_THRESHOLD = 'sales_daily_variance_alert_threshold';
+
+    /** JSON map currency => max float allowed at day close. */
+    public const KEY_SALES_DAILY_MAX_FLOAT_JSON = 'sales_daily_max_float_json';
+
     // Attendance settings
     public const KEY_ATTENDANCE_QR_ENABLED = 'attendance_qr_enabled';
     public const KEY_ATTENDANCE_FINGERPRINT_ENABLED = 'attendance_fingerprint_enabled';

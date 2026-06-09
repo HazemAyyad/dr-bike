@@ -37,6 +37,7 @@ class InstantSale extends Model
         'stock_restored',
         'created_by',
         'updated_by',
+        'sales_daily_session_id',
     ];
 
     protected $casts = [
@@ -90,6 +91,11 @@ class InstantSale extends Model
     public function updatedByUser()
     {
         return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function salesDailySession()
+    {
+        return $this->belongsTo(SalesDailySession::class, 'sales_daily_session_id');
     }
 
     public function isCancelled(): bool

@@ -14,6 +14,7 @@ use App\Models\Project;
 use App\Models\Seller;
 use App\Services\DebtLedgerService;
 use App\Services\OfferPackageService;
+use App\Services\SalesDailySessionService;
 use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -679,6 +680,8 @@ class InstantSales extends Controller
 public function store(Request $request)
  {
     try{
+    $dailySession = app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
+
     if ($request->input('project_id') === '' || $request->input('project_id') === '0') {
         $request->merge(['project_id' => null]);
     }
@@ -730,6 +733,7 @@ public function store(Request $request)
             $data['type'] ?? null
         );
         $paymentBoxPayload = $this->resolvePaymentBoxForStorage($request);
+        $this->assertDailySalesPaymentBox($request, $paymentBoxPayload);
         $additionalNotes = $this->normalizeInstantSaleNotes($request->input('additional_notes', []));
         $additionalNotesTotal = $this->instantSaleNotesTotal($additionalNotes);
 
@@ -741,7 +745,8 @@ public function store(Request $request)
                 $request,
                 $data,
                 $buyerPayload,
-                $paymentBoxPayload
+                $paymentBoxPayload,
+                $dailySession
             );
         }
 
@@ -764,6 +769,7 @@ public function store(Request $request)
                 ->merge($buyerPayload)
                 ->merge($paymentBoxPayload)
                 ->merge($this->auditFieldsForCreate())
+                ->merge(['sales_daily_session_id' => $dailySession->id])
                 ->toArray()
         );
         $mainData['additional_notes'] = $additionalNotes;
@@ -935,11 +941,12 @@ public function store(Request $request)
         Request $request,
         array $data,
         array $buyerPayload,
-        array $paymentBoxPayload
+        array $paymentBoxPayload,
+        \App\Models\SalesDailySession $dailySession
     ) {
         $offerPackageService = app(OfferPackageService::class);
 
-        return DB::transaction(function () use ($data, $buyerPayload, $paymentBoxPayload, $offerPackageService) {
+        return DB::transaction(function () use ($data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession) {
             $package = OfferPackage::query()
                 ->where('is_active', true)
                 ->with(['items.product'])
@@ -989,7 +996,9 @@ public function store(Request $request)
                 'additional_notes' => $data['additional_notes'] ?? [],
                 'type' => $data['type'],
                 'project_id' => $data['project_id'] ?? null,
-            ], $buyerPayload, $paymentBoxPayload, $this->auditFieldsForCreate()));
+            ], $buyerPayload, $paymentBoxPayload, $this->auditFieldsForCreate(), [
+                'sales_daily_session_id' => $dailySession->id,
+            ]));
 
             $mainInstantSale = InstantSale::create($mainData);
 
@@ -1557,6 +1566,23 @@ public function store(Request $request)
         }
     }
 
+    private function assertDailySalesPaymentBox(Request $request, array $paymentBoxPayload): void
+    {
+        $boxId = (int) ($paymentBoxPayload['payment_box_id'] ?? 0);
+        if ($boxId <= 0) {
+            return;
+        }
+
+        $box = Box::find($boxId);
+        if (! $box || ! $box->isDailySalesBox()) {
+            throw ValidationException::withMessages([
+                'payment_box_id' => [__('messages.sales_daily_box_required')],
+            ]);
+        }
+
+        app(SalesDailySessionService::class)->assertDailyBoxOwnedByUser($request->user(), $box);
+    }
+
     public function cancel(Request $request)
     {
         try {
@@ -1567,9 +1593,11 @@ public function store(Request $request)
             DB::transaction(function () use ($request) {
                 $sale = InstantSale::query()
                     ->whereNull('parent_id')
-                    ->with(['product', 'subProducts.product'])
+                    ->with(['product', 'subProducts.product', 'salesDailySession'])
                     ->lockForUpdate()
                     ->findOrFail($request->instant_sale_id);
+
+                app(SalesDailySessionService::class)->assertCanDirectCancelSale($request->user(), $sale);
 
                 if ($sale->isCancelled()) {
                     throw ValidationException::withMessages([

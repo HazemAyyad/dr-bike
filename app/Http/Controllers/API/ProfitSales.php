@@ -8,6 +8,7 @@ use App\Models\Box;
 use App\Models\Customer;
 use App\Models\ProfitSale;
 use App\Services\DebtLedgerService;
+use App\Services\SalesDailySessionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -104,6 +105,8 @@ class ProfitSales extends Controller
     public function store(Request $request)
  {
     try{
+    $dailySession = app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
+
     if ($request->has('total_cost')) {
         $request->merge(['total_cost' => $this->normalizeNumericInput($request->input('total_cost'))]);
     }
@@ -166,7 +169,17 @@ class ProfitSales extends Controller
             unset($data['payment_box_id'], $data['payment_box_name']);
         } else {
             unset($data['payment_box_name']);
+            $box = Box::find((int) $data['payment_box_id']);
+            if ($box && $box->isDailySalesBox()) {
+                app(SalesDailySessionService::class)->assertDailyBoxOwnedByUser($request->user(), $box);
+            } elseif ($box && (float) $data['payment_box_value'] > 0) {
+                throw ValidationException::withMessages([
+                    'payment_box_id' => [__('messages.sales_daily_box_required')],
+                ]);
+            }
         }
+
+        $data['sales_daily_session_id'] = $dailySession->id;
 
         $profitSale = ProfitSale::create($data);
 
@@ -270,8 +283,11 @@ public function getProfitSales()
 
             DB::transaction(function () use ($request) {
                 $profitSale = ProfitSale::query()
+                    ->with('salesDailySession')
                     ->lockForUpdate()
                     ->findOrFail($request->profit_sale_id);
+
+                app(SalesDailySessionService::class)->assertCanDirectCancelSale($request->user(), $profitSale);
 
                 if ($profitSale->isCancelled()) {
                     throw ValidationException::withMessages([
