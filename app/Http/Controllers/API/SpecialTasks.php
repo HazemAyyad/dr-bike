@@ -73,6 +73,42 @@ class SpecialTasks extends Controller
 
     // }
 
+    private function specialTasksWithSubtaskCounts()
+    {
+        return SpecialTask::withCount([
+            'subTasks',
+            'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
+        ]);
+    }
+
+    private function formatSpecialTaskListItem(SpecialTask $task): array
+    {
+        $subTotal = (int) ($task->sub_tasks_count ?? 0);
+        $subDone = (int) ($task->subtasks_completed_count ?? 0);
+
+        if ($subTotal > 0) {
+            $progress = $subDone >= $subTotal
+                ? 100
+                : (int) round(($subDone / $subTotal) * 100);
+        } else {
+            $progress = $task->status === 'completed' ? 100 : 0;
+        }
+
+        return [
+            'id' => $task->id,
+            'name' => $task->name,
+            'start_date' => $task->start_date,
+            'end_date' => $task->end_date,
+            'is_canceled' => $task->is_canceled,
+            'status' => $task->status,
+            'task_recurrence' => $task->task_recurrence,
+            'task_recurrence_time' => is_array($task->task_recurrence_time)
+                ? $task->task_recurrence_time
+                : [],
+            'progress' => $progress,
+        ];
+    }
+
         private function commonGetData($status ,$name, callable $query){
            try {
             $tasks = $query();
@@ -102,7 +138,7 @@ class SpecialTasks extends Controller
                 default:
                     return false;
             }
-        })->values();
+        })->values()->map(fn ($task) => $this->formatSpecialTaskListItem($task));
 
 
             return response()->json([
@@ -128,11 +164,10 @@ class SpecialTasks extends Controller
     public function completedSpecialTasks()
     {
         return $this->commonGetData('completed','completed', function(){
-            return SpecialTask::where('status', 'completed')
-               // ->where('parent_id',null)
-                ->where('is_canceled',0)
-                ->get(['id', 'name', 'start_date', 'end_date','is_canceled','status','task_recurrence','task_recurrence_time']);
-
+            return $this->specialTasksWithSubtaskCounts()
+                ->where('status', 'completed')
+                ->where('is_canceled', 0)
+                ->get();
         });
     }
 
@@ -145,11 +180,11 @@ public function ongoingSpecialTasks()
  
 
         // Return only those still ongoing and not expired
-        return SpecialTask::where('status', 'ongoing')
-            //->whereNull('parent_id')
-            ->where('is_canceled',0)
+        return $this->specialTasksWithSubtaskCounts()
+            ->where('status', 'ongoing')
+            ->where('is_canceled', 0)
             ->where('end_date', '>=', $now)
-            ->get(['id', 'name', 'start_date', 'end_date', 'is_canceled', 'status','task_recurrence','task_recurrence_time']);
+            ->get();
     });
 }
 
@@ -159,14 +194,13 @@ public function ongoingSpecialTasks()
         return $this->commonGetData('ongoing','no_date', function() {
             $now = now();
 
-            return SpecialTask::where(function($query) use ($now) {
-                           $query->where('end_date', '<', $now)
-                            ->where('status', '!=', 'completed');
+            return $this->specialTasksWithSubtaskCounts()
+                ->where(function ($query) use ($now) {
+                    $query->where('end_date', '<', $now)
+                        ->where('status', '!=', 'completed');
                 })
-                //->whereNull('parent_id')
-                ->where('is_canceled',0)
-
-                ->get(['id', 'name', 'start_date', 'end_date', 'is_canceled', 'status','task_recurrence','task_recurrence_time']);
+                ->where('is_canceled', 0)
+                ->get();
 
                     });
     }
@@ -174,9 +208,9 @@ public function ongoingSpecialTasks()
      public function canceledSpecialTasks()
     {
         try {
-            $tasks = SpecialTask::where('is_canceled',1)
-               // ->where('parent_id',null)
-                ->get(['id', 'name', 'start_date', 'end_date','status','task_recurrence','task_recurrence_time']);
+            $tasks = $this->specialTasksWithSubtaskCounts()
+                ->where('is_canceled', 1)
+                ->get();
 
         // Filter based on recurrence
           $filtered = $tasks->filter(function ($task) {
@@ -203,7 +237,7 @@ public function ongoingSpecialTasks()
                 default:
                     return false;
             }
-        })->values();
+        })->values()->map(fn ($task) => $this->formatSpecialTaskListItem($task));
 
             return response()->json([
                 'status' => 'success',

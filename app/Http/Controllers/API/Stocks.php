@@ -64,7 +64,7 @@ class Stocks extends Controller
                 ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'tags' => function ($q) {
                     $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                 }])
-                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'shelf_number', 'created_at', 'updated_at');
+                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at');
 
             if ($request->filled('search')) {
                 $term = '%'.$request->string('search').'%';
@@ -93,10 +93,6 @@ class Stocks extends Controller
 
             if ($request->filled('store_section_id')) {
                 $query->where('store_section_id', (int) $request->input('store_section_id'));
-            }
-
-            if ($request->filled('shelf_number')) {
-                $query->where('shelf_number', $request->string('shelf_number'));
             }
 
             if ($request->filled('date_from')) {
@@ -540,7 +536,6 @@ class Stocks extends Controller
             ])->values(),
             'store_section_id' => $product->store_section_id !== null ? (int) $product->store_section_id : null,
             'store_section_name' => $product->storeSection?->name,
-            'shelf_number' => $product->shelf_number,
         ];
     }
 
@@ -587,7 +582,6 @@ class Stocks extends Controller
                 ? (int) $product->store_section_id
                 : null;
             $product['store_section_name'] = $product->storeSection?->name;
-            $product['shelf_number'] = $product->shelf_number;
             $product->unsetRelation('storeSection');
 
             $mainCatId = $product->category_id;

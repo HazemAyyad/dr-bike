@@ -5,7 +5,6 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\StoreSection;
-use App\Models\StoreSectionShelf;
 use App\Support\ApiImageUrl;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -24,7 +23,7 @@ class StoreSectionController extends Controller
         try {
             $includeInactive = $request->boolean('include_inactive');
             $q = StoreSection::query()
-                ->withCount(['products', 'shelves'])
+                ->withCount(['products'])
                 ->orderBy('sort_order')
                 ->orderBy('name');
             if (! $includeInactive) {
@@ -35,7 +34,6 @@ class StoreSectionController extends Controller
                 ->map(function (StoreSection $section) {
                     $row = $section->only($this->sectionFields());
                     $row['product_count'] = (int) $section->products_count;
-                    $row['shelf_count'] = (int) $section->shelves_count;
 
                     return $row;
                 })
@@ -169,10 +167,7 @@ class StoreSectionController extends Controller
             $sectionId = $request->integer('section_id');
             Product::query()
                 ->where('store_section_id', $sectionId)
-                ->update([
-                    'store_section_id' => null,
-                    'shelf_number' => null,
-                ]);
+                ->update(['store_section_id' => null]);
             StoreSection::query()->whereKey($sectionId)->delete();
 
             return response()->json([
@@ -192,267 +187,21 @@ class StoreSectionController extends Controller
         }
     }
 
-    public function shelves(Request $request)
-    {
-        try {
-            $request->validate([
-                'section_id' => ['required', 'integer', 'exists:store_sections,id'],
-            ]);
-
-            $sectionId = (int) $request->input('section_id');
-            $detailed = $request->boolean('detailed');
-
-            if ($detailed) {
-                $items = StoreSectionShelf::query()
-                    ->where('store_section_id', $sectionId)
-                    ->orderBy('sort_order')
-                    ->orderBy('shelf_number')
-                    ->get()
-                    ->map(function (StoreSectionShelf $shelf) use ($sectionId) {
-                        $count = Product::query()
-                            ->where('store_section_id', $sectionId)
-                            ->where('shelf_number', $shelf->shelf_number)
-                            ->count();
-
-                        return [
-                            'id' => $shelf->id,
-                            'store_section_id' => $shelf->store_section_id,
-                            'shelf_number' => $shelf->shelf_number,
-                            'sort_order' => $shelf->sort_order,
-                            'product_count' => $count,
-                        ];
-                    })
-                    ->values();
-
-                return response()->json([
-                    'status' => 'success',
-                    'shelves' => $items,
-                ], 200);
-            }
-
-            $shelves = StoreSectionShelf::query()
-                ->where('store_section_id', $sectionId)
-                ->orderBy('sort_order')
-                ->orderBy('shelf_number')
-                ->pluck('shelf_number')
-                ->values();
-
-            return response()->json([
-                'status' => 'success',
-                'shelves' => $shelves,
-            ], 200);
-        } catch (ValidationException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.validation_failed'),
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.something_wrong'),
-            ], 200);
-        }
-    }
-
-    public function storeShelf(Request $request)
-    {
-        try {
-            $data = $request->validate([
-                'section_id' => ['required', 'integer', 'exists:store_sections,id'],
-                'shelf_number' => ['required', 'string', 'max:30'],
-                'sort_order' => ['nullable', 'integer', 'min:0', 'max:65535'],
-            ]);
-
-            $sectionId = (int) $data['section_id'];
-            $shelfNumber = trim($data['shelf_number']);
-            if ($shelfNumber === '') {
-                throw ValidationException::withMessages([
-                    'shelf_number' => [__('messages.validation_failed')],
-                ]);
-            }
-
-            $exists = StoreSectionShelf::query()
-                ->where('store_section_id', $sectionId)
-                ->where('shelf_number', $shelfNumber)
-                ->exists();
-            if ($exists) {
-                throw ValidationException::withMessages([
-                    'shelf_number' => [__('messages.store_shelf_duplicate')],
-                ]);
-            }
-
-            $shelf = StoreSectionShelf::query()->create([
-                'store_section_id' => $sectionId,
-                'shelf_number' => $shelfNumber,
-                'sort_order' => $data['sort_order'] ?? 0,
-            ]);
-
-            return response()->json([
-                'status' => 'success',
-                'shelf' => [
-                    'id' => $shelf->id,
-                    'store_section_id' => $shelf->store_section_id,
-                    'shelf_number' => $shelf->shelf_number,
-                    'sort_order' => $shelf->sort_order,
-                    'product_count' => 0,
-                ],
-            ], 200);
-        } catch (ValidationException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.validation_failed'),
-                'errors' => $e->errors(),
-            ], 200);
-        } catch (QueryException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.create_data_error'),
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.something_wrong'),
-            ], 200);
-        }
-    }
-
-    public function updateShelf(Request $request)
-    {
-        try {
-            $data = $request->validate([
-                'shelf_id' => ['required', 'integer', 'exists:store_section_shelves,id'],
-                'shelf_number' => ['required', 'string', 'max:30'],
-                'sort_order' => ['sometimes', 'integer', 'min:0', 'max:65535'],
-            ]);
-
-            $shelf = StoreSectionShelf::query()->findOrFail((int) $data['shelf_id']);
-            $newNumber = trim($data['shelf_number']);
-            if ($newNumber === '') {
-                throw ValidationException::withMessages([
-                    'shelf_number' => [__('messages.validation_failed')],
-                ]);
-            }
-
-            $oldNumber = $shelf->shelf_number;
-            $sectionId = (int) $shelf->store_section_id;
-
-            if ($newNumber !== $oldNumber) {
-                $duplicate = StoreSectionShelf::query()
-                    ->where('store_section_id', $sectionId)
-                    ->where('shelf_number', $newNumber)
-                    ->where('id', '!=', $shelf->id)
-                    ->exists();
-                if ($duplicate) {
-                    throw ValidationException::withMessages([
-                        'shelf_number' => [__('messages.store_shelf_duplicate')],
-                    ]);
-                }
-            }
-
-            DB::transaction(function () use ($shelf, $data, $oldNumber, $newNumber, $sectionId) {
-                if ($newNumber !== $oldNumber) {
-                    Product::query()
-                        ->where('store_section_id', $sectionId)
-                        ->where('shelf_number', $oldNumber)
-                        ->update(['shelf_number' => $newNumber]);
-                }
-
-                $updates = ['shelf_number' => $newNumber];
-                if (array_key_exists('sort_order', $data)) {
-                    $updates['sort_order'] = $data['sort_order'];
-                }
-                $shelf->update($updates);
-            });
-
-            $count = Product::query()
-                ->where('store_section_id', $sectionId)
-                ->where('shelf_number', $newNumber)
-                ->count();
-
-            return response()->json([
-                'status' => 'success',
-                'shelf' => [
-                    'id' => $shelf->id,
-                    'store_section_id' => $sectionId,
-                    'shelf_number' => $newNumber,
-                    'sort_order' => $shelf->sort_order,
-                    'product_count' => $count,
-                ],
-            ], 200);
-        } catch (ValidationException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.validation_failed'),
-                'errors' => $e->errors(),
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.something_wrong'),
-            ], 200);
-        }
-    }
-
-    public function deleteShelf(Request $request)
-    {
-        try {
-            $request->validate([
-                'shelf_id' => ['required', 'integer', 'exists:store_section_shelves,id'],
-            ]);
-
-            $shelf = StoreSectionShelf::query()->findOrFail($request->integer('shelf_id'));
-            $sectionId = (int) $shelf->store_section_id;
-            $shelfNumber = $shelf->shelf_number;
-
-            DB::transaction(function () use ($shelf, $sectionId, $shelfNumber) {
-                Product::query()
-                    ->where('store_section_id', $sectionId)
-                    ->where('shelf_number', $shelfNumber)
-                    ->update(['shelf_number' => null]);
-
-                $shelf->delete();
-            });
-
-            return response()->json([
-                'status' => 'success',
-                'message' => __('messages.store_shelf_deleted'),
-            ], 200);
-        } catch (ValidationException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.validation_failed'),
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.something_wrong'),
-            ], 200);
-        }
-    }
-
     public function productsByLocation(Request $request)
     {
         try {
             $request->validate([
                 'section_id' => ['required', 'integer', 'exists:store_sections,id'],
-                'shelf_number' => ['nullable', 'string', 'max:30'],
                 'page' => ['nullable', 'integer', 'min:1'],
             ]);
 
             $sectionId = (int) $request->input('section_id');
             $section = StoreSection::query()->findOrFail($sectionId);
 
-            $query = Product::query()
+            $products = Product::query()
                 ->where('store_section_id', $sectionId)
                 ->with(['viewImages', 'normalImages', 'storeSection:id,name'])
-                ->select('id', 'nameAr', 'stock', 'product_code', 'store_section_id', 'shelf_number');
-
-            if ($request->filled('shelf_number')) {
-                $query->where('shelf_number', $request->string('shelf_number'));
-            }
-
-            $products = $query
-                ->orderBy('shelf_number')
+                ->select('id', 'nameAr', 'stock', 'product_code', 'store_section_id')
                 ->orderBy('nameAr')
                 ->paginate(15, ['*'], 'page', (int) $request->input('page', 1));
 
@@ -469,7 +218,6 @@ class StoreSectionController extends Controller
                         : 'no image',
                     'store_section_id' => $product->store_section_id,
                     'store_section_name' => $product->storeSection?->name,
-                    'shelf_number' => $product->shelf_number,
                 ];
             });
 
@@ -506,17 +254,14 @@ class StoreSectionController extends Controller
                 'product_ids' => ['required', 'array', 'min:1'],
                 'product_ids.*' => ['integer', 'exists:products,id'],
                 'store_section_id' => ['required', 'integer', 'exists:store_sections,id'],
-                'shelf_number' => ['required', 'string', 'max:30'],
             ]);
 
             StoreSection::query()->findOrFail((int) $data['store_section_id']);
 
-            $shelf = trim((string) $data['shelf_number']);
             $updated = Product::query()
                 ->whereIn('id', $data['product_ids'])
                 ->update([
                     'store_section_id' => (int) $data['store_section_id'],
-                    'shelf_number' => $shelf,
                 ]);
 
             return response()->json([
@@ -548,10 +293,8 @@ class StoreSectionController extends Controller
                 'group_b.*' => ['integer', 'exists:products,id', 'distinct'],
                 'group_a_target' => ['required', 'array'],
                 'group_a_target.store_section_id' => ['required', 'integer', 'exists:store_sections,id'],
-                'group_a_target.shelf_number' => ['required', 'string', 'max:30'],
                 'group_b_target' => ['required', 'array'],
                 'group_b_target.store_section_id' => ['required', 'integer', 'exists:store_sections,id'],
-                'group_b_target.shelf_number' => ['required', 'string', 'max:30'],
             ]);
 
             $idsA = array_values(array_unique(array_map('intval', $data['group_a'])));
@@ -592,26 +335,15 @@ class StoreSectionController extends Controller
                     ]);
                 }
 
-                $updatesA = [];
                 foreach ($idsA as $id) {
-                    $updatesA[$id] = $targetA;
-                }
-                $updatesB = [];
-                foreach ($idsB as $id) {
-                    $updatesB[$id] = $targetB;
-                }
-
-                foreach ($updatesA as $id => $loc) {
                     $productsA[$id]->update([
-                        'store_section_id' => $loc['store_section_id'],
-                        'shelf_number' => $loc['shelf_number'],
+                        'store_section_id' => $targetA['store_section_id'],
                     ]);
                     $swapped++;
                 }
-                foreach ($updatesB as $id => $loc) {
+                foreach ($idsB as $id) {
                     $productsB[$id]->update([
-                        'store_section_id' => $loc['store_section_id'],
-                        'shelf_number' => $loc['shelf_number'],
+                        'store_section_id' => $targetB['store_section_id'],
                     ]);
                     $swapped++;
                 }
@@ -642,14 +374,8 @@ class StoreSectionController extends Controller
             return null;
         }
 
-        $shelf = trim((string) ($target['shelf_number'] ?? ''));
-        if ($shelf === '') {
-            return null;
-        }
-
         return [
             'store_section_id' => (int) $target['store_section_id'],
-            'shelf_number' => $shelf,
         ];
     }
 }

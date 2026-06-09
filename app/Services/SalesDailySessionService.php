@@ -986,6 +986,8 @@ class SalesDailySessionService
             ])
             ->all();
 
+        $salesLog = $this->buildSessionSalesLog($session);
+
         return [
             'session' => [
                 'id' => $session->id,
@@ -1002,11 +1004,85 @@ class SalesDailySessionService
             'currencies' => $currencies,
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],
+            'instant_sales' => $salesLog['instant_sales'],
+            'profit_sales' => $salesLog['profit_sales'],
             'closing_requests' => $closingRequests,
             'config' => [
                 'variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
                 'max_float' => SalesDailySettings::maxFloatMap(),
             ],
+        ];
+    }
+
+    /**
+     * @return array{instant_sales: array<int, array<string, mixed>>, profit_sales: array<int, array<string, mixed>>}
+     */
+    private function buildSessionSalesLog(SalesDailySession $session): array
+    {
+        $instantSales = InstantSale::query()
+            ->where('sales_daily_session_id', $session->id)
+            ->whereNull('parent_id')
+            ->with(['product:id,nameAr', 'offerPackage:id,name'])
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (InstantSale $sale) {
+                $isPackage = $sale->offer_package_id !== null;
+                $label = $isPackage
+                    ? ($sale->offerPackage?->name ?? 'باكيج محذوف')
+                    : ($sale->product?->nameAr ?? 'منتج محذوف');
+                $total = round((float) $sale->total_cost, 2);
+                $paid = round((float) ($sale->payment_box_value ?? 0), 2);
+                if ($paid > $total) {
+                    $paid = $total;
+                }
+
+                return [
+                    'id' => $sale->id,
+                    'sale_type' => 'instant',
+                    'label' => $label,
+                    'is_package_sale' => $isPackage,
+                    'total_cost' => $total,
+                    'quantity' => (float) $sale->quantity,
+                    'paid_amount' => $paid,
+                    'remaining_amount' => max(0, round($total - $paid, 2)),
+                    'status' => $sale->status ?? 'active',
+                    'created_at' => $sale->created_at?->toDateTimeString(),
+                    'buyer_name' => $sale->buyer_name,
+                    'payment_box_name' => $sale->payment_box_name,
+                    'payment_box_value' => $sale->payment_box_value,
+                    'notes' => $sale->notes,
+                ];
+            })
+            ->values()
+            ->all();
+
+        $profitSales = ProfitSale::query()
+            ->where('sales_daily_session_id', $session->id)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (ProfitSale $sale) {
+                return [
+                    'id' => $sale->id,
+                    'sale_type' => 'profit',
+                    'label' => trim((string) ($sale->notes ?: $sale->buyer_name ?: '')) ?: ('ربح نقدي #'.$sale->id),
+                    'total_cost' => round((float) $sale->total_cost, 2),
+                    'paid_amount' => round((float) ($sale->payment_box_value ?? $sale->total_cost), 2),
+                    'status' => $sale->status ?? 'active',
+                    'created_at' => $sale->created_at?->toDateTimeString(),
+                    'buyer_name' => $sale->buyer_name,
+                    'payment_box_name' => $sale->payment_box_name,
+                    'payment_box_value' => $sale->payment_box_value,
+                    'notes' => $sale->notes,
+                ];
+            })
+            ->values()
+            ->all();
+
+        return [
+            'instant_sales' => $instantSales,
+            'profit_sales' => $profitSales,
         ];
     }
 

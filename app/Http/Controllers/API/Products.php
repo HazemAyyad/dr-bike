@@ -43,7 +43,6 @@ class Products extends Controller
                 'rate',
                 'product_code',
                 'store_section_id',
-                'shelf_number',
             ]);
 
         $formatted = $products->map(function ($product) {
@@ -65,7 +64,6 @@ class Products extends Controller
                         ? (int) $product->store_section_id
                         : null,
                     'store_section_name' => $product->storeSection?->name,
-                    'shelf_number' => $product->shelf_number,
                     'projects' => $product->projects->pluck('project_id')->toArray(),
                 ],
                 \App\Support\ProductImageResolver::formatForList($product),

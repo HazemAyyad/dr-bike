@@ -85,7 +85,6 @@ class ProductFormService
             'tag_ids' => ['nullable', 'array'],
             'tag_ids.*' => ['integer', 'exists:product_tags,id'],
             'store_section_id' => ['nullable', 'integer', 'exists:store_sections,id'],
-            'shelf_number' => ['nullable', 'string', 'max:30'],
         ];
 
         if ($forEdit) {
@@ -556,10 +555,6 @@ class ProductFormService
             $payload['store_section_id'] = ($sectionId === null || $sectionId === '')
                 ? null
                 : (int) $sectionId;
-        }
-        if ($request->has('shelf_number')) {
-            $shelf = trim((string) $request->input('shelf_number', ''));
-            $payload['shelf_number'] = $shelf === '' ? null : $shelf;
         }
     }
 

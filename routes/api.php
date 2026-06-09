@@ -707,10 +707,6 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::post('/store/sections/update' , [StoreSectionController::class,'update']);
     Route::post('/store/sections/deactivate' , [StoreSectionController::class,'deactivate']);
     Route::post('/store/sections/delete' , [StoreSectionController::class,'destroy']);
-    Route::get('/store/sections/shelves' , [StoreSectionController::class,'shelves']);
-    Route::post('/store/sections/shelves' , [StoreSectionController::class,'storeShelf']);
-    Route::post('/store/sections/shelves/update' , [StoreSectionController::class,'updateShelf']);
-    Route::post('/store/sections/shelves/delete' , [StoreSectionController::class,'deleteShelf']);
     Route::get('/products/by/location' , [StoreSectionController::class,'productsByLocation']);
     Route::post('/products/location/move' , [StoreSectionController::class,'moveProducts']);
     Route::post('/products/location/swap' , [StoreSectionController::class,'swapProductLocations']);
