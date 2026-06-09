@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
+use App\Models\EmployeeDetail;
 use App\Models\InstantSale;
 use App\Models\ProfitSale;
 use App\Models\SalesCancellationRequest;
@@ -13,13 +14,15 @@ use App\Models\User;
 use App\Support\SalesDailySettings;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class SalesDailySessionService
 {
     public function __construct(
-        protected AdminNotificationService $adminNotificationService
+        protected AdminNotificationService $adminNotificationService,
+        protected EmployeeNotificationService $employeeNotificationService
     ) {}
 
     /**
@@ -598,6 +601,8 @@ class SalesDailySessionService
                 'closed_by_user_id' => $reviewer->id,
             ]);
 
+            $this->notifyEmployeeClosingApproved($session);
+
             return $closingRequest->fresh(['session.user', 'session.employee.user']);
         });
     }
@@ -627,8 +632,75 @@ class SalesDailySessionService
                 'status' => config('sales_daily.session_status.open'),
             ]);
 
+            $this->notifyEmployeeClosingRejected($closingRequest->session);
+
             return $closingRequest->fresh(['session.user', 'session.employee.user']);
         });
+    }
+
+    private function notifyEmployeeClosingApproved(SalesDailySession $session): void
+    {
+        $employee = $this->resolveSessionEmployee($session);
+        if (! $employee) {
+            return;
+        }
+
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            $this->employeeNotificationService->create(
+                $employee,
+                EmployeeNotificationService::TYPE_SALES_DAILY_CLOSING_APPROVED,
+                __('messages.sales_daily_closing_approved_notify_title'),
+                __('messages.sales_daily_closing_approved_notify_body'),
+                [
+                    'session_id' => (string) $session->id,
+                    'business_date' => $session->business_date?->toDateString() ?? '',
+                ],
+                'sales_daily_session',
+                (int) $session->id
+            );
+        } finally {
+            App::setLocale($previous);
+        }
+    }
+
+    private function notifyEmployeeClosingRejected(SalesDailySession $session): void
+    {
+        $employee = $this->resolveSessionEmployee($session);
+        if (! $employee) {
+            return;
+        }
+
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            $this->employeeNotificationService->create(
+                $employee,
+                EmployeeNotificationService::TYPE_SALES_DAILY_CLOSING_REJECTED,
+                __('messages.sales_daily_closing_rejected_notify_title'),
+                __('messages.sales_daily_closing_rejected_notify_body'),
+                [
+                    'session_id' => (string) $session->id,
+                    'business_date' => $session->business_date?->toDateString() ?? '',
+                ],
+                'sales_daily_session',
+                (int) $session->id
+            );
+        } finally {
+            App::setLocale($previous);
+        }
+    }
+
+    private function resolveSessionEmployee(SalesDailySession $session): ?EmployeeDetail
+    {
+        if (! $session->employee_id) {
+            return null;
+        }
+
+        return EmployeeDetail::query()->find($session->employee_id);
     }
 
     public function requestCancellation(User $user, string $saleType, int $saleId, string $reason): SalesCancellationRequest
@@ -753,5 +825,254 @@ class SalesDailySessionService
         throw ValidationException::withMessages([
             'sale' => [__('messages.sales_daily_cancel_request_required')],
         ]);
+    }
+
+    public function canReviewAllSessions(User $user): bool
+    {
+        if ($user && $user->type === 'admin') {
+            return true;
+        }
+
+        if (! $user || $user->type !== 'employee' || ! $user->employee) {
+            return false;
+        }
+
+        return $user->employee->permissions()
+            ->whereHas('permission', fn ($q) => $q->where('name_en', config('sales_daily.permissions.daily_close_review')))
+            ->exists();
+    }
+
+    public function assertCanViewSession(User $viewer, SalesDailySession $session): void
+    {
+        if ($this->canReviewAllSessions($viewer)) {
+            return;
+        }
+
+        if ((int) $session->user_id === (int) $viewer->id) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'session' => [__('messages.unauthorized')],
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array{sessions: Collection<int, array<string, mixed>>, pagination: array<string, int|null>}
+     */
+    public function listSessions(User $viewer, array $filters = []): array
+    {
+        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
+        $page = max(1, (int) ($filters['page'] ?? 1));
+
+        $query = SalesDailySession::query()
+            ->with(['user', 'employee.user'])
+            ->orderByDesc('business_date')
+            ->orderByDesc('id');
+
+        if (! $this->canReviewAllSessions($viewer)) {
+            $query->where('user_id', $viewer->id);
+        }
+
+        if (! empty($filters['business_date'])) {
+            $query->whereDate('business_date', $filters['business_date']);
+        }
+        if (! empty($filters['from_date'])) {
+            $query->whereDate('business_date', '>=', $filters['from_date']);
+        }
+        if (! empty($filters['to_date'])) {
+            $query->whereDate('business_date', '<=', $filters['to_date']);
+        }
+        if (! empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $sessions = collect($paginator->items())
+            ->map(fn (SalesDailySession $session) => $this->formatSessionSummary($session));
+
+        return [
+            'sessions' => $sessions,
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildTodayOverview(User $viewer): array
+    {
+        $today = $this->businessDateToday()->toDateString();
+
+        $result = $this->listSessions($viewer, [
+            'business_date' => $today,
+            'per_page' => 50,
+            'page' => 1,
+        ]);
+
+        $sessions = $result['sessions']->map(function (array $summary) {
+            $session = SalesDailySession::query()->find($summary['id']);
+            if (! $session) {
+                return $summary;
+            }
+
+            $owner = User::query()->find($session->user_id);
+            if (! $owner) {
+                return $summary;
+            }
+
+            return array_merge($summary, [
+                'currencies' => $this->buildCurrenciesForSession($session, $owner),
+            ]);
+        });
+
+        return [
+            'business_date' => $today,
+            'sessions' => $sessions->values()->all(),
+            'counts' => [
+                'total' => $sessions->count(),
+                'open' => $sessions->where('status', config('sales_daily.session_status.open'))->count(),
+                'closing_requested' => $sessions->where('status', config('sales_daily.session_status.closing_requested'))->count(),
+                'closed' => $sessions->where('status', config('sales_daily.session_status.closed'))->count(),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildSessionDetail(User $viewer, int $sessionId): array
+    {
+        $session = SalesDailySession::query()
+            ->with(['user', 'employee.user', 'closingRequests.requestedBy', 'closingRequests.reviewedBy'])
+            ->findOrFail($sessionId);
+
+        $this->assertCanViewSession($viewer, $session);
+
+        $owner = User::query()->findOrFail($session->user_id);
+        $currencies = $this->buildCurrenciesForSession($session, $owner);
+        $counts = $this->salesCountsForSession($session);
+        $closingRequests = $session->closingRequests
+            ->sortByDesc('id')
+            ->values()
+            ->map(fn (SalesDailyClosingRequest $request) => [
+                'id' => $request->id,
+                'status' => $request->status,
+                'requested_at' => $request->requested_at?->toDateTimeString(),
+                'reviewed_at' => $request->reviewed_at?->toDateTimeString(),
+                'review_notes' => $request->review_notes,
+                'requested_by' => $request->requestedBy?->name,
+                'reviewed_by' => $request->reviewedBy?->name,
+                'instant_sales_count' => $request->instant_sales_count,
+                'profit_sales_count' => $request->profit_sales_count,
+                'cash_counts' => $request->cash_counts,
+                'transfers' => $request->transfers,
+            ])
+            ->all();
+
+        return [
+            'session' => [
+                'id' => $session->id,
+                'user_id' => $session->user_id,
+                'employee_id' => $session->employee_id,
+                'employee_name' => $session->user?->name,
+                'business_date' => $session->business_date->toDateString(),
+                'status' => $session->status,
+                'allows_sales' => $session->allowsSales(),
+                'opened_at' => $session->opened_at?->toDateTimeString(),
+                'closed_at' => $session->closed_at?->toDateTimeString(),
+                'opening_balances' => $session->opening_balances ?? [],
+            ],
+            'currencies' => $currencies,
+            'instant_sales_count' => $counts['instant'],
+            'profit_sales_count' => $counts['profit'],
+            'closing_requests' => $closingRequests,
+            'config' => [
+                'variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
+                'max_float' => SalesDailySettings::maxFloatMap(),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatSessionSummary(SalesDailySession $session): array
+    {
+        $session->loadMissing(['user', 'employee.user']);
+        $counts = $this->salesCountsForSession($session);
+
+        return [
+            'id' => $session->id,
+            'user_id' => $session->user_id,
+            'employee_id' => $session->employee_id,
+            'employee_name' => $session->user?->name,
+            'business_date' => $session->business_date->toDateString(),
+            'status' => $session->status,
+            'opened_at' => $session->opened_at?->toDateTimeString(),
+            'closed_at' => $session->closed_at?->toDateTimeString(),
+            'instant_sales_count' => $counts['instant'],
+            'profit_sales_count' => $counts['profit'],
+        ];
+    }
+
+    /**
+     * @return array{instant: int, profit: int}
+     */
+    private function salesCountsForSession(SalesDailySession $session): array
+    {
+        $instant = InstantSale::query()
+            ->where('sales_daily_session_id', $session->id)
+            ->whereNull('parent_id')
+            ->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
+            })
+            ->count();
+
+        $profit = ProfitSale::query()
+            ->where('sales_daily_session_id', $session->id)
+            ->where(function ($q) {
+                $q->whereNull('status')->orWhere('status', '!=', 'cancelled');
+            })
+            ->count();
+
+        return ['instant' => $instant, 'profit' => $profit];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildCurrenciesForSession(SalesDailySession $session, User $owner): array
+    {
+        $dailyBoxes = $this->ensureDailyBoxes($owner);
+        $salesCollected = $this->salesCollectedByCurrency($session);
+        $openingBalances = $session->opening_balances ?? [];
+        $currencies = [];
+
+        foreach ($dailyBoxes as $box) {
+            $currency = $box->currency;
+            $opening = round((float) ($openingBalances[$currency] ?? 0), 2);
+            $collected = round((float) ($salesCollected[$currency] ?? 0), 2);
+            $systemBalance = round($opening + $collected, 2);
+
+            $currencies[] = [
+                'currency' => $currency,
+                'daily_box_id' => $box->id,
+                'daily_box_name' => $box->name,
+                'box_balance' => round((float) $box->total, 2),
+                'opening_float' => $opening,
+                'sales_collected' => $collected,
+                'system_balance' => $systemBalance,
+            ];
+        }
+
+        return $currencies;
     }
 }

@@ -510,6 +510,10 @@ return [
     'sales_daily_cancel_rejected' => 'Cancellation request rejected.',
     'sales_daily_closing_notify_title' => 'Sales day closing request',
     'sales_daily_closing_notify_body' => ':employee requested to close the sales day.',
+    'sales_daily_closing_approved_notify_title' => 'Sales box closed',
+    'sales_daily_closing_approved_notify_body' => 'Your sales box closing was approved. You cannot sell now.',
+    'sales_daily_closing_rejected_notify_title' => 'Sales box closing rejected',
+    'sales_daily_closing_rejected_notify_body' => 'Your closing request was rejected. You can continue selling.',
     'sales_daily_cancel_notify_title' => 'Sales cancellation request',
     'sales_daily_cancel_notify_body' => 'Cancellation requested for :type #:id on a closed day.',
 ];

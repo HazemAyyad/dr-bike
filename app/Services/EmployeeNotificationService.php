@@ -22,6 +22,10 @@ class EmployeeNotificationService
 
     public const TYPE_OPERATIONAL_REMINDER = 'employee_operational_reminder';
 
+    public const TYPE_SALES_DAILY_CLOSING_APPROVED = 'sales_daily_closing_approved';
+
+    public const TYPE_SALES_DAILY_CLOSING_REJECTED = 'sales_daily_closing_rejected';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}

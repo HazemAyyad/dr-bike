@@ -35,6 +35,86 @@ class SalesDailySessionController extends Controller
         }
     }
 
+    public function index(Request $request)
+    {
+        try {
+            $filters = $request->validate([
+                'business_date' => 'nullable|date',
+                'from_date' => 'nullable|date',
+                'to_date' => 'nullable|date',
+                'status' => 'nullable|string|in:open,closing_requested,closed',
+                'page' => 'nullable|integer|min:1',
+                'per_page' => 'nullable|integer|min:1|max:50',
+            ]);
+
+            $result = $this->sessionService->listSessions($request->user(), $filters);
+
+            return response()->json([
+                'status' => 'success',
+                'sessions' => $result['sessions']->values()->all(),
+                'pagination' => $result['pagination'],
+                'can_view_all' => $this->sessionService->canReviewAllSessions($request->user()),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function todayOverview(Request $request)
+    {
+        try {
+            $overview = $this->sessionService->buildTodayOverview($request->user());
+
+            return response()->json([
+                'status' => 'success',
+                'overview' => $overview,
+                'can_view_all' => $this->sessionService->canReviewAllSessions($request->user()),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function show(Request $request, int $sessionId)
+    {
+        try {
+            $detail = $this->sessionService->buildSessionDetail($request->user(), $sessionId);
+
+            return response()->json([
+                'status' => 'success',
+                'session_detail' => $detail,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.unauthorized'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function requestClosing(Request $request)
     {
         try {
