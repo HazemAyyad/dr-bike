@@ -366,6 +366,10 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/sales/daily-closing/pending', [SalesDailySessionController::class, 'pendingClosing']);
       Route::post('/sales/daily-closing/approve', [SalesDailySessionController::class, 'approveClosing']);
       Route::post('/sales/daily-closing/reject', [SalesDailySessionController::class, 'rejectClosing']);
+      Route::post('/sales/daily-reopen/request', [SalesDailySessionController::class, 'requestReopen']);
+      Route::get('/sales/daily-reopen/pending', [SalesDailySessionController::class, 'pendingReopen']);
+      Route::post('/sales/daily-reopen/approve', [SalesDailySessionController::class, 'approveReopen']);
+      Route::post('/sales/daily-reopen/reject', [SalesDailySessionController::class, 'rejectReopen']);
       Route::post('/sales/cancellation/request', [SalesDailySessionController::class, 'requestCancellation']);
       Route::get('/sales/cancellation/pending', [SalesDailySessionController::class, 'pendingCancellations']);
       Route::post('/sales/cancellation/approve', [SalesDailySessionController::class, 'approveCancellation']);

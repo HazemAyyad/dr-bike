@@ -44,6 +44,11 @@ class SalesDailySession extends Model
         return $this->hasMany(SalesDailyClosingRequest::class, 'session_id');
     }
 
+    public function reopenRequests(): HasMany
+    {
+        return $this->hasMany(SalesDailyReopenRequest::class, 'session_id');
+    }
+
     public function latestClosingRequest(): HasOne
     {
         return $this->hasOne(SalesDailyClosingRequest::class, 'session_id')->latestOfMany();

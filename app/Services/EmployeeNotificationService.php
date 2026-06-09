@@ -26,6 +26,10 @@ class EmployeeNotificationService
 
     public const TYPE_SALES_DAILY_CLOSING_REJECTED = 'sales_daily_closing_rejected';
 
+    public const TYPE_SALES_DAILY_REOPEN_APPROVED = 'sales_daily_reopen_approved';
+
+    public const TYPE_SALES_DAILY_REOPEN_REJECTED = 'sales_daily_reopen_rejected';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}

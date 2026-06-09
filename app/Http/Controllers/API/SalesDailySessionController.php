@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\SalesCancellationRequest;
 use App\Models\SalesDailyClosingRequest;
+use App\Models\SalesDailyReopenRequest;
 use App\Services\SalesCancellationExecutor;
 use App\Services\SalesDailySessionService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -268,6 +269,147 @@ class SalesDailySessionController extends Controller
         }
     }
 
+    public function requestReopen(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'reason' => 'required|string|max:2000',
+            ]);
+
+            $reopenRequest = $this->sessionService->requestReopen(
+                $request->user(),
+                $data['reason']
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_daily_reopen_requested'),
+                'reopen_request' => $this->formatReopenRequest($reopenRequest),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function pendingReopen(Request $request)
+    {
+        try {
+            if (! $this->canReviewClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $items = $this->sessionService->pendingReopenRequests()
+                ->map(fn ($item) => $this->formatReopenRequest($item));
+
+            return response()->json([
+                'status' => 'success',
+                'reopen_requests' => $items,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function approveReopen(Request $request)
+    {
+        try {
+            if (! $this->canReviewClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'reopen_request_id' => 'required|integer|exists:sales_daily_reopen_requests,id',
+                'review_notes' => 'nullable|string|max:2000',
+            ]);
+
+            $reopenRequest = $this->sessionService->approveReopen(
+                $request->user(),
+                (int) $data['reopen_request_id'],
+                $data['review_notes'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_daily_reopen_approved'),
+                'reopen_request' => $this->formatReopenRequest($reopenRequest),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function rejectReopen(Request $request)
+    {
+        try {
+            if (! $this->canReviewClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'reopen_request_id' => 'required|integer|exists:sales_daily_reopen_requests,id',
+                'review_notes' => 'nullable|string|max:2000',
+            ]);
+
+            $reopenRequest = $this->sessionService->rejectReopen(
+                $request->user(),
+                (int) $data['reopen_request_id'],
+                $data['review_notes'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_daily_reopen_rejected'),
+                'reopen_request' => $this->formatReopenRequest($reopenRequest),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function requestCancellation(Request $request)
     {
         try {
@@ -464,6 +606,24 @@ class SalesDailySessionController extends Controller
             'profit_sales_count' => $request->profit_sales_count,
             'cash_counts' => $request->cash_counts,
             'transfers' => $request->transfers,
+            'employee_name' => $request->session?->user?->name,
+            'business_date' => $request->session?->business_date?->toDateString(),
+            'session_id' => $request->session_id,
+            'session_status' => $request->session?->status,
+        ];
+    }
+
+    private function formatReopenRequest(SalesDailyReopenRequest $request): array
+    {
+        $request->loadMissing(['session.user', 'session.employee.user', 'requestedBy', 'reviewedBy']);
+
+        return [
+            'id' => $request->id,
+            'status' => $request->status,
+            'reason' => $request->reason,
+            'requested_at' => $request->requested_at?->toDateTimeString(),
+            'reviewed_at' => $request->reviewed_at?->toDateTimeString(),
+            'review_notes' => $request->review_notes,
             'employee_name' => $request->session?->user?->name,
             'business_date' => $request->session?->business_date?->toDateString(),
             'session_id' => $request->session_id,

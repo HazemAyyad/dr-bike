@@ -9,6 +9,7 @@ use App\Models\InstantSale;
 use App\Models\ProfitSale;
 use App\Models\SalesCancellationRequest;
 use App\Models\SalesDailyClosingRequest;
+use App\Models\SalesDailyReopenRequest;
 use App\Models\SalesDailySession;
 use App\Models\User;
 use App\Support\SalesDailySettings;
@@ -348,6 +349,7 @@ class SalesDailySessionService
         $instantCount = 0;
         $profitCount = 0;
         $pendingClosing = null;
+        $pendingReopen = null;
 
         if ($session) {
             $instantCount = InstantSale::query()
@@ -369,6 +371,11 @@ class SalesDailySessionService
                 ->where('status', 'pending')
                 ->latest('id')
                 ->first();
+
+            $pendingReopen = $session->reopenRequests()
+                ->where('status', 'pending')
+                ->latest('id')
+                ->first();
         }
 
         return [
@@ -378,11 +385,13 @@ class SalesDailySessionService
                 'status' => $session->status,
                 'allows_sales' => $session->allowsSales() && ! $blocking,
                 'is_blocking_previous_day' => (bool) $blocking,
+                'has_pending_reopen' => (bool) $pendingReopen,
             ] : null,
             'currencies' => $currencies,
             'instant_sales_count' => $instantCount,
             'profit_sales_count' => $profitCount,
             'pending_closing_request_id' => $pendingClosing?->id,
+            'pending_reopen_request_id' => $pendingReopen?->id,
             'config' => [
                 'variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
                 'max_float' => SalesDailySettings::maxFloatMap(),
@@ -1049,6 +1058,199 @@ class SalesDailySessionService
     /**
      * @return array<int, array<string, mixed>>
      */
+    public function requestReopen(User $user, string $reason): SalesDailyReopenRequest
+    {
+        $reason = trim($reason);
+        if ($reason === '') {
+            throw ValidationException::withMessages([
+                'reason' => [__('messages.sales_daily_reopen_reason_required')],
+            ]);
+        }
+
+        $owner = $this->resolveOwner($user);
+        $today = $this->businessDateToday()->toDateString();
+
+        $session = SalesDailySession::query()
+            ->where('user_id', $owner['user_id'])
+            ->whereDate('business_date', $today)
+            ->first();
+
+        if (! $session || ! $session->isClosed()) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.sales_daily_reopen_not_closed_day')],
+            ]);
+        }
+
+        if ($session->reopenRequests()->where('status', 'pending')->exists()) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.sales_daily_reopen_already_pending')],
+            ]);
+        }
+
+        return DB::transaction(function () use ($user, $session, $reason) {
+            $request = SalesDailyReopenRequest::create([
+                'session_id' => $session->id,
+                'requested_by_user_id' => $user->id,
+                'requested_at' => now(),
+                'reason' => $reason,
+                'status' => 'pending',
+            ]);
+
+            $user->loadMissing('employee.user');
+            $name = $user->name ?? __('messages.employee_default_name');
+
+            $this->adminNotificationService->create(
+                AdminNotificationService::TYPE_SALES_DAILY_REOPEN_REQUEST,
+                __('messages.sales_daily_reopen_notify_title'),
+                __('messages.sales_daily_reopen_notify_body', ['employee' => $name]),
+                [
+                    'reopen_request_id' => (string) $request->id,
+                    'session_id' => (string) $session->id,
+                ],
+                $session->employee_id,
+                'sales_daily_reopen_request',
+                $request->id
+            );
+
+            return $request->fresh(['session.user', 'session.employee.user']);
+        });
+    }
+
+    public function approveReopen(User $reviewer, int $requestId, ?string $reviewNotes = null): SalesDailyReopenRequest
+    {
+        return DB::transaction(function () use ($reviewer, $requestId, $reviewNotes) {
+            $reopenRequest = SalesDailyReopenRequest::query()
+                ->with('session')
+                ->lockForUpdate()
+                ->findOrFail($requestId);
+
+            if (! $reopenRequest->isPending()) {
+                throw ValidationException::withMessages([
+                    'request' => [__('messages.sales_daily_request_not_pending')],
+                ]);
+            }
+
+            $session = $reopenRequest->session;
+            if (! $session->isClosed()) {
+                throw ValidationException::withMessages([
+                    'session' => [__('messages.sales_daily_reopen_session_not_closed')],
+                ]);
+            }
+
+            $reopenRequest->update([
+                'status' => 'approved',
+                'reviewed_by_user_id' => $reviewer->id,
+                'reviewed_at' => now(),
+                'review_notes' => $reviewNotes,
+            ]);
+
+            $session->update([
+                'status' => config('sales_daily.session_status.open'),
+                'closed_at' => null,
+                'closed_by_user_id' => null,
+            ]);
+
+            $this->notifyEmployeeReopenApproved($session);
+
+            return $reopenRequest->fresh(['session.user', 'session.employee.user']);
+        });
+    }
+
+    public function rejectReopen(User $reviewer, int $requestId, ?string $reviewNotes = null): SalesDailyReopenRequest
+    {
+        return DB::transaction(function () use ($reviewer, $requestId, $reviewNotes) {
+            $reopenRequest = SalesDailyReopenRequest::query()
+                ->with('session')
+                ->lockForUpdate()
+                ->findOrFail($requestId);
+
+            if (! $reopenRequest->isPending()) {
+                throw ValidationException::withMessages([
+                    'request' => [__('messages.sales_daily_request_not_pending')],
+                ]);
+            }
+
+            $reopenRequest->update([
+                'status' => 'rejected',
+                'reviewed_by_user_id' => $reviewer->id,
+                'reviewed_at' => now(),
+                'review_notes' => $reviewNotes,
+            ]);
+
+            $this->notifyEmployeeReopenRejected($reopenRequest->session);
+
+            return $reopenRequest->fresh(['session.user', 'session.employee.user']);
+        });
+    }
+
+    private function notifyEmployeeReopenApproved(SalesDailySession $session): void
+    {
+        $employee = $this->resolveSessionEmployee($session);
+        if (! $employee) {
+            return;
+        }
+
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            $this->employeeNotificationService->create(
+                $employee,
+                EmployeeNotificationService::TYPE_SALES_DAILY_REOPEN_APPROVED,
+                __('messages.sales_daily_reopen_approved_notify_title'),
+                __('messages.sales_daily_reopen_approved_notify_body'),
+                [
+                    'session_id' => (string) $session->id,
+                    'business_date' => $session->business_date?->toDateString() ?? '',
+                ],
+                'sales_daily_session',
+                (int) $session->id
+            );
+        } finally {
+            App::setLocale($previous);
+        }
+    }
+
+    private function notifyEmployeeReopenRejected(SalesDailySession $session): void
+    {
+        $employee = $this->resolveSessionEmployee($session);
+        if (! $employee) {
+            return;
+        }
+
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            $this->employeeNotificationService->create(
+                $employee,
+                EmployeeNotificationService::TYPE_SALES_DAILY_REOPEN_REJECTED,
+                __('messages.sales_daily_reopen_rejected_notify_title'),
+                __('messages.sales_daily_reopen_rejected_notify_body'),
+                [
+                    'session_id' => (string) $session->id,
+                    'business_date' => $session->business_date?->toDateString() ?? '',
+                ],
+                'sales_daily_session',
+                (int) $session->id
+            );
+        } finally {
+            App::setLocale($previous);
+        }
+    }
+
+    /**
+     * @return Collection<int, SalesDailyReopenRequest>
+     */
+    public function pendingReopenRequests(): Collection
+    {
+        return SalesDailyReopenRequest::query()
+            ->with(['session.user', 'session.employee.user', 'requestedBy'])
+            ->where('status', 'pending')
+            ->orderByDesc('id')
+            ->get();
+    }
+
     private function buildCurrenciesForSession(SalesDailySession $session, User $owner): array
     {
         $dailyBoxes = $this->ensureDailyBoxes($owner);

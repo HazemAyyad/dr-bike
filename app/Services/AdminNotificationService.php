@@ -43,6 +43,8 @@ class AdminNotificationService
 
     public const TYPE_SALES_CANCELLATION_REQUEST = 'sales_cancellation_request';
 
+    public const TYPE_SALES_DAILY_REOPEN_REQUEST = 'sales_daily_reopen_request';
+
     /**
      * @param  array<string, mixed>  $data
      */
