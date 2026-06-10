@@ -444,8 +444,8 @@ class SuspendedInstantSaleService
         $reference = $record->reference_code ?? ('ع-'.$record->id);
 
         $bodyKey = (int) $completedBy->id === (int) $record->created_by_user_id
-            ? 'admin_notify_suspended_sale_completed_body'
-            : 'admin_notify_suspended_sale_completed_body_admin';
+            ? 'messages.admin_notify_suspended_sale_completed_body'
+            : 'messages.admin_notify_suspended_sale_completed_body_admin';
 
         $this->adminNotificationService->create(
             AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_COMPLETED,
