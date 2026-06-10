@@ -362,6 +362,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/sales/daily-sessions/today-overview', [SalesDailySessionController::class, 'todayOverview']);
       Route::get('/sales/daily-sessions', [SalesDailySessionController::class, 'index']);
       Route::get('/sales/daily-sessions/{sessionId}', [SalesDailySessionController::class, 'show']);
+      Route::get('/sales/daily-sessions/{sessionId}/close-payload', [SalesDailySessionController::class, 'closePayload']);
       Route::post('/sales/daily-closing/request', [SalesDailySessionController::class, 'requestClosing']);
       Route::get('/sales/daily-closing/pending', [SalesDailySessionController::class, 'pendingClosing']);
       Route::post('/sales/daily-closing/approve', [SalesDailySessionController::class, 'approveClosing']);

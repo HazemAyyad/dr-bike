@@ -523,6 +523,8 @@ return [
     'sales_daily_cancel_rejected' => 'تم رفض طلب الإلغاء.',
     'sales_daily_closing_notify_title' => 'طلب إغلاق يوم مبيعات',
     'sales_daily_closing_notify_body' => ':employee طلب إغلاق يوم المبيعات.',
+    'sales_daily_closing_notify_body_admin' => ':admin أرسل طلب إغلاق لصندوق :employee.',
+    'sales_daily_late_close_reason_required' => 'سبب تأخير الإغلاق مطلوب عند إغلاق يوم سابق.',
     'sales_daily_closing_approved_notify_title' => 'تم إغلاق صندوق المبيعات',
     'sales_daily_closing_approved_notify_body' => 'تمت الموافقة على إغلاق صندوقك. لا يمكنك البيع الآن.',
     'sales_daily_closing_rejected_notify_title' => 'تم رفض إغلاق الصندوق',

@@ -116,6 +116,37 @@ class SalesDailySessionController extends Controller
         }
     }
 
+    public function closePayload(Request $request, int $sessionId)
+    {
+        try {
+            $payload = $this->sessionService->buildClosePayloadForSession(
+                $request->user(),
+                $sessionId
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'daily_session' => $payload,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.unauthorized'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function requestClosing(Request $request)
     {
         try {
@@ -125,11 +156,15 @@ class SalesDailySessionController extends Controller
                 'cash_counts.*.physical_count' => 'required|numeric|min:0',
                 'cash_counts.*.float_to_keep' => 'required|numeric|min:0',
                 'cash_counts.*.employee_note' => 'nullable|string|max:1000',
+                'late_close_reason' => 'nullable|string|max:2000',
+                'session_id' => 'nullable|integer|exists:sales_daily_sessions,id',
             ]);
 
             $closingRequest = $this->sessionService->requestClosing(
                 $request->user(),
-                $data['cash_counts']
+                $data['cash_counts'],
+                $data['late_close_reason'] ?? null,
+                isset($data['session_id']) ? (int) $data['session_id'] : null
             );
 
             return response()->json([
@@ -596,21 +631,14 @@ class SalesDailySessionController extends Controller
     {
         $request->loadMissing(['session.user', 'session.employee.user', 'requestedBy', 'reviewedBy']);
 
-        return [
-            'id' => $request->id,
-            'status' => $request->status,
-            'requested_at' => $request->requested_at?->toDateTimeString(),
-            'reviewed_at' => $request->reviewed_at?->toDateTimeString(),
-            'review_notes' => $request->review_notes,
-            'instant_sales_count' => $request->instant_sales_count,
-            'profit_sales_count' => $request->profit_sales_count,
-            'cash_counts' => $request->cash_counts,
-            'transfers' => $request->transfers,
-            'employee_name' => $request->session?->user?->name,
-            'business_date' => $request->session?->business_date?->toDateString(),
-            'session_id' => $request->session_id,
-            'session_status' => $request->session?->status,
-        ];
+        return array_merge(
+            $this->sessionService->formatClosingRequestRow($request),
+            [
+                'employee_name' => $request->session?->user?->name,
+                'session_id' => $request->session_id,
+                'session_status' => $request->session?->status,
+            ]
+        );
     }
 
     private function formatReopenRequest(SalesDailyReopenRequest $request): array

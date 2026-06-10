@@ -510,6 +510,8 @@ return [
     'sales_daily_cancel_rejected' => 'Cancellation request rejected.',
     'sales_daily_closing_notify_title' => 'Sales day closing request',
     'sales_daily_closing_notify_body' => ':employee requested to close the sales day.',
+    'sales_daily_closing_notify_body_admin' => ':admin submitted a closing request for :employee.',
+    'sales_daily_late_close_reason_required' => 'A late-close reason is required when closing a previous day.',
     'sales_daily_closing_approved_notify_title' => 'Sales box closed',
     'sales_daily_closing_approved_notify_body' => 'Your sales box closing was approved. You cannot sell now.',
     'sales_daily_closing_rejected_notify_title' => 'Sales box closing rejected',

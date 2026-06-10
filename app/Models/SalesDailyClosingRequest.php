@@ -18,6 +18,7 @@ class SalesDailyClosingRequest extends Model
         'instant_sales_count',
         'profit_sales_count',
         'cash_counts',
+        'late_close_reason',
         'transfers',
     ];
 
