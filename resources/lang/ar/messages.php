@@ -301,6 +301,11 @@ return [
     'suspended_instant_sale_forbidden' => 'لا تملك صلاحية لهذه الفاتورة العالقة',
     'suspended_instant_sale_not_active' => 'هذه الفاتورة العالقة غير متاحة',
     'suspended_instant_sale_default_label' => 'فاتورة عالقة',
+    'admin_notify_suspended_sale_created_title' => 'فاتورة عالقة جديدة',
+    'admin_notify_suspended_sale_created_body' => 'علّق :employee فاتورة :reference بقيمة :total',
+    'admin_notify_suspended_sale_completed_title' => 'تم إتمام فاتورة عالقة',
+    'admin_notify_suspended_sale_completed_body' => 'أتم :employee الفاتورة العالقة :reference بقيمة :total',
+    'admin_notify_suspended_sale_completed_body_admin' => 'أتم :actor فاتورة :reference (كانت معلّقة لـ :employee) بقيمة :total',
 
     //outgoing_checks
     'check_created_successfully'=>'تم انشاء الشيك الصادر بنجاح',

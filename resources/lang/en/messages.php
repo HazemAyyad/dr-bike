@@ -292,6 +292,11 @@ return [
     'suspended_instant_sale_forbidden' => 'You do not have access to this suspended invoice',
     'suspended_instant_sale_not_active' => 'This suspended invoice is not available',
     'suspended_instant_sale_default_label' => 'Suspended invoice',
+    'admin_notify_suspended_sale_created_title' => 'New suspended invoice',
+    'admin_notify_suspended_sale_created_body' => ':employee suspended invoice :reference for :total',
+    'admin_notify_suspended_sale_completed_title' => 'Suspended invoice completed',
+    'admin_notify_suspended_sale_completed_body' => ':employee completed suspended invoice :reference for :total',
+    'admin_notify_suspended_sale_completed_body_admin' => ':actor completed suspended invoice :reference (owned by :employee) for :total',
 
     //outgoing_checks
     'check_created_successfully'=>'outgoing check was successfully created',

@@ -45,6 +45,10 @@ class AdminNotificationService
 
     public const TYPE_SALES_DAILY_REOPEN_REQUEST = 'sales_daily_reopen_request';
 
+    public const TYPE_SUSPENDED_INSTANT_SALE_CREATED = 'suspended_instant_sale_created';
+
+    public const TYPE_SUSPENDED_INSTANT_SALE_COMPLETED = 'suspended_instant_sale_completed';
+
     /**
      * @param  array<string, mixed>  $data
      */

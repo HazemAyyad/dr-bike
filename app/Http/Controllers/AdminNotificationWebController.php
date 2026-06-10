@@ -207,6 +207,8 @@ class AdminNotificationWebController extends Controller
             AdminNotificationService::TYPE_CHECK_DUE_REMINDER => 'شيك يستحق قريباً',
             AdminNotificationService::TYPE_CHECK_CASHED => 'صرف شيك صادر',
             AdminNotificationService::TYPE_CHECK_RETURNED => 'إرجاع شيك صادر',
+            AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_CREATED => 'فاتورة عالقة جديدة',
+            AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_COMPLETED => 'إتمام فاتورة عالقة',
         ];
     }
 }

@@ -12,7 +12,8 @@ use Illuminate\Validation\ValidationException;
 class SuspendedInstantSaleService
 {
     public function __construct(
-        protected SalesDailySessionService $sessionService
+        protected SalesDailySessionService $sessionService,
+        protected AdminNotificationService $adminNotificationService
     ) {}
 
     public function isAdmin(User $user): bool
@@ -189,7 +190,11 @@ class SuspendedInstantSaleService
             'reference_code' => 'ع-'.$record->id,
         ]);
 
-        return $record->fresh(['createdByUser:id,name', 'employee:id,name']);
+        $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
+
+        $this->notifyAdminSuspendedCreated($record);
+
+        return $record;
     }
 
     /**
@@ -316,6 +321,9 @@ class SuspendedInstantSaleService
                 'completed_at' => now(),
             ]);
 
+            $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
+            $this->notifyAdminSuspendedCompleted($record, $user);
+
             return [
                 'response' => response()->json([
                     'status' => 'success',
@@ -398,5 +406,66 @@ class SuspendedInstantSaleService
         }
 
         return $query->count();
+    }
+
+    private function notifyAdminSuspendedCreated(SuspendedInstantSale $record): void
+    {
+        $record->loadMissing(['createdByUser', 'employee.user']);
+        $employeeName = $record->createdByUser?->name ?? __('messages.employee_default_name');
+        $reference = $record->reference_code ?? ('ع-'.$record->id);
+
+        $this->adminNotificationService->create(
+            AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_CREATED,
+            __('messages.admin_notify_suspended_sale_created_title'),
+            __('messages.admin_notify_suspended_sale_created_body', [
+                'employee' => $employeeName,
+                'reference' => $reference,
+                'total' => number_format((float) $record->total_cost, 2),
+            ]),
+            [
+                'suspended_instant_sale_id' => (string) $record->id,
+                'reference_code' => $reference,
+                'employee_name' => $employeeName,
+                'total_cost' => (string) $record->total_cost,
+            ],
+            $record->employee_id,
+            'suspended_instant_sale',
+            $record->id
+        );
+    }
+
+    private function notifyAdminSuspendedCompleted(
+        SuspendedInstantSale $record,
+        User $completedBy
+    ): void {
+        $record->loadMissing(['createdByUser', 'employee.user']);
+        $ownerName = $record->createdByUser?->name ?? __('messages.employee_default_name');
+        $actorName = $completedBy->name ?? __('messages.employee_default_name');
+        $reference = $record->reference_code ?? ('ع-'.$record->id);
+
+        $bodyKey = (int) $completedBy->id === (int) $record->created_by_user_id
+            ? 'admin_notify_suspended_sale_completed_body'
+            : 'admin_notify_suspended_sale_completed_body_admin';
+
+        $this->adminNotificationService->create(
+            AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_COMPLETED,
+            __('messages.admin_notify_suspended_sale_completed_title'),
+            __($bodyKey, [
+                'employee' => $ownerName,
+                'actor' => $actorName,
+                'reference' => $reference,
+                'total' => number_format((float) $record->total_cost, 2),
+            ]),
+            [
+                'suspended_instant_sale_id' => (string) $record->id,
+                'reference_code' => $reference,
+                'employee_name' => $ownerName,
+                'completed_by_name' => $actorName,
+                'instant_sale_id' => (string) ($record->completed_instant_sale_id ?? ''),
+            ],
+            $record->employee_id,
+            'suspended_instant_sale',
+            $record->id
+        );
     }
 }
