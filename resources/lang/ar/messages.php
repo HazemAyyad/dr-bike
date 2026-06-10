@@ -294,6 +294,13 @@ return [
     'instant_sale_already_cancelled' => 'هذا البيع ملغى مسبقاً',
     'sale_attached' => 'تم ربط البيع الفوري بمشروع الشراكة بنجاح',
     'cant_be_project_type'=>'المنتج غير مرتبط في أي مشروع بعد',
+    'suspended_instant_sale_saved' => 'تم تعليق الفاتورة بنجاح',
+    'suspended_instant_sale_completed' => 'تم إتمام الفاتورة العالقة بنجاح',
+    'suspended_instant_sale_cancelled' => 'تم إلغاء الفاتورة العالقة',
+    'suspended_instant_sale_empty' => 'أضف منتجاً أو باكيجاً على الأقل قبل التعليق',
+    'suspended_instant_sale_forbidden' => 'لا تملك صلاحية لهذه الفاتورة العالقة',
+    'suspended_instant_sale_not_active' => 'هذه الفاتورة العالقة غير متاحة',
+    'suspended_instant_sale_default_label' => 'فاتورة عالقة',
 
     //outgoing_checks
     'check_created_successfully'=>'تم انشاء الشيك الصادر بنجاح',

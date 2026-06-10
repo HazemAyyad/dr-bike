@@ -285,6 +285,14 @@ return [
     'instant_sale_already_cancelled' => 'This sale is already cancelled',
     'sale_attached' => 'sale was attached to project successfully',
     'cant_be_project_type'=>'Product is not attached in any project yet',
+    'suspended_instant_sale_saved' => 'Invoice suspended successfully',
+    'suspended_instant_sale_completed' => 'Suspended invoice completed successfully',
+    'suspended_instant_sale_cancelled' => 'Suspended invoice cancelled',
+    'suspended_instant_sale_empty' => 'Add at least one product or package before suspending',
+    'suspended_instant_sale_forbidden' => 'You do not have access to this suspended invoice',
+    'suspended_instant_sale_not_active' => 'This suspended invoice is not available',
+    'suspended_instant_sale_default_label' => 'Suspended invoice',
+
     //outgoing_checks
     'check_created_successfully'=>'outgoing check was successfully created',
 

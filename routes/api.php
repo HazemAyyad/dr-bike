@@ -43,6 +43,7 @@ use App\Http\Controllers\API\FollowupAPI;
 use App\Http\Controllers\API\Goals;
 use App\Http\Controllers\API\IncomingChecks;
 use App\Http\Controllers\API\InstantSales;
+use App\Http\Controllers\API\SuspendedInstantSaleController;
 use App\Http\Controllers\API\SalesDailySessionController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
@@ -347,6 +348,14 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/get/product/projects' , [InstantSales::class,'getProjectsOfProduct']);
       Route::post('/get/subsales' , [InstantSales::class,'getSubSales']);
       Route::post('/get/instant/sale/invoice' , [InstantSales::class,'invoiceDetails']);
+
+      // suspended (pending) instant sales — الفواتير العالقة
+      Route::get('/suspended/instant/sales', [SuspendedInstantSaleController::class, 'index']);
+      Route::get('/suspended/instant/sales/count', [SuspendedInstantSaleController::class, 'count']);
+      Route::get('/suspended/instant/sale', [SuspendedInstantSaleController::class, 'show']);
+      Route::post('/suspended/instant/sale', [SuspendedInstantSaleController::class, 'store']);
+      Route::post('/suspended/instant/sale/complete', [SuspendedInstantSaleController::class, 'complete']);
+      Route::post('/suspended/instant/sale/cancel', [SuspendedInstantSaleController::class, 'cancel']);
 
       //Route::post('/attach/project/of/product/to/sale' , [InstantSales::class,'attachProjectToProductInSale']);
 

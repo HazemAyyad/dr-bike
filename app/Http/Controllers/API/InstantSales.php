@@ -891,7 +891,8 @@ public function store(Request $request)
         'instant_sales');
         return response()->json([
                     'status' => 'success',
-                    'message' => __('messages.instant_sale_created_successfully')
+                    'message' => __('messages.instant_sale_created_successfully'),
+                    'instant_sale_id' => $mainInstantSale->id,
                 ], 200);
 
             }
@@ -1106,6 +1107,7 @@ public function store(Request $request)
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.instant_sale_created_successfully'),
+                'instant_sale_id' => $mainInstantSale->id,
             ], 200);
         });
     }
