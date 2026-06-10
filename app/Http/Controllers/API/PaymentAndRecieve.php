@@ -76,7 +76,13 @@ class PaymentAndRecieve extends Controller
 
         $type = $request->type;
 
-        if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+        $isEmbeddedSaleReceive = $type === 'receive'
+            && $request->filled('box_id')
+            && trim((string) $request->input('box_log_note', '')) !== '';
+
+        if (! $isEmbeddedSaleReceive
+            && ! $request->filled('customer_id')
+            && ! $request->filled('seller_id')) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.must_select_customer_or_seller'),
