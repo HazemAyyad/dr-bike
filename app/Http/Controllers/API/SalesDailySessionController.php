@@ -227,7 +227,7 @@ class SalesDailySessionController extends Controller
 
             $data = $request->validate([
                 'closing_request_id' => 'required|integer|exists:sales_daily_closing_requests,id',
-                'transfers' => 'required|array',
+                'transfers' => 'nullable|array',
                 'transfers.*.currency' => 'required|string',
                 'transfers.*.to_box_id' => 'nullable|integer|exists:boxes,id',
                 'review_notes' => 'nullable|string|max:2000',
@@ -236,7 +236,7 @@ class SalesDailySessionController extends Controller
             $closingRequest = $this->sessionService->approveClosing(
                 $request->user(),
                 (int) $data['closing_request_id'],
-                $data['transfers'],
+                $data['transfers'] ?? [],
                 $data['review_notes'] ?? null
             );
 
