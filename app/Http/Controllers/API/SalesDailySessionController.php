@@ -246,9 +246,11 @@ class SalesDailySessionController extends Controller
                 'closing_request' => $this->formatClosingRequest($closingRequest),
             ], 200);
         } catch (ValidationException $e) {
+            $firstError = collect($e->errors())->flatten()->first();
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.validation_failed'),
+                'message' => $firstError ?: __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
         } catch (ModelNotFoundException $e) {
@@ -259,7 +261,7 @@ class SalesDailySessionController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => $e->getMessage() ?: __('messages.something_wrong'),
             ], 200);
         }
     }

@@ -428,7 +428,8 @@ class SalesDailySessionService
             && $session->status === config('sales_daily.session_status.open')
             && ! $pendingClosing;
         $requiresLateCloseReason = $canRequestClosing
-            && (bool) $blocking
+            && $session
+            && $this->isLateCloseSession($session)
             && ! $this->canReviewAllSessions($user);
 
         return [
@@ -690,8 +691,17 @@ class SalesDailySessionService
             foreach ($cashCounts as $row) {
                 $currency = $row['currency'] ?? '';
                 $fromBoxId = (int) ($row['daily_box_id'] ?? 0);
+                if ($fromBoxId <= 0) {
+                    $fromBoxId = $this->resolveDailyBoxIdForSession($session, $currency);
+                }
                 $amountToTransfer = round((float) ($row['amount_to_transfer'] ?? 0), 2);
                 $floatToKeep = round((float) ($row['float_to_keep'] ?? 0), 2);
+
+                if ($fromBoxId <= 0) {
+                    throw ValidationException::withMessages([
+                        'transfers' => [__('messages.sales_daily_box_not_found')],
+                    ]);
+                }
 
                 if ($amountToTransfer <= 0) {
                     $fromBox = Box::lockForUpdate()->find($fromBoxId);
@@ -1499,6 +1509,18 @@ class SalesDailySessionService
             ->where('status', 'pending')
             ->orderByDesc('id')
             ->get();
+    }
+
+    private function resolveDailyBoxIdForSession(SalesDailySession $session, string $currency): int
+    {
+        $owner = User::query()->find($session->user_id);
+        if (! $owner) {
+            return 0;
+        }
+
+        $box = $this->ensureDailyBoxes($owner)->firstWhere('currency', $currency);
+
+        return $box ? (int) $box->id : 0;
     }
 
     private function buildCurrenciesForSession(SalesDailySession $session, User $owner): array
