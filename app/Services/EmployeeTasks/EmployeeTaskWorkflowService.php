@@ -696,9 +696,10 @@ class EmployeeTaskWorkflowService
     private function notifyAdminTaskSubmitted(EmployeeTask $task): void
     {
         try {
-            $task->loadMissing('employee.user');
-            if ($task->employee) {
-                app(AdminNotificationService::class)->notifyTaskSubmittedForReview($task->employee, $task);
+            $task->loadMissing('employee.user', 'completedByEmployee.user');
+            $employee = $this->resolvePointsRecipient($task, null);
+            if ($employee) {
+                app(AdminNotificationService::class)->notifyTaskSubmittedForReview($employee, $task);
             }
         } catch (\Throwable $e) {
             Log::warning('admin_notification.task_submitted_failed', [
@@ -711,10 +712,11 @@ class EmployeeTaskWorkflowService
     private function notifyAdminOccurrenceSubmitted(EmployeeTaskOccurrence $occurrence): void
     {
         try {
-            $occurrence->loadMissing('employee.user');
-            if ($occurrence->employee) {
+            $occurrence->loadMissing('employee.user', 'completedByEmployee.user');
+            $employee = $this->resolvePointsRecipient(null, $occurrence);
+            if ($employee) {
                 app(AdminNotificationService::class)->notifyOccurrenceSubmittedForReview(
-                    $occurrence->employee,
+                    $employee,
                     $occurrence
                 );
             }
@@ -726,11 +728,10 @@ class EmployeeTaskWorkflowService
         }
     }
 
-    private function notifyAdminLegacySubtaskCompleted(\App\Models\EmployeeSubTask $subTask): void
+    private function notifyAdminLegacySubtaskCompleted(EmployeeSubTask $subTask): void
     {
         try {
-            $subTask->loadMissing('employeeTask.employee.user');
-            $employee = $subTask->employeeTask?->employee;
+            $employee = $this->resolveLegacySubtaskCompleter($subTask);
             if ($employee) {
                 app(AdminNotificationService::class)->notifyLegacySubtaskCompleted($employee, $subTask);
             }
@@ -743,11 +744,10 @@ class EmployeeTaskWorkflowService
     }
 
     private function notifyAdminOccurrenceSubtaskCompleted(
-        \App\Models\EmployeeTaskOccurrenceSubtask $subTask
+        EmployeeTaskOccurrenceSubtask $subTask
     ): void {
         try {
-            $subTask->loadMissing('occurrence.employee.user');
-            $employee = $subTask->occurrence?->employee;
+            $employee = $this->resolveOccurrenceSubtaskCompleter($subTask);
             if ($employee) {
                 app(AdminNotificationService::class)->notifyOccurrenceSubtaskCompleted($employee, $subTask);
             }
@@ -757,6 +757,38 @@ class EmployeeTaskWorkflowService
                 'message' => $e->getMessage(),
             ]);
         }
+    }
+
+    private function resolveLegacySubtaskCompleter(EmployeeSubTask $subTask): ?EmployeeDetail
+    {
+        $subTask->loadMissing(['completedByEmployee.user', 'employeeTask.employee.user']);
+
+        if ($subTask->completed_by_employee_id && $subTask->completedByEmployee) {
+            return $subTask->completedByEmployee;
+        }
+
+        $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+        if ($actorId > 0) {
+            return EmployeeDetail::with('user')->find($actorId);
+        }
+
+        return $subTask->employeeTask?->employee;
+    }
+
+    private function resolveOccurrenceSubtaskCompleter(EmployeeTaskOccurrenceSubtask $subTask): ?EmployeeDetail
+    {
+        $subTask->loadMissing(['completedByEmployee.user', 'occurrence.employee.user']);
+
+        if ($subTask->completed_by_employee_id && $subTask->completedByEmployee) {
+            return $subTask->completedByEmployee;
+        }
+
+        $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+        if ($actorId > 0) {
+            return EmployeeDetail::with('user')->find($actorId);
+        }
+
+        return $subTask->occurrence?->employee;
     }
 
     private function notifyEmployeeTaskApproved(
