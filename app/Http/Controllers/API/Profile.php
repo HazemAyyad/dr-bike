@@ -22,9 +22,23 @@ class Profile extends Controller
               
             $user = $request->user();
 
-            if ($request->input('sub_phone') === '') {
-                $request->merge(['sub_phone' => null]);
-            }
+            $normalizePhone = static function (?string $value): ?string {
+                if ($value === null || trim($value) === '') {
+                    return null;
+                }
+
+                $compact = preg_replace('/\s+/', '', trim($value));
+
+                return $compact === '' ? null : $compact;
+            };
+
+            $request->merge([
+                'phone' => $normalizePhone($request->input('phone')),
+                'sub_phone' => $normalizePhone($request->input('sub_phone')),
+                'address' => $request->filled('address')
+                    ? trim((string) $request->input('address'))
+                    : null,
+            ]);
 
             $data = $request->validate([
                 'name'      => 'required|string|max:100',
@@ -37,7 +51,7 @@ class Profile extends Controller
                 'phone'     => 'required|string|regex:/^\+?[0-9]{12}$/',
                 'sub_phone' => 'nullable|string|regex:/^\+?[0-9]{12}$/',
                 'city'      => 'required|string|max:50',
-                'address'   => 'required|string',
+                'address'   => 'nullable|string|max:500',
             ]);
             
             $user->update($data);
