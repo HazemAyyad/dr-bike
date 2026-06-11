@@ -120,6 +120,7 @@ class Profile extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
+                'details' => $e->getMessage(),
             ], 200);
         } catch (\Throwable $e) {
             Log::error('Profile update failed', [
@@ -130,6 +131,7 @@ class Profile extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
+                'details' => $e->getMessage(),
             ], 200);
         }
     }
