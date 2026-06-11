@@ -21,8 +21,6 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Validation\ValidationException;
-use Laravel\Sanctum\PersonalAccessToken;
-
 class Authentication extends Controller
 {
     public function register(Request $request)
@@ -389,21 +387,18 @@ class Authentication extends Controller
     public function changePassword(Request $request)
     {
         try {
-            $token = PersonalAccessToken::findToken($request->bearerToken());
-
-            if (! $token || $token->isExpired()) {
+            $user = $request->user();
+            if (! $user) {
                 return response()->json([
                     'status' => 'error',
-
-                    'message' => __('messages.expired_token')], 200);
+                    'message' => __('messages.expired_token'),
+                ], 200);
             }
 
             $data = $request->validate([
                 'old_password' => 'required',
                 'password' => 'required|string|confirmed',
             ]);
-
-            $user = $request->user();
 
             if (! Hash::check($data['old_password'], $user->password)) {
                 return response()->json([
@@ -535,15 +530,13 @@ class Authentication extends Controller
     public function me(Request $request)
     {
         try {
-            $token = PersonalAccessToken::findToken($request->bearerToken());
-
-            if (! $token || $token->isExpired()) {
+            $user = $request->user();
+            if (! $user) {
                 return response()->json([
                     'status' => 'error',
-
-                    'message' => __('messages.expired_token')], 200);
+                    'message' => __('messages.expired_token'),
+                ], 200);
             }
-            $user = $request->user();
 
             $response = [
                 'status' => 'success',

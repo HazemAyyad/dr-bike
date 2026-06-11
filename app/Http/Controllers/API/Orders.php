@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Invoice;
 use App\Models\Order;
 use App\Models\Product;
+use App\Support\SanctumTokenHelper;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -13,7 +14,7 @@ class Orders extends Controller
 {
     public function addOrder(Request $request){
 
-        if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+        if(!SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))){
 
         $data = $request->validate([
             'products' => 'required|array|min:1',
@@ -57,7 +58,7 @@ class Orders extends Controller
 
     private function sharedOrders(Request $request , $status){
 
-        if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+        if(!SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))){
 
             $user = $request->user();
             $customer = $user->customer;
@@ -120,7 +121,7 @@ class Orders extends Controller
 
 
     public function cancelOrder(Request $request){
-        if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+        if(!SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))){
 
         $request->validate(['order_id'=>'required|exists:orders,id']);
 

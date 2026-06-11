@@ -5,13 +5,14 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
 use Carbon\Carbon;
+use App\Support\SanctumTokenHelper;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 
 class UserOrders extends Controller
 {
     public function completedOrders(Request $request){
-        if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+        if(!SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))){
 
           $user = $request->user();
           $orders = $user->orders()
@@ -43,7 +44,7 @@ class UserOrders extends Controller
  
 
 public function ongoingOrders(Request $request){
-  if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+  if(!SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))){
 
           $user = $request->user();
           $orders = $user->orders()
@@ -72,7 +73,7 @@ public function ongoingOrders(Request $request){
 
 
 public function canceledOrders(Request $request){
-      if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+      if(!SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))){
 
         $user = $request->user();
         $orders = $user->orders()
@@ -101,7 +102,7 @@ public function canceledOrders(Request $request){
 
 
     public function cancelOrder(Request $request){
-        if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+        if(!SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))){
 
 
            $user = $request->user();

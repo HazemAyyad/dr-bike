@@ -5,13 +5,14 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\InstantBuying;
 use App\Models\Product;
+use App\Support\SanctumTokenHelper;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 
 class OldInstanBuyingsAPI extends Controller
 {
     public function addInstantBuying(Request $request){
-        if(!PersonalAccessToken::findToken($request->bearerToken())->isExpired()){
+        if (! SanctumTokenHelper::isExpired(PersonalAccessToken::findToken($request->bearerToken()))) {
 
         $user = $request->user();
         $data = $request->validate([

@@ -8,21 +8,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
-use Laravel\Sanctum\PersonalAccessToken;
 
 class Profile extends Controller
 {
     public function updatePersonalInformation(Request $request)
     {
         try {
-            $token = PersonalAccessToken::findToken($request->bearerToken());
-            if (! $token || $token->isExpired()) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.expired_token'),
-                ], 200);
-            }
-
             $user = $request->user();
             if (! $user) {
                 return response()->json([
