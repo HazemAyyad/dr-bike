@@ -4,6 +4,7 @@ namespace App\Services\EmployeeTasks;
 
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
+use App\Models\EmployeeTaskOccurrence;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -145,6 +146,38 @@ class EmployeeTaskAssigneeService
     }
 
     public function isAssignee(EmployeeTask $task, int $employeeId): bool
+    {
+        if ($this->isDirectAssignee($task, $employeeId)) {
+            return true;
+        }
+
+        if (! empty($task->parent_id)) {
+            $parent = EmployeeTask::find($task->parent_id);
+            if ($parent instanceof EmployeeTask && $this->isDirectAssignee($parent, $employeeId)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function canAccessOccurrence(EmployeeTaskOccurrence $occurrence, int $employeeId): bool
+    {
+        if ((int) $occurrence->employee_id === $employeeId) {
+            return true;
+        }
+
+        if ($occurrence->legacy_task_id) {
+            $legacy = EmployeeTask::find($occurrence->legacy_task_id);
+            if ($legacy instanceof EmployeeTask && $this->isAssignee($legacy, $employeeId)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isDirectAssignee(EmployeeTask $task, int $employeeId): bool
     {
         if ((int) $task->employee_id === $employeeId) {
             return true;

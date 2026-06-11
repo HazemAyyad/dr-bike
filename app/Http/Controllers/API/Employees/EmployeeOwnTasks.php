@@ -9,6 +9,7 @@ use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Services\EmployeeTasks\EmployeeSubtaskProofCompletionService;
+use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -30,13 +31,12 @@ class EmployeeOwnTasks extends Controller
             $user = $request->user();
             $employee = $user->employee;
 
-            $task = EmployeeTask::
-            findOrFail($request->employee_task_id);
-            if($task->employee_id != $employee->id){
+            $task = EmployeeTask::findOrFail($request->employee_task_id);
+            if (! $employee || ! app(EmployeeTaskAssigneeService::class)->isAssignee($task, (int) $employee->id)) {
                 return response()->json([
-                    'status'=>'error',
-                    'message'=>__('messages.unauthorized'),
-                ]);
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
             }
 
         $finalEmployeeImages = CommonUse::handleImageUpdate(
@@ -98,13 +98,13 @@ class EmployeeOwnTasks extends Controller
             $user = $request->user();
             $employee = $user->employee;
 
-            $subTask = EmployeeSubTask::
-            findOrFail($request->sub_employee_task_id);
-            if($subTask->employeeTask->employee_id != $employee->id){
+            $subTask = EmployeeSubTask::with('employeeTask')->findOrFail($request->sub_employee_task_id);
+            $parent = $subTask->employeeTask;
+            if (! $employee || ! $parent || ! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, (int) $employee->id)) {
                 return response()->json([
-                    'status'=>'error',
-                    'message'=>__('messages.unauthorized'),
-                ]);
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
             }
 
         $subTask->employee_img = self::storeEmployeeProofImages(
@@ -220,7 +220,7 @@ class EmployeeOwnTasks extends Controller
             $employee = $request->user()->employee;
             $task = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
 
-            if (! $employee || $task->employee_id != $employee->id) {
+            if (! $employee || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($task, (int) $employee->id)) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),
@@ -257,7 +257,7 @@ class EmployeeOwnTasks extends Controller
             $subTask = EmployeeTaskOccurrenceSubtask::with('occurrence')
                 ->findOrFail($request->sub_task_id);
 
-            if (! $employee || $subTask->occurrence->employee_id != $employee->id) {
+            if (! $employee || ! $subTask->occurrence || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($subTask->occurrence, (int) $employee->id)) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),

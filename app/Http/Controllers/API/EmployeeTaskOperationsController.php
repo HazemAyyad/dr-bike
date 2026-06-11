@@ -802,7 +802,8 @@ class EmployeeTaskOperationsController extends Controller
             $request->validate(['sub_task_id' => 'required|exists:employee_task_occurrence_subtasks,id']);
             $sub = EmployeeTaskOccurrenceSubtask::findOrFail($request->sub_task_id);
 
-            if ($sub->occurrence->employee_id != auth()->user()->employee->id) {
+            $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+            if ($actorId <= 0 || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) {
                 return response()->json(['status' => 'error', 'message' => __('messages.unauthorized')], 200);
             }
 

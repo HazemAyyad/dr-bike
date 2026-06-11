@@ -3,8 +3,8 @@
 namespace App\Http\Middleware;
 
 use App\Models\EmployeeSubTask;
-use App\Models\EmployeeTask;
 use App\Models\SubTask;
+use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -43,9 +43,17 @@ class CheckTaskOwnership
             ], 200);
         }
 
-        // check ownership via parent task
-        $parentTask = $subTask->{$taskType . 'Task'}; // assumes relation like employeeTask / specialTask
-        if (!$parentTask || $parentTask->employee_id !== auth()->user()->employee->id) {
+        $employeeId = (int) (auth()->user()?->employee?->id ?? 0);
+        $parentTask = $subTask->{$taskType . 'Task'};
+
+        if ($taskType === 'employee') {
+            if (! $parentTask || $employeeId <= 0 || ! app(EmployeeTaskAssigneeService::class)->isAssignee($parentTask, $employeeId)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+        } elseif (! $parentTask || $parentTask->employee_id !== $employeeId) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.unauthorized'),
