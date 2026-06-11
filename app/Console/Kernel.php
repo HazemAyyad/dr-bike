@@ -42,6 +42,10 @@ class Kernel extends ConsoleKernel
         $schedule->command('fingerprint:process-pending')
             ->everyMinute()
             ->timezone('Asia/Hebron');
+
+        $schedule->command('attendance:auto-checkout-open-shifts')
+            ->dailyAt('01:00')
+            ->timezone('Asia/Hebron');
     }
 
     /**

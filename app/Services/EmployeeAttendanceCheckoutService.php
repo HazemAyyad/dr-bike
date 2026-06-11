@@ -57,7 +57,11 @@ class EmployeeAttendanceCheckoutService
             'work_date' => $workDate,
             'scanned_at' => $checkoutAt,
             'direction' => 'out',
-            'source' => $source === 'fingerprint' ? 'fingerprint' : 'manual',
+            'source' => match ($source) {
+                'fingerprint' => 'fingerprint',
+                'auto' => 'auto',
+                default => 'manual',
+            },
             'server_received_at' => now(),
         ]);
 
@@ -91,7 +95,9 @@ class EmployeeAttendanceCheckoutService
         $attendance->overtime_minutes = $daily['overtime_minutes'];
         $attendance->save();
 
-        $this->notifyCheckout($employee, $attendance, $checkoutAt, $source);
+        if ($source !== 'auto') {
+            $this->notifyCheckout($employee, $attendance, $checkoutAt, $source);
+        }
 
         return [
             'attendance' => $attendance,

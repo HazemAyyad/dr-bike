@@ -53,6 +53,32 @@ class EmployeeAttendanceScan extends Model
         return $total;
     }
 
+    /**
+     * Closed in/out pairs plus any open check-in counted until $asOf (for live "still inside" display).
+     */
+    public static function computeWorkedMinutesAsOf(Collection $scans, Carbon $asOf): int
+    {
+        $total = 0;
+        $pendingIn = null;
+        foreach ($scans as $s) {
+            if ($s->direction === 'in') {
+                $pendingIn = $s->scanned_at;
+            } elseif ($s->direction === 'out' && $pendingIn !== null) {
+                $total += Carbon::parse($pendingIn)->diffInMinutes(Carbon::parse($s->scanned_at));
+                $pendingIn = null;
+            }
+        }
+
+        if ($pendingIn !== null) {
+            $inAt = Carbon::parse($pendingIn);
+            if ($asOf->gt($inAt)) {
+                $total += $inAt->diffInMinutes($asOf);
+            }
+        }
+
+        return $total;
+    }
+
     public static function computeAwayMinutes(Collection $scans): int
     {
         $total = 0;

@@ -6,6 +6,7 @@ use App\Models\AttendanceDevice;
 use App\Models\EmployeeDetail;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
@@ -157,12 +158,6 @@ class FingerprintActivityLogService
 
     protected function actionFromStatus(mixed $status): string
     {
-        $s = trim((string) ($status ?? ''));
-
-        return match ($s) {
-            '0' => 'in',
-            '1' => 'out',
-            default => 'unknown',
-        };
+        return FingerprintAttendanceLogFilter::directionFromDeviceStatus($status) ?? 'unknown';
     }
 }

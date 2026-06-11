@@ -8,6 +8,7 @@ use App\Mail\NewEmployeeAccountMail;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceScan;
 use App\Support\AttendanceScanPresenter;
+use App\Support\EmployeeAttendanceToday;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
 use App\Models\EmployeePermission;
@@ -1221,6 +1222,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         $expectedMinutes = (int) (($salaryService->calculateDailyOvertime($employee, 0))['required_minutes']);
 
         $days = [];
+        $todayStr = EmployeeAttendanceToday::todayDateString();
+        $nowTz = Carbon::now(EmployeeAttendanceToday::TIMEZONE);
+
         foreach ($allDates as $dateStr) {
             $dayScans = EmployeeAttendanceScan::query()
                 ->where('employee_id', $employee->id)
@@ -1248,7 +1252,6 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $currentlyIn = false;
 
             if ($dayScans->isNotEmpty()) {
-                $workedMinutes = EmployeeAttendanceScan::computeWorkedMinutes($dayScans);
                 $awayMinutes = EmployeeAttendanceScan::computeAwayMinutes($dayScans);
 
                 foreach ($dayScans as $s) {
@@ -1264,6 +1267,11 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 $lastScan = $dayScans->last();
                 $currentlyIn = $lastScan && $lastScan->direction === 'in';
 
+                $useLiveMinutes = $dateStr === $todayStr && $currentlyIn;
+                $workedMinutes = $useLiveMinutes
+                    ? EmployeeAttendanceScan::computeWorkedMinutesAsOf($dayScans, $nowTz)
+                    : EmployeeAttendanceScan::computeWorkedMinutes($dayScans);
+
                 $pendingIn = null;
                 foreach ($dayScans as $s) {
                     if ($s->direction === 'in') {
@@ -1278,10 +1286,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     }
                 }
                 if ($pendingIn !== null) {
+                    $openMinutes = $useLiveMinutes
+                        ? Carbon::parse($pendingIn->scanned_at)->diffInMinutes($nowTz)
+                        : null;
                     $segments[] = AttendanceScanPresenter::segmentToApi(
                         $pendingIn,
                         null,
-                        null,
+                        $openMinutes,
                         true,
                     );
                 }
@@ -1294,6 +1305,12 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     $lastCheckOut = Carbon::parse($dateStr.' '.$legacy->left_at);
                 }
                 $currentlyIn = $legacy->arrived_at && ! $legacy->left_at;
+                if ($currentlyIn && $dateStr === $todayStr && $legacy->arrived_at) {
+                    $workedMinutes = max(
+                        $workedMinutes,
+                        Carbon::parse($dateStr.' '.$legacy->arrived_at)->diffInMinutes($nowTz)
+                    );
+                }
                 if ($legacy->arrived_at && $legacy->left_at) {
                     $segments[] = [
                         'check_in_at' => Carbon::parse($dateStr.' '.$legacy->arrived_at)->toIso8601String(),
@@ -1350,6 +1367,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'last_check_out_source' => $lastOutScan?->source,
                 'currently_in' => $currentlyIn,
                 'worked_minutes' => $workedMinutes,
+                'worked_minutes_live' => ($dateStr === $todayStr && $currentlyIn),
                 'away_minutes' => $awayMinutes,
                 'expected_work_minutes' => $expectedMinutes,
                 'on_time' => $onTime,
@@ -1378,10 +1396,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         $overlapDays = ($overlapEnd->lt($overlapStart)) ? 0 : ((int) $overlapStart->diffInDays($overlapEnd) + 1);
         $proration = $monthDays > 0 ? min(1, $overlapDays / $monthDays) : 1;
 
-        $monthlyWorkedInRange = (int) EmployeeAttendance::query()
-            ->where('employee_id', $employee->id)
-            ->whereBetween('date', [$fromStr, $toStr])
-            ->sum('worked_minutes');
+        $monthlyWorkedInRange = (int) array_sum(array_map(
+            fn (array $dayRow) => (int) ($dayRow['worked_minutes'] ?? 0),
+            $days
+        ));
         $monthlyRequiredProrated = (int) round($periodMonthly['monthly_required_minutes'] * $proration);
         $monthlyOvertimeProrated = max(0, $monthlyWorkedInRange - $monthlyRequiredProrated);
 

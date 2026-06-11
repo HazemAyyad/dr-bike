@@ -13,6 +13,7 @@ use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
 use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 
 class FingerprintAttendanceProcessor
@@ -74,7 +75,13 @@ class FingerprintAttendanceProcessor
                 return;
             }
 
-            $this->applyScan($employee, $device, $rawLog, $scanAt, $workDate);
+            $skipReason = $this->applyScan($employee, $device, $rawLog, $scanAt, $workDate);
+            if ($skipReason !== null) {
+                $this->mark($rawLog, 'ignored', $skipReason);
+
+                return;
+            }
+
             $this->mark($rawLog, 'processed', null);
         } catch (\Throwable $e) {
             Log::error('fingerprint.processor_failed', [
@@ -159,13 +166,16 @@ class FingerprintAttendanceProcessor
         return Carbon::parse($last->scanned_at)->diffInMinutes($scanAt) < $dedup;
     }
 
+    /**
+     * @return string|null Skip/ignore reason, or null on success.
+     */
     protected function applyScan(
         EmployeeDetail $employee,
         AttendanceDevice $device,
         FingerprintRawLog $rawLog,
         Carbon $scanAt,
         string $workDate
-    ): void {
+    ): ?string {
         $employeeId = (int) $employee->id;
 
         $scans = EmployeeAttendanceScan::query()
@@ -174,7 +184,15 @@ class FingerprintAttendanceProcessor
             ->orderBy('id')
             ->get();
 
-        $nextIsIn = $scans->isEmpty() || $scans->last()->direction === 'out';
+        $direction = $this->resolveScanDirection($rawLog, $scans);
+        if ($direction === null) {
+            return 'invalid_direction';
+        }
+
+        $rejectReason = $this->rejectInvalidDirection($direction, $scans);
+        if ($rejectReason !== null) {
+            return $rejectReason;
+        }
 
         $attendance = EmployeeAttendance::firstOrNew([
             'employee_id' => $employeeId,
@@ -186,77 +204,114 @@ class FingerprintAttendanceProcessor
         $attendance->device_user_id = (string) $rawLog->device_user_id;
         $attendance->fingerprint_raw_log_id = $rawLog->id;
 
-        if ($nextIsIn) {
-            EmployeeAttendanceScan::create([
-                'employee_id' => $employeeId,
-                'work_date' => $workDate,
-                'scanned_at' => $scanAt,
-                'direction' => 'in',
-                'source' => 'fingerprint',
-                'server_received_at' => $rawLog->serverReceivedAt(),
-                'fingerprint_raw_log_id' => $rawLog->id,
-            ]);
-
-            if (! $attendance->exists || $attendance->arrived_at === null) {
-                $attendance->arrived_at = $scanAt->format('H:i:s');
-            }
-            $attendance->left_at = null;
-
-            $dayScans = EmployeeAttendanceScan::query()
-                ->where('employee_id', $employeeId)
-                ->whereDate('work_date', $workDate)
-                ->orderBy('id')
-                ->get();
-
-            $attendance->worked_minutes = EmployeeAttendanceScan::computeWorkedMinutes($dayScans);
-            $daily = $this->salaryService->calculateDailyOvertime($employee, (int) $attendance->worked_minutes);
-            $attendance->required_minutes = $daily['required_minutes'];
-            $attendance->normal_minutes = $daily['normal_minutes'];
-            $attendance->overtime_minutes = $daily['overtime_minutes'];
-            $attendance->save();
-
-            try {
-                app(AdminNotificationService::class)->notifyEmployeeLogin(
-                    $employee,
-                    (int) $attendance->id,
-                    'fingerprint'
-                );
-            } catch (\Throwable $e) {
-                Log::error('fingerprint.notify_login_failed', ['message' => $e->getMessage()]);
-            }
-
-            return;
-        }
-
-        if ($scans->isEmpty() || $scans->last()->direction !== 'in') {
-            return;
-        }
-
         EmployeeAttendanceScan::create([
             'employee_id' => $employeeId,
             'work_date' => $workDate,
             'scanned_at' => $scanAt,
-            'direction' => 'out',
+            'direction' => $direction,
             'source' => 'fingerprint',
             'server_received_at' => $rawLog->serverReceivedAt(),
             'fingerprint_raw_log_id' => $rawLog->id,
         ]);
 
-        $allScans = EmployeeAttendanceScan::query()
+        if ($direction === 'in') {
+            if (! $attendance->exists || $attendance->arrived_at === null) {
+                $attendance->arrived_at = $scanAt->format('H:i:s');
+            }
+            $attendance->left_at = null;
+        } else {
+            $attendance->left_at = $scanAt->format('H:i:s');
+            if ($attendance->arrived_at === null) {
+                $firstIn = $scans->firstWhere('direction', 'in');
+                if ($firstIn) {
+                    $attendance->arrived_at = Carbon::parse($firstIn->scanned_at)->format('H:i:s');
+                }
+            }
+        }
+
+        $dayScans = EmployeeAttendanceScan::query()
             ->where('employee_id', $employeeId)
             ->whereDate('work_date', $workDate)
             ->orderBy('id')
             ->get();
 
-        $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
-        $attendance->worked_minutes = $totalWorked;
-        $attendance->left_at = $scanAt->format('H:i:s');
-        $daily = $this->salaryService->calculateDailyOvertime($employee, (int) $totalWorked);
+        $workedMinutes = EmployeeAttendanceScan::computeWorkedMinutes($dayScans);
+        $attendance->worked_minutes = $workedMinutes;
+        $daily = $this->salaryService->calculateDailyOvertime($employee, (int) $workedMinutes);
         $attendance->required_minutes = $daily['required_minutes'];
         $attendance->normal_minutes = $daily['normal_minutes'];
         $attendance->overtime_minutes = $daily['overtime_minutes'];
         $attendance->save();
 
+        if ($direction === 'in') {
+            $this->notifyLogin($employee, $attendance);
+        } else {
+            $this->notifyLogout($employee, $attendance, $scanAt, $employeeId);
+        }
+
+        return null;
+    }
+
+    /**
+     * Prefer ZKTeco device status (0=in, 1=out); fall back to alternating toggle when missing.
+     *
+     * @param  Collection<int, EmployeeAttendanceScan>  $scans
+     */
+    protected function resolveScanDirection(FingerprintRawLog $rawLog, Collection $scans): ?string
+    {
+        $fromDevice = FingerprintAttendanceLogFilter::directionFromDeviceStatus($rawLog->status);
+        if ($fromDevice !== null) {
+            return $fromDevice;
+        }
+
+        if ($scans->isEmpty() || $scans->last()->direction === 'out') {
+            return 'in';
+        }
+
+        if ($scans->last()->direction === 'in') {
+            return 'out';
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  Collection<int, EmployeeAttendanceScan>  $scans
+     */
+    protected function rejectInvalidDirection(string $direction, Collection $scans): ?string
+    {
+        $last = $scans->last();
+
+        if ($direction === 'in' && $last && $last->direction === 'in') {
+            return 'duplicate_checkin';
+        }
+
+        if ($direction === 'out' && $last && $last->direction === 'out') {
+            return 'duplicate_checkout';
+        }
+
+        return null;
+    }
+
+    protected function notifyLogin(EmployeeDetail $employee, EmployeeAttendance $attendance): void
+    {
+        try {
+            app(AdminNotificationService::class)->notifyEmployeeLogin(
+                $employee,
+                (int) $attendance->id,
+                'fingerprint'
+            );
+        } catch (\Throwable $e) {
+            Log::error('fingerprint.notify_login_failed', ['message' => $e->getMessage()]);
+        }
+    }
+
+    protected function notifyLogout(
+        EmployeeDetail $employee,
+        EmployeeAttendance $attendance,
+        Carbon $scanAt,
+        int $employeeId
+    ): void {
         try {
             $notifier = app(AdminNotificationService::class);
             $notifier->notifyEmployeeLogout(

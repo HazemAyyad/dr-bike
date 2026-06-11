@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -21,8 +21,19 @@ class Profile extends Controller
             }
               
             $user = $request->user();
+
+            if ($request->input('sub_phone') === '') {
+                $request->merge(['sub_phone' => null]);
+            }
+
             $data = $request->validate([
                 'name'      => 'required|string|max:100',
+                'email'     => [
+                    'required',
+                    'email',
+                    'max:255',
+                    Rule::unique('users', 'email')->ignore($user->id),
+                ],
                 'phone'     => 'required|string|regex:/^\+?[0-9]{12}$/',
                 'sub_phone' => 'nullable|string|regex:/^\+?[0-9]{12}$/',
                 'city'      => 'required|string|max:50',

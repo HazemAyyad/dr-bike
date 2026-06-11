@@ -13,6 +13,16 @@ final class FingerprintAttendanceLogFilter
     /** ATTLOG check-in / check-out status codes only. */
     private const ATTENDANCE_STATUSES = ['0', '1'];
 
+    /** ZKTeco ATTLOG: 0 = check-in, 1 = check-out. */
+    public static function directionFromDeviceStatus(mixed $status): ?string
+    {
+        return match (trim((string) ($status ?? ''))) {
+            '0' => 'in',
+            '1' => 'out',
+            default => null,
+        };
+    }
+
     /** ZKTeco verify modes that represent real attendance scans. */
     private const VALID_VERIFY_TYPES = ['0', '1', '2', '3', '4', '5', '15'];
 
