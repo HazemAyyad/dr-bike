@@ -83,7 +83,7 @@ class ProductStockService
     }
 
     /**
-     * @return array{ok: bool, message?: string, size_id?: int|null}
+     * @return array{ok: bool, message?: string, size_id?: int|null, size_color_id?: int|null, legacy_aggregate_stock?: bool}
      */
     public function validateSaleStock(Product $product, int $quantity, ?int $sizeColorId = null): array
     {
@@ -91,38 +91,90 @@ class ProductStockService
             return ['ok' => false, 'message' => __('messages.cant_sale')];
         }
 
-        $hasVariants = $this->productHasVariants($product);
-
-        if ($hasVariants) {
-            if ($sizeColorId === null || $sizeColorId <= 0) {
-                return ['ok' => false, 'message' => __('messages.variant_required')];
-            }
-
-            $variant = SizeColor::query()
-                ->with('size')
-                ->find($sizeColorId);
-
-            if (! $variant instanceof SizeColor) {
-                return ['ok' => false, 'message' => __('messages.cant_sale')];
-            }
-
-            $size = $variant->size;
-            if (! $size instanceof Size || (int) $size->itemId !== (int) $product->id) {
-                return ['ok' => false, 'message' => __('messages.cant_sale')];
-            }
-
-            if ((int) $variant->stock < $quantity) {
-                return ['ok' => false, 'message' => __('messages.cant_sale')];
-            }
-
-            return ['ok' => true, 'size_id' => (int) $variant->sizeId];
+        if ($sizeColorId !== null && $sizeColorId > 0) {
+            return $this->validateExplicitVariantSale($product, $quantity, $sizeColorId);
         }
 
-        if ((int) $product->stock < $quantity || (int) $product->stock <= 0) {
+        $hasVariants = $this->productHasVariants($product);
+
+        if (! $hasVariants) {
+            if ((int) $product->stock < $quantity || (int) $product->stock <= 0) {
+                return ['ok' => false, 'message' => __('messages.cant_sale')];
+            }
+
+            return ['ok' => true, 'size_id' => null];
+        }
+
+        // Legacy clients (old app builds / suspended invoices) may omit size/color.
+        $autoVariant = $this->resolveSingleAvailableVariant($product, $quantity);
+        if ($autoVariant instanceof SizeColor) {
+            return [
+                'ok' => true,
+                'size_color_id' => (int) $autoVariant->id,
+                'size_id' => (int) $autoVariant->sizeId,
+            ];
+        }
+
+        $product->loadMissing('sizes.colorSizes');
+        $aggregateStock = max((int) $product->stock, $this->sumVariantStock($product));
+        if ($aggregateStock >= $quantity && $aggregateStock > 0) {
+            return [
+                'ok' => true,
+                'size_id' => null,
+                'legacy_aggregate_stock' => true,
+            ];
+        }
+
+        return ['ok' => false, 'message' => __('messages.variant_required')];
+    }
+
+    /**
+     * @return array{ok: bool, message?: string, size_id?: int|null, size_color_id?: int}
+     */
+    private function validateExplicitVariantSale(Product $product, int $quantity, int $sizeColorId): array
+    {
+        $variant = SizeColor::query()
+            ->with('size')
+            ->find($sizeColorId);
+
+        if (! $variant instanceof SizeColor) {
             return ['ok' => false, 'message' => __('messages.cant_sale')];
         }
 
-        return ['ok' => true, 'size_id' => null];
+        $size = $variant->size;
+        if (! $size instanceof Size || (int) $size->itemId !== (int) $product->id) {
+            return ['ok' => false, 'message' => __('messages.cant_sale')];
+        }
+
+        if ((int) $variant->stock < $quantity) {
+            return ['ok' => false, 'message' => __('messages.cant_sale')];
+        }
+
+        return [
+            'ok' => true,
+            'size_id' => (int) $variant->sizeId,
+            'size_color_id' => (int) $variant->id,
+        ];
+    }
+
+    private function resolveSingleAvailableVariant(Product $product, int $quantity): ?SizeColor
+    {
+        $product->loadMissing('sizes.colorSizes');
+        $eligible = [];
+
+        foreach ($product->sizes as $size) {
+            foreach ($size->colorSizes as $variant) {
+                if ((int) $variant->stock >= $quantity) {
+                    $eligible[] = $variant;
+                }
+            }
+        }
+
+        if (count($eligible) === 1) {
+            return $eligible[0];
+        }
+
+        return null;
     }
 
     public function deductForSale(

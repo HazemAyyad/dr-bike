@@ -920,7 +920,8 @@ public function store(Request $request)
             ], 200);
         }
 
-        if ($mainSizeColorId) {
+        $mainSizeColorId = (int) ($mainStockCheck['size_color_id'] ?? $mainSizeColorId ?: 0);
+        if ($mainSizeColorId > 0) {
             $mainData['size_color_id'] = $mainSizeColorId;
             $mainData['size_id'] = $mainStockCheck['size_id'] ?? ($data['size_id'] ?? null);
         }
@@ -966,7 +967,7 @@ public function store(Request $request)
         $stockService->deductForSale(
             product: $mainProduct,
             quantity: $mainSaleQuantity,
-            sizeColorId: $mainSizeColorId,
+            sizeColorId: $mainSizeColorId > 0 ? $mainSizeColorId : null,
             sizeId: isset($mainData['size_id']) ? (int) $mainData['size_id'] : null,
             referenceType: 'instant_sale',
             referenceId: (int) $mainInstantSale->id,
@@ -990,10 +991,18 @@ public function store(Request $request)
                 $lineQty = (int) round((float) $product['quantity']);
                 $lineSizeColorId = isset($product['size_color_id']) ? (int) $product['size_color_id'] : null;
                 $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId);
+                if (! ($lineCheck['ok'] ?? false)) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => $lineCheck['message'] ?? __('messages.cant_sale'),
+                    ], 200);
+                }
+
+                $lineSizeColorId = (int) ($lineCheck['size_color_id'] ?? $lineSizeColorId ?: 0);
 
                 $subSale = InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                     'product_id' => $product['product_id'],
-                    'size_color_id' => $lineSizeColorId,
+                    'size_color_id' => $lineSizeColorId > 0 ? $lineSizeColorId : null,
                     'size_id' => $lineCheck['size_id'] ?? ($product['size_id'] ?? null),
                     'cost' => $product['cost'],
                     'quantity' => $lineQty,
@@ -1007,7 +1016,7 @@ public function store(Request $request)
                 $stockService->deductForSale(
                     product: $subProduct,
                     quantity: $lineQty,
-                    sizeColorId: $lineSizeColorId,
+                    sizeColorId: $lineSizeColorId > 0 ? $lineSizeColorId : null,
                     sizeId: $lineCheck['size_id'] ?? null,
                     referenceType: 'instant_sale',
                     referenceId: (int) $subSale->id,
