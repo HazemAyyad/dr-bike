@@ -1323,11 +1323,11 @@ public function store(Request $request)
                 'product:id,nameAr',
                     'offerPackage:id,name',
                     'project:id,name',
-                'size:id,size',
-                'sizeColor.size:id,size,colorAr',
+                'size',
+                'sizeColor.size',
                 'subProducts.product:id,nameAr',
-                'subProducts.size:id,size',
-                'subProducts.sizeColor.size:id,size,colorAr',
+                'subProducts.size',
+                'subProducts.sizeColor.size',
                     'createdByUser:id,name',
                     'updatedByUser:id,name',
                 ]);
@@ -1744,12 +1744,12 @@ public function store(Request $request)
                     'product.viewImages',
                     'product.normalImages',
                     'offerPackage',
-                    'size:id,size',
-                    'sizeColor.size:id,size,colorAr',
+                    'size',
+                    'sizeColor.size',
                     'subProducts.product.viewImages',
                     'subProducts.product.normalImages',
-                    'subProducts.size:id,size',
-                    'subProducts.sizeColor.size:id,size,colorAr',
+                    'subProducts.size',
+                    'subProducts.sizeColor.size',
                     'project.partnership.customer',
                     'paymentBox:id,name',
                     'createdByUser:id,name',
@@ -1849,11 +1849,15 @@ public function store(Request $request)
 
     
         catch (QueryException $e) {
+            Log::error('InstantSales::invoiceDetails query', ['message' => $e->getMessage()]);
+
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.retrieve_data_error')
             ], 200);
         } catch (\Exception $e) {
+            Log::error('InstantSales::invoiceDetails', ['message' => $e->getMessage()]);
+
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong')
