@@ -316,6 +316,47 @@ class InstantSales extends Controller
         return rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.');
     }
 
+    /**
+     * @return array{size_color_id: int|null, size_id: int|null, size: string|null, color_ar: string|null, variant_label: string|null}
+     */
+    private function formatInstantSaleVariantFields(?InstantSale $line): array
+    {
+        if (! $line instanceof InstantSale) {
+            return [
+                'size_color_id' => null,
+                'size_id' => null,
+                'size' => null,
+                'color_ar' => null,
+                'variant_label' => null,
+            ];
+        }
+
+        $sizeLabel = $line->relationLoaded('size') ? $line->size?->size : null;
+        if (($sizeLabel === null || $sizeLabel === '') && $line->relationLoaded('sizeColor')) {
+            $sizeLabel = $line->sizeColor?->size?->size;
+        }
+
+        $colorAr = $line->relationLoaded('sizeColor') ? $line->sizeColor?->colorAr : null;
+
+        $variantLabel = null;
+        $parts = array_values(array_filter([
+            is_string($sizeLabel) ? trim($sizeLabel) : null,
+            is_string($colorAr) ? trim($colorAr) : null,
+        ], fn ($v) => $v !== null && $v !== ''));
+
+        if ($parts !== []) {
+            $variantLabel = implode(' / ', $parts);
+        }
+
+        return [
+            'size_color_id' => $line->size_color_id ? (int) $line->size_color_id : null,
+            'size_id' => $line->size_id ? (int) $line->size_id : null,
+            'size' => $sizeLabel,
+            'color_ar' => $colorAr,
+            'variant_label' => $variantLabel,
+        ];
+    }
+
     private function clampBoxLogNote(string $note, int $max = 500): string
     {
         $note = trim($note);
@@ -1282,7 +1323,11 @@ public function store(Request $request)
                 'product:id,nameAr',
                     'offerPackage:id,name',
                     'project:id,name',
+                'size:id,size',
+                'sizeColor.size:id,size,colorAr',
                 'subProducts.product:id,nameAr',
+                'subProducts.size:id,size',
+                'subProducts.sizeColor.size:id,size,colorAr',
                     'createdByUser:id,name',
                     'updatedByUser:id,name',
                 ]);
@@ -1340,6 +1385,7 @@ public function store(Request $request)
                 'product' => $isPackageSale
                     ? ($packageName ?? 'باكيج محذوف')
                     : (optional($sale->product)->nameAr ?? 'منتج محذوف'),
+                ...$this->formatInstantSaleVariantFields($isPackageSale ? null : $sale),
                 'cost' => $sale->cost,
                 'total_cost' => $sale->total_cost,
                 'quantity' => $sale->quantity,
@@ -1365,6 +1411,7 @@ public function store(Request $request)
                     return [
                         'id' => $sub->id,
                         'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
+                        ...$this->formatInstantSaleVariantFields($sub),
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,
                         'is_package_component' => $isPackageSale && $lineCost <= 0,
@@ -1697,8 +1744,12 @@ public function store(Request $request)
                     'product.viewImages',
                     'product.normalImages',
                     'offerPackage',
+                    'size:id,size',
+                    'sizeColor.size:id,size,colorAr',
                     'subProducts.product.viewImages',
                     'subProducts.product.normalImages',
+                    'subProducts.size:id,size',
+                    'subProducts.sizeColor.size:id,size,colorAr',
                     'project.partnership.customer',
                     'paymentBox:id,name',
                     'createdByUser:id,name',
@@ -1733,6 +1784,7 @@ public function store(Request $request)
                 'is_package_sale' => $isPackageSale,
                 'package_name' => $sale->offerPackage?->name,
                 'product' => $displayName,
+                ...$this->formatInstantSaleVariantFields($isPackageSale ? null : $sale),
                 'product_image' => $isPackageSale
                     ? app(OfferPackageService::class)->imagePublicPath($sale->offerPackage?->image_path)
                     : $this->invoiceProductImage($sale->product),
@@ -1765,6 +1817,7 @@ public function store(Request $request)
                     return [
                         'id' => $sub->id,
                         'product_name' => $sub->product?->nameAr ?? '-',
+                        ...$this->formatInstantSaleVariantFields($sub),
                         'product_image' => $this->invoiceProductImage($sub->product),
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,
