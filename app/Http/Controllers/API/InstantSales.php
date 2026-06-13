@@ -317,7 +317,15 @@ class InstantSales extends Controller
     }
 
     /**
-     * @return array{size_color_id: int|null, size_id: int|null, size: string|null, color_ar: string|null, variant_label: string|null}
+     * @return array{
+     *     size_color_id: int|null,
+     *     size_id: int|null,
+     *     size: string|null,
+     *     color_ar: string|null,
+     *     variant_label: string|null,
+     *     size_label: string|null,
+     *     color_label: string|null
+     * }
      */
     private function formatInstantSaleVariantFields(?InstantSale $line): array
     {
@@ -328,6 +336,8 @@ class InstantSales extends Controller
                 'size' => null,
                 'color_ar' => null,
                 'variant_label' => null,
+                'size_label' => null,
+                'color_label' => null,
             ];
         }
 
@@ -336,7 +346,16 @@ class InstantSales extends Controller
             $sizeLabel = $line->sizeColor?->size?->size;
         }
 
+        if (($sizeLabel === null || $sizeLabel === '') && $line->size_color_id) {
+            $line->loadMissing('sizeColor.size');
+            $sizeLabel = $line->sizeColor?->size?->size;
+        }
+
         $colorAr = $line->relationLoaded('sizeColor') ? $line->sizeColor?->colorAr : null;
+        if (($colorAr === null || $colorAr === '') && $line->size_color_id) {
+            $line->loadMissing('sizeColor');
+            $colorAr = $line->sizeColor?->colorAr;
+        }
 
         $variantLabel = null;
         $parts = array_values(array_filter([
@@ -354,6 +373,65 @@ class InstantSales extends Controller
             'size' => $sizeLabel,
             'color_ar' => $colorAr,
             'variant_label' => $variantLabel,
+            'size_label' => $sizeLabel,
+            'color_label' => $colorAr,
+        ];
+    }
+
+    /**
+     * Old app builds only render the product name — append size/color for backward compatibility.
+     *
+     * @param  array{variant_label?: string|null}  $variantFields
+     */
+    private function appendVariantToDisplayName(?string $name, array $variantFields): string
+    {
+        $name = trim((string) ($name ?? ''));
+        if ($name === '') {
+            $name = 'منتج';
+        }
+
+        $variant = $variantFields['variant_label'] ?? null;
+        if (! is_string($variant) || trim($variant) === '') {
+            return $name;
+        }
+
+        $variant = trim($variant);
+        $suffix = ' — '.$variant;
+        if (str_ends_with($name, $suffix) || str_contains($name, $suffix)) {
+            return $name;
+        }
+
+        return $name.$suffix;
+    }
+
+    /**
+     * @param  array{variant_label?: string|null}  $variantFields
+     * @return array{product: string, product_base: string}
+     */
+    private function formatInstantSaleProductDisplay(?string $baseName, array $variantFields): array
+    {
+        $base = trim((string) ($baseName ?? ''));
+        if ($base === '') {
+            $base = 'منتج';
+        }
+
+        return [
+            'product_base' => $base,
+            'product' => $this->appendVariantToDisplayName($base, $variantFields),
+        ];
+    }
+
+    /**
+     * @param  array{variant_label?: string|null}  $variantFields
+     * @return array{product_name: string, product_name_base: string}
+     */
+    private function formatInstantSaleSubProductDisplay(?string $baseName, array $variantFields): array
+    {
+        $display = $this->formatInstantSaleProductDisplay($baseName, $variantFields);
+
+        return [
+            'product_name_base' => $display['product_base'],
+            'product_name' => $display['product'],
         ];
     }
 
@@ -1373,6 +1451,13 @@ public function store(Request $request)
                 $saleComposition = $isPackageSale
                     ? ($hasAdditionalProducts ? 'mixed' : 'package')
                     : 'product';
+                $variantFields = $this->formatInstantSaleVariantFields($isPackageSale ? null : $sale);
+                $baseProductName = $isPackageSale
+                    ? ($packageName ?? 'باكيج محذوف')
+                    : (optional($sale->product)->nameAr ?? 'منتج محذوف');
+                $productDisplay = $isPackageSale
+                    ? ['product_base' => $baseProductName, 'product' => $baseProductName]
+                    : $this->formatInstantSaleProductDisplay($baseProductName, $variantFields);
 
             return [
                 'id' => $sale->id,
@@ -1382,10 +1467,8 @@ public function store(Request $request)
                 'is_package_sale' => $isPackageSale,
                 'offer_package_id' => $sale->offer_package_id,
                 'package_name' => $packageName,
-                'product' => $isPackageSale
-                    ? ($packageName ?? 'باكيج محذوف')
-                    : (optional($sale->product)->nameAr ?? 'منتج محذوف'),
-                ...$this->formatInstantSaleVariantFields($isPackageSale ? null : $sale),
+                ...$productDisplay,
+                ...$variantFields,
                 'cost' => $sale->cost,
                 'total_cost' => $sale->total_cost,
                 'quantity' => $sale->quantity,
@@ -1407,11 +1490,13 @@ public function store(Request $request)
                     ...$this->instantSalePaymentAmounts($sale),
                 'sub_products' => $sale->subProducts->map(function ($sub) use ($isPackageSale) {
                     $lineCost = (float) $sub->cost;
+                    $subVariant = $this->formatInstantSaleVariantFields($sub);
+                    $subBase = optional($sub->product)->nameAr ?? 'منتج محذوف';
 
                     return [
                         'id' => $sub->id,
-                        'product_name' => optional($sub->product)->nameAr ?? 'منتج محذوف',
-                        ...$this->formatInstantSaleVariantFields($sub),
+                        ...$this->formatInstantSaleSubProductDisplay($subBase, $subVariant),
+                        ...$subVariant,
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,
                         'is_package_component' => $isPackageSale && $lineCost <= 0,
@@ -1773,6 +1858,10 @@ public function store(Request $request)
             $displayName = $isPackageSale
                 ? ($sale->offerPackage?->name ?? 'باكيج محذوف')
                 : ($sale->product?->nameAr ?? '-');
+            $variantFields = $this->formatInstantSaleVariantFields($isPackageSale ? null : $sale);
+            $productDisplay = $isPackageSale
+                ? ['product_base' => $displayName, 'product' => $displayName]
+                : $this->formatInstantSaleProductDisplay($displayName, $variantFields);
 
             $formatted = [
                 'id' => $sale->id,
@@ -1783,8 +1872,8 @@ public function store(Request $request)
                 'has_additional_products' => $hasAdditionalProducts,
                 'is_package_sale' => $isPackageSale,
                 'package_name' => $sale->offerPackage?->name,
-                'product' => $displayName,
-                ...$this->formatInstantSaleVariantFields($isPackageSale ? null : $sale),
+                ...$productDisplay,
+                ...$variantFields,
                 'product_image' => $isPackageSale
                     ? app(OfferPackageService::class)->imagePublicPath($sale->offerPackage?->image_path)
                     : $this->invoiceProductImage($sale->product),
@@ -1813,11 +1902,13 @@ public function store(Request $request)
                 'sub_products' => $sale->subProducts->map(function ($sub) use ($isPackageSale) {
                     $lineCost = (float) $sub->cost;
                     $lineSubtotal = $lineCost * (float) $sub->quantity;
+                    $subVariant = $this->formatInstantSaleVariantFields($sub);
+                    $subBase = $sub->product?->nameAr ?? '-';
 
                     return [
                         'id' => $sub->id,
-                        'product_name' => $sub->product?->nameAr ?? '-',
-                        ...$this->formatInstantSaleVariantFields($sub),
+                        ...$this->formatInstantSaleSubProductDisplay($subBase, $subVariant),
+                        ...$subVariant,
                         'product_image' => $this->invoiceProductImage($sub->product),
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,

@@ -94,10 +94,21 @@ class ProductStockController extends Controller
                 'product_id' => ['required', 'integer', 'exists:products,id'],
                 'date_from' => ['nullable', 'date'],
                 'date_to' => ['nullable', 'date'],
+                'type' => ['nullable', 'string', 'in:'.implode(',', [
+                    ProductStockMovement::TYPE_PURCHASE,
+                    ProductStockMovement::TYPE_BILL_QUANTITY,
+                    ProductStockMovement::TYPE_SALE,
+                    ProductStockMovement::TYPE_SALE_CANCEL,
+                    ProductStockMovement::TYPE_DESTRUCTION,
+                    ProductStockMovement::TYPE_RETURN,
+                    ProductStockMovement::TYPE_MANUAL_ADD,
+                    ProductStockMovement::TYPE_MANUAL_SET,
+                    ProductStockMovement::TYPE_IMPORT,
+                ])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);
 
-            $perPage = min(max((int) ($data['per_page'] ?? 20), 1), 100);
+            $perPage = min(max((int) ($data['per_page'] ?? 50), 1), 100);
             $summary = $this->stockService->movementSummary(
                 (int) $data['product_id'],
                 $data['date_from'] ?? null,
@@ -119,22 +130,33 @@ class ProductStockController extends Controller
             if (! empty($data['date_to'])) {
                 $query->whereDate('created_at', '<=', $data['date_to']);
             }
+            if (! empty($data['type'])) {
+                $query->where('type', $data['type']);
+            }
 
             $paginated = $query->paginate($perPage);
-            $rows = $paginated->getCollection()->map(fn (ProductStockMovement $m) => [
-                'id' => $m->id,
-                'type' => $m->type,
-                'quantity' => $m->quantity,
-                'stock_before' => $m->stock_before,
-                'stock_after' => $m->stock_after,
-                'size' => $m->size?->size,
-                'color_ar' => $m->sizeColor?->colorAr,
-                'note' => $m->note,
-                'reference_type' => $m->reference_type,
-                'reference_id' => $m->reference_id,
-                'created_by_name' => $m->creator?->name,
-                'created_at' => $m->created_at?->format('Y-m-d H:i'),
-            ]);
+            $rows = $paginated->getCollection()->map(function (ProductStockMovement $m) {
+                $invoiceNumber = null;
+                if ($m->reference_type === 'instant_sale' && $m->reference_id) {
+                    $invoiceNumber = '#'.$m->reference_id;
+                }
+
+                return [
+                    'id' => $m->id,
+                    'type' => $m->type,
+                    'quantity' => $m->quantity,
+                    'stock_before' => $m->stock_before,
+                    'stock_after' => $m->stock_after,
+                    'size' => $m->size?->size,
+                    'color_ar' => $m->sizeColor?->colorAr,
+                    'note' => $m->note,
+                    'reference_type' => $m->reference_type,
+                    'reference_id' => $m->reference_id,
+                    'invoice_number' => $invoiceNumber,
+                    'created_by_name' => $m->creator?->name,
+                    'created_at' => $m->created_at?->format('Y-m-d H:i'),
+                ];
+            });
 
             return response()->json([
                 'status' => 'success',
