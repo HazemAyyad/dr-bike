@@ -66,6 +66,114 @@ class EmployeeDetails extends Controller
         return $s === '' ? null : $s;
     }
 
+    private function uniqueActiveUserEmailRule(?int $ignoreUserId = null): \Illuminate\Validation\Rules\Unique
+    {
+        $rule = Rule::unique('users', 'email')->where(fn ($query) => $query->whereNull('deleted_at'));
+
+        return $ignoreUserId !== null ? $rule->ignore($ignoreUserId) : $rule;
+    }
+
+    private function uniqueActiveUserPhoneRule(?int $ignoreUserId = null): \Illuminate\Validation\Rules\Unique
+    {
+        $rule = Rule::unique('users', 'phone')->where(fn ($query) => $query->whereNull('deleted_at'));
+
+        return $ignoreUserId !== null ? $rule->ignore($ignoreUserId) : $rule;
+    }
+
+    private function uniqueActiveEmployeeDeviceUserIdRule(?int $ignoreEmployeeId = null): \Illuminate\Validation\Rules\Unique
+    {
+        $rule = Rule::unique('employee_details', 'device_user_id')
+            ->where(fn ($query) => $query->whereNull('deleted_at')->whereNotNull('device_user_id'));
+
+        return $ignoreEmployeeId !== null ? $rule->ignore($ignoreEmployeeId) : $rule;
+    }
+
+    private function prefixedUniqueValue(string $prefix, string $value, int $maxLength): string
+    {
+        $combined = $prefix.$value;
+
+        if (strlen($combined) <= $maxLength) {
+            return $combined;
+        }
+
+        $keep = max(1, $maxLength - strlen($prefix));
+
+        return $prefix.substr($value, 0, $keep);
+    }
+
+    private function releaseUserUniqueFieldsForSoftDelete(User $user): void
+    {
+        $stamp = (string) now()->timestamp;
+        $prefix = "deleted.{$user->id}.{$stamp}.";
+        $dirty = false;
+
+        if (is_string($user->email) && $user->email !== '' && ! str_starts_with($user->email, 'deleted.')) {
+            $user->email = $this->prefixedUniqueValue($prefix, $user->email, 255);
+            $dirty = true;
+        }
+
+        if (is_string($user->phone) && $user->phone !== '' && ! str_starts_with($user->phone, 'deleted.')) {
+            $user->phone = $this->prefixedUniqueValue($prefix, $user->phone, 32);
+            $dirty = true;
+        }
+
+        if ($dirty) {
+            $user->save();
+        }
+    }
+
+    private function releaseEmployeeUniqueFieldsForSoftDelete(EmployeeDetail $employee): void
+    {
+        if (! is_string($employee->device_user_id) || trim($employee->device_user_id) === '') {
+            return;
+        }
+
+        if (str_starts_with($employee->device_user_id, 'deleted.')) {
+            return;
+        }
+
+        $stamp = (string) now()->timestamp;
+        $prefix = "deleted.{$employee->id}.{$stamp}.";
+        $employee->device_user_id = $this->prefixedUniqueValue(
+            $prefix,
+            $employee->device_user_id,
+            120
+        );
+        $employee->save();
+    }
+
+    private function scrubSoftDeletedUserConflicts(string $email, ?string $phone): void
+    {
+        $users = User::onlyTrashed()
+            ->where(function ($query) use ($email, $phone) {
+                $query->where('email', $email);
+                if ($phone !== null && $phone !== '') {
+                    $query->orWhere('phone', $phone);
+                }
+            })
+            ->get();
+
+        foreach ($users as $user) {
+            $this->releaseUserUniqueFieldsForSoftDelete($user);
+        }
+    }
+
+    private function scrubSoftDeletedDeviceUserIdConflict(?string $deviceUserId): void
+    {
+        $deviceUserId = $this->normalizeDeviceUserId($deviceUserId);
+        if ($deviceUserId === null) {
+            return;
+        }
+
+        $employees = EmployeeDetail::onlyTrashed()
+            ->where('device_user_id', $deviceUserId)
+            ->get();
+
+        foreach ($employees as $employee) {
+            $this->releaseEmployeeUniqueFieldsForSoftDelete($employee);
+        }
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -583,12 +691,12 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         try {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users'],
+            'email' => ['required', 'string', 'email', 'max:255', $this->uniqueActiveUserEmailRule()],
             'password' => ['required', 'string', 'min:8', 'confirmed'],
             'phone' => [
                         'required',
                         'regex:/^\+\d{3}\ \d{9}$/',
-                        'unique:users,phone',
+                        $this->uniqueActiveUserPhoneRule(),
                     ],
             'sub_phone' => [
                         'nullable',
@@ -616,11 +724,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'nullable',
                 'string',
                 'max:120',
-                Rule::unique('employee_details', 'device_user_id')
-                    ->whereNotNull('device_user_id'),
+                $this->uniqueActiveEmployeeDeviceUserIdRule(),
             ],
 
         ]);
+
+        $this->scrubSoftDeletedUserConflicts($data['email'], $data['phone'] ?? null);
+        $this->scrubSoftDeletedDeviceUserIdConflict($data['device_user_id'] ?? null);
 
         $user = User::create([
             'name' => $data['name'],
@@ -715,13 +825,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     'string',
                     'email',
                     'max:255',
-                    Rule::unique('users')->ignore($userId),
+                    $this->uniqueActiveUserEmailRule($userId),
                     ],
             'name' => ['required', 'string', 'max:255'],
             'phone' => [
                         'required',
                         'regex:/^\+\d{3}\ \d{9}$/',
-                         Rule::unique('users', 'phone')->ignore($userId),
+                         $this->uniqueActiveUserPhoneRule($userId),
                     ],
             'sub_phone' => [
                         'nullable',
@@ -750,9 +860,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'nullable',
                 'string',
                 'max:120',
-                Rule::unique('employee_details', 'device_user_id')
-                    ->whereNotNull('device_user_id')
-                    ->ignore($request->input('employee_id')),
+                $this->uniqueActiveEmployeeDeviceUserIdRule((int) $request->input('employee_id')),
             ],
         ]);
     
@@ -792,6 +900,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         ['document_img'=> $finalDocumentImages]);
         // Update employee record
         $employee->update($finalData);
+
+        $this->scrubSoftDeletedUserConflicts($request->email, $request->phone);
+        $this->scrubSoftDeletedDeviceUserIdConflict($request->input('device_user_id'));
+
         $user->update([
              'email'=> $request->email,
 
@@ -861,7 +973,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $employeeName = $employee->user?->name ?? '—';
 
             DB::transaction(function () use ($employee) {
+                $this->releaseEmployeeUniqueFieldsForSoftDelete($employee);
+
                 if ($employee->user) {
+                    $this->releaseUserUniqueFieldsForSoftDelete($employee->user);
                     $employee->user->delete();
                 }
                 $employee->delete();
