@@ -13,6 +13,8 @@ class InstantSale extends Model
 
     protected $fillable = [
         'product_id',
+        'size_id',
+        'size_color_id',
         'offer_package_id',
         'parent_id',
         'total_cost',
@@ -50,6 +52,16 @@ class InstantSale extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function size()
+    {
+        return $this->belongsTo(Size::class, 'size_id');
+    }
+
+    public function sizeColor()
+    {
+        return $this->belongsTo(SizeColor::class, 'size_color_id');
     }
 
     public function offerPackage()

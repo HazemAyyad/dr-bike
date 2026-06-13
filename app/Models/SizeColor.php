@@ -20,6 +20,7 @@ class SizeColor extends Model
         'wholesalePrice',
         'discount',
         'stock',
+        'image_url',
     ];
 
    public $incrementing = false;

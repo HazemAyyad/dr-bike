@@ -553,7 +553,7 @@ class Stocks extends Controller
                     $q->select('id', 'size', 'itemId');
                 },
                 'sizes.colorSizes' => function ($q) {
-                    $q->select('id', 'colorAr', 'colorEn', 'colorAbbr', 'normailPrice', 'wholesalePrice', 'discount', 'stock', 'sizeId');
+                    $q->select('id', 'colorAr', 'colorEn', 'colorAbbr', 'normailPrice', 'wholesalePrice', 'discount', 'stock', 'sizeId', 'image_url');
                 },
                 'wholesales',
                 'normalImages:id,itemId,imageUrl',

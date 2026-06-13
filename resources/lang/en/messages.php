@@ -387,6 +387,7 @@ return [
     'cant_create_closeout'=>'Product already in close outs',
 
     'cant_sale'=>'Quantity is more than the product\'s stock',
+    'variant_required' => 'Please select a size and color for this product',
 
     // combinations
     'combination_created'=>'Combination was created successfully',

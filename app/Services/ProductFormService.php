@@ -22,7 +22,8 @@ class ProductFormService
 {
     public function __construct(
         private readonly StoreManageItemService $storeManageItemService,
-        private readonly ProductTagService $productTagService
+        private readonly ProductTagService $productTagService,
+        private readonly ProductStockService $productStockService,
     ) {}
 
     /**
@@ -70,6 +71,8 @@ class ProductFormService
             'sizes.*.color_sizes.*.colorAbbr' => ['nullable', 'string', 'max:100'],
             'sizes.*.color_sizes.*.normailPrice' => ['nullable', 'numeric', 'min:0'],
             'sizes.*.color_sizes.*.stock' => ['nullable', 'integer', 'min:0'],
+            'sizes.*.color_sizes.*.image' => ['nullable', 'image', 'max:10240'],
+            'sizes.*.color_sizes.*.delete_image' => ['nullable', 'boolean'],
             'video' => ['nullable', 'file', 'mimes:mp4,mov,avi,webm', 'max:51200'],
             'normal_images.*' => ['nullable', 'image', 'max:10240'],
             'three_d_images.*' => ['nullable', 'image', 'max:10240'],
@@ -192,6 +195,8 @@ class ProductFormService
                 fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
             ));
             $this->replaceSizesFromTestForm($sizesInput, $newId);
+            $this->applySizeColorImagesFromRequest($request, $newId, $sizesInput);
+            $this->productStockService->afterVariantsSaved(Product::with('sizes.colorSizes')->findOrFail($newId));
             $trace('مقاسات/ألوان محلية', ['count' => count($sizesInput)]);
 
             $this->syncProductTagsFromRequest($request, $newId);
@@ -275,6 +280,8 @@ class ProductFormService
             fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
         ));
         $this->replaceSizesFromTestForm($sizesInput, $newId);
+        $this->applySizeColorImagesFromRequest($request, $newId, $sizesInput);
+        $this->productStockService->afterVariantsSaved(Product::with('sizes.colorSizes')->findOrFail($newId));
         $trace('تم حفظ المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
 
         $this->syncProductTagsFromRequest($request, $newId);
@@ -383,6 +390,8 @@ class ProductFormService
             fn ($r) => is_array($r) && (! empty($r['size']) || ! empty($r['id']))
         ));
         $this->replaceSizesFromTestForm($sizesInput, $product->id);
+        $this->applySizeColorImagesFromRequest($request, (int) $product->id, $sizesInput);
+        $this->productStockService->afterVariantsSaved(Product::with('sizes.colorSizes')->findOrFail($product->id));
         $trace('تم تحديث المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
 
         $this->syncProductTagsFromRequest($request, (int) $product->id);
@@ -692,6 +701,7 @@ class ProductFormService
                             'wholesalePrice' => $colorData['wholesalePrice'] ?? $color->wholesalePrice,
                             'discount' => $colorData['discount'] ?? $color->discount,
                             'stock' => $colorData['stock'] ?? $color->stock,
+                            'image_url' => $colorData['image_url'] ?? $color->image_url,
                         ]);
                     }
                 } else {
@@ -740,5 +750,72 @@ class ProductFormService
             'seller_id' => null,
             'price' => $price,
         ]);
+    }
+
+    /**
+     * @param  array<int, mixed>  $sizesInput
+     */
+    private function applySizeColorImagesFromRequest(Request $request, int $productId, array $sizesInput): void
+    {
+        $sizes = Size::query()
+            ->where('itemId', $productId)
+            ->with('colorSizes')
+            ->get();
+
+        foreach ($sizesInput as $sizeIndex => $sizeData) {
+            if (! is_array($sizeData)) {
+                continue;
+            }
+
+            $sizeLabel = trim((string) ($sizeData['size'] ?? ''));
+            $size = $sizes->first(function (Size $row) use ($sizeData, $sizeLabel) {
+                if (! empty($sizeData['id']) && (int) $sizeData['id'] === (int) $row->id) {
+                    return true;
+                }
+
+                return $sizeLabel !== '' && trim((string) $row->size) === $sizeLabel;
+            });
+
+            if (! $size instanceof Size) {
+                continue;
+            }
+
+            foreach ($sizeData['color_sizes'] ?? [] as $colorIndex => $colorData) {
+                if (! is_array($colorData)) {
+                    continue;
+                }
+
+                $colorAr = trim((string) ($colorData['colorAr'] ?? ''));
+                $color = $size->colorSizes->first(function (SizeColor $row) use ($colorData, $colorAr) {
+                    if (! empty($colorData['id']) && (int) $colorData['id'] === (int) $row->id) {
+                        return true;
+                    }
+
+                    return $colorAr !== '' && trim((string) $row->colorAr) === $colorAr;
+                });
+
+                if (! $color instanceof SizeColor) {
+                    continue;
+                }
+
+                if ($request->boolean("sizes.$sizeIndex.color_sizes.$colorIndex.delete_image")) {
+                    $color->update(['image_url' => null]);
+                }
+
+                $file = $request->file("sizes.$sizeIndex.color_sizes.$colorIndex.image");
+                if ($file === null) {
+                    continue;
+                }
+
+                $folder = public_path('SizeColorImages');
+                if (! is_dir($folder)) {
+                    mkdir($folder, 0755, true);
+                }
+
+                $filename = 'sc_'.$color->id.'_'.time().'_'.$file->getClientOriginalName();
+                $file->move($folder, $filename);
+                $color->update(['image_url' => 'SizeColorImages/'.$filename]);
+            }
+        }
     }
 }

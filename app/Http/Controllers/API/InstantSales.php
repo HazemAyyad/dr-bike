@@ -14,6 +14,7 @@ use App\Models\Project;
 use App\Models\Seller;
 use App\Services\DebtLedgerService;
 use App\Services\OfferPackageService;
+use App\Services\ProductStockService;
 use App\Services\SalesDailySessionService;
 use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -267,25 +268,22 @@ class InstantSales extends Controller
             return;
         }
 
-        $product = Product::withTrashed()->lockForUpdate()->find($productId);
+        $product = Product::withTrashed()->find($productId);
         if (! $product instanceof Product) {
             $this->markSaleLineStockRestored($line);
 
             return;
         }
 
-        Product::withTrashed()
-            ->where('id', $productId)
-            ->increment('stock', $quantity);
-
-        $product->refresh();
-
-        if ((float) $product->stock > 0) {
-            $closeout = Closeout::where('product_id', $productId)->first();
-            if ($closeout && $closeout->status === 'archived') {
-                $closeout->update(['status' => 'ongoing']);
-            }
-        }
+        app(ProductStockService::class)->restoreForSale(
+            product: $product,
+            quantity: $quantity,
+            sizeColorId: $line->size_color_id ? (int) $line->size_color_id : null,
+            sizeId: $line->size_id ? (int) $line->size_id : null,
+            referenceType: 'instant_sale',
+            referenceId: (int) $line->id,
+            userId: auth()->id() ? (int) auth()->id() : null,
+        );
 
         $this->markSaleLineStockRestored($line);
     }
@@ -704,10 +702,15 @@ public function store(Request $request)
 
         'other_products' => 'nullable|array',
         'other_products.*.product_id' => 'required|exists:products,id',
+        'other_products.*.size_color_id' => 'nullable|integer|exists:size_colors,id',
+        'other_products.*.size_id' => 'nullable|integer|exists:sizes,id',
         'other_products.*.cost' => 'required|numeric|min:0',
         'other_products.*.quantity' => 'required|numeric|min:1',
         'other_products.*.type' => 'required|string|in:normal,project',
         'other_products.*.project_id' => 'nullable|exists:projects,id',
+
+        'size_color_id' => 'nullable|integer|exists:size_colors,id',
+        'size_id' => 'nullable|integer|exists:sizes,id',
 
         'buyer_type' => 'nullable|string|in:trader,customer,unknown,seller',
         'buyer_id' => 'nullable|integer|exists:customers,id',
@@ -785,14 +788,22 @@ public function store(Request $request)
             round($mainLineTotal + $otherProductsTotal + $additionalNotesTotal - (float) ($mainData['discount'] ?? 0), 2)
         );
 
-        $mainProduct = Product::findOrFail($mainData['product_id']);
+        $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
+        $stockService = app(ProductStockService::class);
 
-        $mainSaleQuantity = $request->quantity;
-        if( ($mainSaleQuantity > $mainProduct->stock) || ($mainProduct->stock <= 0) ){
+        $mainSaleQuantity = (int) round((float) $request->quantity);
+        $mainSizeColorId = isset($data['size_color_id']) ? (int) $data['size_color_id'] : null;
+        $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId);
+        if (! ($mainStockCheck['ok'] ?? false)) {
             return response()->json([
-                'status'=>'error',
-                'message'=>__('messages.cant_sale'),
-            ],200);
+                'status' => 'error',
+                'message' => $mainStockCheck['message'] ?? __('messages.cant_sale'),
+            ], 200);
+        }
+
+        if ($mainSizeColorId) {
+            $mainData['size_color_id'] = $mainSizeColorId;
+            $mainData['size_id'] = $mainStockCheck['size_id'] ?? ($data['size_id'] ?? null);
         }
 
 
@@ -800,12 +811,15 @@ public function store(Request $request)
         if ($request->has('other_products')) {
 
         foreach ($data['other_products'] as $item) {
-            $product = Product::find($item['product_id']);
-            $otherNames[] = $product->nameAr?? 'بدون اسم';
-            if (($product->stock <= 0) || ($item['quantity'] > $product->stock)) {
+            $product = Product::with('sizes.colorSizes')->find($item['product_id']);
+            $otherNames[] = $product->nameAr ?? 'بدون اسم';
+            $lineQty = (int) round((float) $item['quantity']);
+            $lineSizeColorId = isset($item['size_color_id']) ? (int) $item['size_color_id'] : null;
+            $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId);
+            if (! ($lineCheck['ok'] ?? false)) {
                     return response()->json([
                         'status'=>'error',
-                        'message'=>__('messages.cant_sale'),
+                        'message'=> $lineCheck['message'] ?? __('messages.cant_sale'),
                     ],200);
             } 
         }
@@ -830,21 +844,20 @@ public function store(Request $request)
             $mainInstantSale->fresh(['product', 'offerPackage', 'paymentBox'])
         );
 
-        $mainProduct->stock -= $mainInstantSale->quantity;
-        $mainProduct->save();
-        if ($mainProduct->stock === 0) {
-                $closeout = $mainProduct->closeout;
-
-                if ($closeout) { // check if it exists
-                    $closeout->status = 'archived'; 
-                    $closeout->save();
-                }
-            }
+        $stockService->deductForSale(
+            product: $mainProduct,
+            quantity: $mainSaleQuantity,
+            sizeColorId: $mainSizeColorId,
+            sizeId: isset($mainData['size_id']) ? (int) $mainData['size_id'] : null,
+            referenceType: 'instant_sale',
+            referenceId: (int) $mainInstantSale->id,
+            userId: auth()->id() ? (int) auth()->id() : null,
+        );
 
         // Save other  if provided
         if ($request->has('other_products')) {
             foreach ($request->other_products as  $product) {
-                $subProduct = Product::findOrFail($product['product_id']);
+                $subProduct = Product::with('sizes.colorSizes')->findOrFail($product['product_id']);
                 $subProductProjects = $subProduct->projects;
 
 
@@ -855,28 +868,32 @@ public function store(Request $request)
                     ],200);
                 }        
                 $subProjectId = isset($product['project_id']) ? (int) $product['project_id'] : null;
+                $lineQty = (int) round((float) $product['quantity']);
+                $lineSizeColorId = isset($product['size_color_id']) ? (int) $product['size_color_id'] : null;
+                $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId);
 
-                InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
+                $subSale = InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                     'product_id' => $product['product_id'],
+                    'size_color_id' => $lineSizeColorId,
+                    'size_id' => $lineCheck['size_id'] ?? ($product['size_id'] ?? null),
                     'cost' => $product['cost'],
-                    'quantity' => $product['quantity'],
+                    'quantity' => $lineQty,
                     'discount' => 0,
-                    'total_cost' => (float) $product['cost'] * (float) $product['quantity'],
+                    'total_cost' => (float) $product['cost'] * $lineQty,
                     'parent_id' => $mainInstantSale->id,
                     'type' => $product['type'],
                     'project_id' => $product['project_id'] ?? null,
                 ], $buyerPayload)));
 
-                $subProduct->stock -= $product['quantity'];
-                $subProduct->save();
-                if ($subProduct->stock === 0) {
-                        $closeout = $subProduct->closeout;
-
-                         if ($closeout) { // check if it exists
-                                    $closeout->status = 'archived'; 
-                                    $closeout->save();
-                                }
-                            }
+                $stockService->deductForSale(
+                    product: $subProduct,
+                    quantity: $lineQty,
+                    sizeColorId: $lineSizeColorId,
+                    sizeId: $lineCheck['size_id'] ?? null,
+                    referenceType: 'instant_sale',
+                    referenceId: (int) $subSale->id,
+                    userId: auth()->id() ? (int) auth()->id() : null,
+                );
             }
         }
      $logDescription = "اضافة بيع فوري جديد للمنتج: " . ($mainInstantSale->product->nameAr ?? 'بدون اسم');

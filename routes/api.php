@@ -73,6 +73,7 @@ use App\Models\EmployeeOrder;
 use App\Http\Controllers\API\ProjectExpensesAPI;
 use App\Http\Controllers\API\Reports;
 use App\Http\Controllers\API\ReturnsAPI;
+use App\Http\Controllers\API\ProductStockController;
 use App\Http\Controllers\API\Stocks;
 use App\Http\Controllers\API\Treasuries;
 use Illuminate\Http\Request;
@@ -686,6 +687,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */
     Route::post('/create/product' , [Stocks::class,'createProduct']);
     Route::post('/update/product/full' , [Stocks::class,'updateProductFull']);
+    Route::post('/product/stock/adjust' , [ProductStockController::class,'adjust']);
+    Route::post('/product/stock/movements' , [ProductStockController::class,'movements']);
     Route::post('/add/product/to/closeouts' , [Stocks::class,'addProductToCloseout']);
     Route::post('/archive/closeout' , [Stocks::class,'archiveCloseout']);
 

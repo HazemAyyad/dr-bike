@@ -399,6 +399,7 @@ return [
     'cant_create_closeout'=>'المنتج ضمن التصفيات بالفعل',
 
     'cant_sale'=>'الكيمة المراد بيعها اعلى من مخزون المنتج',
+    'variant_required' => 'يجب اختيار اللون والحجم لهذا المنتج',
 
     // combinations
     'combination_created'=>'تم تركيب المنتجات بنجاح',

@@ -7,6 +7,7 @@ use App\Models\Image3dProduct;
 use App\Models\NormalImageProduct;
 use App\Models\Product;
 use App\Models\ViewImageProduct;
+use App\Support\ApiImageUrl;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -755,6 +756,7 @@ class StoreManageItemService
                     'wholesalePrice' => $c->wholesalePrice !== null ? $c->wholesalePrice : 0,
                     'discount' => $c->discount !== null ? $c->discount : 0,
                     'stock' => (int) $c->stock,
+                    'image_url' => $c->image_url ? ApiImageUrl::normalize($c->image_url) : null,
                 ];
             }
             $rows[] = [

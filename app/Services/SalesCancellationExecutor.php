@@ -211,7 +211,17 @@ class SalesCancellationExecutor
         $productId = (int) $line->product_id;
 
         if ($productId > 0 && $quantity > 0) {
-            Product::withTrashed()->where('id', $productId)->increment('stock', $quantity);
+            $product = Product::withTrashed()->find($productId);
+            if ($product instanceof Product) {
+                app(ProductStockService::class)->restoreForSale(
+                    product: $product,
+                    quantity: $quantity,
+                    sizeColorId: $line->size_color_id ? (int) $line->size_color_id : null,
+                    sizeId: $line->size_id ? (int) $line->size_id : null,
+                    referenceType: 'instant_sale',
+                    referenceId: (int) $line->id,
+                );
+            }
         }
 
         if (Schema::hasColumn('instant_sales', 'stock_restored')) {

@@ -12,6 +12,7 @@ use App\Models\SizeColor;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\ViewImageProduct;
+use App\Services\ProductStockService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -24,6 +25,8 @@ class Products extends Controller
 {
     public function allProducts(){
       try{
+        $stockService = app(ProductStockService::class);
+
         $products = Product::query()
             ->with([
                 'projects:product_id,project_id',
@@ -31,6 +34,7 @@ class Products extends Controller
                 'normalImages',
                 'image3d',
                 'storeSection:id,name',
+                'sizes.colorSizes',
             ])
             ->get([
                 'id',
@@ -45,17 +49,21 @@ class Products extends Controller
                 'store_section_id',
             ]);
 
-        $formatted = $products->map(function ($product) {
+        $formatted = $products->map(function ($product) use ($stockService) {
             $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
             if ($unitPrice <= 0) {
                 $unitPrice = (float) ($product->min_sale_price ?? 0);
             }
 
+            $variantPayload = $stockService->formatProductForSaleApi($product);
+
             return array_merge(
                 [
                     'id' => $product->id,
                     'nameAr' => $product->nameAr,
-                    'stock' => $product->stock,
+                    'stock' => $variantPayload['stock'],
+                    'has_variants' => $variantPayload['has_variants'],
+                    'sizes' => $variantPayload['sizes'],
                     'normail_price' => $unitPrice,
                     'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
                     'rate' => (float) ($product->rate ?? 0),
