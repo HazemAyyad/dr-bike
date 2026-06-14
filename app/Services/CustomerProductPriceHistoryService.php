@@ -38,6 +38,56 @@ class CustomerProductPriceHistoryService
         ];
     }
 
+    /**
+     * @return array{last_price: float|null, entries: list<array{cost: float, invoice_id: int, sold_at: string}>}
+     */
+    public function getGeneralHistory(
+        int $productId,
+        ?int $sizeColorId = null,
+        int $limit = 5
+    ): array {
+        $limit = max(1, min($limit, 20));
+
+        $rows = $this->productOnlyQuery($productId, $sizeColorId)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get(['id', 'parent_id', 'cost', 'created_at']);
+
+        $entries = $rows
+            ->map(fn (InstantSale $sale) => $this->formatEntry($sale))
+            ->values()
+            ->all();
+
+        return [
+            'last_price' => $entries[0]['cost'] ?? null,
+            'entries' => $entries,
+        ];
+    }
+
+    private function productOnlyQuery(int $productId, ?int $sizeColorId): Builder
+    {
+        $query = InstantSale::query()
+            ->where('product_id', $productId)
+            ->where('cost', '>', 0)
+            ->where(function (Builder $q) {
+                $q->whereNull('status')
+                    ->orWhere('status', '!=', 'cancelled');
+            })
+            ->whereNull('cancelled_at');
+
+        if ($sizeColorId !== null && $sizeColorId > 0) {
+            $query->where('size_color_id', $sizeColorId);
+        } else {
+            $query->where(function (Builder $q) {
+                $q->whereNull('size_color_id')
+                    ->orWhere('size_color_id', 0);
+            });
+        }
+
+        return $query;
+    }
+
     private function baseQuery(
         string $personType,
         int $personId,

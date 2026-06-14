@@ -2096,32 +2096,42 @@ public function edit(Request $request)
     {
         try {
             $data = $request->validate([
-                'person_type' => 'required|string|in:customer,seller',
-                'person_id' => 'required|integer|min:1',
+                'person_type' => 'nullable|required_with:person_id|string|in:customer,seller',
+                'person_id' => 'nullable|required_with:person_type|integer|min:1',
                 'product_id' => 'required|integer|exists:products,id',
                 'size_color_id' => 'nullable|integer|min:1',
                 'limit' => 'nullable|integer|min:1|max:20',
             ]);
 
-            $personType = (string) $data['person_type'];
-            $personId = (int) $data['person_id'];
-
-            if ($personType === 'customer') {
-                Customer::query()->findOrFail($personId);
-            } else {
-                Seller::query()->findOrFail($personId);
-            }
-
             $sizeColorId = isset($data['size_color_id']) ? (int) $data['size_color_id'] : null;
             $limit = isset($data['limit']) ? (int) $data['limit'] : 5;
+            $service = app(CustomerProductPriceHistoryService::class);
+            $productId = (int) $data['product_id'];
 
-            $history = app(CustomerProductPriceHistoryService::class)->getHistory(
-                $personType,
-                $personId,
-                (int) $data['product_id'],
-                $sizeColorId,
-                $limit
-            );
+            if (! empty($data['person_type']) && ! empty($data['person_id'])) {
+                $personType = (string) $data['person_type'];
+                $personId = (int) $data['person_id'];
+
+                if ($personType === 'customer') {
+                    Customer::query()->findOrFail($personId);
+                } else {
+                    Seller::query()->findOrFail($personId);
+                }
+
+                $history = $service->getHistory(
+                    $personType,
+                    $personId,
+                    $productId,
+                    $sizeColorId,
+                    $limit
+                );
+            } else {
+                $history = $service->getGeneralHistory(
+                    $productId,
+                    $sizeColorId,
+                    $limit
+                );
+            }
 
             return response()->json([
                 'status' => 'success',

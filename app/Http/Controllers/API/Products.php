@@ -35,6 +35,7 @@ class Products extends Controller
                 'image3d',
                 'storeSection:id,name',
                 'sizes.colorSizes',
+                'purchasePrices' => fn ($q) => $q->orderByDesc('id')->limit(1),
             ])
             ->get([
                 'id',
@@ -57,7 +58,7 @@ class Products extends Controller
 
             $variantPayload = $stockService->formatProductForSaleApi($product);
 
-            return array_merge(
+            $row = array_merge(
                 [
                     'id' => $product->id,
                     'nameAr' => $product->nameAr,
@@ -76,6 +77,12 @@ class Products extends Controller
                 ],
                 \App\Support\ProductImageResolver::formatForList($product),
             );
+
+            if (auth()->user()?->type === 'admin') {
+                $row['purchase_cost'] = (float) ($product->purchasePrices->first()?->price ?? 0);
+            }
+
+            return $row;
         })->values();
 
             return response()->json([
