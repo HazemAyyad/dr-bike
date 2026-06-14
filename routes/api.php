@@ -349,6 +349,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/get/product/projects' , [InstantSales::class,'getProjectsOfProduct']);
       Route::post('/get/subsales' , [InstantSales::class,'getSubSales']);
       Route::post('/get/instant/sale/invoice' , [InstantSales::class,'invoiceDetails']);
+      Route::get('/instant/sale/customer-product-prices', [InstantSales::class, 'customerProductPriceHistory']);
 
       // suspended (pending) instant sales — الفواتير العالقة
       Route::get('/suspended/instant/sales', [SuspendedInstantSaleController::class, 'index']);

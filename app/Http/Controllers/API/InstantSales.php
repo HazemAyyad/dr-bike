@@ -12,6 +12,7 @@ use App\Models\OfferPackage;
 use App\Models\Product;
 use App\Models\Project;
 use App\Models\Seller;
+use App\Services\CustomerProductPriceHistoryService;
 use App\Services\DebtLedgerService;
 use App\Services\OfferPackageService;
 use App\Services\ProductStockService;
@@ -2089,6 +2090,65 @@ public function edit(Request $request)
             ], 200);
         }
 
+    }
+
+    public function customerProductPriceHistory(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'person_type' => 'required|string|in:customer,seller',
+                'person_id' => 'required|integer|min:1',
+                'product_id' => 'required|integer|exists:products,id',
+                'size_color_id' => 'nullable|integer|min:1',
+                'limit' => 'nullable|integer|min:1|max:20',
+            ]);
+
+            $personType = (string) $data['person_type'];
+            $personId = (int) $data['person_id'];
+
+            if ($personType === 'customer') {
+                Customer::query()->findOrFail($personId);
+            } else {
+                Seller::query()->findOrFail($personId);
+            }
+
+            $sizeColorId = isset($data['size_color_id']) ? (int) $data['size_color_id'] : null;
+            $limit = isset($data['limit']) ? (int) $data['limit'] : 5;
+
+            $history = app(CustomerProductPriceHistoryService::class)->getHistory(
+                $personType,
+                $personId,
+                (int) $data['product_id'],
+                $sizeColorId,
+                $limit
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'last_price' => $history['last_price'],
+                'entries' => $history['entries'],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            Log::error('InstantSales::customerProductPriceHistory error', [
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 
 }
