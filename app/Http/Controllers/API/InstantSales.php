@@ -557,6 +557,42 @@ class InstantSales extends Controller
         }
     }
 
+    /**
+     * Reverse stock/box for an existing instant sale before replacing its lines.
+     */
+    private function prepareInstantSaleReplacement(int $mainSaleId): void
+    {
+        $existing = InstantSale::query()
+            ->whereNull('parent_id')
+            ->with('subProducts')
+            ->lockForUpdate()
+            ->findOrFail($mainSaleId);
+
+        if ($existing->isCancelled()) {
+            throw ValidationException::withMessages([
+                'instant_sale_id' => [__('messages.instant_sale_already_cancelled')],
+            ]);
+        }
+
+        $this->reverseBoxForCancelledSale($existing);
+
+        foreach ($this->stockLinesForSale($existing) as $line) {
+            $this->restoreStockForSaleLine($line);
+        }
+
+        if ($existing->offer_package_id) {
+            $package = OfferPackage::query()->lockForUpdate()->find($existing->offer_package_id);
+            if ($package) {
+                app(OfferPackageService::class)->restorePackageQuantity(
+                    $package,
+                    $this->saleLineQuantity($existing)
+                );
+            }
+        }
+
+        $existing->subProducts()->delete();
+    }
+
     private function reverseBoxForCancelledSale(InstantSale $sale): void
     {
         $boxId = $sale->payment_box_id;
@@ -796,6 +832,8 @@ class InstantSales extends Controller
 
 public function store(Request $request)
  {
+    $replaceId = 0;
+
     try{
     $dailySession = app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
 
@@ -845,6 +883,8 @@ public function store(Request $request)
     ]);
 
 
+        $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
+
         $otherNames = [];
 
 
@@ -873,6 +913,13 @@ public function store(Request $request)
         }
 
         // Save main instant sale
+        $auditAndSession = $replaceId > 0
+            ? $this->auditFieldsForUpdate()
+            : array_merge(
+                $this->auditFieldsForCreate(),
+                ['sales_daily_session_id' => $dailySession->id]
+            );
+
         $mainData = $this->sanitizeInstantSaleAttributes(
             collect($data)
                 ->except([
@@ -890,8 +937,7 @@ public function store(Request $request)
                 ])
                 ->merge($buyerPayload)
                 ->merge($paymentBoxPayload)
-                ->merge($this->auditFieldsForCreate())
-                ->merge(['sales_daily_session_id' => $dailySession->id])
+                ->merge($auditAndSession)
                 ->toArray()
         );
         $mainData['additional_notes'] = $additionalNotes;
@@ -954,7 +1000,18 @@ public function store(Request $request)
             ],200);
         }
 
-        $mainInstantSale = InstantSale::create($mainData);
+        if ($replaceId > 0) {
+            DB::beginTransaction();
+        }
+
+        if ($replaceId > 0) {
+            $this->prepareInstantSaleReplacement($replaceId);
+            $mainInstantSale = InstantSale::lockForUpdate()->findOrFail($replaceId);
+            $mainInstantSale->update(array_merge($mainData, $this->auditFieldsForUpdate()));
+            $mainInstantSale = $mainInstantSale->fresh();
+        } else {
+            $mainInstantSale = InstantSale::create($mainData);
+        }
 
         $this->linkPaymentBoxLogToInstantSale(
             $mainInstantSale->fresh(['product', 'subProducts.product'])
@@ -982,6 +1039,9 @@ public function store(Request $request)
 
 
                 if($product['type']==='project' && $subProductProjects->isEmpty()){
+                    if ($replaceId > 0) {
+                        DB::rollBack();
+                    }
                     return response()->json([
                         'status'=>'error',
                         'message'=>__('messages.cant_be_project_type'),
@@ -992,6 +1052,9 @@ public function store(Request $request)
                 $lineSizeColorId = isset($product['size_color_id']) ? (int) $product['size_color_id'] : null;
                 $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId);
                 if (! ($lineCheck['ok'] ?? false)) {
+                    if ($replaceId > 0) {
+                        DB::rollBack();
+                    }
                     return response()->json([
                         'status' => 'error',
                         'message' => $lineCheck['message'] ?? __('messages.cant_sale'),
@@ -1031,18 +1094,29 @@ public function store(Request $request)
      }
      $logDescription .= " بإجمالي تكلفة: " . $mainInstantSale->total_cost??0;
 
-        Logs::createLog('اضافة بيع فوري جديد',
+        Logs::createLog(
+            $replaceId > 0 ? 'تعديل بيع فوري' : 'اضافة بيع فوري جديد',
         $logDescription,
         'instant_sales');
+
+        if ($replaceId > 0) {
+            DB::commit();
+        }
+
         return response()->json([
                     'status' => 'success',
-                    'message' => __('messages.instant_sale_created_successfully'),
+                    'message' => $replaceId > 0
+                        ? __('messages.instant_sale_updated_successfully')
+                        : __('messages.instant_sale_created_successfully'),
                     'instant_sale_id' => $mainInstantSale->id,
                 ], 200);
 
             }
 
         catch (ValidationException $e) {
+            if ($replaceId > 0 && DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
@@ -1050,6 +1124,9 @@ public function store(Request $request)
             ], 200);
         }
             catch (QueryException $e) {
+            if ($replaceId > 0 && DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             Log::error('InstantSales::store QueryException', [
                 'message' => $e->getMessage(),
                 'sql' => $e->getSql(),
@@ -1063,6 +1140,9 @@ public function store(Request $request)
             ], 200);
         }
         catch (\Exception $e) {
+            if ($replaceId > 0 && DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             Log::error('InstantSales::store error', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
@@ -1092,7 +1172,13 @@ public function store(Request $request)
     ) {
         $offerPackageService = app(OfferPackageService::class);
 
-        return DB::transaction(function () use ($data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession) {
+        return DB::transaction(function () use ($request, $data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession) {
+            $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
+
+            if ($replaceId > 0) {
+                $this->prepareInstantSaleReplacement($replaceId);
+            }
+
             $package = OfferPackage::query()
                 ->where('is_active', true)
                 ->with(['items.product'])
@@ -1122,6 +1208,13 @@ public function store(Request $request)
             foreach ($data['other_products'] ?? [] as $item) {
                 $otherProductsTotal += (float) $item['cost'] * (float) $item['quantity'];
             }
+            $auditAndSession = $replaceId > 0
+                ? $this->auditFieldsForUpdate()
+                : array_merge(
+                    $this->auditFieldsForCreate(),
+                    ['sales_daily_session_id' => $dailySession->id]
+                );
+
             $mainData = $this->sanitizeInstantSaleAttributes(array_merge([
                 'offer_package_id' => $package->id,
                 'product_id' => null,
@@ -1142,11 +1235,15 @@ public function store(Request $request)
                 'additional_notes' => $data['additional_notes'] ?? [],
                 'type' => $data['type'],
                 'project_id' => $data['project_id'] ?? null,
-            ], $buyerPayload, $paymentBoxPayload, $this->auditFieldsForCreate(), [
-                'sales_daily_session_id' => $dailySession->id,
-            ]));
+            ], $buyerPayload, $paymentBoxPayload, $auditAndSession));
 
-            $mainInstantSale = InstantSale::create($mainData);
+            if ($replaceId > 0) {
+                $mainInstantSale = InstantSale::lockForUpdate()->findOrFail($replaceId);
+                $mainInstantSale->update(array_merge($mainData, $this->auditFieldsForUpdate()));
+                $mainInstantSale = $mainInstantSale->fresh();
+            } else {
+                $mainInstantSale = InstantSale::create($mainData);
+            }
 
             $this->linkPaymentBoxLogToInstantSale(
                 $mainInstantSale->fresh(['offerPackage', 'subProducts.product'])
@@ -1247,11 +1344,17 @@ public function store(Request $request)
                 $logDescription .= ' مع منتجات إضافية: '.implode(', ', $extraProductNames);
             }
 
-            Logs::createLog('اضافة بيع فوري جديد', $logDescription, 'instant_sales');
+            Logs::createLog(
+                $replaceId > 0 ? 'تعديل بيع فوري' : 'اضافة بيع فوري جديد',
+                $logDescription,
+                'instant_sales'
+            );
 
             return response()->json([
                 'status' => 'success',
-                'message' => __('messages.instant_sale_created_successfully'),
+                'message' => $replaceId > 0
+                    ? __('messages.instant_sale_updated_successfully')
+                    : __('messages.instant_sale_created_successfully'),
                 'instant_sale_id' => $mainInstantSale->id,
             ], 200);
         });
@@ -1582,9 +1685,21 @@ public function store(Request $request)
         }
 }
 
-    public function edit(Request $request)
+public function edit(Request $request)
     {
         try {
+            if ($request->filled('product_id') || $request->filled('offer_package_id')) {
+                $request->validate([
+                    'instant_sale_id' => 'required|integer|exists:instant_sales,id',
+                ]);
+                $request->attributes->set(
+                    'replace_instant_sale_id',
+                    (int) $request->input('instant_sale_id')
+                );
+
+                return $this->store($request);
+            }
+
             $data = $request->validate([
                 'instant_sale_id' => 'required|exists:instant_sales,id',
             'cost' => 'required|numeric|min:0',
@@ -1881,6 +1996,11 @@ public function store(Request $request)
                 'has_additional_products' => $hasAdditionalProducts,
                 'is_package_sale' => $isPackageSale,
                 'package_name' => $sale->offerPackage?->name,
+                'product_id' => $sale->product_id,
+                'offer_package_id' => $sale->offer_package_id,
+                'project_id' => $sale->project_id,
+                'type' => $sale->type ?? 'normal',
+                'seller_id' => $sale->seller_id,
                 ...$productDisplay,
                 ...$variantFields,
                 'product_image' => $isPackageSale
@@ -1916,6 +2036,11 @@ public function store(Request $request)
 
                     return [
                         'id' => $sub->id,
+                        'product_id' => $sub->product_id,
+                        'size_color_id' => $sub->size_color_id,
+                        'size_id' => $sub->size_id,
+                        'type' => $sub->type ?? 'normal',
+                        'project_id' => $sub->project_id,
                         ...$this->formatInstantSaleSubProductDisplay($subBase, $subVariant),
                         ...$subVariant,
                         'product_image' => $this->invoiceProductImage($sub->product),
