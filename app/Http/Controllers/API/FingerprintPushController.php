@@ -60,6 +60,13 @@ class FingerprintPushController extends Controller
             return $this->attendance($request, $table !== '' ? $table : 'ATTLOG');
         }
 
+        // ZKTeco PUSH SDK: GET /iclock/cdata?SN=...&type=time — return explicit local time so
+        // firmware does not fall back to the HTTP Date header (GMT) or a wrong default.
+        $type = strtolower(trim((string) ($request->query('type') ?? '')));
+        if ($request->isMethod('GET') && $type === 'time') {
+            return $this->iclockTimeResponse($request, $sn);
+        }
+
         AdmsDebugLogger::logOutcome('iclock/cdata', [
             'branch' => 'noop_ok',
             'sn' => $sn,
@@ -116,6 +123,11 @@ class FingerprintPushController extends Controller
 
     protected function iclockHandshakeResponse(string $sn): \Illuminate\Http\Response
     {
+        $timezone = $this->admsTimezone();
+        // SyncTime=0 disables periodic server time sync in device firmware (PUSH SDK).
+        // TimeZone tells the device our offset when it does consult ADMS options.
+        $timeZoneOffset = now($timezone)->format('P');
+
         $body = implode("\n", [
             "GET OPTION FROM: {$sn}",
             'ATTLOGStamp=0',
@@ -128,10 +140,45 @@ class FingerprintPushController extends Controller
             'TransFlag=TransData AttLog OpLog AttPhoto EnrollUser ChgUser NewUser',
             'Realtime=1',
             'Encrypt=0',
+            'SyncTime=0',
+            "TimeZone={$timeZoneOffset}",
             '',
         ]);
 
         return response($body, 200)->header('Content-Type', 'text/plain');
+    }
+
+    /**
+     * ZKTeco / BioPro ADMS time query (GET ...&type=time).
+     * Plain-text body: YYYY-MM-DD HH:mm:ss in Asia/Hebron.
+     */
+    protected function iclockTimeResponse(Request $request, string $sn): \Illuminate\Http\Response
+    {
+        $timezone = $this->admsTimezone();
+        $returnedTime = now($timezone)->format('Y-m-d H:i:s');
+
+        $this->touchDeviceLastSeen($sn);
+
+        AdmsDebugLogger::logOutcome('iclock/cdata', [
+            'branch' => 'type_time',
+            'route' => 'iclock/cdata',
+            'sn' => $sn,
+            'returned_time' => $returnedTime,
+            'timezone' => $timezone,
+            'query' => $request->query(),
+        ]);
+
+        return response($returnedTime, 200)->header('Content-Type', 'text/plain');
+    }
+
+    /**
+     * ADMS clock responses always use Asia/Hebron (attendance TZ), regardless of app default.
+     */
+    protected function admsTimezone(): string
+    {
+        $configured = (string) config('app.timezone', 'Asia/Hebron');
+
+        return $configured === 'Asia/Hebron' ? $configured : 'Asia/Hebron';
     }
 
     public function attendance(Request $request, ?string $pushTable = null)

@@ -69,8 +69,7 @@ return [
     |
     */
 
- //   'timezone' => 'UTC',
-'timezone' => 'Africa/Cairo', // or your actual timezone
+    'timezone' => env('APP_TIMEZONE', 'Asia/Hebron'),
 
     /*
     |--------------------------------------------------------------------------
