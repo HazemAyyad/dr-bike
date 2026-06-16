@@ -369,6 +369,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/sales/order/confirm', [SalesOrdersController::class, 'confirm']);
       Route::post('/sales/order/ready', [SalesOrdersController::class, 'markReady']);
       Route::post('/sales/order/cancel', [SalesOrdersController::class, 'cancel']);
+      Route::post('/sales/order/revert', [SalesOrdersController::class, 'revertStatus']);
       Route::post('/sales/order/postpone', [SalesOrdersController::class, 'postpone']);
       Route::post('/sales/order/handover', [SalesOrdersController::class, 'handover']);
       Route::post('/sales/order/deliver', [SalesOrdersController::class, 'deliver']);

@@ -256,6 +256,68 @@ class SalesOrderService
         });
     }
 
+    public function revertStatus(User $user, int $orderId, ?string $note = null): SalesOrder
+    {
+        $order = SalesOrder::query()->with(['items.product'])->findOrFail($orderId);
+
+        if ($order->instant_sale_id || $order->financial_posted_at) {
+            throw ValidationException::withMessages([
+                'order' => [__('messages.sales_order_cannot_revert_after_delivery')],
+            ]);
+        }
+
+        $previous = match ($order->statusEnum()) {
+            SalesOrderStatus::Confirmed => SalesOrderStatus::Unconfirmed,
+            SalesOrderStatus::Ready => SalesOrderStatus::Confirmed,
+            SalesOrderStatus::WithDelivery => SalesOrderStatus::Ready,
+            SalesOrderStatus::Postponed => SalesOrderStatus::Unconfirmed,
+            default => null,
+        };
+
+        if ($previous === null) {
+            throw ValidationException::withMessages([
+                'order' => [__('messages.sales_order_cannot_revert_status')],
+            ]);
+        }
+
+        return DB::transaction(function () use ($user, $order, $previous, $note) {
+            $from = $order->status;
+
+            if ($order->statusEnum() === SalesOrderStatus::WithDelivery) {
+                $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
+                $order->packages()->update(['status' => 'pending']);
+                $order->update(['stock_deducted_at' => null]);
+                $this->stockService->reserveOrder($order->fresh(['items.product']));
+            } elseif ($previous === SalesOrderStatus::Unconfirmed) {
+                $this->stockService->releaseOrder($order);
+            }
+
+            $order->update([
+                'status' => $previous->value,
+                'postponed_until' => null,
+                'postpone_reason' => null,
+                'updated_by' => $user->id,
+            ]);
+
+            $this->logStatus(
+                $order,
+                $from,
+                $previous->value,
+                $note ?? __('messages.sales_order_revert_note'),
+                $user->id
+            );
+            $this->notifications->notifyStatusChange(
+                $order->fresh(),
+                $from,
+                $previous->value,
+                $user,
+                $note
+            );
+
+            return $order->fresh($this->detailRelations());
+        });
+    }
+
     public function cancel(User $user, int $orderId, ?string $note = null): SalesOrder
     {
         $order = SalesOrder::query()->findOrFail($orderId);
@@ -334,6 +396,8 @@ class SalesOrderService
             'payment_amount' => (float) $order->payment_amount,
             'delivery_company_id' => $order->delivery_company_id,
             'delivery_company_name' => $order->delivery_company_name,
+            'tracking_number' => $order->deliveries->sortByDesc('id')->first()?->tracking_number
+                ?? $order->packages->sortByDesc('id')->first()?->tracking_number,
             'customer_delivery_fee' => (float) $order->customer_delivery_fee,
             'carrier_delivery_cost' => $order->carrier_delivery_cost !== null
                 ? (float) $order->carrier_delivery_cost

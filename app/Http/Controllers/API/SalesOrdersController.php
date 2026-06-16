@@ -243,6 +243,39 @@ class SalesOrdersController extends Controller
         }
     }
 
+    public function revertStatus(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_order_id' => 'required|integer|exists:sales_orders,id',
+                'note' => 'nullable|string|max:500',
+            ]);
+
+            $order = $this->service->revertStatus(
+                $request->user(),
+                (int) $data['sales_order_id'],
+                $data['note'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_order_reverted'),
+                'sales_order' => $this->service->formatDetail($order),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function postpone(Request $request)
     {
         try {
