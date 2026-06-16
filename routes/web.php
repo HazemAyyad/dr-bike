@@ -107,6 +107,59 @@ Route::get('/test/run-storage-link', function () {
     );
 })->name('test.run-storage-link');
 
+/**
+ * مسح كل بيانات الحضور على السيرفر (مرة واحدة).
+ * GET /test/purge-attendance-data?token=TOKEN&confirm=yes
+ */
+Route::get('/test/purge-attendance-data', function () {
+    $token = (string) request()->query('token', '');
+    $expected = (string) env('DEPLOY_ONCE_TOKEN', 'eshterelyDeploy2026SecureToken123');
+    if ($token === '' || ! hash_equals($expected, $token)) {
+        abort(403);
+    }
+    $confirm = strtolower(trim((string) request()->query('confirm', '')));
+    if (! in_array($confirm, ['yes', '1', 'true'], true)) {
+        return response(
+            "Add &confirm=yes to execute.\nExample: /test/purge-attendance-data?token=...&confirm=yes\n",
+            400,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+
+    $lockPath = storage_path('framework/attendance_purge_once.lock');
+    if (is_file($lockPath)) {
+        return response(
+            "Already executed.\nLock: {$lockPath}\n\n".(file_get_contents($lockPath) ?: ''),
+            200,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+
+    $before = [];
+    foreach (['employee_attendances', 'employee_attendance_scans', 'fingerprint_raw_logs'] as $table) {
+        $before[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+    }
+
+    $exit = Artisan::call('attendance:purge-all', ['--force' => true]);
+    $output = Artisan::output();
+
+    $after = [];
+    foreach (array_keys($before) as $table) {
+        $after[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+    }
+
+    file_put_contents($lockPath, json_encode([
+        'executed_at' => now()->toIso8601String(),
+        'before' => $before,
+        'after' => $after,
+        'via' => 'web-route',
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    $body = "=== Purge attendance (one-time) ===\nBefore: ".json_encode($before)."\n\n{$output}\nAfter: ".json_encode($after)."\nExit: {$exit}\n";
+
+    return response($body, 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
+})->name('test.purge-attendance-data');
+
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
 Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');
