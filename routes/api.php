@@ -44,6 +44,8 @@ use App\Http\Controllers\API\Goals;
 use App\Http\Controllers\API\IncomingChecks;
 use App\Http\Controllers\API\InstantSales;
 use App\Http\Controllers\API\SuspendedInstantSaleController;
+use App\Http\Controllers\API\SalesOrdersController;
+use App\Http\Controllers\API\CitiesController;
 use App\Http\Controllers\API\SalesDailySessionController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
@@ -358,6 +360,28 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/suspended/instant/sale', [SuspendedInstantSaleController::class, 'store']);
       Route::post('/suspended/instant/sale/complete', [SuspendedInstantSaleController::class, 'complete']);
       Route::post('/suspended/instant/sale/cancel', [SuspendedInstantSaleController::class, 'cancel']);
+
+      // sales orders — الطلبيات
+      Route::get('/sales/orders', [SalesOrdersController::class, 'index']);
+      Route::get('/sales/order', [SalesOrdersController::class, 'show']);
+      Route::post('/sales/order', [SalesOrdersController::class, 'store']);
+      Route::post('/sales/order/update', [SalesOrdersController::class, 'update']);
+      Route::post('/sales/order/confirm', [SalesOrdersController::class, 'confirm']);
+      Route::post('/sales/order/ready', [SalesOrdersController::class, 'markReady']);
+      Route::post('/sales/order/cancel', [SalesOrdersController::class, 'cancel']);
+      Route::post('/sales/order/postpone', [SalesOrdersController::class, 'postpone']);
+      Route::post('/sales/order/handover', [SalesOrdersController::class, 'handover']);
+      Route::post('/sales/order/deliver', [SalesOrdersController::class, 'deliver']);
+      Route::post('/sales/order/settle', [SalesOrdersController::class, 'settle']);
+      Route::post('/sales/order/archive', [SalesOrdersController::class, 'archive']);
+      Route::post('/sales/order/media', [SalesOrdersController::class, 'uploadMedia']);
+      Route::post('/sales/order/partial-deliver', [SalesOrdersController::class, 'partialDeliver']);
+      Route::post('/sales/order/follow-up', [SalesOrdersController::class, 'followUp']);
+      Route::post('/sales/order/partial-return', [SalesOrdersController::class, 'partialReturn']);
+      Route::post('/sales/order/alternative-return', [SalesOrdersController::class, 'alternativeReturn']);
+      Route::get('/sales/order/statement', [SalesOrdersController::class, 'statement']);
+      Route::get('/cities', [CitiesController::class, 'index']);
+      Route::get('/delivery/companies', [CitiesController::class, 'deliveryCompanies']);
 
       //Route::post('/attach/project/of/product/to/sale' , [InstantSales::class,'attachProjectToProductInSale']);
 
