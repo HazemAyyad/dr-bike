@@ -333,6 +333,12 @@ class SalesOrderFulfillmentService
             'status' => 'active',
         ]));
 
+        app(DocumentSerialService::class)->assignToModel(
+            $main,
+            DocumentSerialService::TYPE_INSTANT_SALE_INVOICE,
+            'serial_number'
+        );
+
         foreach ($items->slice(1) as $item) {
             InstantSale::create(array_merge($buyer, [
                 'product_id' => $item->product_id,

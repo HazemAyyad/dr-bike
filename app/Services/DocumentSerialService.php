@@ -10,10 +10,19 @@ class DocumentSerialService
 {
     public const TYPE_SALES_ORDER = 'SO';
 
+    /** فاتورة البيع الفوري المرتبطة بطلبية — يتضمن سنة */
+    public const TYPE_INSTANT_SALE_INVOICE = 'IS';
+
+    public function usesYearPrefix(string $documentType): bool
+    {
+        return $documentType !== self::TYPE_SALES_ORDER;
+    }
+
     public function nextSerial(string $documentType, ?Carbon $at = null): string
     {
         $at ??= now();
-        $year = (int) $at->format('Y');
+        $withYear = $this->usesYearPrefix($documentType);
+        $year = $withYear ? (int) $at->format('Y') : 0;
         $yearSuffix = $at->format('y');
 
         $number = DB::transaction(function () use ($year, $documentType) {
@@ -30,7 +39,11 @@ class DocumentSerialService
             return (int) $row->last_number;
         });
 
-        return sprintf('%s/%07d', $yearSuffix, $number);
+        if ($withYear) {
+            return sprintf('%s/%07d', $yearSuffix, $number);
+        }
+
+        return sprintf('%07d', $number);
     }
 
     public function assignToModel(object $model, string $documentType, string $column = 'serial_number', ?Carbon $at = null): string

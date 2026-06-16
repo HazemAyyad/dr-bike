@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\SalesOrderStatus;
+use App\Support\ProductImageResolver;
 use App\Models\City;
 use App\Models\Customer;
 use App\Models\Product;
@@ -341,6 +342,7 @@ class SalesOrderService
             'debt_id' => $order->debt_id,
             'is_debt_collection' => (bool) $order->is_debt_collection,
             'instant_sale_id' => $order->instant_sale_id,
+            'instant_sale_serial' => $order->instantSale?->serial_number,
             'hidden_until' => $order->hidden_until?->toDateTimeString(),
             'postponed_until' => $order->postponed_until?->toDateTimeString(),
             'postpone_reason' => $order->postpone_reason,
@@ -360,10 +362,16 @@ class SalesOrderService
                 ? (float) $order->delivery_settled_amount
                 : null,
             'archived_at' => $order->archived_at?->toDateTimeString(),
-            'items' => $order->items->map(fn (SalesOrderItem $item) => [
+            'items' => $order->items->map(function (SalesOrderItem $item) {
+                $productImage = $item->relationLoaded('product') && $item->product
+                    ? ProductImageResolver::preferredUrl($item->product)
+                    : 'no image';
+
+                return [
                 'id' => $item->id,
                 'product_id' => $item->product_id,
                 'product_name' => $item->product_name,
+                'product_image' => $productImage !== 'no image' ? $productImage : null,
                 'size_id' => $item->size_id,
                 'size_color_id' => $item->size_color_id,
                 'quantity' => (int) $item->quantity,
@@ -375,7 +383,8 @@ class SalesOrderService
                 'line_total' => (float) $item->line_total,
                 'is_hidden' => (bool) $item->is_hidden,
                 'sales_order_package_id' => $item->sales_order_package_id,
-            ])->values()->all(),
+            ];
+            })->values()->all(),
             'packages' => $order->packages->map(fn (SalesOrderPackage $pkg) => [
                 'id' => $pkg->id,
                 'package_index' => (int) $pkg->package_index,
@@ -441,7 +450,10 @@ class SalesOrderService
         return [
             'customer:id,name,phone,address',
             'city:id,name_ar,name_en',
-            'items.product:id,nameAr',
+            'items.product.normalImages',
+            'items.product.viewImages',
+            'items.product.image3d',
+            'instantSale:id,serial_number',
             'packages',
             'statusLogs.user:id,name',
             'deliveryCompany:id,name,code',
