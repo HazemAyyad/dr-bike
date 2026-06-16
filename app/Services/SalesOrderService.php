@@ -9,6 +9,8 @@ use App\Models\Customer;
 use App\Models\Product;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderItem;
+use App\Models\Size;
+use App\Models\SizeColor;
 use App\Models\SalesOrderPackage;
 use App\Models\SalesOrderStatusLog;
 use App\Models\User;
@@ -374,6 +376,8 @@ class SalesOrderService
                 'product_image' => $productImage !== 'no image' ? $productImage : null,
                 'size_id' => $item->size_id,
                 'size_color_id' => $item->size_color_id,
+                'size_label' => $item->size?->size,
+                'color_label' => $item->sizeColor?->colorAr,
                 'quantity' => (int) $item->quantity,
                 'reserved_qty' => (int) $item->reserved_qty,
                 'dispatched_qty' => (int) $item->dispatched_qty,
@@ -450,6 +454,8 @@ class SalesOrderService
         return [
             'customer:id,name,phone,address',
             'city:id,name_ar,name_en',
+            'items.size:id,size',
+            'items.sizeColor:id,colorAr',
             'items.product.normalImages',
             'items.product.viewImages',
             'items.product.image3d',
@@ -668,13 +674,27 @@ class SalesOrderService
             $unitPrice = (float) $item['unit_price'];
             $packageIndex = (int) ($item['package_index'] ?? 1);
 
+            $sizeLabel = $item['size_label'] ?? null;
+            $colorLabel = $item['color_label'] ?? null;
+            if ($sizeLabel === null && ! empty($item['size_id'])) {
+                $sizeLabel = Size::query()->find($item['size_id'])?->size;
+            }
+            if ($colorLabel === null && ! empty($item['size_color_id'])) {
+                $colorLabel = SizeColor::query()->find($item['size_color_id'])?->colorAr;
+            }
+
+            $productName = $product?->nameAr;
+            if ($sizeLabel && $colorLabel) {
+                $productName = trim((string) $productName).' — '.$sizeLabel.' / '.$colorLabel;
+            }
+
             SalesOrderItem::create([
                 'sales_order_id' => $order->id,
                 'sales_order_package_id' => $packageMap[$packageIndex]->id ?? null,
                 'product_id' => (int) $item['product_id'],
                 'size_id' => $item['size_id'] ?? null,
                 'size_color_id' => $item['size_color_id'] ?? null,
-                'product_name' => $product?->nameAr,
+                'product_name' => $productName,
                 'quantity' => $qty,
                 'unit_price' => $unitPrice,
                 'line_total' => round($qty * $unitPrice, 2),

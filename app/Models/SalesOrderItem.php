@@ -44,4 +44,14 @@ class SalesOrderItem extends Model
     {
         return $this->belongsTo(SalesOrderPackage::class, 'sales_order_package_id');
     }
+
+    public function size(): BelongsTo
+    {
+        return $this->belongsTo(Size::class, 'size_id');
+    }
+
+    public function sizeColor(): BelongsTo
+    {
+        return $this->belongsTo(SizeColor::class, 'size_color_id');
+    }
 }
