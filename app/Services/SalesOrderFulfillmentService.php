@@ -19,9 +19,9 @@ use Illuminate\Validation\ValidationException;
 
 class SalesOrderFulfillmentService
 {
-    public const MAX_MEDIA_FILES = 2;
+    public const MAX_MEDIA_FILES = 100;
 
-    public const MAX_MEDIA_BYTES = 2097152;
+    public const MAX_MEDIA_BYTES = 52428800;
 
     public function __construct(
         protected SalesOrderStockService $stockService,
@@ -47,8 +47,6 @@ class SalesOrderFulfillmentService
                 'delivery_company_id' => [__('messages.sales_order_delivery_company_required')],
             ]);
         }
-
-        $this->assertHasRequiredMedia($order);
 
         return DB::transaction(function () use ($user, $order, $data) {
             $this->stockService->dispatchOrder($order, (int) $user->id);
@@ -93,8 +91,6 @@ class SalesOrderFulfillmentService
             'payment_amount' => 'nullable|numeric|min:0',
             'payment_box_id' => 'nullable|integer|exists:boxes,id',
         ])->validate();
-
-        $this->assertHasRequiredMedia($order);
 
         if (! empty($data['payment_amount'])) {
             $order->payment_amount = (float) $data['payment_amount'];
@@ -190,8 +186,6 @@ class SalesOrderFulfillmentService
     {
         $order = SalesOrder::query()->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::WithDelivery]);
-
-        $this->assertHasRequiredMedia($order);
 
         return DB::transaction(function () use ($user, $order, $note) {
             if ($order->stock_deducted_at) {
@@ -365,12 +359,7 @@ class SalesOrderFulfillmentService
 
     public function assertHasRequiredMedia(SalesOrder $order): void
     {
-        $count = SalesOrderMedia::query()->where('sales_order_id', $order->id)->count();
-        if ($count < 1) {
-            throw ValidationException::withMessages([
-                'media' => [__('messages.sales_order_media_required')],
-            ]);
-        }
+        // Media is optional — user may upload any number of photos/videos when needed.
     }
 
     private function createInstantSaleFromOrder(

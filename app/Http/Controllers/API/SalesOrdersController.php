@@ -172,8 +172,8 @@ class SalesOrdersController extends Controller
         try {
             $data = $request->validate([
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
-                'media' => 'required|array|max:2',
-                'media.*' => 'file|max:2048|mimes:jpg,jpeg,png,webp,mp4,mov',
+                'media' => 'required|array',
+                'media.*' => 'file|max:51200|mimes:jpg,jpeg,png,webp,gif,heic,mp4,mov,avi,mkv,webm',
             ]);
 
             $files = $request->file('media', []);

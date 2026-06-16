@@ -581,7 +581,7 @@ return [
     'sales_order_settlement_required' => 'يجب تسوية شركة التوصيل قبل الأرشفة.',
     'sales_order_media_required' => 'يجب إرفاق صورة أو فيديو واحد على الأقل.',
     'sales_order_media_limit' => 'الحد الأقصى :max ملفات للطلبية.',
-    'sales_order_media_size_limit' => 'حجم الملف يجب ألا يتجاوز 2 ميجابايت.',
+    'sales_order_media_size_limit' => 'حجم الملف يجب ألا يتجاوز 50 ميجابايت.',
     'sales_order_media_uploaded' => 'تم رفع الملفات بنجاح.',
     'sales_order_partial_delivered' => 'تم تسجيل توصيل جزئي.',
     'sales_order_partial_returned' => 'تم تسجيل راجع جزئي.',

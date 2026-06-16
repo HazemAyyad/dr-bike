@@ -569,7 +569,7 @@ return [
     'sales_order_settlement_required' => 'Delivery settlement required before archiving.',
     'sales_order_media_required' => 'At least one photo or video is required.',
     'sales_order_media_limit' => 'Maximum :max files per order.',
-    'sales_order_media_size_limit' => 'File size must not exceed 2MB.',
+    'sales_order_media_size_limit' => 'File size must not exceed 50MB.',
     'sales_order_media_uploaded' => 'Files uploaded successfully.',
     'sales_order_partial_delivered' => 'Partial delivery recorded.',
     'sales_order_partial_returned' => 'Partial return recorded.',
