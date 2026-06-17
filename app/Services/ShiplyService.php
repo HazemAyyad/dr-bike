@@ -198,6 +198,23 @@ class ShiplyService
         return is_array($response) ? $response : [];
     }
 
+    /**
+     * @return array{delivery_cost: float, extra_price: float, returned_extra_price: float}
+     */
+    public function calculateDeliveryCost(int $villageId, float $parcelPrice = 0, ?string $mode = null): array
+    {
+        $response = $this->request('POST', '/parcels/fees', [
+            'village_id' => $villageId,
+            'price' => max(0, $parcelPrice),
+        ], $mode);
+
+        return [
+            'delivery_cost' => (float) ($response['delivery_cost'] ?? 0),
+            'extra_price' => (float) ($response['extra_price'] ?? 0),
+            'returned_extra_price' => (float) ($response['returned_extra_price'] ?? 0),
+        ];
+    }
+
     private function assertOrderReadyForShiply(SalesOrder $order, string $mode): void
     {
         if (empty($order->shiply_village_id)) {

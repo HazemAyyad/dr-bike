@@ -116,9 +116,21 @@ class SalesOrderFulfillmentService
                 ? 'تسليم لشبلي — '.$parcelCode
                 : 'تسليم لشركة التوصيل';
             $this->logStatus($order, $from, SalesOrderStatus::WithDelivery->value, $note, $user->id);
-            $this->notifications->notifyStatusChange($order->fresh(), $from, SalesOrderStatus::WithDelivery->value, $user);
 
-            return $order->fresh();
+            $freshOrder = $order->fresh();
+            if ($isShiply && $parcelCode) {
+                $this->notifications->notifyShiplyHandover($freshOrder, $user, $parcelCode);
+            } else {
+                $this->notifications->notifyStatusChange(
+                    $freshOrder,
+                    $from,
+                    SalesOrderStatus::WithDelivery->value,
+                    $user,
+                    $note
+                );
+            }
+
+            return $freshOrder;
         });
     }
 

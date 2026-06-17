@@ -32,4 +32,37 @@ class ShiplyController extends Controller
             ], 200);
         }
     }
+
+    public function calculateDeliveryFee(Request $request, ShiplyService $shiply)
+    {
+        try {
+            $data = $request->validate([
+                'village_id' => 'required|integer|min:1',
+                'price' => 'nullable|numeric|min:0',
+            ]);
+
+            $fees = $shiply->calculateDeliveryCost(
+                (int) $data['village_id'],
+                (float) ($data['price'] ?? 0)
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'fees' => $fees,
+            ], 200);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
+            Log::error('shiply.calculate_fee_failed', ['message' => $e->getMessage()]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.shiply_request_failed'),
+            ], 200);
+        }
+    }
 }

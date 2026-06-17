@@ -609,6 +609,8 @@ return [
     'sales_order_statement_failed' => 'Failed to generate order statement.',
     'sales_order_notify_title' => 'Order :serial',
     'sales_order_notify_body' => 'Order :serial (:customer): :from → :to',
+    'sales_order_shiply_handover_title' => 'Shiply handover — :serial',
+    'sales_order_shiply_handover_body' => 'Order :serial (:customer) handed to Shiply. Parcel: :parcel. By: :employee. Address: :address',
     'sales_order_unknown_customer' => 'Unknown customer',
     'sales_order_status_unconfirmed' => 'Unconfirmed',
     'sales_order_status_confirmed' => 'Confirmed',

@@ -11,6 +11,8 @@ class SalesOrderNotificationService
 {
     public const TYPE_STATUS = 'sales_order_status';
 
+    public const TYPE_SHIPLY_HANDOVER = 'sales_order_shiply_handover';
+
     public function __construct(
         protected AdminNotificationService $adminNotifications
     ) {}
@@ -61,6 +63,57 @@ class SalesOrderNotificationService
             Log::error('Sales order notification failed: '.$e->getMessage(), [
                 'order_id' => $order->id,
                 'to_status' => $toStatus,
+            ]);
+        }
+    }
+
+    public function notifyShiplyHandover(
+        SalesOrder $order,
+        User $actor,
+        string $parcelCode
+    ): void {
+        try {
+            $serial = $order->serial_number ?? '#'.$order->id;
+            $customer = $order->customer_name ?? __('messages.sales_order_unknown_customer');
+            $actorName = $actor->name ?? __('messages.employee_default_name');
+            $address = trim((string) ($order->customer_address ?? ''));
+            if ($address === '' && $order->shiply_city_name) {
+                $address = trim(implode(' — ', array_filter([
+                    $order->shiply_city_name,
+                    $order->shiply_village_name,
+                ])));
+            }
+
+            $title = __('messages.sales_order_shiply_handover_title', ['serial' => $serial]);
+            $body = __('messages.sales_order_shiply_handover_body', [
+                'serial' => $serial,
+                'customer' => $customer,
+                'parcel' => $parcelCode,
+                'employee' => $actorName,
+                'address' => $address !== '' ? $address : '—',
+            ]);
+
+            $this->adminNotifications->create(
+                self::TYPE_SHIPLY_HANDOVER,
+                $title,
+                $body,
+                [
+                    'sales_order_id' => (string) $order->id,
+                    'serial_number' => (string) ($order->serial_number ?? ''),
+                    'parcel_code' => $parcelCode,
+                    'customer_name' => (string) ($order->customer_name ?? ''),
+                    'actor_id' => (string) $actor->id,
+                    'actor_name' => $actorName,
+                ],
+                null,
+                'sales_order',
+                (int) $order->id,
+                true
+            );
+        } catch (\Throwable $e) {
+            Log::error('Shiply handover notification failed: '.$e->getMessage(), [
+                'order_id' => $order->id,
+                'parcel_code' => $parcelCode,
             ]);
         }
     }

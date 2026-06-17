@@ -6,6 +6,7 @@ use App\Models\AdminDeviceToken;
 use App\Models\AdminNotification;
 use App\Services\AdminNotificationService;
 use App\Services\FirebaseService;
+use App\Services\SalesOrderNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\RedirectResponse;
 
@@ -212,6 +213,7 @@ class AdminNotificationWebController extends Controller
             AdminNotificationService::TYPE_CHECK_RETURNED => 'إرجاع شيك صادر',
             AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_CREATED => 'فاتورة عالقة جديدة',
             AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_COMPLETED => 'إتمام فاتورة عالقة',
+            SalesOrderNotificationService::TYPE_SHIPLY_HANDOVER => 'تسليم طلبية لشبلي',
         ];
     }
 }

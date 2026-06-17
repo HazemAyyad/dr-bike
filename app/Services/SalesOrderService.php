@@ -660,9 +660,11 @@ class SalesOrderService
             if ($customer) {
                 return [
                     'customer_id' => (int) $customer->id,
-                    'customer_name' => $customer->name,
-                    'customer_phone' => $customer->phone,
-                    'customer_address' => $customer->address,
+                    'customer_name' => $data['customer_name'] ?? $customer->name,
+                    'customer_phone' => $data['customer_phone'] ?? $customer->phone,
+                    'customer_address' => array_key_exists('customer_address', $data)
+                        ? $data['customer_address']
+                        : ($order?->customer_address ?? $customer->address),
                 ];
             }
         }
