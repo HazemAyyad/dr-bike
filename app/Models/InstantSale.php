@@ -40,6 +40,7 @@ class InstantSale extends Model
         'created_by',
         'updated_by',
         'sales_daily_session_id',
+        'sales_order_id',
         'serial_number',
     ];
 
@@ -109,6 +110,11 @@ class InstantSale extends Model
     public function salesDailySession()
     {
         return $this->belongsTo(SalesDailySession::class, 'sales_daily_session_id');
+    }
+
+    public function salesOrder()
+    {
+        return $this->belongsTo(SalesOrder::class, 'sales_order_id');
     }
 
     public function isCancelled(): bool

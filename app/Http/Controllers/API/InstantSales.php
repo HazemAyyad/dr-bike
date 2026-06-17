@@ -11,6 +11,7 @@ use App\Models\InstantSale;
 use App\Models\OfferPackage;
 use App\Models\Product;
 use App\Models\Project;
+use App\Models\SalesOrder;
 use App\Models\Seller;
 use App\Services\CustomerProductPriceHistoryService;
 use App\Services\DebtLedgerService;
@@ -1988,6 +1989,15 @@ public function edit(Request $request)
                 ? ['product_base' => $displayName, 'product' => $displayName]
                 : $this->formatInstantSaleProductDisplay($displayName, $variantFields);
 
+            $linkedSalesOrder = $sale->sales_order_id
+                ? SalesOrder::query()
+                    ->select(['id', 'serial_number'])
+                    ->find($sale->sales_order_id)
+                : SalesOrder::query()
+                    ->where('instant_sale_id', $sale->id)
+                    ->select(['id', 'serial_number'])
+                    ->first();
+
             $formatted = [
                 'id' => $sale->id,
                 'invoice_number' => (string) $sale->id,
@@ -2019,6 +2029,8 @@ public function edit(Request $request)
                 'sale_status' => $sale->type ?? 'normal',
                 'payment_method' => $sale->project?->payment_method,
                 'notes' => $sale->notes,
+                'sales_order_id' => $linkedSalesOrder?->id,
+                'sales_order_serial' => $linkedSalesOrder?->serial_number,
                 'buyer' => $buyer,
                 'trader_name' => $buyer['type'] === 'trader' ? $buyer['name'] : null,
                 'customer_name' => $buyer['type'] === 'customer' ? $buyer['name'] : ($sale->project?->partnership?->customer?->name),

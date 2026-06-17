@@ -7,6 +7,7 @@ use App\Models\Box;
 use App\Models\EmployeeDetail;
 use App\Models\InstantSale;
 use App\Models\ProfitSale;
+use App\Models\SalesOrder;
 use App\Models\SalesCancellationRequest;
 use App\Models\SalesDailyClosingRequest;
 use App\Models\SalesDailyReopenRequest;
@@ -1127,6 +1128,7 @@ class SalesDailySessionService
             && ! $session->closingRequests->contains(fn (SalesDailyClosingRequest $r) => $r->status === 'pending');
 
         $salesLog = $this->buildSessionSalesLog($session);
+        $ordersLog = $this->buildSessionSalesOrdersLog($session);
 
         return [
             'session' => [
@@ -1153,6 +1155,8 @@ class SalesDailySessionService
             'profit_sales_count' => $counts['profit'],
             'instant_sales' => $salesLog['instant_sales'],
             'profit_sales' => $salesLog['profit_sales'],
+            'sales_orders_count' => count($ordersLog),
+            'sales_orders' => $ordersLog,
             'closing_requests' => $closingRequests,
             'config' => [
                 'variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
@@ -1166,18 +1170,29 @@ class SalesDailySessionService
      */
     private function buildSessionSalesLog(SalesDailySession $session): array
     {
-        $instantSales = InstantSale::query()
+        $sales = InstantSale::query()
             ->where('sales_daily_session_id', $session->id)
             ->whereNull('parent_id')
             ->with(['product:id,nameAr', 'offerPackage:id,name'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
+            ->get();
+
+        $orderByInstantSale = SalesOrder::query()
+            ->whereIn('instant_sale_id', $sales->pluck('id'))
             ->get()
-            ->map(function (InstantSale $sale) {
+            ->keyBy('instant_sale_id');
+
+        $instantSales = $sales
+            ->map(function (InstantSale $sale) use ($orderByInstantSale) {
+                $linkedOrder = $orderByInstantSale->get($sale->id);
                 $isPackage = $sale->offer_package_id !== null;
                 $label = $isPackage
                     ? ($sale->offerPackage?->name ?? 'باكيج محذوف')
                     : ($sale->product?->nameAr ?? 'منتج محذوف');
+                if ($linkedOrder) {
+                    $label = 'طلبية '.($linkedOrder->serial_number ?? '#'.$linkedOrder->id);
+                }
                 $total = round((float) $sale->total_cost, 2);
                 $paid = round((float) ($sale->payment_box_value ?? 0), 2);
                 if ($paid > $total) {
@@ -1189,6 +1204,9 @@ class SalesDailySessionService
                     'sale_type' => 'instant',
                     'label' => $label,
                     'is_package_sale' => $isPackage,
+                    'is_from_sales_order' => $linkedOrder !== null,
+                    'sales_order_id' => $linkedOrder?->id,
+                    'sales_order_serial' => $linkedOrder?->serial_number,
                     'total_cost' => $total,
                     'quantity' => (float) $sale->quantity,
                     'paid_amount' => $paid,
@@ -1231,6 +1249,40 @@ class SalesDailySessionService
             'instant_sales' => $instantSales,
             'profit_sales' => $profitSales,
         ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildSessionSalesOrdersLog(SalesDailySession $session): array
+    {
+        $businessDate = $session->business_date->toDateString();
+
+        return SalesOrder::query()
+            ->where('created_by', $session->user_id)
+            ->whereDate('created_at', $businessDate)
+            ->where('is_debt_collection', false)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (SalesOrder $order) => [
+                'id' => $order->id,
+                'serial_number' => $order->serial_number,
+                'status' => $order->status,
+                'customer_name' => $order->customer_name,
+                'total' => round((float) $order->total, 2),
+                'payment_type' => $order->payment_type,
+                'payment_amount' => round((float) $order->payment_amount, 2),
+                'instant_sale_id' => $order->instant_sale_id,
+                'delivered_today' => $order->instant_sale_id !== null
+                    && InstantSale::query()
+                        ->where('id', $order->instant_sale_id)
+                        ->where('sales_daily_session_id', $session->id)
+                        ->exists(),
+                'created_at' => $order->created_at?->toDateTimeString(),
+            ])
+            ->values()
+            ->all();
     }
 
     /**

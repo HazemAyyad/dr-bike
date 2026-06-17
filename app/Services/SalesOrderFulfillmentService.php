@@ -15,6 +15,7 @@ use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class SalesOrderFulfillmentService
@@ -309,7 +310,7 @@ class SalesOrderFulfillmentService
         $notes = trim('طلبية '.($order->serial_number ?? '#'.$order->id)
             .($deliveryFee > 0 ? ' | توصيل: '.$deliveryFee : ''));
 
-        $main = InstantSale::create(array_merge($buyer, [
+        $mainAttributes = array_merge($buyer, [
             'product_id' => $first->product_id,
             'size_id' => $first->size_id,
             'size_color_id' => $first->size_color_id,
@@ -325,7 +326,13 @@ class SalesOrderFulfillmentService
             'sales_daily_session_id' => $session->id,
             'created_by' => $user->id,
             'status' => 'active',
-        ]));
+        ]);
+
+        if (Schema::hasColumn('instant_sales', 'sales_order_id')) {
+            $mainAttributes['sales_order_id'] = $order->id;
+        }
+
+        $main = InstantSale::create($mainAttributes);
 
         app(DocumentSerialService::class)->assignToModel(
             $main,
