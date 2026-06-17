@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Models\AttendanceDevice;
+use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeeDetail;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Support\AttendanceScanPresenter;
 use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -46,6 +48,25 @@ class FingerprintActivityLogService
             ->limit($limit)
             ->get();
 
+        $reverseByRawId = [];
+        if ($logs->isNotEmpty()) {
+            $scanFlags = EmployeeAttendanceScan::query()
+                ->whereNotNull('fingerprint_raw_log_id')
+                ->whereIn('fingerprint_raw_log_id', $logs->pluck('id')->unique()->filter())
+                ->get(['fingerprint_raw_log_id', 'is_reverse_checkout']);
+            foreach ($scanFlags as $s) {
+                $reverseByRawId[(int) $s->fingerprint_raw_log_id] = (bool) $s->is_reverse_checkout;
+            }
+        }
+
+        // Also include system-generated check-outs so admins can see who was closed automatically.
+        $autoScans = EmployeeAttendanceScan::query()
+            ->where('source', 'auto')
+            ->whereBetween('scanned_at', [$from, $to])
+            ->orderByDesc('scanned_at')
+            ->limit(max(10, (int) round($limit * 0.25)))
+            ->get();
+
         $deviceNames = AttendanceDevice::query()
             ->whereIn('id', $logs->pluck('attendance_device_id')->unique()->filter())
             ->pluck('name', 'id');
@@ -69,16 +90,53 @@ class FingerprintActivityLogService
                 'device_at' => $scanAt->toIso8601String(),
                 'server_at' => $log->serverReceivedAt()->toIso8601String(),
                 'server_received_at' => $log->serverReceivedAt()->toIso8601String(),
-                'action' => $this->actionFromStatus($log->status),
+                'action' => ($reverseByRawId[(int) $log->id] ?? false) ? 'out' : $this->actionFromStatus($log->status),
                 'verify_type' => $log->verify_type,
                 'status' => $log->status,
                 'processing_status' => $log->processing_status,
                 'processing_error' => $log->processing_error,
                 'processed_at' => $log->processed_at?->toIso8601String(),
-                'raw_kind' => is_array($log->raw_payload)
-                    ? ($log->raw_payload['row']['_kind'] ?? $log->raw_payload['row']['_table'] ?? null)
-                    : null,
+                'raw_kind' => ($reverseByRawId[(int) $log->id] ?? false)
+                    ? 'reverse_checkout'
+                    : (is_array($log->raw_payload)
+                        ? ($log->raw_payload['row']['_kind'] ?? $log->raw_payload['row']['_table'] ?? null)
+                        : null),
+                'is_reverse_checkout' => (bool) ($reverseByRawId[(int) $log->id] ?? false),
             ];
+        }
+
+        // Merge auto-checkouts into the same "fingerprint activity log" feed.
+        if ($autoScans->isNotEmpty()) {
+            $employees = EmployeeDetail::query()
+                ->whereIn('id', $autoScans->pluck('employee_id')->unique()->filter())
+                ->with('user:id,name')
+                ->get()
+                ->keyBy('id');
+
+            foreach ($autoScans as $scan) {
+                $emp = $employees[$scan->employee_id] ?? null;
+                $dateKey = Carbon::parse($scan->scanned_at)->toDateString();
+
+                $byDate[$dateKey][] = [
+                    'id' => (int) $scan->id,
+                    'device_id' => null,
+                    'device_name' => 'SYSTEM',
+                    'device_user_id' => $emp?->device_user_id ? (string) $emp->device_user_id : ('EMP-'.$scan->employee_id),
+                    'employee_name' => $emp?->user?->name ? (string) $emp->user->name : null,
+                    'scan_time' => Carbon::parse($scan->scanned_at)->toIso8601String(),
+                    'device_at' => Carbon::parse($scan->scanned_at)->toIso8601String(),
+                    'server_at' => AttendanceScanPresenter::serverReceivedAt($scan)->toIso8601String(),
+                    'server_received_at' => AttendanceScanPresenter::serverReceivedAt($scan)->toIso8601String(),
+                    'action' => 'out',
+                    'verify_type' => null,
+                    'status' => null,
+                    'processing_status' => 'processed',
+                    'processing_error' => null,
+                    'processed_at' => null,
+                    'raw_kind' => 'auto_checkout',
+                    'source' => 'auto',
+                ];
+            }
         }
 
         krsort($byDate);

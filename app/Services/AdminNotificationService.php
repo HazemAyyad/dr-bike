@@ -13,6 +13,7 @@ use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
 use App\Support\EmployeePendingTasksForToday;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 
 class AdminNotificationService
@@ -49,6 +50,10 @@ class AdminNotificationService
 
     public const TYPE_SUSPENDED_INSTANT_SALE_COMPLETED = 'suspended_instant_sale_completed';
 
+    public const TYPE_ATTENDANCE_AUTO_CHECKOUT = 'attendance_auto_checkout';
+
+    public const TYPE_ATTENDANCE_ABSENT_REMINDER = 'attendance_absent_reminder';
+
     /**
      * @param  array<string, mixed>  $data
      */
@@ -83,11 +88,23 @@ class AdminNotificationService
     public function notifyEmployeeLogin(
         EmployeeDetail $employee,
         ?int $attendanceId = null,
-        string $source = 'qr'
+        string $source = 'qr',
+        ?string $loginTime = null
+    ): AdminNotification {
+        return $this->withArabicLocale(function () use ($employee, $attendanceId, $source, $loginTime) {
+            return $this->notifyEmployeeLoginLocalized($employee, $attendanceId, $source, $loginTime);
+        });
+    }
+
+    protected function notifyEmployeeLoginLocalized(
+        EmployeeDetail $employee,
+        ?int $attendanceId,
+        string $source,
+        ?string $loginTime
     ): AdminNotification {
         $employee->loadMissing('user');
         $name = $employee->user->name ?? __('messages.employee_default_name');
-        $time = $this->serverNotificationTime();
+        $time = $this->formatNotificationTime($loginTime);
         $sourceLabel = $this->attendanceSourceLabel($source);
 
         $data = [
@@ -118,12 +135,34 @@ class AdminNotificationService
         EmployeeDetail $employee,
         ?int $attendanceId,
         ?string $logoutTime = null,
-        string $source = 'qr'
+        string $source = 'qr',
+        bool $isReverseCheckout = false
+    ): AdminNotification {
+        return $this->withArabicLocale(function () use ($employee, $attendanceId, $logoutTime, $source, $isReverseCheckout) {
+            return $this->notifyEmployeeLogoutLocalized(
+                $employee,
+                $attendanceId,
+                $logoutTime,
+                $source,
+                $isReverseCheckout
+            );
+        });
+    }
+
+    protected function notifyEmployeeLogoutLocalized(
+        EmployeeDetail $employee,
+        ?int $attendanceId,
+        ?string $logoutTime,
+        string $source,
+        bool $isReverseCheckout
     ): AdminNotification {
         $employee->loadMissing('user');
         $name = $employee->user->name ?? __('messages.employee_default_name');
-        $time = $this->serverNotificationTime();
+        $time = $this->formatNotificationTime($logoutTime);
         $sourceLabel = $this->attendanceSourceLabel($source);
+        $reverseLabel = $isReverseCheckout
+            ? __('messages.admin_notify_reverse_checkout_suffix')
+            : '';
 
         $data = [
             'employee_id' => (string) $employee->id,
@@ -131,6 +170,7 @@ class AdminNotificationService
             'logout_time' => $time,
             'attendance_id' => $attendanceId !== null ? (string) $attendanceId : '',
             'source' => $source,
+            'is_reverse_checkout' => $isReverseCheckout ? '1' : '0',
         ];
 
         return $this->create(
@@ -140,6 +180,7 @@ class AdminNotificationService
                 'employee' => $name,
                 'source' => $sourceLabel,
                 'time' => $time,
+                'reverse' => $reverseLabel,
             ]),
             $data,
             $employee->id,
@@ -147,6 +188,84 @@ class AdminNotificationService
             $attendanceId,
             true
         );
+    }
+
+    /**
+     * @param  list<array{employee_id: int, employee_name: string}>  $closedEmployees
+     */
+    public function notifyAutoCheckoutSummary(string $workDate, array $closedEmployees): ?AdminNotification
+    {
+        if ($closedEmployees === []) {
+            return null;
+        }
+
+        return $this->withArabicLocale(function () use ($workDate, $closedEmployees) {
+            $names = collect($closedEmployees)->pluck('employee_name')->implode('، ');
+            $count = count($closedEmployees);
+            $dateLabel = Carbon::parse($workDate, EmployeePendingTasksForToday::TIMEZONE)
+                ->locale('ar')
+                ->translatedFormat('l j F Y');
+
+            return $this->create(
+                self::TYPE_ATTENDANCE_AUTO_CHECKOUT,
+                __('messages.admin_notify_auto_checkout_title'),
+                __('messages.admin_notify_auto_checkout_body', [
+                    'count' => (string) $count,
+                    'names' => $names,
+                    'date' => $dateLabel,
+                ]),
+                [
+                    'work_date' => $workDate,
+                    'employee_count' => (string) $count,
+                    'employees' => $closedEmployees,
+                ],
+                null,
+                'attendance_auto_checkout',
+                null,
+                true
+            );
+        });
+    }
+
+    /**
+     * @param  list<array{employee_id: int, employee_name: string}>  $absentEmployees
+     */
+    public function notifyAbsentEmployeesReminder(
+        string $workDate,
+        array $absentEmployees,
+        bool $force = false
+    ): ?AdminNotification {
+        if ($absentEmployees === [] || (! $force && $this->hasAbsentReminderForDate($workDate))) {
+            return null;
+        }
+
+        return $this->withArabicLocale(function () use ($workDate, $absentEmployees) {
+            $names = collect($absentEmployees)->pluck('employee_name')->implode('، ');
+            $count = count($absentEmployees);
+            $timeLabel = now(EmployeePendingTasksForToday::TIMEZONE)
+                ->locale('ar')
+                ->translatedFormat('g:i a');
+
+            return $this->create(
+                self::TYPE_ATTENDANCE_ABSENT_REMINDER,
+                __('messages.admin_notify_absent_title'),
+                __('messages.admin_notify_absent_body', [
+                    'count' => (string) $count,
+                    'names' => $names,
+                    'time' => $timeLabel,
+                ]),
+                [
+                    'work_date' => $workDate,
+                    'employee_count' => (string) $count,
+                    'employees' => $absentEmployees,
+                    'checked_at' => now(EmployeePendingTasksForToday::TIMEZONE)->toIso8601String(),
+                ],
+                null,
+                'attendance_absent_reminder',
+                null,
+                true
+            );
+        });
     }
 
     public function notifyTaskCompleted(EmployeeDetail $employee, EmployeeTask $task): AdminNotification
@@ -398,7 +517,7 @@ class AdminNotificationService
         $employee->loadMissing('user');
         $name = $employee->user->name ?? __('messages.employee_default_name');
         $count = $pendingTasks->count();
-        $time = $this->serverNotificationTime();
+        $time = $this->formatNotificationTime($logoutTime);
 
         $pendingList = $pendingTasks->map(fn (EmployeeTask $t) => [
             'id' => $t->id,
@@ -430,9 +549,24 @@ class AdminNotificationService
         );
     }
 
-    protected function serverNotificationTime(): string
+    protected function formatNotificationTime(?string $isoOrDatetime = null): string
     {
-        return now()->format('Y-m-d H:i:s');
+        $tz = EmployeePendingTasksForToday::TIMEZONE;
+
+        if ($isoOrDatetime !== null && trim($isoOrDatetime) !== '') {
+            try {
+                $at = Carbon::parse($isoOrDatetime)->timezone($tz);
+            } catch (\Throwable) {
+                $at = now($tz);
+            }
+        } else {
+            $at = now($tz);
+        }
+
+        $date = $at->format('Y-m-d');
+        $time = $at->locale('ar')->translatedFormat('g:i a');
+
+        return "{$date} {$time}";
     }
 
     protected function attendanceSourceLabel(string $source): string
@@ -440,8 +574,34 @@ class AdminNotificationService
         return match ($source) {
             'fingerprint' => __('messages.admin_notify_source_fingerprint'),
             'manual' => __('messages.admin_notify_source_manual'),
+            'auto' => __('messages.admin_notify_source_auto'),
             default => '',
         };
+    }
+
+    public function hasAbsentReminderForDate(string $workDate): bool
+    {
+        return AdminNotification::query()
+            ->where('type', self::TYPE_ATTENDANCE_ABSENT_REMINDER)
+            ->where('data->work_date', $workDate)
+            ->exists();
+    }
+
+    /**
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    protected function withArabicLocale(callable $callback): mixed
+    {
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            return $callback();
+        } finally {
+            App::setLocale($previous);
+        }
     }
 
     public function notifyCheckDueSoon(IncomingCheck|OutgoingCheck $check, string $direction, string $reminderDate): ?AdminNotification

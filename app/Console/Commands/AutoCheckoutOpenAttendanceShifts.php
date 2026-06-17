@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeeDetail;
+use App\Services\AdminNotificationService;
 use App\Services\CronJobLogger;
 use App\Services\EmployeeAttendanceCheckoutService;
 use App\Support\EmployeePendingTasksForToday;
@@ -16,17 +17,18 @@ class AutoCheckoutOpenAttendanceShifts extends Command
 {
     protected $signature = 'attendance:auto-checkout-open-shifts {--date= : Work date to close (Y-m-d), default: yesterday in Asia/Hebron}';
 
-    protected $description = 'Auto check-out employees still marked in at end of the previous work day (runs at 01:00)';
+    protected $description = 'Auto check-out employees still marked in at end of the previous work day (runs after the 04:00 grace window)';
 
     public function handle(
         EmployeeAttendanceCheckoutService $checkoutService,
+        AdminNotificationService $adminNotificationService,
         CronJobLogger $cronJobLogger
     ): int {
         $workDate = $this->option('date');
 
         return $cronJobLogger->run(
             'attendance:auto-checkout-open-shifts',
-            function ($buffer, $log) use ($checkoutService, $workDate) {
+            function ($buffer, $log) use ($checkoutService, $adminNotificationService, $workDate) {
                 $tz = EmployeePendingTasksForToday::TIMEZONE;
                 $workDate = $workDate
                     ?: Carbon::now($tz)->subDay()->toDateString();
@@ -38,9 +40,10 @@ class AutoCheckoutOpenAttendanceShifts extends Command
                 $closed = 0;
                 $failed = 0;
                 $failures = [];
+                $closedEmployees = [];
 
                 foreach ($openEmployeeIds as $employeeId) {
-                    $employee = EmployeeDetail::query()->find($employeeId);
+                    $employee = EmployeeDetail::query()->with('user:id,name')->find($employeeId);
                     if (! $employee) {
                         continue;
                     }
@@ -48,6 +51,10 @@ class AutoCheckoutOpenAttendanceShifts extends Command
                     try {
                         $checkoutService->checkout($employee, $checkoutAt, $workDate, 'auto');
                         $closed++;
+                        $closedEmployees[] = [
+                            'employee_id' => (int) $employee->id,
+                            'employee_name' => (string) ($employee->user->name ?? "موظف #{$employee->id}"),
+                        ];
                     } catch (\Throwable $e) {
                         $failed++;
                         $failures[] = [
@@ -61,6 +68,11 @@ class AutoCheckoutOpenAttendanceShifts extends Command
                         ]);
                     }
                 }
+
+                $autoCheckoutNotification = $adminNotificationService->notifyAutoCheckoutSummary(
+                    $workDate,
+                    $closedEmployees
+                );
 
                 $summary = sprintf(
                     'Work date %s: %d open shift(s), %d closed, %d failed.',
@@ -78,6 +90,8 @@ class AutoCheckoutOpenAttendanceShifts extends Command
                         'closed' => $closed,
                         'failed' => $failed,
                         'failures' => $failures,
+                        'closed_employees' => $closedEmployees,
+                        'notification_id' => $autoCheckoutNotification?->id,
                     ]),
                 ]);
 

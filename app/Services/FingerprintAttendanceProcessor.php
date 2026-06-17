@@ -18,6 +18,14 @@ use Illuminate\Support\Facades\Log;
 
 class FingerprintAttendanceProcessor
 {
+    /**
+     * After-midnight checkout grace window.
+     *
+     * Business rule: a check-out between 00:00 and 04:00 belongs to the previous work date
+     * if the employee still has an open check-in on the previous date.
+     */
+    private const AFTER_MIDNIGHT_CHECKOUT_CUTOFF_HOUR = 4; // inclusive window: 00:00–03:59
+
     public function __construct(
         protected AttendanceSalaryService $salaryService
     ) {}
@@ -178,6 +186,16 @@ class FingerprintAttendanceProcessor
     ): ?string {
         $employeeId = (int) $employee->id;
 
+        // If device reports an explicit check-out just after midnight (grace window),
+        // attribute it to yesterday if yesterday has an open "in" scan.
+        $dirFromDevice = FingerprintAttendanceLogFilter::directionFromDeviceStatus($rawLog->status);
+        if ($dirFromDevice === 'out' && $this->isAfterMidnightGraceCheckout($scanAt)) {
+            $prevWorkDate = $scanAt->copy()->subDay()->toDateString();
+            if ($this->hasOpenShift($employeeId, $prevWorkDate)) {
+                $workDate = $prevWorkDate;
+            }
+        }
+
         $scans = EmployeeAttendanceScan::query()
             ->where('employee_id', $employeeId)
             ->whereDate('work_date', $workDate)
@@ -187,6 +205,19 @@ class FingerprintAttendanceProcessor
         $direction = $this->resolveScanDirection($rawLog, $scans);
         if ($direction === null) {
             return 'invalid_direction';
+        }
+
+        // Reverse checkout: if the device/user records an "IN" scan near the scheduled end time while still inside,
+        // treat it as an "OUT" scan (common mistake on some devices).
+        $isReverseCheckout = false;
+        if (
+            $direction === 'in'
+            && $scans->isNotEmpty()
+            && $scans->last()?->direction === 'in'
+            && $this->shouldConvertInToReverseOut($employee, $scanAt, $workDate)
+        ) {
+            $direction = 'out';
+            $isReverseCheckout = true;
         }
 
         $rejectReason = $this->rejectInvalidDirection($direction, $scans);
@@ -203,12 +234,15 @@ class FingerprintAttendanceProcessor
         $attendance->attendance_device_id = $device->id;
         $attendance->device_user_id = (string) $rawLog->device_user_id;
         $attendance->fingerprint_raw_log_id = $rawLog->id;
+        // Real fingerprint scans should clear the "missing checkout" mark.
+        $attendance->missing_checkout = false;
 
         EmployeeAttendanceScan::create([
             'employee_id' => $employeeId,
             'work_date' => $workDate,
             'scanned_at' => $scanAt,
             'direction' => $direction,
+            'is_reverse_checkout' => $isReverseCheckout,
             'source' => 'fingerprint',
             'server_received_at' => $rawLog->serverReceivedAt(),
             'fingerprint_raw_log_id' => $rawLog->id,
@@ -244,12 +278,52 @@ class FingerprintAttendanceProcessor
         $attendance->save();
 
         if ($direction === 'in') {
-            $this->notifyLogin($employee, $attendance);
+            $this->notifyLogin($employee, $attendance, $scanAt);
         } else {
-            $this->notifyLogout($employee, $attendance, $scanAt, $employeeId);
+            $this->notifyLogout($employee, $attendance, $scanAt, $employeeId, $isReverseCheckout);
         }
 
         return null;
+    }
+
+    protected function shouldConvertInToReverseOut(EmployeeDetail $employee, Carbon $scanAt, string $workDate): bool
+    {
+        $window = \App\Models\AppSetting::getInt(\App\Models\AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES, 60);
+        $window = max(0, min(180, (int) $window));
+        if ($window <= 0) {
+            return false;
+        }
+
+        $end = trim((string) ($employee->end_work_time ?? ''));
+        if ($end === '') {
+            return false;
+        }
+
+        try {
+            $scheduledEnd = Carbon::parse($workDate.' '.$end, \App\Support\EmployeePendingTasksForToday::TIMEZONE);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        return abs($scheduledEnd->diffInMinutes($scanAt, false)) <= $window;
+    }
+
+    protected function isAfterMidnightGraceCheckout(Carbon $scanAt): bool
+    {
+        $h = (int) $scanAt->format('G'); // 0..23
+
+        return $h >= 0 && $h < self::AFTER_MIDNIGHT_CHECKOUT_CUTOFF_HOUR;
+    }
+
+    protected function hasOpenShift(int $employeeId, string $workDate): bool
+    {
+        $last = EmployeeAttendanceScan::query()
+            ->where('employee_id', $employeeId)
+            ->whereDate('work_date', $workDate)
+            ->orderByDesc('id')
+            ->first();
+
+        return $last !== null && $last->direction === 'in';
     }
 
     /**
@@ -293,13 +367,14 @@ class FingerprintAttendanceProcessor
         return null;
     }
 
-    protected function notifyLogin(EmployeeDetail $employee, EmployeeAttendance $attendance): void
+    protected function notifyLogin(EmployeeDetail $employee, EmployeeAttendance $attendance, Carbon $scanAt): void
     {
         try {
             app(AdminNotificationService::class)->notifyEmployeeLogin(
                 $employee,
                 (int) $attendance->id,
-                'fingerprint'
+                'fingerprint',
+                $scanAt->toIso8601String()
             );
         } catch (\Throwable $e) {
             Log::error('fingerprint.notify_login_failed', ['message' => $e->getMessage()]);
@@ -310,7 +385,8 @@ class FingerprintAttendanceProcessor
         EmployeeDetail $employee,
         EmployeeAttendance $attendance,
         Carbon $scanAt,
-        int $employeeId
+        int $employeeId,
+        bool $isReverseCheckout = false
     ): void {
         try {
             $notifier = app(AdminNotificationService::class);
@@ -318,7 +394,8 @@ class FingerprintAttendanceProcessor
                 $employee,
                 (int) $attendance->id,
                 $scanAt->toIso8601String(),
-                'fingerprint'
+                'fingerprint',
+                $isReverseCheckout
             );
             $pending = \App\Support\EmployeePendingTasksForToday::forEmployee($employeeId);
             $notifier->notifyEmployeeLogoutWithPendingTasks(

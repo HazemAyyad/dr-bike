@@ -44,7 +44,12 @@ class Kernel extends ConsoleKernel
             ->timezone('Asia/Hebron');
 
         $schedule->command('attendance:auto-checkout-open-shifts')
-            ->dailyAt('01:00')
+            // Allow after-midnight grace window (until 04:00) before auto-closing yesterday.
+            ->dailyAt('04:10')
+            ->timezone('Asia/Hebron');
+
+        $schedule->command('attendance:notify-absent-employees')
+            ->dailyAt('15:00')
             ->timezone('Asia/Hebron');
     }
 

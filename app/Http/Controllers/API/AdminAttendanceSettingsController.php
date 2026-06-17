@@ -41,6 +41,9 @@ class AdminAttendanceSettingsController extends Controller
                 'fingerprint_auto_create_unknown_users' => ['required', 'boolean'],
                 'fingerprint_deduplicate_minutes' => ['required', 'integer', 'min:0', 'max:60'],
                 'fingerprint_push_token' => ['nullable', 'string', 'max:100'],
+                // If an employee scans "IN" near scheduled end while still inside,
+                // treat it as a reverse check-out (OUT) to correct common device/user mistakes.
+                'fingerprint_reverse_checkout_window_minutes' => ['required', 'integer', 'min:0', 'max:180'],
             ]);
 
             AppSetting::set(AppSetting::KEY_ATTENDANCE_QR_ENABLED, $data['attendance_qr_enabled'] ? '1' : '0');
@@ -54,6 +57,7 @@ class AdminAttendanceSettingsController extends Controller
             AppSetting::set(AppSetting::KEY_FINGERPRINT_AUTO_CREATE_UNKNOWN_USERS, $data['fingerprint_auto_create_unknown_users'] ? '1' : '0');
             AppSetting::set(AppSetting::KEY_FINGERPRINT_DEDUPLICATE_MINUTES, (string) ((int) $data['fingerprint_deduplicate_minutes']));
             AppSetting::set(AppSetting::KEY_FINGERPRINT_PUSH_TOKEN, (string) ($data['fingerprint_push_token'] ?? ''));
+            AppSetting::set(AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES, (string) ((int) $data['fingerprint_reverse_checkout_window_minutes']));
 
             return response()->json([
                 'status' => 'success',
@@ -99,6 +103,8 @@ class AdminAttendanceSettingsController extends Controller
         $autoCreate = AppSetting::getBool(AppSetting::KEY_FINGERPRINT_AUTO_CREATE_UNKNOWN_USERS, false);
         $dedup = AppSetting::getInt(AppSetting::KEY_FINGERPRINT_DEDUPLICATE_MINUTES, 2);
         $dedup = max(0, min(60, $dedup));
+        $reverseWindow = AppSetting::getInt(AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES, 60);
+        $reverseWindow = max(0, min(180, $reverseWindow));
 
         return [
             'attendance_qr_enabled' => $qrEnabled,
@@ -109,6 +115,7 @@ class AdminAttendanceSettingsController extends Controller
             'fingerprint_auto_create_unknown_users' => $autoCreate,
             'fingerprint_deduplicate_minutes' => $dedup,
             'fingerprint_push_token' => trim((string) AppSetting::get(AppSetting::KEY_FINGERPRINT_PUSH_TOKEN, '')),
+            'fingerprint_reverse_checkout_window_minutes' => $reverseWindow,
         ];
     }
 }

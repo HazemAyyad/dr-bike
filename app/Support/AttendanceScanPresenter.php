@@ -45,6 +45,7 @@ class AttendanceScanPresenter
             'at' => Carbon::parse($scan->scanned_at)->toIso8601String(),
             'direction' => (string) $scan->direction,
             'source' => $scan->source,
+            'is_reverse_checkout' => (bool) ($scan->is_reverse_checkout ?? false),
         ];
 
         if (self::isFingerprint($scan)) {

@@ -1480,6 +1480,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'last_check_out' => $lastCheckOut?->toIso8601String(),
                 'last_check_out_server' => $lastCheckOutApi['server_at'] ?? null,
                 'last_check_out_source' => $lastOutScan?->source,
+                // Auto-checkout mark (employee forgot to check out; system closed the day).
+                'missing_checkout' => (bool) ($legacy?->missing_checkout ?? false),
                 'currently_in' => $currentlyIn,
                 'worked_minutes' => $workedMinutes,
                 'worked_minutes_live' => ($dateStr === $todayStr && $currentlyIn),

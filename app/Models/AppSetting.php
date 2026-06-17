@@ -28,6 +28,7 @@ class AppSetting extends Model
     public const KEY_FINGERPRINT_AUTO_CREATE_UNKNOWN_USERS = 'fingerprint_auto_create_unknown_users';
     public const KEY_FINGERPRINT_DEDUPLICATE_MINUTES = 'fingerprint_deduplicate_minutes';
     public const KEY_FINGERPRINT_PUSH_TOKEN = 'fingerprint_push_token';
+    public const KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES = 'fingerprint_reverse_checkout_window_minutes';
 
     protected $fillable = [
         'key',

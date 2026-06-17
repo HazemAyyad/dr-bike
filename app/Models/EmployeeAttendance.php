@@ -15,6 +15,7 @@ class EmployeeAttendance extends Model
         'date',
         'arrived_at',
         'left_at',
+        'missing_checkout',
         'worked_minutes',
         'required_minutes',
         'normal_minutes',

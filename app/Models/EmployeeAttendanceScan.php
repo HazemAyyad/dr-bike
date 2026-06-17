@@ -16,6 +16,7 @@ class EmployeeAttendanceScan extends Model
         'work_date',
         'scanned_at',
         'direction',
+        'is_reverse_checkout',
         'source',
         'server_received_at',
         'fingerprint_raw_log_id',
@@ -25,6 +26,7 @@ class EmployeeAttendanceScan extends Model
         'work_date' => 'date',
         'scanned_at' => 'datetime',
         'server_received_at' => 'datetime',
+        'is_reverse_checkout' => 'boolean',
     ];
 
     public function employee(): BelongsTo

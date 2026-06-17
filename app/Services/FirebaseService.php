@@ -73,6 +73,8 @@ class FirebaseService
     private const ADMIN_LOGOUT_NOTIFICATION_TYPES = [
         'employee_logout',
         'employee_logout_pending_tasks',
+        'attendance_auto_checkout',
+        'attendance_absent_reminder',
     ];
 
     protected ?Messaging $messaging = null;

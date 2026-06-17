@@ -90,9 +90,24 @@ class EmployeeAttendanceCheckoutService
         }
 
         $daily = $this->salaryService->calculateDailyOvertime($employee, (int) $totalWorked);
+
         $attendance->required_minutes = $daily['required_minutes'];
         $attendance->normal_minutes = $daily['normal_minutes'];
         $attendance->overtime_minutes = $daily['overtime_minutes'];
+
+        // Auto-checkout (system close) is used only to close an open shift.
+        // When an employee forgets to check out, we intentionally do NOT grant extra/overtime minutes.
+        if ($source === 'auto') {
+            $required = (int) ($daily['required_minutes'] ?? 0);
+            $attendance->worked_minutes = $required;
+            $attendance->normal_minutes = $required;
+            $attendance->overtime_minutes = 0;
+            $attendance->missing_checkout = true;
+        } else {
+            // Manual/fingerprint checkout: real checkout, so overtime is computed normally.
+            $attendance->missing_checkout = false;
+        }
+
         $attendance->save();
 
         if ($source !== 'auto') {
