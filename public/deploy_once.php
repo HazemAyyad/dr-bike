@@ -57,22 +57,17 @@ $allowedCommands = [
         'label' => '=== تشغيل migrations (php artisan migrate --force) ===',
     ],
     [
-        'name' => 'fingerprint:purge-operlog',
-        'params' => [],
-        'label' => '=== تنظيف سجلات OPLOG الخاطئة (php artisan fingerprint:purge-operlog) ===',
+        'name' => 'shiply:sync-addresses',
+        'params' => ['--mode' => 'test', '--register-webhook' => true],
+        'label' => '=== Shiply: مزامنة عناوين test + تسجيل webhook ===',
     ],
     [
-        'name' => 'employee-tasks:cleanup-duplicate-legacy',
-        'params' => [
-            '--parent' => 7650,
-            '--fix-assignee-task' => 331,
-            '--wrong-employee' => 10,
-        ],
-        'label' => '=== إلغاء سلسلة legacy المكررة (7650) + إصلاح assignee خاطئ (331/10) ===',
+        'name' => 'shiply:sync-addresses',
+        'params' => ['--mode' => 'live', '--register-webhook' => true],
+        'label' => '=== Shiply: مزامنة عناوين live + تسجيل webhook ===',
     ],
     ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'cache:clear', 'params' => []],
-    ['name' => 'images:generate-legacy-thumbs', 'params' => []],
     // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
     ['name' => '__composer_dump_autoload__', 'params' => []],
 ];
@@ -91,6 +86,18 @@ foreach ($allowedCommands as $cmd) {
 
     if (! empty($cmd['label'])) {
         echo htmlspecialchars($cmd['label']."\n", ENT_QUOTES, 'UTF-8');
+    }
+
+    if (str_starts_with($cmd['name'], 'shiply:')) {
+        $mode = (string) ($cmd['params']['--mode'] ?? 'test');
+        $apiKey = trim((string) config("shiply.api_keys.{$mode}", ''));
+        if ($apiKey === '') {
+            echo htmlspecialchars(">>> Skipping: SHIPLY_API_KEY_".strtoupper($mode)." is not set in .env\n", ENT_QUOTES, 'UTF-8');
+            echo "Exit code: 0\n";
+            echo "----------------------------------------\n";
+
+            continue;
+        }
     }
 
     // Skip storage:link if the link already exists (avoids "link already exists" message)

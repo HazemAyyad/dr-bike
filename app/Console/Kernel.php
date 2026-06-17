@@ -5,6 +5,7 @@ namespace App\Console;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 use App\Support\AttendanceSettings;
+use App\Support\ShiplySettings;
 
 class Kernel extends ConsoleKernel
 {
@@ -51,6 +52,12 @@ class Kernel extends ConsoleKernel
 
         $schedule->command('attendance:notify-absent-employees')
             ->dailyAt('15:00')
+            ->timezone('Asia/Hebron');
+
+        $schedule->command('shiply:sync-addresses', [
+            '--mode' => ShiplySettings::mode(),
+        ])
+            ->dailyAt('03:00')
             ->timezone('Asia/Hebron');
     }
 
