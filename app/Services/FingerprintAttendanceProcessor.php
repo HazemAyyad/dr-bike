@@ -11,6 +11,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeDeviceMapping;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Support\AttendanceSettings;
 use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -18,14 +19,6 @@ use Illuminate\Support\Facades\Log;
 
 class FingerprintAttendanceProcessor
 {
-    /**
-     * After-midnight checkout grace window.
-     *
-     * Business rule: a check-out between 00:00 and 04:00 belongs to the previous work date
-     * if the employee still has an open check-in on the previous date.
-     */
-    private const AFTER_MIDNIGHT_CHECKOUT_CUTOFF_HOUR = 4; // inclusive window: 00:00–03:59
-
     public function __construct(
         protected AttendanceSalaryService $salaryService
     ) {}
@@ -288,8 +281,7 @@ class FingerprintAttendanceProcessor
 
     protected function shouldConvertInToReverseOut(EmployeeDetail $employee, Carbon $scanAt, string $workDate): bool
     {
-        $window = \App\Models\AppSetting::getInt(\App\Models\AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES, 60);
-        $window = max(0, min(180, (int) $window));
+        $window = AttendanceSettings::reverseCheckoutWindowMinutes();
         if ($window <= 0) {
             return false;
         }
@@ -312,7 +304,7 @@ class FingerprintAttendanceProcessor
     {
         $h = (int) $scanAt->format('G'); // 0..23
 
-        return $h >= 0 && $h < self::AFTER_MIDNIGHT_CHECKOUT_CUTOFF_HOUR;
+        return $h >= 0 && $h < AttendanceSettings::afterMidnightGraceHour();
     }
 
     protected function hasOpenShift(int $employeeId, string $workDate): bool

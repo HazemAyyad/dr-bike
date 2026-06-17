@@ -34,6 +34,7 @@ class AttendanceSettings
         $dedup = max(0, min(60, $dedup));
         $reverseWindow = AppSetting::getInt(AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES, 60);
         $reverseWindow = max(0, min(180, $reverseWindow));
+        $graceHour = self::afterMidnightGraceHour();
 
         return [
             'attendance_qr_enabled' => $qrEnabled,
@@ -45,7 +46,28 @@ class AttendanceSettings
             'fingerprint_deduplicate_minutes' => $dedup,
             'fingerprint_push_token' => trim((string) AppSetting::get(AppSetting::KEY_FINGERPRINT_PUSH_TOKEN, '')),
             'fingerprint_reverse_checkout_window_minutes' => $reverseWindow,
+            'attendance_after_midnight_grace_hour' => $graceHour,
         ];
+    }
+
+    public static function afterMidnightGraceHour(): int
+    {
+        $hour = AppSetting::getInt(AppSetting::KEY_ATTENDANCE_AFTER_MIDNIGHT_GRACE_HOUR, 4);
+
+        return max(1, min(6, $hour));
+    }
+
+    public static function reverseCheckoutWindowMinutes(): int
+    {
+        $window = AppSetting::getInt(AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES, 60);
+
+        return max(0, min(180, $window));
+    }
+
+    /** Cron time for auto-checkout: grace hour + 10 minutes. */
+    public static function autoCheckoutCronTime(): string
+    {
+        return sprintf('%02d:10', self::afterMidnightGraceHour());
     }
 
     /**
@@ -66,6 +88,7 @@ class AttendanceSettings
             'fingerprint_deduplicate_minutes' => ['required', 'integer', 'min:0', 'max:60'],
             'fingerprint_push_token' => ['nullable', 'string', 'max:100'],
             'fingerprint_reverse_checkout_window_minutes' => ['required', 'integer', 'min:0', 'max:180'],
+            'attendance_after_midnight_grace_hour' => ['required', 'integer', 'min:1', 'max:6'],
         ])->validate();
 
         AppSetting::set(AppSetting::KEY_ATTENDANCE_QR_ENABLED, $validated['attendance_qr_enabled'] ? '1' : '0');
@@ -82,6 +105,10 @@ class AttendanceSettings
         AppSetting::set(
             AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES,
             (string) ((int) $validated['fingerprint_reverse_checkout_window_minutes'])
+        );
+        AppSetting::set(
+            AppSetting::KEY_ATTENDANCE_AFTER_MIDNIGHT_GRACE_HOUR,
+            (string) ((int) $validated['attendance_after_midnight_grace_hour'])
         );
 
         return self::toArray();

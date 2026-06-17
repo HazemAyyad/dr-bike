@@ -4,6 +4,7 @@ namespace App\Console;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+use App\Support\AttendanceSettings;
 
 class Kernel extends ConsoleKernel
 {
@@ -44,8 +45,8 @@ class Kernel extends ConsoleKernel
             ->timezone('Asia/Hebron');
 
         $schedule->command('attendance:auto-checkout-open-shifts')
-            // Allow after-midnight grace window (until 04:00) before auto-closing yesterday.
-            ->dailyAt('04:10')
+            // Allow after-midnight grace window before auto-closing yesterday.
+            ->dailyAt(AttendanceSettings::autoCheckoutCronTime())
             ->timezone('Asia/Hebron');
 
         $schedule->command('attendance:notify-absent-employees')

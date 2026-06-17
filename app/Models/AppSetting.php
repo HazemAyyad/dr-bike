@@ -30,6 +30,9 @@ class AppSetting extends Model
     public const KEY_FINGERPRINT_PUSH_TOKEN = 'fingerprint_push_token';
     public const KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES = 'fingerprint_reverse_checkout_window_minutes';
 
+    /** Check-outs between 00:00 and this hour (exclusive) may belong to previous work day. */
+    public const KEY_ATTENDANCE_AFTER_MIDNIGHT_GRACE_HOUR = 'attendance_after_midnight_grace_hour';
+
     protected $fillable = [
         'key',
         'value',
