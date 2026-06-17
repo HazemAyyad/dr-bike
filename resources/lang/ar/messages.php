@@ -517,7 +517,9 @@ return [
     'store_shelf_duplicate' => 'رقم الرف موجود مسبقاً في هذا القسم',
     'store_shelf_deleted' => 'تم حذف الرف',
 
-    'sales_daily_no_session' => 'لا توجد جلسة مبيعات يومية مفتوحة.',
+    'sales_daily_no_session' => 'لا توجد جلسة مبيعات يومية مفتوحة. افتح الصندوق يدوياً أولاً.',
+    'sales_daily_opened' => 'تم فتح صندوق المبيعات بنجاح.',
+    'sales_daily_drawer_open_by_other' => 'صندوق المبيعات مفتوح لدى :employee. يجب إغلاقه قبل فتح صندوق آخر.',
     'sales_daily_previous_day_open' => 'يجب إغلاق يوم المبيعات السابق قبل المتابعة.',
     'sales_daily_closing_pending' => 'طلب إغلاق اليوم بانتظار موافقة الإدارة.',
     'sales_daily_day_closed' => 'يوم المبيعات مغلق.',

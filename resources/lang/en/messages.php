@@ -505,7 +505,9 @@ return [
     'store_shelf_duplicate' => 'Shelf number already exists in this section',
     'store_shelf_deleted' => 'Shelf deleted',
 
-    'sales_daily_no_session' => 'No open daily sales session.',
+    'sales_daily_no_session' => 'No open daily sales session. Open the drawer manually first.',
+    'sales_daily_opened' => 'Sales drawer opened successfully.',
+    'sales_daily_drawer_open_by_other' => 'Sales drawer is already open by :employee. Close it before opening another.',
     'sales_daily_previous_day_open' => 'Close the previous sales day before continuing.',
     'sales_daily_closing_pending' => 'Day closing request is pending admin approval.',
     'sales_daily_day_closed' => 'Sales day is closed.',

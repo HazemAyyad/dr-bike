@@ -36,6 +36,34 @@ class SalesDailySessionController extends Controller
         }
     }
 
+    public function open(Request $request)
+    {
+        try {
+            $session = $this->sessionService->openSession($request->user());
+            $payload = $this->sessionService->buildSessionPayload($request->user());
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_daily_opened'),
+                'daily_session' => $payload,
+                'session_id' => $session->id,
+            ], 200);
+        } catch (ValidationException $e) {
+            $firstError = collect($e->errors())->flatten()->first();
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $firstError ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function index(Request $request)
     {
         try {
