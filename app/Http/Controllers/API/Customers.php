@@ -238,19 +238,27 @@ public function getIncompletePersons()
         $this->syncContactCategories($customer->id, null, $data['contact_category_ids'] ?? []);
         Logs::createLog('اضافة زبون جديد','تم اضافة زبون جديد باسم'.' '.$request->name,'customers');
 
+        return response()->json([
+            'status' => 'success',
+            'message' => __('messages.created_'.$request->person_type.'_successfully'),
+            'person_type' => 'customer',
+            'customer_id' => $customer->id,
+        ], 200);
+
         }
     elseif($request->person_type==='seller'){
             $seller = Seller::create($data);
             $this->syncContactCategories(null, $seller->id, $data['contact_category_ids'] ?? []);
            Logs::createLog('اضافة تاجر جديد','تم اضافة تاجر جديد باسم'.' '.$request->name,'sellers');
 
+        return response()->json([
+            'status' => 'success',
+            'message' => __('messages.created_'.$request->person_type.'_successfully'),
+            'person_type' => 'seller',
+            'seller_id' => $seller->id,
+        ], 200);
+
         }
-
-
-            return response()->json([
-                'status' => 'success',
-                'message' => __('messages.created_'.$request->person_type.'_successfully')
-            ], 200);
 
   }
          catch (ValidationException $e) {
