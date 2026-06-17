@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
+use App\Support\AttendanceSettings;
 use App\Support\SalesDailySettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -15,18 +16,7 @@ class AppSettingsController extends Controller
         try {
             return response()->json([
                 'status' => 'success',
-                'settings' => [
-                    'employee_task_subtask_bonus_default' => AppSetting::getInt(
-                        AppSetting::KEY_SUBTASK_BONUS_DEFAULT,
-                        5
-                    ),
-                    'admin_fab_options' => AppSetting::get(
-                        AppSetting::KEY_ADMIN_FAB_OPTIONS,
-                        'newInvoice,newEmployee,newExpense,newCustomer'
-                    ),
-                    'sales_daily_variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
-                    'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),
-                ],
+                'settings' => $this->readAllSettings(),
             ], 200);
         } catch (\Throwable $e) {
             Log::error('app_settings.show_failed', ['message' => $e->getMessage()]);
@@ -60,6 +50,7 @@ class AppSettingsController extends Controller
                 'admin_fab_options' => 'nullable|string|max:500',
                 'sales_daily_variance_alert_threshold' => 'sometimes|numeric|min:0|max:999999',
                 'sales_daily_max_float' => 'sometimes|array',
+                'attendance' => 'sometimes|array',
             ], $maxFloatRules));
 
             if ($request->has('employee_task_subtask_bonus_default')) {
@@ -95,19 +86,14 @@ class AppSettingsController extends Controller
                     json_encode($merged, JSON_UNESCAPED_UNICODE)
                 );
             }
+            if ($request->has('attendance') && is_array($request->input('attendance'))) {
+                AttendanceSettings::updateFromArray($request->input('attendance'));
+            }
 
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.settings_updated'),
-                'settings' => [
-                    'employee_task_subtask_bonus_default' => AppSetting::getInt(
-                        AppSetting::KEY_SUBTASK_BONUS_DEFAULT,
-                        5
-                    ),
-                    'admin_fab_options' => AppSetting::get(AppSetting::KEY_ADMIN_FAB_OPTIONS, ''),
-                    'sales_daily_variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
-                    'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),
-                ],
+                'settings' => $this->readAllSettings(),
             ], 200);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
@@ -123,5 +109,25 @@ class AppSettingsController extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function readAllSettings(): array
+    {
+        return [
+            'employee_task_subtask_bonus_default' => AppSetting::getInt(
+                AppSetting::KEY_SUBTASK_BONUS_DEFAULT,
+                5
+            ),
+            'admin_fab_options' => AppSetting::get(
+                AppSetting::KEY_ADMIN_FAB_OPTIONS,
+                'newInvoice,newEmployee,newExpense,newCustomer'
+            ),
+            'sales_daily_variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
+            'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),
+            'attendance' => AttendanceSettings::toArray(),
+        ];
     }
 }
