@@ -493,7 +493,8 @@ class SalesDailySessionService
             && $this->isLateCloseSession($session)
             && ! $this->canReviewAllSessions($user);
 
-        $session->loadMissing('user');
+        $canManageOther = $blockedByOther && $this->canReviewAllSessions($user);
+        $session?->loadMissing('user');
 
         return [
             'session' => $session ? [
@@ -504,7 +505,8 @@ class SalesDailySessionService
                 'allows_sales' => $session->allowsSales() && ! $blocking && ! $blockedByOther,
                 'is_blocking_previous_day' => (bool) $blocking,
                 'has_pending_reopen' => (bool) $pendingReopen,
-                'can_request_closing' => $canRequestClosing,
+                'can_request_closing' => $canRequestClosing
+                    && (! $blockedByOther || $this->canReviewAllSessions($user)),
                 'requires_late_close_reason' => $requiresLateCloseReason,
             ] : null,
             'can_request_open' => $canRequestOpen,
@@ -512,6 +514,9 @@ class SalesDailySessionService
             'blocked_by_employee_name' => $blockedByOther
                 ? ($globalOpen?->user?->name ?? null)
                 : null,
+            'can_manage_other_session' => $canManageOther,
+            'manageable_session_id' => $canManageOther ? (int) $globalOpen->id : null,
+            'can_finalize_closing' => $this->canReviewAllSessions($user),
             'currencies' => $currencies,
             'instant_sales_count' => $instantCount,
             'profit_sales_count' => $profitCount,
@@ -531,7 +536,9 @@ class SalesDailySessionService
         User $user,
         array $cashCounts,
         ?string $lateCloseReason = null,
-        ?int $sessionId = null
+        ?int $sessionId = null,
+        ?array $transfers = null,
+        ?string $reviewNotes = null
     ): SalesDailyClosingRequest {
         if ($sessionId !== null) {
             $session = SalesDailySession::query()->findOrFail($sessionId);
@@ -561,7 +568,7 @@ class SalesDailySessionService
 
         $normalized = $this->normalizeCashCounts($owner, $session, $cashCounts);
 
-        return DB::transaction(function () use ($user, $session, $normalized, $isLateClose, $lateCloseReason, $owner) {
+        $request = DB::transaction(function () use ($user, $session, $normalized, $isLateClose, $lateCloseReason, $owner) {
             $session->update([
                 'status' => config('sales_daily.session_status.closing_requested'),
             ]);
@@ -613,6 +620,51 @@ class SalesDailySessionService
 
             return $request->fresh(['session.user', 'session.employee.user']);
         });
+
+        if ($this->canReviewAllSessions($user) && is_array($transfers)) {
+            return $this->approveClosing($user, $request->id, $transfers, $reviewNotes);
+        }
+
+        return $request;
+    }
+
+    /**
+     * @return array{sessions: Collection<int, array<string, mixed>>}
+     */
+    public function listOpenSessions(User $viewer): array
+    {
+        if (! $this->canReviewAllSessions($viewer)) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.unauthorized')],
+            ]);
+        }
+
+        $sessions = SalesDailySession::query()
+            ->with(['user', 'employee.user'])
+            ->whereIn('status', [
+                config('sales_daily.session_status.open'),
+                config('sales_daily.session_status.closing_requested'),
+            ])
+            ->orderByDesc('business_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (SalesDailySession $session) {
+                $owner = User::query()->find($session->user_id);
+                $pendingClosing = $session->closingRequests()
+                    ->where('status', 'pending')
+                    ->latest('id')
+                    ->first();
+
+                return array_merge($this->formatSessionSummary($session), [
+                    'currencies' => $owner
+                        ? $this->buildCurrenciesForSession($session, $owner)
+                        : [],
+                    'can_close' => $session->isOpen() && ! $pendingClosing,
+                    'pending_closing_request_id' => $pendingClosing?->id,
+                ]);
+            });
+
+        return ['sessions' => $sessions];
     }
 
     /**
@@ -659,6 +711,7 @@ class SalesDailySessionService
                 'requires_late_close_reason' => $requiresLateCloseReason,
                 'is_late_close' => $isLate,
             ],
+            'can_finalize_closing' => $this->canReviewAllSessions($viewer),
             'currencies' => $currencies,
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],

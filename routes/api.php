@@ -396,6 +396,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       // sales daily session / cash drawer
       Route::get('/sales/daily-session/current', [SalesDailySessionController::class, 'current']);
       Route::post('/sales/daily-session/open', [SalesDailySessionController::class, 'open']);
+      Route::get('/sales/daily-sessions/open', [SalesDailySessionController::class, 'openSessions']);
       Route::get('/sales/daily-sessions/today-overview', [SalesDailySessionController::class, 'todayOverview']);
       Route::get('/sales/daily-sessions', [SalesDailySessionController::class, 'index']);
       Route::get('/sales/daily-sessions/{sessionId}', [SalesDailySessionController::class, 'show']);

@@ -64,6 +64,29 @@ class SalesDailySessionController extends Controller
         }
     }
 
+    public function openSessions(Request $request)
+    {
+        try {
+            $result = $this->sessionService->listOpenSessions($request->user());
+
+            return response()->json([
+                'status' => 'success',
+                'sessions' => $result['sessions']->values()->all(),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.unauthorized'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function index(Request $request)
     {
         try {
@@ -186,18 +209,26 @@ class SalesDailySessionController extends Controller
                 'cash_counts.*.employee_note' => 'nullable|string|max:1000',
                 'late_close_reason' => 'nullable|string|max:2000',
                 'session_id' => 'nullable|integer|exists:sales_daily_sessions,id',
+                'transfers' => 'nullable|array',
+                'transfers.*.currency' => 'required|string',
+                'transfers.*.to_box_id' => 'nullable|integer|exists:boxes,id',
+                'review_notes' => 'nullable|string|max:2000',
             ]);
 
             $closingRequest = $this->sessionService->requestClosing(
                 $request->user(),
                 $data['cash_counts'],
                 $data['late_close_reason'] ?? null,
-                isset($data['session_id']) ? (int) $data['session_id'] : null
+                isset($data['session_id']) ? (int) $data['session_id'] : null,
+                $data['transfers'] ?? null,
+                $data['review_notes'] ?? null
             );
 
             return response()->json([
                 'status' => 'success',
-                'message' => __('messages.sales_daily_closing_requested'),
+                'message' => $closingRequest->isPending()
+                    ? __('messages.sales_daily_closing_requested')
+                    : __('messages.sales_daily_closing_approved'),
                 'closing_request' => $this->formatClosingRequest($closingRequest),
             ], 200);
         } catch (ValidationException $e) {
