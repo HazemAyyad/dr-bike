@@ -63,6 +63,11 @@ class SalesOrderFulfillmentService
                     'employee_email' => [__('messages.shiply_employee_email_required')],
                 ]);
             }
+            if (! filter_var($employeeEmail, FILTER_VALIDATE_EMAIL)) {
+                throw ValidationException::withMessages([
+                    'employee_email' => [__('messages.shiply_employee_email_invalid')],
+                ]);
+            }
             if (empty($data['tracking_number'])) {
                 $data['tracking_number'] = null;
             }

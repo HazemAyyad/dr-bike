@@ -124,9 +124,14 @@ class ShiplyService
         $create = $this->request('POST', '/parcels/create', $payload, $mode);
 
         if (! is_array($create) || empty($create['success'])) {
-            $errors = is_array($create['errors'] ?? null) ? implode(' ', $create['errors']) : ($create['error'] ?? null);
+            $errors = $create['errors'] ?? $create['error'] ?? null;
+            Log::warning('shiply.create_parcel_failed', [
+                'mode' => $mode,
+                'employee_email' => $employeeEmail,
+                'response' => $create,
+            ]);
             throw ValidationException::withMessages([
-                'shiply' => [$errors ?: __('messages.shiply_create_parcel_failed')],
+                'shiply' => [$this->formatShiplyError($errors, $employeeEmail)],
             ]);
         }
 
@@ -235,6 +240,12 @@ class ShiplyService
             ]);
         }
 
+        if (empty($order->shiply_city_id)) {
+            throw ValidationException::withMessages([
+                'shiply_city_id' => [__('messages.shiply_city_required')],
+            ]);
+        }
+
         $village = ShiplyVillage::query()
             ->where('mode', $mode)
             ->where('shiply_id', $order->shiply_village_id)
@@ -339,6 +350,28 @@ class ShiplyService
             ]);
         }
 
+        if ($response->failed()) {
+            $json = $response->json();
+            Log::warning('shiply.http_error', [
+                'method' => $method,
+                'path' => $path,
+                'mode' => $mode,
+                'status' => $response->status(),
+                'body' => $json ?? $response->body(),
+            ]);
+
+            $errors = is_array($json) ? ($json['errors'] ?? $json['message'] ?? null) : null;
+            if ($response->status() === 401 || $this->isUnauthorizedShiplyError($errors)) {
+                throw ValidationException::withMessages([
+                    'shiply' => [__('messages.shiply_api_unauthorized', ['mode' => $mode])],
+                ]);
+            }
+
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_request_failed')],
+            ]);
+        }
+
         $json = $response->json();
         if (! is_array($json)) {
             throw ValidationException::withMessages([
@@ -347,5 +380,39 @@ class ShiplyService
         }
 
         return $json;
+    }
+
+    private function formatShiplyError(mixed $errors, string $employeeEmail): string
+    {
+        if ($this->isUnauthorizedShiplyError($errors)) {
+            return __('messages.shiply_unauthorized', [
+                'email' => $employeeEmail !== '' ? $employeeEmail : '?',
+            ]);
+        }
+
+        if (is_array($errors)) {
+            $text = trim(implode(' ', array_map('strval', $errors)));
+
+            return $text !== '' ? $text : __('messages.shiply_create_parcel_failed');
+        }
+
+        $text = trim((string) ($errors ?? ''));
+
+        return $text !== '' ? $text : __('messages.shiply_create_parcel_failed');
+    }
+
+    private function isUnauthorizedShiplyError(mixed $errors): bool
+    {
+        if (is_array($errors)) {
+            foreach ($errors as $error) {
+                if ($this->isUnauthorizedShiplyError($error)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return stripos(trim((string) $errors), 'unauthorized') !== false;
     }
 }

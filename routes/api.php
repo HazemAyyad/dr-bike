@@ -321,7 +321,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Projects and Purch
 
 });
 
-Route::group(['middleware'=>['auth:sanctum','check.permission:General Data,Data Completion','refresh.token.expiry']] , function() {
+Route::group(['middleware'=>['auth:sanctum','check.permission:General Data,Data Completion,Sales','refresh.token.expiry']] , function() {
 
       //customers
     Route::post('/create/person' , [Customers::class,'store']);
@@ -672,13 +672,13 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Boxes Section,Ch
 
   });
 
-Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Debts,Checks,Maintenance,Follow-up Section,Goal Creation,Projects and Purchases Management','refresh.token.expiry']], function () {
+Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Debts,Checks,Maintenance,Follow-up Section,Goal Creation,Projects and Purchases Management,Sales','refresh.token.expiry']], function () {
 
     //customers
     Route::get('/all/customers' , [Customers::class,'allCustomers']);
   });
 
-Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Checks,Debts,Maintenance,Follow-up Section,Goal Creation,Projects and Purchases Management,Purchasing Section','refresh.token.expiry']], function () {
+Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Checks,Debts,Maintenance,Follow-up Section,Goal Creation,Projects and Purchases Management,Purchasing Section,Sales','refresh.token.expiry']], function () {
 
     //sellers
     Route::get('/all/sellers' , [Customers::class,'allSellers']);
