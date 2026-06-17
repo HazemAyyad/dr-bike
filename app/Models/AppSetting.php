@@ -33,6 +33,12 @@ class AppSetting extends Model
     /** Check-outs between 00:00 and this hour (exclusive) may belong to previous work day. */
     public const KEY_ATTENDANCE_AFTER_MIDNIGHT_GRACE_HOUR = 'attendance_after_midnight_grace_hour';
 
+    /** Shiply delivery integration: test|live */
+    public const KEY_SHIPLY_MODE = 'shiply_mode';
+
+    /** Master switch for Shiply API calls */
+    public const KEY_SHIPLY_ENABLED = 'shiply_enabled';
+
     protected $fillable = [
         'key',
         'value',

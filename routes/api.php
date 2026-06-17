@@ -45,6 +45,8 @@ use App\Http\Controllers\API\IncomingChecks;
 use App\Http\Controllers\API\InstantSales;
 use App\Http\Controllers\API\SuspendedInstantSaleController;
 use App\Http\Controllers\API\SalesOrdersController;
+use App\Http\Controllers\API\ShiplyController;
+use App\Http\Controllers\API\ShiplyWebhookController;
 use App\Http\Controllers\API\CitiesController;
 use App\Http\Controllers\API\SalesDailySessionController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
@@ -103,6 +105,8 @@ use Illuminate\Support\Facades\Route;
     Route::match(['GET', 'POST'], '/iclock/getrequest', [FingerprintPushController::class, 'iclockGetRequest']);
     Route::match(['GET', 'POST'], '/iclock/devicecmd', [FingerprintPushController::class, 'iclockDevicecmd']);
     Route::get('/iclock/test', [FingerprintPushController::class, 'iclockTest']);
+
+    Route::post('/webhooks/shiply', [ShiplyWebhookController::class, 'handle']);
 
     //auth
     Route::post('/register' , [Authentication::class,'register']);
@@ -383,6 +387,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/sales/order/statement', [SalesOrdersController::class, 'statement']);
       Route::get('/cities', [CitiesController::class, 'index']);
       Route::get('/delivery/companies', [CitiesController::class, 'deliveryCompanies']);
+      Route::get('/shiply/address-options', [ShiplyController::class, 'addressOptions']);
 
       //Route::post('/attach/project/of/product/to/sale' , [InstantSales::class,'attachProjectToProductInSale']);
 

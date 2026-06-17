@@ -13,6 +13,8 @@ use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SalesOrderPackage;
 use App\Models\SalesOrderStatusLog;
+use App\Models\ShiplyCity;
+use App\Models\ShiplyVillage;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -104,6 +106,10 @@ class SalesOrderService
                 'customer_phone' => $customerSnapshot['customer_phone'],
                 'customer_address' => $customerSnapshot['customer_address'],
                 'city_id' => $data['city_id'] ?? null,
+                'shiply_city_id' => $data['shiply_city_id'] ?? null,
+                'shiply_village_id' => $data['shiply_village_id'] ?? null,
+                'shiply_city_name' => $data['shiply_city_name'] ?? null,
+                'shiply_village_name' => $data['shiply_village_name'] ?? null,
                 'status' => SalesOrderStatus::Unconfirmed->value,
                 'parent_order_id' => $data['parent_order_id'] ?? null,
                 'root_order_id' => $data['root_order_id'] ?? null,
@@ -165,6 +171,10 @@ class SalesOrderService
                 'customer_phone' => $customerSnapshot['customer_phone'],
                 'customer_address' => $customerSnapshot['customer_address'],
                 'city_id' => $data['city_id'] ?? $order->city_id,
+                'shiply_city_id' => $data['shiply_city_id'] ?? $order->shiply_city_id,
+                'shiply_village_id' => $data['shiply_village_id'] ?? $order->shiply_village_id,
+                'shiply_city_name' => $data['shiply_city_name'] ?? $order->shiply_city_name,
+                'shiply_village_name' => $data['shiply_village_name'] ?? $order->shiply_village_name,
                 'payment_type' => $data['payment_type'] ?? $order->payment_type,
                 'payment_box_id' => $data['payment_box_id'] ?? $order->payment_box_id,
                 'payment_amount' => $data['payment_amount'] ?? $order->payment_amount,
@@ -396,6 +406,12 @@ class SalesOrderService
                 'name_ar' => $order->city->name_ar,
                 'name_en' => $order->city->name_en,
             ] : null,
+            'shiply_city_id' => $order->shiply_city_id,
+            'shiply_village_id' => $order->shiply_village_id,
+            'shiply_city_name' => $order->shiply_city_name,
+            'shiply_village_name' => $order->shiply_village_name,
+            'shiply_address_label' => $this->formatShiplyAddressLabel($order),
+            'is_shiply_delivery' => $this->isShiplyDeliveryCompany($order),
             'payment_type' => $order->payment_type,
             'payment_box_id' => $order->payment_box_id,
             'payment_amount' => (float) $order->payment_amount,
@@ -507,7 +523,7 @@ class SalesOrderService
             'status' => $order->status,
             'customer_name' => $order->customer_name,
             'customer_phone' => $order->customer_phone,
-            'city_name' => $order->city?->name_ar,
+            'city_name' => $this->formatShiplyAddressLabel($order) ?: $order->city?->name_ar,
             'total' => (float) $order->total,
             'payment_type' => $order->payment_type,
             'created_at' => $order->created_at?->toDateTimeString(),
@@ -582,6 +598,10 @@ class SalesOrderService
             'customer_phone' => 'nullable|string|max:50',
             'customer_address' => 'nullable|string|max:500',
             'city_id' => 'nullable|integer|exists:cities,id',
+            'shiply_city_id' => 'nullable|integer|min:1',
+            'shiply_village_id' => 'nullable|integer|min:1',
+            'shiply_city_name' => 'nullable|string|max:255',
+            'shiply_village_name' => 'nullable|string|max:255',
             'payment_type' => 'nullable|string|in:cash,credit,mixed',
             'payment_box_id' => 'nullable|integer|exists:boxes,id',
             'payment_amount' => 'nullable|numeric|min:0',
@@ -608,6 +628,8 @@ class SalesOrderService
         ];
 
         $data = $request->validate($rules);
+
+        $data = $this->enrichShiplyAddressNames($data);
 
         $isDebtCollection = (bool) ($data['is_debt_collection'] ?? ($order?->is_debt_collection ?? false));
 
@@ -770,5 +792,55 @@ class SalesOrderService
                 'is_hidden' => (bool) ($item['is_hidden'] ?? false),
             ]);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function enrichShiplyAddressNames(array $data): array
+    {
+        if (empty($data['shiply_city_id']) && empty($data['shiply_village_id'])) {
+            return $data;
+        }
+
+        if (empty($data['shiply_city_name']) && ! empty($data['shiply_city_id'])) {
+            $data['shiply_city_name'] = ShiplyCity::query()
+                ->where('shiply_id', (int) $data['shiply_city_id'])
+                ->value('name');
+        }
+
+        if (empty($data['shiply_village_name']) && ! empty($data['shiply_village_id'])) {
+            $data['shiply_village_name'] = ShiplyVillage::query()
+                ->where('shiply_id', (int) $data['shiply_village_id'])
+                ->value('name');
+        }
+
+        return $data;
+    }
+
+    private function formatShiplyAddressLabel(SalesOrder $order): ?string
+    {
+        $city = trim((string) ($order->shiply_city_name ?? ''));
+        $village = trim((string) ($order->shiply_village_name ?? ''));
+
+        if ($city === '' && $village === '') {
+            return null;
+        }
+
+        if ($city !== '' && $village !== '') {
+            return $city.' — '.$village;
+        }
+
+        return $city !== '' ? $city : $village;
+    }
+
+    private function isShiplyDeliveryCompany(SalesOrder $order): bool
+    {
+        $code = $order->relationLoaded('deliveryCompany')
+            ? $order->deliveryCompany?->code
+            : $order->deliveryCompany()->value('code');
+
+        return strtolower((string) $code) === 'shiply';
     }
 }

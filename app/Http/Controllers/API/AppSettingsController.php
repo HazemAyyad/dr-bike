@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Support\AttendanceSettings;
 use App\Support\SalesDailySettings;
+use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -51,6 +52,7 @@ class AppSettingsController extends Controller
                 'sales_daily_variance_alert_threshold' => 'sometimes|numeric|min:0|max:999999',
                 'sales_daily_max_float' => 'sometimes|array',
                 'attendance' => 'sometimes|array',
+                'shiply' => 'sometimes|array',
             ], $maxFloatRules));
 
             if ($request->has('employee_task_subtask_bonus_default')) {
@@ -88,6 +90,9 @@ class AppSettingsController extends Controller
             }
             if ($request->has('attendance') && is_array($request->input('attendance'))) {
                 AttendanceSettings::updateFromArray($request->input('attendance'));
+            }
+            if ($request->has('shiply') && is_array($request->input('shiply'))) {
+                ShiplySettings::updateFromArray($request->input('shiply'));
             }
 
             return response()->json([
@@ -128,6 +133,7 @@ class AppSettingsController extends Controller
             'sales_daily_variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
             'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),
             'attendance' => AttendanceSettings::toArray(),
+            'shiply' => ShiplySettings::toArray(),
         ];
     }
 }

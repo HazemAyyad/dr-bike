@@ -14,6 +14,10 @@ class SalesOrderDelivery extends Model
         'delivery_company_name',
         'tracking_number',
         'external_reference',
+        'handed_over_by_user_id',
+        'shiply_employee_email',
+        'shiply_mode',
+        'shiply_parcel_code',
         'handed_over_at',
         'delivered_at',
     ];

@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\SalesOrderStatus;
 use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
+use App\Models\DeliveryCompany;
 use App\Models\InstantSale;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
@@ -16,6 +17,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use App\Support\ShiplySettings;
 use Illuminate\Validation\ValidationException;
 
 class SalesOrderFulfillmentService
@@ -29,11 +31,12 @@ class SalesOrderFulfillmentService
         protected SalesDailySessionService $sessionService,
         protected DebtLedgerService $debtLedgerService,
         protected SalesOrderNotificationService $notifications,
+        protected ShiplyService $shiplyService,
     ) {}
 
     public function handoverToDelivery(User $user, int $orderId, array $payload): SalesOrder
     {
-        $order = SalesOrder::query()->with(['items', 'packages'])->findOrFail($orderId);
+        $order = SalesOrder::query()->with(['items', 'packages', 'deliveryCompany'])->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::Ready]);
 
         $data = validator($payload, [
@@ -49,14 +52,47 @@ class SalesOrderFulfillmentService
             ]);
         }
 
-        return DB::transaction(function () use ($user, $order, $data) {
+        $deliveryCompanyId = $data['delivery_company_id'] ?? $order->delivery_company_id;
+        $isShiply = $this->isShiplyCompany($deliveryCompanyId);
+        $shiplyMode = ShiplySettings::mode();
+        $employeeEmail = trim((string) $user->email);
+
+        if ($isShiply) {
+            if ($employeeEmail === '') {
+                throw ValidationException::withMessages([
+                    'employee_email' => [__('messages.shiply_employee_email_required')],
+                ]);
+            }
+            if (empty($data['tracking_number'])) {
+                $data['tracking_number'] = null;
+            }
+        }
+
+        $parcelCode = null;
+        if ($isShiply) {
+            $parcel = $this->shiplyService->createAndSubmitParcel($order, $employeeEmail, $shiplyMode);
+            $parcelCode = $parcel['parcel_code'];
+            $data['tracking_number'] = $parcelCode;
+        }
+
+        return DB::transaction(function () use ($user, $order, $data, $isShiply, $shiplyMode, $employeeEmail, $parcelCode, $deliveryCompanyId) {
             $this->stockService->dispatchOrder($order, (int) $user->id);
+
+            $companyName = $data['delivery_company_name'] ?? null;
+            if ($deliveryCompanyId && ! $companyName) {
+                $companyName = DeliveryCompany::query()->find($deliveryCompanyId)?->name;
+            }
 
             SalesOrderDelivery::create([
                 'sales_order_id' => $order->id,
-                'delivery_company_id' => $data['delivery_company_id'] ?? null,
-                'delivery_company_name' => $data['delivery_company_name'] ?? null,
+                'delivery_company_id' => $deliveryCompanyId,
+                'delivery_company_name' => $companyName,
                 'tracking_number' => $data['tracking_number'] ?? null,
+                'external_reference' => $parcelCode,
+                'shiply_parcel_code' => $parcelCode,
+                'shiply_employee_email' => $isShiply ? $employeeEmail : null,
+                'shiply_mode' => $isShiply ? $shiplyMode : null,
+                'handed_over_by_user_id' => $user->id,
                 'handed_over_at' => now(),
             ]);
 
@@ -65,8 +101,8 @@ class SalesOrderFulfillmentService
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::WithDelivery->value,
-                'delivery_company_id' => $data['delivery_company_id'] ?? $order->delivery_company_id,
-                'delivery_company_name' => $data['delivery_company_name'] ?? $order->delivery_company_name,
+                'delivery_company_id' => $deliveryCompanyId,
+                'delivery_company_name' => $companyName ?? $order->delivery_company_name,
                 'carrier_delivery_cost' => $data['carrier_delivery_cost'] ?? $order->carrier_delivery_cost,
                 'stock_deducted_at' => now(),
                 'updated_by' => $user->id,
@@ -76,8 +112,59 @@ class SalesOrderFulfillmentService
                 $order->packages()->update(['tracking_number' => $data['tracking_number']]);
             }
 
-            $this->logStatus($order, $from, SalesOrderStatus::WithDelivery->value, 'تسليم لشركة التوصيل', $user->id);
+            $note = $isShiply
+                ? 'تسليم لشبلي — '.$parcelCode
+                : 'تسليم لشركة التوصيل';
+            $this->logStatus($order, $from, SalesOrderStatus::WithDelivery->value, $note, $user->id);
             $this->notifications->notifyStatusChange($order->fresh(), $from, SalesOrderStatus::WithDelivery->value, $user);
+
+            return $order->fresh();
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    public function markDeliveredFromShiply(User $user, int $orderId, array $meta = []): SalesOrder
+    {
+        $order = SalesOrder::query()->with(['items'])->findOrFail($orderId);
+
+        if ($order->statusEnum() === SalesOrderStatus::Delivered) {
+            return $order;
+        }
+
+        $this->assertTransition($order, [SalesOrderStatus::WithDelivery]);
+
+        $note = trim((string) ($meta['note'] ?? ''));
+        $logNote = $note !== '' ? $note : 'تم التوصيل تلقائياً من Shiply';
+
+        return DB::transaction(function () use ($user, $order, $logNote) {
+            $instantSale = $this->createInstantSaleFromOrder($order, $user, null, []);
+
+            $order->items()->where('is_hidden', false)->update([
+                'delivered_qty' => DB::raw('quantity'),
+            ]);
+
+            SalesOrderDelivery::query()
+                ->where('sales_order_id', $order->id)
+                ->latest('id')
+                ->limit(1)
+                ->update(['delivered_at' => now()]);
+
+            $order->packages()->update(['status' => 'delivered']);
+
+            $from = $order->status;
+            $order->update([
+                'status' => SalesOrderStatus::Delivered->value,
+                'instant_sale_id' => $instantSale->id,
+                'financial_posted_at' => now(),
+                'payment_box_id' => $instantSale->payment_box_id,
+                'payment_amount' => (float) ($instantSale->payment_box_value ?? 0),
+                'updated_by' => $user->id,
+            ]);
+
+            $this->logStatus($order, $from, SalesOrderStatus::Delivered->value, $logNote, $user->id);
+            $this->notifications->notifyStatusChange($order->fresh(), $from, SalesOrderStatus::Delivered->value, $user);
 
             return $order->fresh();
         });
@@ -185,13 +272,30 @@ class SalesOrderFulfillmentService
 
     public function markReturned(User $user, int $orderId, ?string $note = null): SalesOrder
     {
-        $order = SalesOrder::query()->findOrFail($orderId);
+        $order = SalesOrder::query()->with('deliveryCompany')->findOrFail($orderId);
         $this->assertTransition($order, [
             SalesOrderStatus::WithDelivery,
             SalesOrderStatus::PartialReturn,
             SalesOrderStatus::PartialDelivered,
             SalesOrderStatus::Review,
         ]);
+
+        $latestDelivery = SalesOrderDelivery::query()
+            ->where('sales_order_id', $order->id)
+            ->latest('id')
+            ->first();
+
+        if ($latestDelivery?->shiply_parcel_code && $latestDelivery->shiply_employee_email) {
+            try {
+                $this->shiplyService->cancelParcel(
+                    $latestDelivery->shiply_parcel_code,
+                    $latestDelivery->shiply_employee_email,
+                    $latestDelivery->shiply_mode
+                );
+            } catch (\Throwable) {
+                // Local return should still proceed even if Shiply cancel fails.
+            }
+        }
 
         return DB::transaction(function () use ($user, $order, $note) {
             if ($order->stock_deducted_at) {
@@ -377,7 +481,7 @@ class SalesOrderFulfillmentService
     private function createInstantSaleFromOrder(
         SalesOrder $order,
         User $user,
-        $session,
+        $session = null,
         array $payload = []
     ): InstantSale {
         if ($order->instant_sale_id) {
@@ -402,6 +506,17 @@ class SalesOrderFulfillmentService
             (float) $order->discount,
             $payload
         );
+    }
+
+    private function isShiplyCompany(?int $deliveryCompanyId): bool
+    {
+        if (! $deliveryCompanyId) {
+            return false;
+        }
+
+        $code = DeliveryCompany::query()->where('id', $deliveryCompanyId)->value('code');
+
+        return strtolower((string) $code) === 'shiply';
     }
 
     private function resolvePaidAmountForTotal(SalesOrder $order, float $total, array $payload): float
