@@ -32,6 +32,7 @@ class SalesOrderPartialService
             SalesOrderStatus::WithDelivery,
             SalesOrderStatus::PartialDelivered,
             SalesOrderStatus::Review,
+            SalesOrderStatus::PartialReturn,
         ]);
 
         $data = validator($payload, [
@@ -182,7 +183,10 @@ class SalesOrderPartialService
     public function partialReturn(User $user, int $orderId, array $lines, ?string $note = null): SalesOrder
     {
         $order = SalesOrder::query()->with(['items.product'])->findOrFail($orderId);
-        $this->assertTransition($order, [SalesOrderStatus::WithDelivery]);
+        $this->assertTransition($order, [
+            SalesOrderStatus::WithDelivery,
+            SalesOrderStatus::PartialReturn,
+        ]);
 
         return DB::transaction(function () use ($user, $order, $lines, $note) {
             $this->applyPartialReturn($user, $order, $lines, $note, true);

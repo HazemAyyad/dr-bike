@@ -186,7 +186,12 @@ class SalesOrderFulfillmentService
     public function markReturned(User $user, int $orderId, ?string $note = null): SalesOrder
     {
         $order = SalesOrder::query()->findOrFail($orderId);
-        $this->assertTransition($order, [SalesOrderStatus::WithDelivery]);
+        $this->assertTransition($order, [
+            SalesOrderStatus::WithDelivery,
+            SalesOrderStatus::PartialReturn,
+            SalesOrderStatus::PartialDelivered,
+            SalesOrderStatus::Review,
+        ]);
 
         return DB::transaction(function () use ($user, $order, $note) {
             if ($order->stock_deducted_at) {

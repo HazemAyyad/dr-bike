@@ -322,7 +322,12 @@ class SalesOrderService
     {
         $order = SalesOrder::query()->findOrFail($orderId);
 
-        if ($order->statusEnum() === SalesOrderStatus::WithDelivery) {
+        if (in_array($order->statusEnum(), [
+            SalesOrderStatus::WithDelivery,
+            SalesOrderStatus::PartialReturn,
+            SalesOrderStatus::PartialDelivered,
+            SalesOrderStatus::Review,
+        ], true)) {
             return $this->fulfillmentService->markReturned($user, $orderId, $note);
         }
 
