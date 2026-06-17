@@ -150,7 +150,7 @@ class SalesOrderFulfillmentService
         $note = trim((string) ($meta['note'] ?? ''));
         $logNote = $note !== '' ? $note : 'تم التوصيل تلقائياً من Shiply';
 
-        return DB::transaction(function () use ($user, $order, $logNote) {
+        return DB::transaction(function () use ($user, $order, $logNote, $meta) {
             $instantSale = $this->createInstantSaleFromOrder($order, $user, null, []);
 
             $order->items()->where('is_hidden', false)->update([
@@ -176,9 +176,11 @@ class SalesOrderFulfillmentService
             ]);
 
             $this->logStatus($order, $from, SalesOrderStatus::Delivered->value, $logNote, $user->id);
-            $this->notifications->notifyStatusChange($order->fresh(), $from, SalesOrderStatus::Delivered->value, $user);
 
-            return $order->fresh();
+            $freshOrder = $order->fresh();
+            $this->notifications->notifyShiplyDelivered($freshOrder, $user, $meta);
+
+            return $freshOrder;
         });
     }
 

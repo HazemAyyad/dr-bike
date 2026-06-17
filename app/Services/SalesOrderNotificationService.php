@@ -13,6 +13,8 @@ class SalesOrderNotificationService
 
     public const TYPE_SHIPLY_HANDOVER = 'sales_order_shiply_handover';
 
+    public const TYPE_SHIPLY_DELIVERED = 'sales_order_shiply_delivered';
+
     public function __construct(
         protected AdminNotificationService $adminNotifications
     ) {}
@@ -114,6 +116,55 @@ class SalesOrderNotificationService
             Log::error('Shiply handover notification failed: '.$e->getMessage(), [
                 'order_id' => $order->id,
                 'parcel_code' => $parcelCode,
+            ]);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    public function notifyShiplyDelivered(
+        SalesOrder $order,
+        ?User $actor = null,
+        array $meta = []
+    ): void {
+        try {
+            $serial = $order->serial_number ?? '#'.$order->id;
+            $customer = $order->customer_name ?? __('messages.sales_order_unknown_customer');
+            $parcelCode = trim((string) ($meta['parcel_code'] ?? ''));
+            if ($parcelCode === '') {
+                $parcelCode = trim((string) ($meta['tracking_number'] ?? ''));
+            }
+            if ($parcelCode === '') {
+                $parcelCode = '—';
+            }
+
+            $title = __('messages.sales_order_shiply_delivered_title', ['serial' => $serial]);
+            $body = __('messages.sales_order_shiply_delivered_body', [
+                'serial' => $serial,
+                'customer' => $customer,
+                'parcel' => $parcelCode,
+            ]);
+
+            $this->adminNotifications->create(
+                self::TYPE_SHIPLY_DELIVERED,
+                $title,
+                $body,
+                [
+                    'sales_order_id' => (string) $order->id,
+                    'serial_number' => (string) ($order->serial_number ?? ''),
+                    'parcel_code' => $parcelCode,
+                    'customer_name' => (string) ($order->customer_name ?? ''),
+                    'actor_id' => $actor ? (string) $actor->id : '',
+                ],
+                null,
+                'sales_order',
+                (int) $order->id,
+                true
+            );
+        } catch (\Throwable $e) {
+            Log::error('Shiply delivered notification failed: '.$e->getMessage(), [
+                'order_id' => $order->id,
             ]);
         }
     }

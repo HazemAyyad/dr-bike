@@ -214,6 +214,7 @@ class AdminNotificationWebController extends Controller
             AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_CREATED => 'فاتورة عالقة جديدة',
             AdminNotificationService::TYPE_SUSPENDED_INSTANT_SALE_COMPLETED => 'إتمام فاتورة عالقة',
             SalesOrderNotificationService::TYPE_SHIPLY_HANDOVER => 'تسليم طلبية لشبلي',
+            SalesOrderNotificationService::TYPE_SHIPLY_DELIVERED => 'توصيل طلبية من شبلي',
         ];
     }
 }

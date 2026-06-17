@@ -623,6 +623,8 @@ return [
     'sales_order_notify_body' => 'طلبية :serial (:customer): :from ← :to',
     'sales_order_shiply_handover_title' => 'تسليم شبلي — :serial',
     'sales_order_shiply_handover_body' => 'تم تسليم الطلبية :serial (:customer) لشبلي. رقم الطرد: :parcel. بواسطة: :employee. العنوان: :address',
+    'sales_order_shiply_delivered_title' => 'تم التوصيل من شبلي — :serial',
+    'sales_order_shiply_delivered_body' => 'تم توصيل الطلبية :serial (:customer) عبر شبلي. رقم الطرد: :parcel',
     'sales_order_unknown_customer' => 'زبون غير محدد',
     'sales_order_status_unconfirmed' => 'غير مؤكدة',
     'sales_order_status_confirmed' => 'مؤكدة',
