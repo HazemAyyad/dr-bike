@@ -6,6 +6,7 @@ use App\Models\SalesOrder;
 use App\Models\ShiplyCity;
 use App\Models\ShiplyVillage;
 use App\Support\ShiplySettings;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -124,7 +125,7 @@ class ShiplyService
         $create = $this->request('POST', '/parcels/create', $payload, $mode);
 
         if (! is_array($create) || empty($create['success'])) {
-            $errors = $create['errors'] ?? $create['error'] ?? null;
+            $errors = $create['errors'] ?? $create['error'] ?? $create['message'] ?? null;
             Log::warning('shiply.create_parcel_failed', [
                 'mode' => $mode,
                 'employee_email' => $employeeEmail,
@@ -252,6 +253,22 @@ class ShiplyService
             ->first();
 
         if (! $village) {
+            try {
+                $this->syncAddresses($mode);
+            } catch (\Throwable $e) {
+                Log::warning('shiply.sync_before_parcel_failed', [
+                    'mode' => $mode,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+
+            $village = ShiplyVillage::query()
+                ->where('mode', $mode)
+                ->where('shiply_id', $order->shiply_village_id)
+                ->first();
+        }
+
+        if (! $village) {
             throw ValidationException::withMessages([
                 'shiply_village_id' => [__('messages.shiply_village_invalid')],
             ]);
@@ -331,12 +348,29 @@ class ShiplyService
 
         $url = rtrim(ShiplySettings::baseUrl($mode), '/').'/'.ltrim($path, '/');
         $body = array_merge($payload, ['Shiply_API_KEY' => $apiKey]);
+        $method = strtoupper($method);
 
         try {
-            $response = Http::timeout((int) config('shiply.http_timeout', 30))
-                ->acceptJson()
-                ->asJson()
-                ->send($method, $url, ['json' => $body]);
+            $client = Http::timeout((int) config('shiply.http_timeout', 30))->acceptJson();
+
+            $response = match ($method) {
+                'GET', 'HEAD', 'DELETE' => $client->withOptions([
+                    'query' => $body,
+                ])->send($method, $url),
+                default => $client->asJson()->send($method, $url, ['json' => $body]),
+            };
+        } catch (ConnectionException $e) {
+            Log::error('shiply.connection_failed', [
+                'method' => $method,
+                'path' => $path,
+                'mode' => $mode,
+                'url' => $url,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_connection_failed')],
+            ]);
         } catch (RequestException $e) {
             Log::error('shiply.http_failed', [
                 'method' => $method,
@@ -346,7 +380,7 @@ class ShiplyService
             ]);
 
             throw ValidationException::withMessages([
-                'shiply' => [__('messages.shiply_request_failed')],
+                'shiply' => [$this->formatHttpErrorMessage($e)],
             ]);
         }
 
@@ -368,7 +402,7 @@ class ShiplyService
             }
 
             throw ValidationException::withMessages([
-                'shiply' => [__('messages.shiply_request_failed')],
+                'shiply' => [$this->extractResponseErrorMessage($json) ?? __('messages.shiply_request_failed')],
             ]);
         }
 
@@ -380,6 +414,38 @@ class ShiplyService
         }
 
         return $json;
+    }
+
+    private function formatHttpErrorMessage(RequestException $e): string
+    {
+        $json = $e->response?->json();
+        if (is_array($json)) {
+            $message = $this->extractResponseErrorMessage($json);
+            if ($message !== null) {
+                return $message;
+            }
+        }
+
+        return __('messages.shiply_request_failed');
+    }
+
+    private function extractResponseErrorMessage(?array $json): ?string
+    {
+        if ($json === null) {
+            return null;
+        }
+
+        $errors = $json['errors'] ?? null;
+        if ($errors !== null) {
+            return $this->formatShiplyError($errors, '');
+        }
+
+        $message = trim((string) ($json['message'] ?? ''));
+        if ($message !== '') {
+            return $message;
+        }
+
+        return null;
     }
 
     private function formatShiplyError(mixed $errors, string $employeeEmail): string
@@ -416,3 +482,4 @@ class ShiplyService
         return stripos(trim((string) $errors), 'unauthorized') !== false;
     }
 }
+

@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Enums\SalesOrderStatus;
 use App\Support\ProductImageResolver;
+use App\Support\ShiplySettings;
 use App\Models\City;
 use App\Models\Customer;
 use App\Models\Product;
@@ -827,15 +828,19 @@ class SalesOrderService
             return $data;
         }
 
+        $mode = ShiplySettings::mode();
+
         if (empty($data['shiply_city_name']) && ! empty($data['shiply_city_id'])) {
             $data['shiply_city_name'] = ShiplyCity::query()
                 ->where('shiply_id', (int) $data['shiply_city_id'])
+                ->where('mode', $mode)
                 ->value('name');
         }
 
         if (empty($data['shiply_village_name']) && ! empty($data['shiply_village_id'])) {
             $data['shiply_village_name'] = ShiplyVillage::query()
                 ->where('shiply_id', (int) $data['shiply_village_id'])
+                ->where('mode', $mode)
                 ->value('name');
         }
 

@@ -76,6 +76,7 @@ class SalesOrderFulfillmentService
 
         $parcelCode = null;
         if ($isShiply) {
+            $order = $order->fresh();
             $parcel = $this->shiplyService->createAndSubmitParcel($order, $employeeEmail, $shiplyMode);
             $parcelCode = $parcel['parcel_code'];
             $data['tracking_number'] = $parcelCode;

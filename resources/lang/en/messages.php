@@ -600,6 +600,7 @@ return [
     'shiply_disabled' => 'Shiply integration is disabled in settings.',
     'shiply_api_key_missing' => 'Shiply API key is not configured for this environment.',
     'shiply_request_failed' => 'Shiply request failed.',
+    'shiply_connection_failed' => 'Could not reach Shiply servers. Check server internet access, API key, and test/live mode.',
     'shiply_sync_failed' => 'Failed to sync Shiply cities and villages.',
     'shiply_create_parcel_failed' => 'Failed to create Shiply parcel.',
     'shiply_village_required' => 'Shiply village is required before handover.',

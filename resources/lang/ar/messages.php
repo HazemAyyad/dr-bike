@@ -612,6 +612,7 @@ return [
     'shiply_disabled' => 'تكامل شبلي معطّل من الإعدادات.',
     'shiply_api_key_missing' => 'مفتاح Shiply غير مضبوط لهذه البيئة.',
     'shiply_request_failed' => 'فشل الاتصال بـ Shiply.',
+    'shiply_connection_failed' => 'تعذّر الاتصال بخوادم Shiply. تحقق من اتصال السيرفر بالإنترنت ومفتاح API ووضع التجريبي/الفعلي.',
     'shiply_sync_failed' => 'فشل مزامنة مدن وقرى Shiply.',
     'shiply_create_parcel_failed' => 'فشل إنشاء الطرد في Shiply.',
     'shiply_village_required' => 'يجب اختيار قرية Shiply قبل التسليم.',
