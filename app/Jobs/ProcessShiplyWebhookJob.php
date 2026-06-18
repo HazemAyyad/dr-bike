@@ -6,6 +6,7 @@ use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
 use App\Models\User;
 use App\Services\SalesOrderFulfillmentService;
+use App\Services\SalesOrderShiplyTrackingService;
 use App\Support\ShiplySettings;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -26,7 +27,10 @@ class ProcessShiplyWebhookJob implements ShouldQueue
      */
     public function __construct(public array $payload) {}
 
-    public function handle(SalesOrderFulfillmentService $fulfillment): void
+    public function handle(
+        SalesOrderFulfillmentService $fulfillment,
+        SalesOrderShiplyTrackingService $tracking,
+    ): void
     {
         $parcelCode = trim((string) ($this->payload['parcel_code'] ?? ''));
         $statusId = (int) ($this->payload['parcel_status_id'] ?? 0);
@@ -60,6 +64,15 @@ class ProcessShiplyWebhookJob implements ShouldQueue
             Log::warning('shiply.webhook_order_not_found', $this->payload);
 
             return;
+        }
+
+        try {
+            $tracking->recordFromWebhook($order, $this->payload);
+        } catch (\Throwable $e) {
+            Log::warning('shiply.webhook_event_log_failed', [
+                'order_id' => $order->id,
+                'error' => $e->getMessage(),
+            ]);
         }
 
         $deliveredStatus = (int) config('shiply.parcel_status.delivered', 6);

@@ -121,6 +121,11 @@ class SalesOrder extends Model
         return $this->hasMany(SalesOrderDelivery::class);
     }
 
+    public function shiplyEvents(): HasMany
+    {
+        return $this->hasMany(SalesOrderShiplyEvent::class);
+    }
+
     public function deliveryCompany(): BelongsTo
     {
         return $this->belongsTo(DeliveryCompany::class);

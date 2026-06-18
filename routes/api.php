@@ -9,6 +9,7 @@ use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\AppSettingsController;
 use App\Http\Controllers\API\AdminAttendanceSettingsController;
 use App\Http\Controllers\API\AdminEmployeeAttendanceController;
+use App\Http\Controllers\API\EmployeeAttendanceOvertimeController;
 use App\Http\Controllers\API\AdminAttendanceDevicesController;
 use App\Http\Controllers\API\AdminFingerprintDevicesController;
 use App\Http\Controllers\API\AdminFingerprintUsersController;
@@ -202,6 +203,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
     Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory']);
     Route::post('/admin/employees/{employeeId}/attendance/manual-checkout', [AdminEmployeeAttendanceController::class, 'manualCheckout'])
         ->whereNumber('employeeId');
+    Route::put('/admin/employees/{employeeId}/attendance/day', [AdminEmployeeAttendanceController::class, 'updateDay'])
+        ->whereNumber('employeeId');
+    Route::get('/employee/attendance/overtime-requests', [EmployeeAttendanceOvertimeController::class, 'index']);
+    Route::post('/employee/attendance/overtime-requests/{requestId}/approve', [EmployeeAttendanceOvertimeController::class, 'approve'])
+        ->whereNumber('requestId');
+    Route::post('/employee/attendance/overtime-requests/{requestId}/reject', [EmployeeAttendanceOvertimeController::class, 'reject'])
+        ->whereNumber('requestId');
     Route::get('/employee-attendance/reports', [EmployeeAttendanceReportController::class, 'index']);
 
     // Employee points and rewards (manual management)

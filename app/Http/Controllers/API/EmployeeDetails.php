@@ -1239,7 +1239,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 ? Carbon::parse($request->to_date)->endOfDay()
                 : now()->endOfDay();
 
-            $payload = $this->buildAttendanceHistoryPayload($employee, $from, $to);
+            $payload = $this->buildAttendanceHistoryPayload($employee, $from, $to, true);
 
             return response()->json(array_merge(['status' => 'success'], $payload), 200);
         } catch (ValidationException $e) {
@@ -1312,7 +1312,12 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
     /**
      * @return array{employee: array<string, mixed>, days: array<int, array<string, mixed>>}
      */
-    private function buildAttendanceHistoryPayload(EmployeeDetail $employee, Carbon $from, Carbon $to): array
+    private function buildAttendanceHistoryPayload(
+        EmployeeDetail $employee,
+        Carbon $from,
+        Carbon $to,
+        bool $forAdmin = false
+    ): array {
     {
         $fromStr = $from->toDateString();
         $toStr = $to->toDateString();
@@ -1331,6 +1336,22 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             ->map(fn ($d) => $d instanceof Carbon ? $d->format('Y-m-d') : (string) $d);
 
         $allDates = $scanDates->merge($attDates)->unique()->sort()->values();
+
+        $overtimeByAttendanceId = collect();
+        if ($forAdmin) {
+            $attendanceIds = EmployeeAttendance::query()
+                ->where('employee_id', $employee->id)
+                ->whereBetween('date', [$fromStr, $toStr])
+                ->pluck('id');
+            if ($attendanceIds->isNotEmpty()) {
+                $overtimeByAttendanceId = \App\Models\EmployeeAttendanceOvertimeRequest::query()
+                    ->whereIn('employee_attendance_id', $attendanceIds)
+                    ->orderByDesc('id')
+                    ->get()
+                    ->unique('employee_attendance_id')
+                    ->keyBy('employee_attendance_id');
+            }
+        }
 
         /** @var AttendanceSalaryService $salaryService */
         $salaryService = app(AttendanceSalaryService::class);
@@ -1467,6 +1488,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $firstCheckInApi = AttendanceScanPresenter::checkInSummary($firstInScan ?? null);
             $lastCheckOutApi = AttendanceScanPresenter::checkInSummary($lastOutScan ?? null);
 
+            $overtimeRequest = ($legacy && $forAdmin)
+                ? $overtimeByAttendanceId->get($legacy->id)
+                : null;
+
             $days[] = array_merge([
                 'date' => $dateStr,
                 'source' => $dayScans->isNotEmpty()
@@ -1493,6 +1518,15 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'contract_overtime_minutes' => (int) round(((float) ($financial['overtime_hours'] ?? 0)) * 60),
                 'segments' => $segments,
                 'scans' => $scansOut,
+                'overtime_request_id' => $overtimeRequest ? (int) $overtimeRequest->id : null,
+                'overtime_request_status' => $overtimeRequest ? (string) $overtimeRequest->status : null,
+                'overtime_requested_minutes' => $overtimeRequest
+                    ? (int) $overtimeRequest->requested_minutes
+                    : 0,
+                'overtime_approved_minutes' => $overtimeRequest && $overtimeRequest->approved_minutes !== null
+                    ? (int) $overtimeRequest->approved_minutes
+                    : null,
+                'can_edit_day' => $forAdmin && ! $currentlyIn,
             ], $financial);
         }
 

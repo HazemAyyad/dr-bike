@@ -12,6 +12,7 @@ use App\Models\EmployeeDeviceMapping;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
 use App\Support\AttendanceSettings;
+use App\Services\EmployeeAttendanceOvertimeService;
 use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -269,6 +270,18 @@ class FingerprintAttendanceProcessor
         $attendance->normal_minutes = $daily['normal_minutes'];
         $attendance->overtime_minutes = $daily['overtime_minutes'];
         $attendance->save();
+
+        if ($direction === 'out') {
+            $calculatedOvertime = (int) ($daily['overtime_minutes'] ?? 0);
+            if ($calculatedOvertime > 0) {
+                $attendance = app(EmployeeAttendanceOvertimeService::class)->applyCheckoutOvertimePolicy(
+                    $attendance,
+                    $employee,
+                    'fingerprint',
+                    $calculatedOvertime
+                );
+            }
+        }
 
         if ($direction === 'in') {
             $this->notifyLogin($employee, $attendance, $scanAt);

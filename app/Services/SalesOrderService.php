@@ -27,6 +27,8 @@ class SalesOrderService
         protected SalesOrderStockService $stockService,
         protected SalesOrderFulfillmentService $fulfillmentService,
         protected SalesOrderNotificationService $notifications,
+        protected SalesOrderShiplyTrackingService $shiplyTracking,
+        protected ShiplyService $shiplyService,
     ) {}
 
     /**
@@ -196,7 +198,7 @@ class SalesOrderService
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
             }
 
-            $this->stockService->syncReservationsAfterEdit($order->fresh(['items.product']));
+            $this->stockService->syncReservationsAfterEdit($order->fresh(['items.product']), (int) $user->id);
 
             return $order->fresh($this->detailRelations());
         });
@@ -233,12 +235,21 @@ class SalesOrderService
         }
 
         return DB::transaction(function () use ($user, $order) {
-            $this->stockService->reserveOrder($order);
+            $order->loadMissing('items.product');
+            foreach ($order->items as $item) {
+                if ($item->is_hidden) {
+                    continue;
+                }
+                $this->stockService->assertItemCanReserve($item, (int) $order->id);
+            }
+
+            $this->stockService->dispatchOrder($order, (int) $user->id);
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Confirmed->value,
                 'postponed_until' => null,
                 'postpone_reason' => null,
+                'stock_deducted_at' => now(),
                 'updated_by' => $user->id,
             ]);
             $this->logStatus($order, $from, SalesOrderStatus::Confirmed->value, 'تأكيد الطلبية', $user->id);
@@ -294,12 +305,15 @@ class SalesOrderService
             $from = $order->status;
 
             if ($order->statusEnum() === SalesOrderStatus::WithDelivery) {
-                $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
+                $this->cancelActiveShiplyParcel($order);
                 $order->packages()->update(['status' => 'pending']);
-                $order->update(['stock_deducted_at' => null]);
-                $this->stockService->reserveOrder($order->fresh(['items.product']));
             } elseif ($previous === SalesOrderStatus::Unconfirmed) {
-                $this->stockService->releaseOrder($order);
+                if ($order->stock_deducted_at) {
+                    $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
+                    $order->update(['stock_deducted_at' => null]);
+                } else {
+                    $this->stockService->releaseOrder($order);
+                }
             }
 
             $order->update([
@@ -348,10 +362,16 @@ class SalesOrderService
         }
 
         return DB::transaction(function () use ($user, $order, $note) {
-            $this->stockService->releaseOrder($order);
+            if ($order->stock_deducted_at) {
+                $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
+            } else {
+                $this->stockService->releaseOrder($order);
+            }
+
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Canceled->value,
+                'stock_deducted_at' => null,
                 'updated_by' => $user->id,
             ]);
             $this->logStatus($order, $from, SalesOrderStatus::Canceled->value, $note ?? 'إلغاء الطلبية', $user->id);
@@ -509,6 +529,7 @@ class SalesOrderService
                 'total' => (float) $child->total,
                 'created_at' => $child->created_at?->toDateTimeString(),
             ])->values()->all(),
+            'shiply_tracking' => $this->shiplyTracking->buildTrackingPayload($order),
         ];
     }
 
@@ -844,5 +865,27 @@ class SalesOrderService
             : $order->deliveryCompany()->value('code');
 
         return strtolower((string) $code) === 'shiply';
+    }
+
+    private function cancelActiveShiplyParcel(SalesOrder $order): void
+    {
+        $delivery = $order->deliveries()
+            ->whereNotNull('shiply_parcel_code')
+            ->latest('id')
+            ->first();
+
+        if (! $delivery?->shiply_parcel_code || ! $delivery->shiply_employee_email) {
+            return;
+        }
+
+        try {
+            $this->shiplyService->cancelParcel(
+                $delivery->shiply_parcel_code,
+                $delivery->shiply_employee_email,
+                $delivery->shiply_mode
+            );
+        } catch (\Throwable) {
+            // Revert should proceed even if Shiply cancel fails.
+        }
     }
 }

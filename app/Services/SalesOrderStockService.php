@@ -103,8 +103,15 @@ class SalesOrderStockService
             ->update(['reserved_qty' => 0]);
     }
 
-    public function syncReservationsAfterEdit(SalesOrder $order): void
+    public function syncReservationsAfterEdit(SalesOrder $order, ?int $userId = null): void
     {
+        if ($order->stock_deducted_at) {
+            $this->restoreDispatchedOrder($order, $userId);
+            $this->dispatchOrder($order->fresh(['items.product']), $userId);
+
+            return;
+        }
+
         if (! $order->statusEnum()->reservesStock()) {
             return;
         }

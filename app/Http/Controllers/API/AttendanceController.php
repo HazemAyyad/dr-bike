@@ -241,6 +241,17 @@ class AttendanceController extends Controller
             $attendance->overtime_minutes = $daily['overtime_minutes'];
             $attendance->save();
 
+            $calculatedOvertime = (int) ($daily['overtime_minutes'] ?? 0);
+            if ($calculatedOvertime > 0) {
+                app(\App\Services\EmployeeAttendanceOvertimeService::class)->applyCheckoutOvertimePolicy(
+                    $attendance,
+                    $employee,
+                    'qr',
+                    $calculatedOvertime
+                );
+                $attendance->refresh();
+            }
+
             try {
                 $pending = \App\Support\EmployeePendingTasksForToday::forEmployee($employee_id);
                 app(\App\Services\AdminNotificationService::class)->notifyEmployeeLogoutWithPendingTasks(

@@ -75,6 +75,7 @@ class FirebaseService
         'employee_logout_pending_tasks',
         'attendance_auto_checkout',
         'attendance_absent_reminder',
+        'attendance_overtime_request',
     ];
 
     protected ?Messaging $messaging = null;

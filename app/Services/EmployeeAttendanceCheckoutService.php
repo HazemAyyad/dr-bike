@@ -111,11 +111,20 @@ class EmployeeAttendanceCheckoutService
         $attendance->save();
 
         if ($source !== 'auto') {
-            $this->notifyCheckout($employee, $attendance, $checkoutAt, $source);
+            $calculatedOvertime = (int) ($daily['overtime_minutes'] ?? 0);
+            if ($calculatedOvertime > 0) {
+                app(EmployeeAttendanceOvertimeService::class)->applyCheckoutOvertimePolicy(
+                    $attendance,
+                    $employee,
+                    $source,
+                    $calculatedOvertime
+                );
+            }
+            $this->notifyCheckout($employee, $attendance->fresh(), $checkoutAt, $source);
         }
 
         return [
-            'attendance' => $attendance,
+            'attendance' => $attendance->fresh(),
             'segment_minutes' => $segmentMinutes,
             'day_worked_minutes' => $totalWorked,
         ];

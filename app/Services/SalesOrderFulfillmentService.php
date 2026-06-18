@@ -32,6 +32,7 @@ class SalesOrderFulfillmentService
         protected DebtLedgerService $debtLedgerService,
         protected SalesOrderNotificationService $notifications,
         protected ShiplyService $shiplyService,
+        protected SalesOrderShiplyTrackingService $shiplyTracking,
     ) {}
 
     public function handoverToDelivery(User $user, int $orderId, array $payload): SalesOrder
@@ -81,8 +82,6 @@ class SalesOrderFulfillmentService
         }
 
         return DB::transaction(function () use ($user, $order, $data, $isShiply, $shiplyMode, $employeeEmail, $parcelCode, $deliveryCompanyId) {
-            $this->stockService->dispatchOrder($order, (int) $user->id);
-
             $companyName = $data['delivery_company_name'] ?? null;
             if ($deliveryCompanyId && ! $companyName) {
                 $companyName = DeliveryCompany::query()->find($deliveryCompanyId)?->name;
@@ -109,7 +108,6 @@ class SalesOrderFulfillmentService
                 'delivery_company_id' => $deliveryCompanyId,
                 'delivery_company_name' => $companyName ?? $order->delivery_company_name,
                 'carrier_delivery_cost' => $data['carrier_delivery_cost'] ?? $order->carrier_delivery_cost,
-                'stock_deducted_at' => now(),
                 'updated_by' => $user->id,
             ]);
 
@@ -124,6 +122,7 @@ class SalesOrderFulfillmentService
 
             $freshOrder = $order->fresh();
             if ($isShiply && $parcelCode) {
+                $this->shiplyTracking->recordHandoverSubmitted($freshOrder, $parcelCode, $shiplyMode);
                 $this->notifications->notifyShiplyHandover($freshOrder, $user, $parcelCode);
             } else {
                 $this->notifications->notifyStatusChange(
@@ -326,6 +325,7 @@ class SalesOrderFulfillmentService
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Returned->value,
+                'stock_deducted_at' => null,
                 'updated_by' => $user->id,
             ]);
             $order->packages()->update(['status' => 'returned']);

@@ -54,6 +54,8 @@ class AdminNotificationService
 
     public const TYPE_ATTENDANCE_ABSENT_REMINDER = 'attendance_absent_reminder';
 
+    public const TYPE_ATTENDANCE_OVERTIME_REQUEST = 'attendance_overtime_request';
+
     /**
      * @param  array<string, mixed>  $data
      */
@@ -263,6 +265,41 @@ class AdminNotificationService
                 null,
                 'attendance_absent_reminder',
                 null,
+                true
+            );
+        });
+    }
+
+    public function notifyAttendanceOvertimePending(
+        EmployeeDetail $employee,
+        \App\Models\EmployeeAttendanceOvertimeRequest $request
+    ): AdminNotification {
+        return $this->withArabicLocale(function () use ($employee, $request) {
+            $employee->loadMissing('user');
+            $name = $employee->user->name ?? __('messages.employee_default_name');
+            $minutes = (int) $request->requested_minutes;
+            $hours = number_format($minutes / 60, 2);
+            $date = $request->work_date?->toDateString() ?? '';
+
+            return $this->create(
+                self::TYPE_ATTENDANCE_OVERTIME_REQUEST,
+                __('messages.admin_notify_attendance_overtime_title'),
+                __('messages.admin_notify_attendance_overtime_body', [
+                    'employee' => $name,
+                    'hours' => $hours,
+                    'date' => $date,
+                ]),
+                [
+                    'request_id' => (string) $request->id,
+                    'employee_id' => (string) $employee->id,
+                    'employee_name' => $name,
+                    'work_date' => $date,
+                    'requested_minutes' => (string) $minutes,
+                    'checkout_source' => (string) ($request->checkout_source ?? ''),
+                ],
+                $employee->id,
+                'attendance_overtime_request',
+                (int) $request->id,
                 true
             );
         });
