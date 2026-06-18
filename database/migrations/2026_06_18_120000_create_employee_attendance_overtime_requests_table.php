@@ -8,6 +8,12 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Recover from a failed deploy where MySQL created the table but rejected
+        // a too-long default foreign-key identifier.
+        if (Schema::hasTable('employee_attendance_overtime_requests')) {
+            Schema::dropIfExists('employee_attendance_overtime_requests');
+        }
+
         Schema::create('employee_attendance_overtime_requests', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('employee_id');
