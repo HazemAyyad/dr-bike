@@ -603,6 +603,8 @@ return [
     'shiply_connection_failed' => 'Could not reach Shiply servers. Check server internet access, API key, and test/live mode.',
     'shiply_sync_failed' => 'Failed to sync Shiply cities and villages.',
     'shiply_create_parcel_failed' => 'Failed to create Shiply parcel.',
+    'shiply_content_items_group' => 'Grouped item photos',
+    'shiply_content_packaged' => 'Photo after packaging',
     'shiply_village_required' => 'Shiply village is required before handover.',
     'shiply_city_required' => 'Shiply city is required before handover.',
     'shiply_street_required' => 'Street address is required for Shiply.',
