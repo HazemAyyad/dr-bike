@@ -174,6 +174,7 @@ class SalesOrdersController extends Controller
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
                 'media' => 'required|array',
                 'media.*' => 'file|max:51200|mimes:jpg,jpeg,png,webp,gif,heic,mp4,mov,avi,mkv,webm',
+                'category' => 'nullable|string|in:general,items_group,packaged,testing,document',
             ]);
 
             $files = $request->file('media', []);
@@ -184,7 +185,8 @@ class SalesOrdersController extends Controller
             $order = $this->fulfillmentService->uploadMedia(
                 $request->user(),
                 (int) $data['sales_order_id'],
-                $files
+                $files,
+                $data['category'] ?? null
             );
 
             return response()->json([
@@ -455,6 +457,74 @@ class SalesOrdersController extends Controller
         }
     }
 
+    public function markStuck(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_order_id' => 'required|integer|exists:sales_orders,id',
+                'reason' => 'nullable|string|max:500',
+            ]);
+
+            $order = $this->service->markStuck(
+                $request->user(),
+                (int) $data['sales_order_id'],
+                $data['reason'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_order_marked_stuck'),
+                'sales_order' => $this->service->formatDetail($order),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function bulkStatus(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'order_ids' => 'required|array|min:1|max:50',
+                'order_ids.*' => 'integer|exists:sales_orders,id',
+                'action' => 'required|string|in:confirm,mark_ready,cancel',
+            ]);
+
+            $result = $this->service->bulkStatusAction(
+                $request->user(),
+                array_map('intval', $data['order_ids']),
+                (string) $data['action']
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_order_bulk_done', ['count' => $result['updated']]),
+                'updated' => $result['updated'],
+                'failed' => $result['failed'],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     private function transition(Request $request, string $action, string $message)
     {
         try {
@@ -524,9 +594,17 @@ class SalesOrdersController extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {
+            \Log::error('sales_order.fulfillment_failed', [
+                'action' => $action,
+                'order_id' => $request->input('sales_order_id'),
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => config('app.debug')
+                    ? $e->getMessage()
+                    : __('messages.something_wrong'),
             ], 200);
         }
     }

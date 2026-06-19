@@ -392,6 +392,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/sales/order/follow-up', [SalesOrdersController::class, 'followUp']);
       Route::post('/sales/order/partial-return', [SalesOrdersController::class, 'partialReturn']);
       Route::post('/sales/order/alternative-return', [SalesOrdersController::class, 'alternativeReturn']);
+      Route::post('/sales/order/mark-stuck', [SalesOrdersController::class, 'markStuck']);
+      Route::post('/sales/orders/bulk-status', [SalesOrdersController::class, 'bulkStatus']);
       Route::get('/sales/order/statement', [SalesOrdersController::class, 'statement']);
       Route::get('/cities', [CitiesController::class, 'index']);
       Route::get('/delivery/companies', [CitiesController::class, 'deliveryCompanies']);

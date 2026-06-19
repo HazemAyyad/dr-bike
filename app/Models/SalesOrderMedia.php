@@ -12,6 +12,7 @@ class SalesOrderMedia extends Model
     protected $fillable = [
         'sales_order_id',
         'status_at_upload',
+        'category',
         'type',
         'path',
         'mime',

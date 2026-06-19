@@ -41,6 +41,7 @@ class SalesOrder extends Model
         'is_debt_collection',
         'delivery_settled_at',
         'delivery_settled_amount',
+        'delivery_settled_box_id',
         'stock_deducted_at',
         'financial_posted_at',
         'archived_at',

@@ -30,6 +30,7 @@ class SalesOrderService
         protected SalesOrderNotificationService $notifications,
         protected SalesOrderShiplyTrackingService $shiplyTracking,
         protected ShiplyService $shiplyService,
+        protected SalesOrderMediaRequirementService $mediaRequirements,
     ) {}
 
     /**
@@ -236,7 +237,7 @@ class SalesOrderService
         }
 
         return DB::transaction(function () use ($user, $order) {
-            $order->loadMissing('items.product');
+            $order->loadMissing('items.product', 'media');
             foreach ($order->items as $item) {
                 if ($item->is_hidden) {
                     continue;
@@ -262,8 +263,12 @@ class SalesOrderService
 
     public function markReady(User $user, int $orderId): SalesOrder
     {
-        $order = SalesOrder::query()->findOrFail($orderId);
+        $order = SalesOrder::query()->with('media')->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::Confirmed]);
+        $this->mediaRequirements->assertCategoriesPresent(
+            $order,
+            $this->mediaRequirements->requiredBeforeReady()
+        );
 
         return DB::transaction(function () use ($user, $order) {
             $from = $order->status;
@@ -469,6 +474,8 @@ class SalesOrderService
             'delivery_settled_amount' => $order->delivery_settled_amount !== null
                 ? (float) $order->delivery_settled_amount
                 : null,
+            'delivery_settled_box_id' => $order->delivery_settled_box_id,
+            'media_requirements' => $this->mediaRequirements->buildRequirementsPayload($order),
             'archived_at' => $order->archived_at?->toDateTimeString(),
             'items' => $order->items->map(function (SalesOrderItem $item) {
                 $productImage = $item->relationLoaded('product') && $item->product
@@ -512,6 +519,7 @@ class SalesOrderService
             'media' => $order->media->map(fn ($media) => [
                 'id' => $media->id,
                 'type' => $media->type,
+                'category' => $media->category ?? 'general',
                 'path' => $media->path,
                 'url' => $media->path ? url('storage/'.$media->path) : null,
                 'status_at_upload' => $media->status_at_upload,
@@ -624,7 +632,7 @@ class SalesOrderService
             'shiply_village_id' => 'nullable|integer|min:1',
             'shiply_city_name' => 'nullable|string|max:255',
             'shiply_village_name' => 'nullable|string|max:255',
-            'payment_type' => 'nullable|string|in:cash,credit,mixed',
+            'payment_type' => 'nullable|string|in:cash,credit,mixed,visa',
             'payment_box_id' => 'nullable|integer|exists:boxes,id',
             'payment_amount' => 'nullable|numeric|min:0',
             'delivery_company_id' => 'nullable|integer|exists:delivery_companies,id',
@@ -870,6 +878,77 @@ class SalesOrderService
             : $order->deliveryCompany()->value('code');
 
         return strtolower((string) $code) === 'shiply';
+    }
+
+    public function markStuck(User $user, int $orderId, ?string $reason = null): SalesOrder
+    {
+        $order = SalesOrder::query()->findOrFail($orderId);
+        $this->assertTransition($order, [
+            SalesOrderStatus::Returned,
+            SalesOrderStatus::Review,
+            SalesOrderStatus::WithDelivery,
+            SalesOrderStatus::PartialReturn,
+        ]);
+
+        return DB::transaction(function () use ($user, $order, $reason) {
+            $from = $order->status;
+            $order->update([
+                'status' => SalesOrderStatus::Stuck->value,
+                'notes' => trim(($order->notes ? $order->notes."\n" : '').($reason ?? 'عالق')),
+                'updated_by' => $user->id,
+            ]);
+            $this->logStatus(
+                $order,
+                $from,
+                SalesOrderStatus::Stuck->value,
+                $reason ?? 'تعليم الطلبية كعالقة',
+                $user->id
+            );
+            $this->notifications->notifyStatusChange(
+                $order->fresh(),
+                $from,
+                SalesOrderStatus::Stuck->value,
+                $user,
+                $reason
+            );
+
+            return $order->fresh($this->detailRelations());
+        });
+    }
+
+    /**
+     * @param  list<int>  $orderIds
+     * @return array{updated: int, failed: list<array<string, mixed>>}
+     */
+    public function bulkStatusAction(User $user, array $orderIds, string $action): array
+    {
+        $allowed = ['confirm', 'mark_ready', 'cancel'];
+        if (! in_array($action, $allowed, true)) {
+            throw ValidationException::withMessages([
+                'action' => [__('messages.sales_order_bulk_action_invalid')],
+            ]);
+        }
+
+        $updated = 0;
+        $failed = [];
+
+        foreach ($orderIds as $orderId) {
+            try {
+                match ($action) {
+                    'confirm' => $this->confirm($user, (int) $orderId),
+                    'mark_ready' => $this->markReady($user, (int) $orderId),
+                    'cancel' => $this->cancel($user, (int) $orderId),
+                };
+                $updated++;
+            } catch (ValidationException $e) {
+                $failed[] = [
+                    'order_id' => (int) $orderId,
+                    'errors' => $e->errors(),
+                ];
+            }
+        }
+
+        return ['updated' => $updated, 'failed' => $failed];
     }
 
     private function cancelActiveShiplyParcel(SalesOrder $order): void

@@ -33,12 +33,18 @@ class SalesOrderFulfillmentService
         protected SalesOrderNotificationService $notifications,
         protected ShiplyService $shiplyService,
         protected SalesOrderShiplyTrackingService $shiplyTracking,
+        protected SalesOrderMediaRequirementService $mediaRequirements,
     ) {}
 
     public function handoverToDelivery(User $user, int $orderId, array $payload): SalesOrder
     {
-        $order = SalesOrder::query()->with(['items', 'packages', 'deliveryCompany'])->findOrFail($orderId);
+        $order = SalesOrder::query()->with(['items', 'packages', 'deliveryCompany', 'media'])->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::Ready]);
+
+        $this->mediaRequirements->assertCategoriesPresent(
+            $order,
+            $this->mediaRequirements->requiredBeforeHandover()
+        );
 
         $data = validator($payload, [
             'delivery_company_id' => 'nullable|integer|exists:delivery_companies,id',
@@ -243,12 +249,37 @@ class SalesOrderFulfillmentService
 
         $data = validator($payload, [
             'delivery_settled_amount' => 'required|numeric|min:0',
+            'payment_box_id' => 'nullable|integer|exists:boxes,id',
         ])->validate();
 
-        return DB::transaction(function () use ($user, $order, $data) {
+        $amount = (float) $data['delivery_settled_amount'];
+        $boxId = isset($data['payment_box_id']) ? (int) $data['payment_box_id'] : null;
+
+        if ($amount > 0 && ! $boxId) {
+            throw ValidationException::withMessages([
+                'payment_box_id' => [__('messages.sales_order_settlement_box_required')],
+            ]);
+        }
+
+        return DB::transaction(function () use ($user, $order, $amount, $boxId) {
+            if ($amount > 0 && $boxId) {
+                $box = Box::lockForUpdate()->findOrFail($boxId);
+                $box->total = round((float) $box->total + $amount, 2);
+                $box->save();
+
+                BoxLogs::createBoxLog(
+                    $box,
+                    'تسوية شركة توصيل — '.$order->serial_number,
+                    'add',
+                    $amount,
+                    'طلبية #'.$order->id.' — '.$order->serial_number
+                );
+            }
+
             $order->update([
                 'delivery_settled_at' => now(),
-                'delivery_settled_amount' => (float) $data['delivery_settled_amount'],
+                'delivery_settled_amount' => $amount,
+                'delivery_settled_box_id' => $boxId,
                 'updated_by' => $user->id,
             ]);
 
@@ -338,7 +369,7 @@ class SalesOrderFulfillmentService
         });
     }
 
-    public function uploadMedia(User $user, int $orderId, array $files): SalesOrder
+    public function uploadMedia(User $user, int $orderId, array $files, ?string $category = null): SalesOrder
     {
         $order = SalesOrder::query()->findOrFail($orderId);
 
@@ -347,6 +378,8 @@ class SalesOrderFulfillmentService
                 'order' => [__('messages.sales_order_not_editable')],
             ]);
         }
+
+        $category = \App\Support\SalesOrderMediaCategory::normalize($category);
 
         $existingCount = SalesOrderMedia::query()->where('sales_order_id', $order->id)->count();
         if ($existingCount + count($files) > self::MAX_MEDIA_FILES) {
@@ -366,7 +399,7 @@ class SalesOrderFulfillmentService
             }
         }
 
-        DB::transaction(function () use ($user, $order, $files) {
+        DB::transaction(function () use ($user, $order, $files, $category) {
             foreach ($files as $file) {
                 if (! $file instanceof UploadedFile) {
                     continue;
@@ -379,6 +412,7 @@ class SalesOrderFulfillmentService
                 SalesOrderMedia::create([
                     'sales_order_id' => $order->id,
                     'status_at_upload' => $order->status,
+                    'category' => $category,
                     'type' => $type,
                     'path' => $path,
                     'mime' => $mime,
