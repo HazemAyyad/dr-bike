@@ -30,8 +30,8 @@ class FirebaseService
     /** Admin logout — must match Flutter and res/raw/task_sos_alert. */
     public const ADMIN_ATTENDANCE_CHANNEL_ID = 'dr_bike_admin_attendance_alerts';
 
-    /** Shiply sales-order updates — coin/cash tone (res/raw/task_success). */
-    public const SHIPLY_COINS_CHANNEL_ID = 'dr_bike_shiply_coins_notifications';
+    /** Shiply sales-order updates — metallic piggy-bank coin tone (res/raw/shiply_coins). */
+    public const SHIPLY_COINS_CHANNEL_ID = 'dr_bike_shiply_piggy_coins';
 
     public const EMPLOYEE_TASK_SOUND_ANDROID = 'task_sos_alert';
 
@@ -45,10 +45,10 @@ class FirebaseService
 
     public const ADMIN_LOGIN_SOUND_IOS = 'admin_login_motivate.wav';
 
-    /** Coin/cash register tone for Shiply admin alerts — same file as task success. */
-    public const SHIPLY_COINS_SOUND_ANDROID = 'task_success';
+    /** Metallic piggy-bank coins — res/raw/shiply_coins.wav */
+    public const SHIPLY_COINS_SOUND_ANDROID = 'shiply_coins';
 
-    public const SHIPLY_COINS_SOUND_IOS = 'task_success.wav';
+    public const SHIPLY_COINS_SOUND_IOS = 'shiply_coins.wav';
 
     /** @var list<string> */
     private const SHIPLY_NOTIFICATION_TYPES = [
