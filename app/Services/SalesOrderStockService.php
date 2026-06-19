@@ -50,7 +50,9 @@ class SalesOrderStockService
             });
         }
 
-        return (int) $query->sum(DB::raw('GREATEST(reserved_qty - dispatched_qty, 0)'));
+        return (int) $query->sum(DB::raw(
+            'GREATEST(CAST(reserved_qty AS SIGNED) - CAST(dispatched_qty AS SIGNED), 0)'
+        ));
     }
 
     public function availableForOrder(Product $product, int $quantity, ?int $sizeColorId = null, ?int $excludeOrderId = null): int
