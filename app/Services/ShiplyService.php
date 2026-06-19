@@ -290,7 +290,7 @@ class ShiplyService
         $description = $order->items
             ->where('is_hidden', false)
             ->take(5)
-            ->map(fn ($item) => trim((string) ($item->product_name ?? 'صنف')).' x'.(int) $item->quantity)
+            ->map(fn ($item) => $this->scalarString($item->product_name, 'صنف').' x'.(int) $item->quantity)
             ->implode(' | ');
 
         if ($description === '') {
@@ -302,25 +302,27 @@ class ShiplyService
             $description = 'طلبية';
         }
 
-        $recipientName = trim((string) ($order->customer_name ?? ''));
+        $recipientName = $this->scalarString($order->customer_name, 'مستلم');
         if ($recipientName === '') {
             $recipientName = 'مستلم';
         }
 
+        $notes = $this->scalarString($order->notes);
+
         return [
             'recipient' => [
                 'first_name' => mb_substr($recipientName, 0, 100),
-                'phone' => trim((string) $order->customer_phone),
+                'phone' => $this->scalarString($order->customer_phone),
             ],
             'address' => [
                 'city_id' => (int) $order->shiply_city_id,
                 'village_id' => (int) $order->shiply_village_id,
-                'street_name' => mb_substr(trim((string) $order->customer_address), 0, 500),
+                'street_name' => mb_substr($this->scalarString($order->customer_address), 0, 500),
             ],
             'total_price' => (int) round((float) $order->total),
             'actual_price' => (int) max(0, round((float) $order->subtotal - (float) $order->discount)),
             'description' => $description,
-            'note' => $order->notes ? mb_substr((string) $order->notes, 0, 1023) : null,
+            'note' => $notes !== '' ? mb_substr($notes, 0, 1023) : null,
             'reference_number' => $order->serial_number ?: (string) $order->id,
             'employee_email' => $employeeEmail,
         ];
@@ -456,15 +458,42 @@ class ShiplyService
             ]);
         }
 
-        if (is_array($errors)) {
-            $text = trim(implode(' ', array_map('strval', $errors)));
-
-            return $text !== '' ? $text : __('messages.shiply_create_parcel_failed');
-        }
-
-        $text = trim((string) ($errors ?? ''));
+        $text = $this->flattenShiplyErrors($errors);
 
         return $text !== '' ? $text : __('messages.shiply_create_parcel_failed');
+    }
+
+    private function flattenShiplyErrors(mixed $errors): string
+    {
+        if ($errors === null || $errors === '') {
+            return '';
+        }
+
+        if (is_scalar($errors)) {
+            $text = trim((string) $errors);
+
+            return $text !== '' && $text !== 'Array' ? $text : '';
+        }
+
+        if (! is_array($errors)) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($errors as $key => $value) {
+            $flat = $this->flattenShiplyErrors($value);
+            if ($flat === '') {
+                continue;
+            }
+
+            if (is_string($key) && ! is_numeric($key)) {
+                $parts[] = $key.': '.$flat;
+            } else {
+                $parts[] = $flat;
+            }
+        }
+
+        return implode(' ', $parts);
     }
 
     private function isUnauthorizedShiplyError(mixed $errors): bool
@@ -480,6 +509,27 @@ class ShiplyService
         }
 
         return stripos(trim((string) $errors), 'unauthorized') !== false;
+    }
+
+    private function scalarString(mixed $value, string $default = ''): string
+    {
+        if ($value === null) {
+            return $default;
+        }
+
+        if (is_scalar($value)) {
+            $text = trim((string) $value);
+
+            return $text !== '' ? $text : $default;
+        }
+
+        if (is_array($value)) {
+            $flat = $this->flattenShiplyErrors($value);
+
+            return $flat !== '' ? $flat : $default;
+        }
+
+        return $default;
     }
 }
 

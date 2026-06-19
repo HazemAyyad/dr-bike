@@ -81,9 +81,9 @@ class SalesOrderNotificationService
             $address = trim((string) ($order->customer_address ?? ''));
             if ($address === '' && $order->shiply_city_name) {
                 $address = trim(implode(' — ', array_filter([
-                    $order->shiply_city_name,
-                    $order->shiply_village_name,
-                ])));
+                    $this->scalarLabel($order->shiply_city_name),
+                    $this->scalarLabel($order->shiply_village_name),
+                ], fn ($part) => $part !== '')));
             }
 
             $title = __('messages.sales_order_shiply_handover_title', ['serial' => $serial]);
@@ -178,5 +178,30 @@ class SalesOrderNotificationService
         $key = 'messages.sales_order_status_'.$status;
 
         return __($key) !== $key ? __($key) : $status;
+    }
+
+    private function scalarLabel(mixed $value): string
+    {
+        if ($value === null || is_bool($value)) {
+            return '';
+        }
+
+        if (is_scalar($value)) {
+            return trim((string) $value);
+        }
+
+        if (! is_array($value)) {
+            return '';
+        }
+
+        $parts = [];
+        foreach ($value as $item) {
+            $text = $this->scalarLabel($item);
+            if ($text !== '') {
+                $parts[] = $text;
+            }
+        }
+
+        return implode(' ', $parts);
     }
 }
