@@ -30,6 +30,9 @@ class FirebaseService
     /** Admin logout — must match Flutter and res/raw/task_sos_alert. */
     public const ADMIN_ATTENDANCE_CHANNEL_ID = 'dr_bike_admin_attendance_alerts';
 
+    /** Shiply delivered — coins + end whistle (res/raw/shiply_delivered). */
+    public const SHIPLY_DELIVERED_CHANNEL_ID = 'dr_bike_shiply_delivered_finale';
+
     /** Shiply sales-order updates — metallic piggy-bank coin tone (res/raw/shiply_coins). */
     public const SHIPLY_COINS_CHANNEL_ID = 'dr_bike_shiply_piggy_coins';
 
@@ -50,11 +53,20 @@ class FirebaseService
 
     public const SHIPLY_COINS_SOUND_IOS = 'shiply_coins.wav';
 
+    /** Coins + end whistle — res/raw/shiply_delivered.wav */
+    public const SHIPLY_DELIVERED_SOUND_ANDROID = 'shiply_delivered';
+
+    public const SHIPLY_DELIVERED_SOUND_IOS = 'shiply_delivered.wav';
+
     /** @var list<string> */
-    private const SHIPLY_NOTIFICATION_TYPES = [
+    private const SHIPLY_COINS_NOTIFICATION_TYPES = [
         'sales_order_shiply_handover',
-        'sales_order_shiply_delivered',
         'sales_order_shiply_status',
+    ];
+
+    /** @var list<string> */
+    private const SHIPLY_DELIVERED_NOTIFICATION_TYPES = [
+        'sales_order_shiply_delivered',
     ];
 
     /** @var list<string> */
@@ -546,7 +558,15 @@ class FirebaseService
             ];
         }
 
-        if (in_array($type, self::SHIPLY_NOTIFICATION_TYPES, true)) {
+        if (in_array($type, self::SHIPLY_DELIVERED_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::SHIPLY_DELIVERED_CHANNEL_ID,
+                'sound' => self::SHIPLY_DELIVERED_SOUND_ANDROID,
+                'ios_sound' => self::SHIPLY_DELIVERED_SOUND_IOS,
+            ];
+        }
+
+        if (in_array($type, self::SHIPLY_COINS_NOTIFICATION_TYPES, true)) {
             return [
                 'channel_id' => self::SHIPLY_COINS_CHANNEL_ID,
                 'sound' => self::SHIPLY_COINS_SOUND_ANDROID,
