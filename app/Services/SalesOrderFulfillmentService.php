@@ -120,7 +120,14 @@ class SalesOrderFulfillmentService
             $freshOrder = $order->fresh();
             if ($isShiply && $parcelCode) {
                 $this->shiplyTracking->recordHandoverSubmitted($freshOrder, $parcelCode, $shiplyMode);
-                $this->notifications->notifyShiplyHandover($freshOrder, $user, $parcelCode);
+                $submittedStatus = (int) config('shiply.parcel_status.submitted', 2);
+                $this->notifications->notifyShiplyStatusChange(
+                    $freshOrder,
+                    $submittedStatus,
+                    $parcelCode,
+                    null,
+                    $user,
+                );
             } else {
                 $this->notifications->notifyStatusChange(
                     $freshOrder,
@@ -178,10 +185,7 @@ class SalesOrderFulfillmentService
 
             $this->logStatus($order, $from, SalesOrderStatus::Delivered->value, $logNote, $user->id);
 
-            $freshOrder = $order->fresh();
-            $this->notifications->notifyShiplyDelivered($freshOrder, $user, $meta);
-
-            return $freshOrder;
+            return $order->fresh();
         });
     }
 
@@ -310,7 +314,12 @@ class SalesOrderFulfillmentService
         });
     }
 
-    public function markReturned(User $user, int $orderId, ?string $note = null): SalesOrder
+    public function markReturned(
+        User $user,
+        int $orderId,
+        ?string $note = null,
+        bool $skipNotification = false,
+    ): SalesOrder
     {
         $order = SalesOrder::query()->with('deliveryCompany')->findOrFail($orderId);
         $this->assertTransition($order, [
@@ -336,7 +345,7 @@ class SalesOrderFulfillmentService
             }
         }
 
-        return DB::transaction(function () use ($user, $order, $note) {
+        return DB::transaction(function () use ($user, $order, $note, $skipNotification) {
             if ($order->stock_deducted_at) {
                 $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
             } else {
@@ -352,7 +361,9 @@ class SalesOrderFulfillmentService
             $order->packages()->update(['status' => 'returned']);
 
             $this->logStatus($order, $from, SalesOrderStatus::Returned->value, $note ?? 'راجع من شركة التوصيل', $user->id);
-            $this->notifications->notifyStatusChange($order->fresh(), $from, SalesOrderStatus::Returned->value, $user, $note);
+            if (! $skipNotification) {
+                $this->notifications->notifyStatusChange($order->fresh(), $from, SalesOrderStatus::Returned->value, $user, $note);
+            }
 
             return $order->fresh();
         });

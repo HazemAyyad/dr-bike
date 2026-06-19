@@ -6,6 +6,7 @@ use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
 use App\Models\User;
 use App\Services\SalesOrderFulfillmentService;
+use App\Services\SalesOrderNotificationService;
 use App\Services\SalesOrderShiplyTrackingService;
 use App\Support\ShiplySettings;
 use Illuminate\Bus\Queueable;
@@ -30,6 +31,7 @@ class ProcessShiplyWebhookJob implements ShouldQueue
     public function handle(
         SalesOrderFulfillmentService $fulfillment,
         SalesOrderShiplyTrackingService $tracking,
+        SalesOrderNotificationService $notifications,
     ): void
     {
         $parcelCode = trim((string) ($this->payload['parcel_code'] ?? ''));
@@ -66,13 +68,24 @@ class ProcessShiplyWebhookJob implements ShouldQueue
             return;
         }
 
+        $newEvent = null;
         try {
-            $tracking->recordFromWebhook($order, $this->payload);
+            $newEvent = $tracking->recordFromWebhook($order, $this->payload);
         } catch (\Throwable $e) {
             Log::warning('shiply.webhook_event_log_failed', [
                 'order_id' => $order->id,
                 'error' => $e->getMessage(),
             ]);
+        }
+
+        if ($newEvent !== null && $statusId > 0) {
+            $note = trim((string) ($this->payload['note'] ?? ''));
+            $notifications->notifyShiplyStatusChange(
+                $order,
+                $statusId,
+                $parcelCode !== '' ? $parcelCode : (string) ($newEvent->parcel_code ?? ''),
+                $note !== '' ? $note : null,
+            );
         }
 
         $deliveredStatus = (int) config('shiply.parcel_status.delivered', 6);
@@ -111,7 +124,8 @@ class ProcessShiplyWebhookJob implements ShouldQueue
             $fulfillment->markReturned(
                 $actor,
                 $order->id,
-                $note !== '' ? $note : 'راجع تلقائياً من Shiply'
+                $note !== '' ? $note : 'راجع تلقائياً من Shiply',
+                skipNotification: true,
             );
         }
     }

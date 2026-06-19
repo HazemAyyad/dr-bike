@@ -29,7 +29,7 @@ class SalesOrderShiplyTrackingService
             return null;
         }
 
-        return $this->record(
+        return $this->recordIfNew(
             order: $order,
             parcelCode: $parcelCode,
             statusId: $statusId,
@@ -64,6 +64,39 @@ class SalesOrderShiplyTrackingService
         string $source = 'webhook',
         ?\DateTimeInterface $occurredAt = null,
     ): SalesOrderShiplyEvent {
+        $event = $this->recordIfNew(
+            order: $order,
+            parcelCode: $parcelCode,
+            statusId: $statusId,
+            positionId: $positionId,
+            note: $note,
+            mode: $mode,
+            source: $source,
+            occurredAt: $occurredAt,
+        );
+
+        if ($event !== null) {
+            return $event;
+        }
+
+        return SalesOrderShiplyEvent::query()
+            ->where('sales_order_id', $order->id)
+            ->where('parcel_code', $parcelCode)
+            ->where('parcel_status_id', $statusId)
+            ->latest('id')
+            ->firstOrFail();
+    }
+
+    public function recordIfNew(
+        SalesOrder $order,
+        string $parcelCode,
+        int $statusId,
+        ?int $positionId = null,
+        ?string $note = null,
+        ?string $mode = null,
+        string $source = 'webhook',
+        ?\DateTimeInterface $occurredAt = null,
+    ): ?SalesOrderShiplyEvent {
         $duplicate = SalesOrderShiplyEvent::query()
             ->where('sales_order_id', $order->id)
             ->where('parcel_code', $parcelCode)
@@ -73,12 +106,7 @@ class SalesOrderShiplyTrackingService
             ->exists();
 
         if ($duplicate) {
-            return SalesOrderShiplyEvent::query()
-                ->where('sales_order_id', $order->id)
-                ->where('parcel_code', $parcelCode)
-                ->where('parcel_status_id', $statusId)
-                ->latest('id')
-                ->firstOrFail();
+            return null;
         }
 
         return SalesOrderShiplyEvent::create([

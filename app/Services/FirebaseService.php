@@ -30,6 +30,9 @@ class FirebaseService
     /** Admin logout — must match Flutter and res/raw/task_sos_alert. */
     public const ADMIN_ATTENDANCE_CHANNEL_ID = 'dr_bike_admin_attendance_alerts';
 
+    /** Shiply sales-order updates — coin/cash tone (res/raw/task_success). */
+    public const SHIPLY_COINS_CHANNEL_ID = 'dr_bike_shiply_coins_notifications';
+
     public const EMPLOYEE_TASK_SOUND_ANDROID = 'task_sos_alert';
 
     public const EMPLOYEE_TASK_SOUND_IOS = 'task_sos_alert.mp3';
@@ -41,6 +44,18 @@ class FirebaseService
     public const ADMIN_LOGIN_SOUND_ANDROID = 'admin_login_motivate';
 
     public const ADMIN_LOGIN_SOUND_IOS = 'admin_login_motivate.wav';
+
+    /** Coin/cash register tone for Shiply admin alerts — same file as task success. */
+    public const SHIPLY_COINS_SOUND_ANDROID = 'task_success';
+
+    public const SHIPLY_COINS_SOUND_IOS = 'task_success.wav';
+
+    /** @var list<string> */
+    private const SHIPLY_NOTIFICATION_TYPES = [
+        'sales_order_shiply_handover',
+        'sales_order_shiply_delivered',
+        'sales_order_shiply_status',
+    ];
 
     /** @var list<string> */
     private const EMPLOYEE_TASK_URGENT_NOTIFICATION_TYPES = [
@@ -528,6 +543,14 @@ class FirebaseService
                 'channel_id' => self::EMPLOYEE_TASK_CHANNEL_ID,
                 'sound' => self::EMPLOYEE_TASK_SOUND_ANDROID,
                 'ios_sound' => self::EMPLOYEE_TASK_SOUND_IOS,
+            ];
+        }
+
+        if (in_array($type, self::SHIPLY_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::SHIPLY_COINS_CHANNEL_ID,
+                'sound' => self::SHIPLY_COINS_SOUND_ANDROID,
+                'ios_sound' => self::SHIPLY_COINS_SOUND_IOS,
             ];
         }
 
