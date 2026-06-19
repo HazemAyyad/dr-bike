@@ -6,6 +6,7 @@ use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
 use App\Models\SalesOrderShiplyEvent;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Schema;
 
 class SalesOrderShiplyTrackingService
 {
@@ -97,6 +98,10 @@ class SalesOrderShiplyTrackingService
      */
     public function buildTrackingPayload(SalesOrder $order): ?array
     {
+        if (! Schema::hasTable('sales_order_shiply_events')) {
+            return null;
+        }
+
         $parcelCode = $this->resolveParcelCode($order);
         if ($parcelCode === '') {
             return null;

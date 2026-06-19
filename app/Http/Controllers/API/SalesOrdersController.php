@@ -179,7 +179,26 @@ class SalesOrdersController extends Controller
 
             $files = $request->file('media', []);
             if (! is_array($files)) {
-                $files = [$files];
+                $files = $files ? [$files] : [];
+            }
+            $files = array_values(array_filter($files));
+            if ($files === []) {
+                $collected = [];
+                foreach ($request->allFiles() as $key => $file) {
+                    if (! str_starts_with((string) $key, 'media')) {
+                        continue;
+                    }
+                    if (is_array($file)) {
+                        foreach ($file as $f) {
+                            if ($f) {
+                                $collected[] = $f;
+                            }
+                        }
+                    } elseif ($file) {
+                        $collected[] = $file;
+                    }
+                }
+                $files = $collected;
             }
 
             $order = $this->fulfillmentService->uploadMedia(
@@ -201,9 +220,16 @@ class SalesOrdersController extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {
+            \Log::error('sales_order.media_upload_failed', [
+                'order_id' => $request->input('sales_order_id'),
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => config('app.debug')
+                    ? $e->getMessage()
+                    : __('messages.something_wrong'),
             ], 200);
         }
     }
@@ -550,9 +576,17 @@ class SalesOrdersController extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {
+            \Log::error('sales_order.transition_failed', [
+                'action' => $action,
+                'order_id' => $request->input('sales_order_id'),
+                'message' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => config('app.debug')
+                    ? $e->getMessage()
+                    : __('messages.something_wrong'),
             ], 200);
         }
     }

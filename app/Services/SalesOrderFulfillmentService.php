@@ -409,16 +409,21 @@ class SalesOrderFulfillmentService
                 $mime = $file->getMimeType() ?? '';
                 $type = str_starts_with($mime, 'video/') ? 'video' : 'image';
 
-                SalesOrderMedia::create([
+                $attributes = [
                     'sales_order_id' => $order->id,
                     'status_at_upload' => $order->status,
-                    'category' => $category,
                     'type' => $type,
                     'path' => $path,
                     'mime' => $mime,
                     'size_bytes' => $file->getSize(),
                     'uploaded_by' => $user->id,
-                ]);
+                ];
+
+                if (Schema::hasColumn('sales_order_media', 'category')) {
+                    $attributes['category'] = $category;
+                }
+
+                SalesOrderMedia::create($attributes);
             }
         });
 
