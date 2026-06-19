@@ -3,15 +3,21 @@
 namespace App\Services;
 
 use App\Models\SalesOrder;
+use App\Models\SalesOrderItem;
+use App\Models\SalesOrderMedia;
 use App\Models\ShiplyCity;
 use App\Models\ShiplyVillage;
+use App\Support\SalesOrderMediaCategory;
 use App\Support\ShiplyPhoneFormatter;
 use App\Support\ShiplySettings;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\ImageManager;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class ShiplyService
@@ -117,38 +123,29 @@ class ShiplyService
     /**
      * @return array{parcel_code: string, qr_code: ?string}
      */
-    public function createAndSubmitParcel(SalesOrder $order, string $employeeEmail, ?string $mode = null): array
+    public function createAndSubmitParcel(SalesOrder $order, ?string $mode = null): array
     {
         $mode = $mode ?? ShiplySettings::mode();
         $this->assertOrderReadyForShiply($order, $mode);
 
-        $payload = $this->buildCreateParcelPayload($order, $employeeEmail);
+        $payload = $this->buildCreateParcelPayload($order);
         $create = $this->request('POST', '/parcels/create', $payload, $mode);
-
-        if (! is_array($create) || empty($create['success'])) {
-            $errors = $create['errors'] ?? $create['error'] ?? $create['message'] ?? null;
-            Log::warning('shiply.create_parcel_failed', [
-                'mode' => $mode,
-                'employee_email' => $employeeEmail,
-                'response' => $create,
-            ]);
-            throw ValidationException::withMessages([
-                'shiply' => [$this->formatShiplyError($errors, $employeeEmail)],
-            ]);
-        }
 
         $parcelCode = (string) ($create['parcel_code'] ?? '');
         if ($parcelCode === '') {
+            $errors = $create['errors'] ?? $create['error'] ?? $create['message'] ?? null;
+            Log::warning('shiply.create_parcel_failed', [
+                'mode' => $mode,
+                'response' => $create,
+            ]);
             throw ValidationException::withMessages([
-                'shiply' => [__('messages.shiply_create_parcel_failed')],
+                'shiply' => [$this->formatShiplyError($errors, '')],
             ]);
         }
 
         $qrCode = null;
         try {
-            $submit = $this->request('GET', '/parcels/assignQRCode/'.rawurlencode($parcelCode), [
-                'employee_email' => $employeeEmail,
-            ], $mode);
+            $submit = $this->request('GET', '/parcels/assignQRCode/'.rawurlencode($parcelCode), [], $mode);
             if (is_array($submit) && ! empty($submit['success'])) {
                 $qrCode = $submit['qr_code'] ?? null;
             }
@@ -159,22 +156,30 @@ class ShiplyService
             ]);
         }
 
+        try {
+            $this->syncOrderContentsToParcel($order, $parcelCode, $mode);
+        } catch (\Throwable $e) {
+            Log::warning('shiply.sync_parcel_content_failed', [
+                'parcel_code' => $parcelCode,
+                'order_id' => $order->id,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
         return [
             'parcel_code' => $parcelCode,
             'qr_code' => is_string($qrCode) ? $qrCode : null,
         ];
     }
 
-    public function cancelParcel(string $parcelCode, string $employeeEmail, ?string $mode = null): void
+    public function cancelParcel(string $parcelCode, ?string $mode = null): void
     {
         if ($parcelCode === '') {
             return;
         }
 
         $mode = $mode ?? ShiplySettings::mode();
-        $response = $this->request('GET', '/parcels/cancel/'.rawurlencode($parcelCode), [
-            'employee_email' => $employeeEmail,
-        ], $mode);
+        $response = $this->request('GET', '/parcels/cancel/'.rawurlencode($parcelCode), [], $mode);
 
         if (is_array($response) && array_key_exists('success', $response) && ! $response['success']) {
             Log::warning('shiply.cancel_parcel_failed', [
@@ -220,6 +225,295 @@ class ShiplyService
             'extra_price' => (float) ($response['extra_price'] ?? 0),
             'returned_extra_price' => (float) ($response['returned_extra_price'] ?? 0),
         ];
+    }
+
+    /**
+     * Push order line items and uploaded photos to Shiply parcel content.
+     */
+    public function syncOrderContentsToParcel(SalesOrder $order, string $parcelCode, ?string $mode = null): void
+    {
+        $order->loadMissing(['items', 'media']);
+
+        foreach ($order->items->where('is_hidden', false) as $item) {
+            $this->tryCreateParcelContent($parcelCode, $mode, [
+                'item_name' => $this->parcelContentItemName($item),
+                'quantity' => max(1, (int) $item->quantity),
+                'item_price' => (int) round((float) $item->unit_price),
+            ]);
+        }
+
+        foreach ($order->media as $media) {
+            $this->tryUploadMediaAsParcelContent($parcelCode, $media, $mode);
+        }
+    }
+
+    private function parcelContentItemName(SalesOrderItem $item): string
+    {
+        $name = trim((string) ($item->product_name ?? ''));
+        if ($name === '') {
+            $name = 'صنف #'.(int) $item->product_id;
+        }
+
+        return mb_substr($name, 0, 255);
+    }
+
+    private function tryUploadMediaAsParcelContent(
+        string $parcelCode,
+        SalesOrderMedia $media,
+        ?string $mode
+    ): void {
+        if ($media->type !== 'image') {
+            return;
+        }
+
+        $path = $this->prepareShiplyUploadPath($media);
+        if ($path === null) {
+            return;
+        }
+
+        $isTempFile = str_starts_with($path, sys_get_temp_dir());
+
+        $category = SalesOrderMediaCategory::normalize($media->category ?? SalesOrderMediaCategory::GENERAL);
+        $labelKey = 'messages.sales_order_media_category_'.$category;
+        $itemName = __($labelKey);
+        if ($itemName === $labelKey) {
+            $itemName = $category;
+        }
+
+        $attachments = [];
+        if ($category === SalesOrderMediaCategory::PACKAGED) {
+            $attachments['content_photo'] = $path;
+        } else {
+            $attachments['item_image'] = $path;
+        }
+
+        $this->tryCreateParcelContent($parcelCode, $mode, [
+            'item_name' => mb_substr($itemName, 0, 255),
+            'quantity' => 1,
+        ], $attachments);
+
+        if ($isTempFile) {
+            @unlink($path);
+        }
+    }
+
+    /**
+     * @param  array<string, scalar|null>  $fields
+     * @param  array<string, string>  $attachments  field name => absolute file path
+     */
+    private function tryCreateParcelContent(
+        string $parcelCode,
+        ?string $mode,
+        array $fields,
+        array $attachments = []
+    ): void {
+        try {
+            $response = $this->requestMultipart('/parcel-content/create', array_merge($fields, [
+                'parcel_code' => $parcelCode,
+            ]), $attachments, $mode);
+
+            if (isset($response['parcel_content']) || ($response['success'] ?? true) !== false) {
+                return;
+            }
+
+            Log::warning('shiply.parcel_content_rejected', [
+                'parcel_code' => $parcelCode,
+                'fields' => array_keys($fields),
+                'attachments' => array_keys($attachments),
+                'response' => $response,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('shiply.parcel_content_failed', [
+                'parcel_code' => $parcelCode,
+                'fields' => array_keys($fields),
+                'attachments' => array_keys($attachments),
+                'message' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function prepareShiplyUploadPath(SalesOrderMedia $media): ?string
+    {
+        $absolute = $this->resolveLocalMediaPath($media);
+        if ($absolute === null) {
+            return null;
+        }
+
+        $maxBytes = (int) config('shiply.max_content_image_bytes', 2097152);
+        $size = @filesize($absolute);
+        if ($size !== false && $size <= $maxBytes) {
+            return $absolute;
+        }
+
+        return $this->compressImageForShiply($absolute, $maxBytes, (int) $media->id);
+    }
+
+    private function resolveLocalMediaPath(SalesOrderMedia $media): ?string
+    {
+        $relative = trim((string) $media->path);
+        if ($relative === '') {
+            return null;
+        }
+
+        if (! Storage::disk('public')->exists($relative)) {
+            Log::warning('shiply.media_file_missing', [
+                'media_id' => $media->id,
+                'path' => $relative,
+            ]);
+
+            return null;
+        }
+
+        $absolute = Storage::disk('public')->path($relative);
+        $extension = strtolower(pathinfo($absolute, PATHINFO_EXTENSION));
+        if (! in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true)) {
+            Log::warning('shiply.media_file_unsupported', [
+                'media_id' => $media->id,
+                'extension' => $extension,
+            ]);
+
+            return null;
+        }
+
+        return $absolute;
+    }
+
+    private function compressImageForShiply(string $sourcePath, int $maxBytes, int $mediaId): ?string
+    {
+        if (! extension_loaded('gd')) {
+            Log::warning('shiply.media_compress_unavailable', [
+                'media_id' => $mediaId,
+                'reason' => 'gd_missing',
+            ]);
+
+            return null;
+        }
+
+        try {
+            $manager = new ImageManager(new Driver);
+            $image = $manager->read($sourcePath);
+            $image->scaleDown(1920, 1920);
+
+            $tempBase = tempnam(sys_get_temp_dir(), 'shiply_');
+            if ($tempBase === false) {
+                return null;
+            }
+            @unlink($tempBase);
+            $tempPath = $tempBase.'.jpg';
+
+            for ($quality = 85; $quality >= 45; $quality -= 10) {
+                $image->toJpeg(quality: $quality)->save($tempPath);
+                $compressedSize = @filesize($tempPath);
+                if ($compressedSize !== false && $compressedSize <= $maxBytes) {
+                    return $tempPath;
+                }
+            }
+
+            @unlink($tempPath);
+            Log::warning('shiply.media_compress_failed', [
+                'media_id' => $mediaId,
+                'max_bytes' => $maxBytes,
+            ]);
+
+            return null;
+        } catch (\Throwable $e) {
+            Log::warning('shiply.media_compress_failed', [
+                'media_id' => $mediaId,
+                'message' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * @param  array<string, scalar|null>  $fields
+     * @param  array<string, string>  $attachments
+     * @return array<string, mixed>
+     */
+    private function requestMultipart(
+        string $path,
+        array $fields,
+        array $attachments = [],
+        ?string $mode = null
+    ): array {
+        if (! ShiplySettings::isEnabled()) {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_disabled')],
+            ]);
+        }
+
+        $mode = $mode ?? ShiplySettings::mode();
+        $apiKey = ShiplySettings::apiKey($mode);
+        if ($apiKey === '') {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_api_key_missing')],
+            ]);
+        }
+
+        $url = rtrim(ShiplySettings::baseUrl($mode), '/').'/'.ltrim($path, '/');
+        $form = ['Shiply_API_KEY' => $apiKey];
+        foreach ($fields as $key => $value) {
+            if ($value === null) {
+                continue;
+            }
+            $form[$key] = is_bool($value) ? ($value ? '1' : '0') : (string) $value;
+        }
+
+        try {
+            $client = Http::timeout((int) config('shiply.http_timeout', 30))->acceptJson();
+            foreach ($attachments as $fieldName => $filePath) {
+                if (! is_string($filePath) || ! is_file($filePath)) {
+                    continue;
+                }
+                $client = $client->attach(
+                    $fieldName,
+                    fopen($filePath, 'r'),
+                    basename($filePath)
+                );
+            }
+
+            $response = $client->post($url, $form);
+        } catch (ConnectionException $e) {
+            Log::error('shiply.multipart_connection_failed', [
+                'path' => $path,
+                'mode' => $mode,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_connection_failed')],
+            ]);
+        } catch (RequestException $e) {
+            Log::error('shiply.multipart_http_failed', [
+                'path' => $path,
+                'status' => $e->response?->status(),
+                'body' => $e->response?->body(),
+            ]);
+
+            throw ValidationException::withMessages([
+                'shiply' => [$this->formatHttpErrorMessage($e)],
+            ]);
+        }
+
+        if ($response->failed()) {
+            $json = $response->json();
+            Log::warning('shiply.multipart_http_error', [
+                'path' => $path,
+                'mode' => $mode,
+                'status' => $response->status(),
+                'body' => $json ?? $response->body(),
+            ]);
+
+            throw ValidationException::withMessages([
+                'shiply' => [$this->extractResponseErrorMessage(is_array($json) ? $json : null)
+                    ?? __('messages.shiply_request_failed')],
+            ]);
+        }
+
+        $json = $response->json();
+
+        return is_array($json) ? $json : [];
     }
 
     private function assertOrderReadyForShiply(SalesOrder $order, string $mode): void
@@ -291,7 +585,7 @@ class ShiplyService
     /**
      * @return array<string, mixed>
      */
-    private function buildCreateParcelPayload(SalesOrder $order, string $employeeEmail): array
+    private function buildCreateParcelPayload(SalesOrder $order): array
     {
         $order->loadMissing('items');
         $description = $order->items
@@ -331,7 +625,6 @@ class ShiplyService
             'description' => $description,
             'note' => $notes !== '' ? mb_substr($notes, 0, 1023) : null,
             'reference_number' => $order->serial_number ?: (string) $order->id,
-            'employee_email' => $employeeEmail,
         ];
     }
 

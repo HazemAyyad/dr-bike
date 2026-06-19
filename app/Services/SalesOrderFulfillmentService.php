@@ -65,16 +65,6 @@ class SalesOrderFulfillmentService
         $employeeEmail = trim((string) $user->email);
 
         if ($isShiply) {
-            if ($employeeEmail === '') {
-                throw ValidationException::withMessages([
-                    'employee_email' => [__('messages.shiply_employee_email_required')],
-                ]);
-            }
-            if (! filter_var($employeeEmail, FILTER_VALIDATE_EMAIL)) {
-                throw ValidationException::withMessages([
-                    'employee_email' => [__('messages.shiply_employee_email_invalid')],
-                ]);
-            }
             if (empty($data['tracking_number'])) {
                 $data['tracking_number'] = null;
             }
@@ -82,8 +72,8 @@ class SalesOrderFulfillmentService
 
         $parcelCode = null;
         if ($isShiply) {
-            $order = $order->fresh();
-            $parcel = $this->shiplyService->createAndSubmitParcel($order, $employeeEmail, $shiplyMode);
+            $order = $order->fresh(['items', 'media']);
+            $parcel = $this->shiplyService->createAndSubmitParcel($order, $shiplyMode);
             $parcelCode = $parcel['parcel_code'];
             $data['tracking_number'] = $parcelCode;
         }
@@ -335,11 +325,10 @@ class SalesOrderFulfillmentService
             ->latest('id')
             ->first();
 
-        if ($latestDelivery?->shiply_parcel_code && $latestDelivery->shiply_employee_email) {
+        if ($latestDelivery?->shiply_parcel_code) {
             try {
                 $this->shiplyService->cancelParcel(
                     $latestDelivery->shiply_parcel_code,
-                    $latestDelivery->shiply_employee_email,
                     $latestDelivery->shiply_mode
                 );
             } catch (\Throwable) {

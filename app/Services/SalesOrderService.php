@@ -958,14 +958,13 @@ class SalesOrderService
             ->latest('id')
             ->first();
 
-        if (! $delivery?->shiply_parcel_code || ! $delivery->shiply_employee_email) {
+        if (! $delivery?->shiply_parcel_code) {
             return;
         }
 
         try {
             $this->shiplyService->cancelParcel(
                 $delivery->shiply_parcel_code,
-                $delivery->shiply_employee_email,
                 $delivery->shiply_mode
             );
         } catch (\Throwable) {

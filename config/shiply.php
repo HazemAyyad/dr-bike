@@ -25,6 +25,9 @@ return [
 
     'http_timeout' => (int) env('SHIPLY_HTTP_TIMEOUT', 30),
 
+    /** Shiply parcel-content image limit (2 MB). */
+    'max_content_image_bytes' => (int) env('SHIPLY_MAX_CONTENT_IMAGE_BYTES', 2097152),
+
     'deliver_retry_minutes' => (int) env('SHIPLY_DELIVER_RETRY_MINUTES', 15),
 
     'parcel_status' => [
