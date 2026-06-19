@@ -1318,7 +1318,6 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         Carbon $to,
         bool $forAdmin = false
     ): array {
-    {
         $fromStr = $from->toDateString();
         $toStr = $to->toDateString();
 
