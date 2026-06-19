@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\SalesOrder;
 use App\Models\ShiplyCity;
 use App\Models\ShiplyVillage;
+use App\Support\ShiplyPhoneFormatter;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
@@ -241,6 +242,12 @@ class ShiplyService
             ]);
         }
 
+        if (! ShiplyPhoneFormatter::isValidForParcel($order->customer_phone)) {
+            throw ValidationException::withMessages([
+                'customer_phone' => [__('messages.shiply_phone_invalid')],
+            ]);
+        }
+
         if (empty($order->shiply_city_id)) {
             throw ValidationException::withMessages([
                 'shiply_city_id' => [__('messages.shiply_city_required')],
@@ -312,7 +319,7 @@ class ShiplyService
         return [
             'recipient' => [
                 'first_name' => mb_substr($recipientName, 0, 100),
-                'phone' => $this->scalarString($order->customer_phone),
+                'phone' => ShiplyPhoneFormatter::forParcel($order->customer_phone),
             ],
             'address' => [
                 'city_id' => (int) $order->shiply_city_id,

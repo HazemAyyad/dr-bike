@@ -619,6 +619,7 @@ return [
     'shiply_city_required' => 'يجب اختيار مدينة Shiply قبل التسليم.',
     'shiply_street_required' => 'عنوان الشارع مطلوب لشبلي.',
     'shiply_phone_required' => 'رقم هاتف المستلم مطلوب لشبلي.',
+    'shiply_phone_invalid' => 'رقم الهاتف غير صالح لشبلي — استخدم رقم جوال مثل 0599999999.',
     'shiply_village_invalid' => 'قرية Shiply غير صالحة.',
     'shiply_village_closed' => 'قرية Shiply مغلقة للتوصيل حالياً.',
     'shiply_employee_email_required' => 'حساب الموظف يحتاج بريداً إلكترونياً مسجلاً في Shiply.',

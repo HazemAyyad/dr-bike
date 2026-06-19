@@ -607,6 +607,7 @@ return [
     'shiply_city_required' => 'Shiply city is required before handover.',
     'shiply_street_required' => 'Street address is required for Shiply.',
     'shiply_phone_required' => 'Recipient phone is required for Shiply.',
+    'shiply_phone_invalid' => 'Invalid phone for Shiply — use a mobile number like 0599999999.',
     'shiply_village_invalid' => 'Invalid Shiply village.',
     'shiply_village_closed' => 'This Shiply village is closed for delivery.',
     'shiply_employee_email_required' => 'Employee account must have an email registered in Shiply.',
