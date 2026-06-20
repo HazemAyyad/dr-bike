@@ -59,6 +59,10 @@ class Kernel extends ConsoleKernel
         ])
             ->dailyAt('03:00')
             ->timezone('Asia/Hebron');
+
+        $schedule->command('special-tasks:rollover-weekly')
+            ->weeklyOn(6, '00:05')
+            ->timezone('Asia/Hebron');
     }
 
     /**
