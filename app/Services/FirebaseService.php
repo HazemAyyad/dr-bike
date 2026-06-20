@@ -42,6 +42,13 @@ class FirebaseService
     /** Shiply returned — ambulance siren (res/raw/shiply_returned). */
     public const SHIPLY_RETURNED_CHANNEL_ID = 'dr_bike_shiply_returned_ambulance';
 
+    /** Sales order status change — church bell (res/raw/sales_order_church_bell). */
+    public const SALES_ORDER_STATUS_CHANNEL_ID = 'dr_bike_sales_order_status';
+
+    public const SALES_ORDER_STATUS_SOUND_ANDROID = 'sales_order_church_bell';
+
+    public const SALES_ORDER_STATUS_SOUND_IOS = 'sales_order_church_bell.wav';
+
     public const EMPLOYEE_TASK_SOUND_ANDROID = 'task_sos_alert';
 
     public const EMPLOYEE_TASK_SOUND_IOS = 'task_sos_alert.mp3';
@@ -80,6 +87,11 @@ class FirebaseService
     /** @var list<string> */
     private const SHIPLY_DELIVERED_NOTIFICATION_TYPES = [
         'sales_order_shiply_delivered',
+    ];
+
+    /** @var list<string> */
+    private const SALES_ORDER_STATUS_NOTIFICATION_TYPES = [
+        'sales_order_status',
     ];
 
     /** @var list<string> */
@@ -576,6 +588,14 @@ class FirebaseService
                 'channel_id' => self::SHIPLY_DELIVERED_CHANNEL_ID,
                 'sound' => self::SHIPLY_DELIVERED_SOUND_ANDROID,
                 'ios_sound' => self::SHIPLY_DELIVERED_SOUND_IOS,
+            ];
+        }
+
+        if (in_array($type, self::SALES_ORDER_STATUS_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::SALES_ORDER_STATUS_CHANNEL_ID,
+                'sound' => self::SALES_ORDER_STATUS_SOUND_ANDROID,
+                'ios_sound' => self::SALES_ORDER_STATUS_SOUND_IOS,
             ];
         }
 

@@ -150,6 +150,14 @@ class SalesOrderService
 
             $this->logStatus($order, null, SalesOrderStatus::Unconfirmed->value, 'إنشاء طلبية', $user->id);
 
+            $this->notifications->notifyStatusChange(
+                $order->fresh(),
+                null,
+                SalesOrderStatus::Unconfirmed->value,
+                $user,
+                __('messages.sales_order_created_note')
+            );
+
             return $order->fresh($this->detailRelations());
         });
     }

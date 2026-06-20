@@ -50,6 +50,10 @@ class SalesOrderFulfillmentService
             'delivery_company_id' => 'nullable|integer|exists:delivery_companies,id',
             'delivery_company_name' => 'nullable|string|max:255',
             'tracking_number' => 'nullable|string|max:100',
+            'carrier_contact_name' => 'nullable|string|max:255',
+            'carrier_contact_phone' => 'nullable|string|max:50',
+            'carrier_office_name' => 'nullable|string|max:255',
+            'carrier_vehicle_number' => 'nullable|string|max:50',
             'carrier_delivery_cost' => 'nullable|numeric|min:0',
         ])->validate();
 
@@ -60,7 +64,13 @@ class SalesOrderFulfillmentService
         }
 
         $deliveryCompanyId = $data['delivery_company_id'] ?? $order->delivery_company_id;
-        $isShiply = $this->isShiplyCompany($deliveryCompanyId);
+        $companyCode = $this->resolveDeliveryCompanyCode($deliveryCompanyId);
+        $isShiply = $companyCode === 'shiply';
+
+        if ($companyCode !== 'doctor_bike') {
+            $this->assertHandoverRecipient($order, $isShiply);
+        }
+        $this->assertManualCarrierDetails($data, $companyCode);
         $shiplyMode = ShiplySettings::mode();
         $employeeEmail = trim((string) $user->email);
 
@@ -89,6 +99,10 @@ class SalesOrderFulfillmentService
                 'delivery_company_id' => $deliveryCompanyId,
                 'delivery_company_name' => $companyName,
                 'tracking_number' => $data['tracking_number'] ?? null,
+                'carrier_contact_name' => $data['carrier_contact_name'] ?? null,
+                'carrier_contact_phone' => $data['carrier_contact_phone'] ?? null,
+                'carrier_office_name' => $data['carrier_office_name'] ?? null,
+                'carrier_vehicle_number' => $data['carrier_vehicle_number'] ?? null,
                 'external_reference' => $parcelCode,
                 'shiply_parcel_code' => $parcelCode,
                 'shiply_employee_email' => $isShiply ? $employeeEmail : null,
@@ -569,13 +583,101 @@ class SalesOrderFulfillmentService
 
     private function isShiplyCompany(?int $deliveryCompanyId): bool
     {
+        return $this->resolveDeliveryCompanyCode($deliveryCompanyId) === 'shiply';
+    }
+
+    private function resolveDeliveryCompanyCode(?int $deliveryCompanyId): ?string
+    {
         if (! $deliveryCompanyId) {
-            return false;
+            return null;
         }
 
         $code = DeliveryCompany::query()->where('id', $deliveryCompanyId)->value('code');
 
-        return strtolower((string) $code) === 'shiply';
+        return $code !== null ? strtolower(trim((string) $code)) : null;
+    }
+
+    private function assertHandoverRecipient(SalesOrder $order, bool $isShiply): void
+    {
+        $name = trim((string) $order->customer_name);
+        $phone = trim((string) $order->customer_phone);
+
+        if ($name === '') {
+            throw ValidationException::withMessages([
+                'customer_name' => [__('messages.sales_order_handover_customer_required')],
+            ]);
+        }
+
+        if ($phone === '') {
+            throw ValidationException::withMessages([
+                'customer_phone' => [__('messages.sales_order_handover_phone_required')],
+            ]);
+        }
+
+        if (trim((string) $order->customer_address) === '') {
+            throw ValidationException::withMessages([
+                'customer_address' => [__('messages.sales_order_handover_address_required')],
+            ]);
+        }
+
+        if ($isShiply) {
+            if (! $order->shiply_city_id) {
+                throw ValidationException::withMessages([
+                    'shiply_city_id' => [__('messages.shiply_city_required')],
+                ]);
+            }
+            if (! $order->shiply_village_id) {
+                throw ValidationException::withMessages([
+                    'shiply_village_id' => [__('messages.shiply_village_required')],
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function assertManualCarrierDetails(array $data, ?string $companyCode): void
+    {
+        if ($companyCode === 'taxi') {
+            $errors = [];
+            if (trim((string) ($data['tracking_number'] ?? '')) === '') {
+                $errors['tracking_number'] = [__('messages.sales_order_taxi_number_required')];
+            }
+            if (trim((string) ($data['carrier_contact_name'] ?? '')) === '') {
+                $errors['carrier_contact_name'] = [__('messages.sales_order_taxi_driver_required')];
+            }
+            if (trim((string) ($data['carrier_contact_phone'] ?? '')) === '') {
+                $errors['carrier_contact_phone'] = [__('messages.sales_order_taxi_phone_required')];
+            }
+            if ($errors !== []) {
+                throw ValidationException::withMessages($errors);
+            }
+
+            return;
+        }
+
+        if ($companyCode !== 'office') {
+            return;
+        }
+
+        $errors = [];
+        if (trim((string) ($data['carrier_office_name'] ?? '')) === '') {
+            $errors['carrier_office_name'] = [__('messages.sales_order_office_name_required')];
+        }
+        if (trim((string) ($data['carrier_contact_name'] ?? '')) === '') {
+            $errors['carrier_contact_name'] = [__('messages.sales_order_office_driver_required')];
+        }
+        if (trim((string) ($data['carrier_contact_phone'] ?? '')) === '') {
+            $errors['carrier_contact_phone'] = [__('messages.sales_order_office_phone_required')];
+        }
+        if (trim((string) ($data['carrier_vehicle_number'] ?? '')) === '') {
+            $errors['carrier_vehicle_number'] = [__('messages.sales_order_office_vehicle_required')];
+        }
+
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
     }
 
     private function resolvePaidAmountForTotal(SalesOrder $order, float $total, array $payload): float
