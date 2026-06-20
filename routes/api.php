@@ -878,6 +878,12 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     Route::post('/admin/impersonate-employee/{employeeId}', [\App\Http\Controllers\API\AdminImpersonationController::class, 'impersonate']);
 
+    Route::get('/admin/users', [\App\Http\Controllers\API\AdminUsersController::class, 'index']);
+    Route::post('/admin/users', [\App\Http\Controllers\API\AdminUsersController::class, 'store']);
+    Route::post('/admin/users/{id}/edit', [\App\Http\Controllers\API\AdminUsersController::class, 'update'])->whereNumber('id');
+    Route::post('/admin/users/{id}/delete', [\App\Http\Controllers\API\AdminUsersController::class, 'destroy'])->whereNumber('id');
+    Route::post('/admin/users/{id}/toggle-block', [\App\Http\Controllers\API\AdminUsersController::class, 'toggleBlock'])->whereNumber('id');
+
     Route::get('/app/settings', [AppSettingsController::class, 'show']);
     Route::put('/app/settings', [AppSettingsController::class, 'update']);
 

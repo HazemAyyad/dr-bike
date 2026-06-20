@@ -240,6 +240,16 @@ class Authentication extends Controller
             }
 
             $user = User::where('email', $request->email)->first();
+
+            if ($user->is_blocked) {
+                Auth::logout();
+
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.account_blocked'),
+                ], 200);
+            }
+
             $fcm = trim((string) $request->fcm_token);
             if ($fcm !== '' && $fcm !== 'no_token') {
                 $user->forceFill(['fcm_token' => $fcm])->save();

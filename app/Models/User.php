@@ -30,6 +30,7 @@ class User extends Authenticatable
         'city',
         'address',
         'type',
+        'is_blocked',
     ];
 
     /**
@@ -49,6 +50,7 @@ class User extends Authenticatable
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'is_blocked' => 'boolean',
     ];
 
    

@@ -487,6 +487,16 @@ return [
     'employee_not_found' => 'الموظف غير موجود',
     'failed_to_delete_employee' => 'فشل حذف الموظف، الرجاء المحاولة لاحقًا',
 
+    // admin users
+    'admin_created_successfully' => 'تم إضافة المدير بنجاح',
+    'admin_updated_successfully' => 'تم تعديل المدير بنجاح',
+    'admin_deleted_successfully' => 'تم حذف المدير بنجاح',
+    'admin_blocked_successfully' => 'تم حظر المدير بنجاح',
+    'admin_unblocked_successfully' => 'تم إلغاء حظر المدير بنجاح',
+    'admin_not_found' => 'المدير غير موجود',
+    'cannot_manage_own_admin_account' => 'لا يمكنك تعديل أو حذف أو حظر حسابك الحالي',
+    'account_blocked' => 'تم حظر هذا الحساب. تواصل مع الإدارة.',
+
     'admin_notify_task_submitted_title' => 'مهمة بانتظار المراجعة',
     'admin_notify_task_submitted_body' => ':employee أنهى المهمة «:task» وبانتظار مراجعتك.',
 

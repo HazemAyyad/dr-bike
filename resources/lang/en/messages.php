@@ -476,6 +476,16 @@ return [
     'employee_not_found' => 'Employee not found',
     'failed_to_delete_employee' => 'Failed to delete the employee, please try again later',
 
+    // admin users
+    'admin_created_successfully' => 'Admin was created successfully',
+    'admin_updated_successfully' => 'Admin was updated successfully',
+    'admin_deleted_successfully' => 'Admin was deleted successfully',
+    'admin_blocked_successfully' => 'Admin was blocked successfully',
+    'admin_unblocked_successfully' => 'Admin was unblocked successfully',
+    'admin_not_found' => 'Admin not found',
+    'cannot_manage_own_admin_account' => 'You cannot edit, delete, or block your own account',
+    'account_blocked' => 'This account is blocked. Contact an administrator.',
+
     'admin_notify_task_submitted_title' => 'Task awaiting review',
     'admin_notify_task_submitted_body' => ':employee finished task «:task» and is waiting for your review.',
 
