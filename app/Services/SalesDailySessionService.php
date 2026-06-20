@@ -1343,6 +1343,55 @@ class SalesDailySessionService
             ->values()
             ->all();
 
+        $linkedOrderIds = collect($instantSales)
+            ->pluck('sales_order_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $sessionOrderDeliveries = SalesOrder::query()
+            ->where('sales_daily_session_id', $session->id)
+            ->whereNotNull('financial_posted_at')
+            ->where('is_debt_collection', false)
+            ->when($linkedOrderIds !== [], fn ($q) => $q->whereNotIn('id', $linkedOrderIds))
+            ->orderByDesc('financial_posted_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (SalesOrder $order) {
+                $total = round((float) $order->total, 2);
+                $paid = round((float) $order->payment_amount, 2);
+                if ($paid > $total) {
+                    $paid = $total;
+                }
+
+                return [
+                    'id' => $order->id,
+                    'sale_type' => 'sales_order',
+                    'label' => 'طلبية '.($order->serial_number ?? '#'.$order->id),
+                    'is_package_sale' => false,
+                    'is_from_sales_order' => true,
+                    'sales_order_id' => $order->id,
+                    'sales_order_serial' => $order->serial_number,
+                    'total_cost' => $total,
+                    'quantity' => 0,
+                    'paid_amount' => $paid,
+                    'remaining_amount' => max(0, round($total - $paid, 2)),
+                    'status' => $order->status,
+                    'created_at' => $order->financial_posted_at?->toDateTimeString(),
+                    'buyer_name' => $order->customer_name,
+                    'payment_box_name' => null,
+                    'payment_box_value' => $paid,
+                    'notes' => null,
+                ];
+            })
+            ->values()
+            ->all();
+
+        $instantSales = collect(array_merge($instantSales, $sessionOrderDeliveries))
+            ->sortByDesc(fn (array $row) => $row['created_at'] ?? '')
+            ->values()
+            ->all();
+
         $profitSales = ProfitSale::query()
             ->where('sales_daily_session_id', $session->id)
             ->orderByDesc('created_at')
@@ -1395,12 +1444,10 @@ class SalesDailySessionService
                 'payment_type' => $order->payment_type,
                 'payment_amount' => round((float) $order->payment_amount, 2),
                 'instant_sale_id' => $order->instant_sale_id,
-                'delivered_today' => $order->instant_sale_id !== null
-                    && InstantSale::query()
-                        ->where('id', $order->instant_sale_id)
-                        ->where('sales_daily_session_id', $session->id)
-                        ->exists(),
+                'delivered_today' => $order->sales_daily_session_id === $session->id
+                    && $order->financial_posted_at !== null,
                 'created_at' => $order->created_at?->toDateTimeString(),
+                'financial_posted_at' => $order->financial_posted_at?->toDateTimeString(),
             ])
             ->values()
             ->all();

@@ -45,6 +45,7 @@ class SalesOrder extends Model
         'delivery_settled_box_id',
         'stock_deducted_at',
         'financial_posted_at',
+        'sales_daily_session_id',
         'archived_at',
         'notes',
         'created_by',
@@ -137,6 +138,11 @@ class SalesOrder extends Model
     public function instantSale(): BelongsTo
     {
         return $this->belongsTo(InstantSale::class);
+    }
+
+    public function salesDailySession(): BelongsTo
+    {
+        return $this->belongsTo(SalesDailySession::class, 'sales_daily_session_id');
     }
 
     public function salesReturns(): HasMany

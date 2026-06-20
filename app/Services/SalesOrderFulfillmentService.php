@@ -191,6 +191,7 @@ class SalesOrderFulfillmentService
                 'financial_posted_at' => now(),
                 'payment_box_id' => $financials['payment_box_id'],
                 'payment_amount' => $financials['paid_amount'],
+                'sales_daily_session_id' => $financials['sales_daily_session_id'],
                 'updated_by' => $user->id,
             ]);
 
@@ -235,6 +236,7 @@ class SalesOrderFulfillmentService
                 'financial_posted_at' => now(),
                 'payment_box_id' => $financials['payment_box_id'],
                 'payment_amount' => $financials['paid_amount'],
+                'sales_daily_session_id' => $financials['sales_daily_session_id'],
                 'updated_by' => $user->id,
             ]);
 
@@ -443,7 +445,7 @@ class SalesOrderFulfillmentService
      * Post cash box and debt ledger entries when a sales order is delivered.
      *
      * @param  array<string, mixed>  $payload
-     * @return array{paid_amount: float, payment_box_id: int|null}
+     * @return array{paid_amount: float, payment_box_id: int|null, sales_daily_session_id: int|null}
      */
     public function postDeliveryFinancials(
         SalesOrder $order,
@@ -455,10 +457,11 @@ class SalesOrderFulfillmentService
             return [
                 'paid_amount' => (float) $order->payment_amount,
                 'payment_box_id' => $order->payment_box_id,
+                'sales_daily_session_id' => $order->sales_daily_session_id,
             ];
         }
 
-        $this->sessionService->assertCanCreateSale($user);
+        $session = $this->sessionService->assertCanCreateSale($user);
 
         $paidAmount = $this->resolvePaidAmountForTotal($order, $recognizedTotal, $payload);
         $paymentBox = $this->resolvePaymentBox($user, $paidAmount, $payload);
@@ -486,6 +489,7 @@ class SalesOrderFulfillmentService
         return [
             'paid_amount' => $paidAmount,
             'payment_box_id' => $paymentBox['id'] ?? $order->payment_box_id,
+            'sales_daily_session_id' => $session->id,
         ];
     }
 

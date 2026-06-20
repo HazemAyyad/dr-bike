@@ -68,6 +68,7 @@ class SalesOrderPartialService
                 $updates['financial_posted_at'] = now();
                 $updates['payment_box_id'] = $financials['payment_box_id'];
                 $updates['payment_amount'] = $financials['paid_amount'];
+                $updates['sales_daily_session_id'] = $financials['sales_daily_session_id'];
 
                 SalesOrderDelivery::query()
                     ->where('sales_order_id', $order->id)
