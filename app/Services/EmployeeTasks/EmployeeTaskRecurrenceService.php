@@ -307,4 +307,25 @@ class EmployeeTaskRecurrenceService
 
         return implode(' · ', $parts);
     }
+
+    /**
+     * Lazily generate upcoming occurrences for active recurring templates.
+     */
+    public function ensureActiveTemplateOccurrences(?int $employeeId = null): void
+    {
+        $query = EmployeeTaskTemplate::query()
+            ->where('is_active', true)
+            ->where('recurrence_type', '!=', 'noRepeat');
+
+        if ($employeeId !== null) {
+            $query->where('employee_id', $employeeId);
+        }
+
+        $from = now()->startOfDay();
+        $to = $from->copy()->addDays(self::HORIZON_DAYS);
+
+        foreach ($query->get() as $template) {
+            $this->ensureOccurrences($template, $from, $to);
+        }
+    }
 }

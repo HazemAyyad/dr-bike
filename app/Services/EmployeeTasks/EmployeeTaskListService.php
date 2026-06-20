@@ -133,6 +133,10 @@ class EmployeeTaskListService
     {
         $statuses = EmployeeTaskStatus::ongoingTabValues();
 
+        if (Schema::hasTable('employee_task_templates')) {
+            app(EmployeeTaskRecurrenceService::class)->ensureActiveTemplateOccurrences();
+        }
+
         $legacy = EmployeeTask::with('employee.user')
             ->withCount([
                 'subTasks',

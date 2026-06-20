@@ -114,6 +114,11 @@ class EmployeeVisibleTasks
 
     public static function dashboardPayload(int $employeeId): Collection
     {
+        if (Schema::hasTable('employee_task_templates')) {
+            app(\App\Services\EmployeeTasks\EmployeeTaskRecurrenceService::class)
+                ->ensureActiveTemplateOccurrences($employeeId);
+        }
+
         $legacyRows = self::legacyForEmployee($employeeId);
         $dayInstance = app(\App\Services\EmployeeTasks\EmployeeLegacyDayInstanceService::class);
 
