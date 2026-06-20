@@ -271,6 +271,10 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
 
 });
 
+Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Impersonation','refresh.token.expiry']] , function() {
+    Route::post('/employee/impersonate/{employeeId}', [\App\Http\Controllers\API\EmployeeImpersonationController::class, 'impersonate'])
+        ->whereNumber('employeeId');
+});
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','refresh.token.expiry']] , function() {
 

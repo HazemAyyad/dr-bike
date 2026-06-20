@@ -19,6 +19,7 @@ return [
     'otp_verified' => 'OTP verified successfully. Your account is activated.',
     'login_error' => 'Login error',
     'invalid_credentials' => 'The email or password you entered is incorrect',
+    'cannot_impersonate_self' => 'You cannot impersonate your own account',
     'logout_success' => 'Logged out',
     'logout_failed' => 'Logout failed',
     'expired_token' =>'you need to login',

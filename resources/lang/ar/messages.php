@@ -19,6 +19,7 @@ return [
     'otp_verified' => 'تم التحقق من رمز OTP بنجاح. تم تفعيل حسابك',
     'login_error' => 'حدث خطأ أثناء تسجيل الدخول',
     'invalid_credentials' => 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+    'cannot_impersonate_self' => 'لا يمكنك الدخول إلى حسابك الشخصي',
     'logout_success' => 'تم تسجيل الخروج',
     'logout_failed' => 'فشل تسجيل الخروج',
     'expired_token' =>'تحتاج لتسجيل الدخول',

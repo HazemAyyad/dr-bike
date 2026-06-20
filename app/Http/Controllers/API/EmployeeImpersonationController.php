@@ -7,31 +7,31 @@ use App\Services\ImpersonationService as EmployeeImpersonationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
-class AdminImpersonationController extends Controller
+class EmployeeImpersonationController extends Controller
 {
     public function __construct(
         private readonly EmployeeImpersonationService $impersonationService
     ) {}
 
     /**
-     * Issue an employee session token for admin support / preview (no password).
+     * Employee with "Employee Impersonation" permission enters another employee account.
      */
     public function impersonate(Request $request, int $employeeId)
     {
         try {
-            $admin = $request->user();
-            if (! $admin || $admin->type !== 'admin') {
+            $user = $request->user();
+            if (! $user || $user->type !== 'employee') {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Unauthorized. Admins only.',
+                    'message' => 'Unauthorized.',
                 ], 200);
             }
 
-            $result = $this->impersonationService->impersonateEmployee($admin, $employeeId);
+            $result = $this->impersonationService->impersonateEmployee($user, $employeeId);
 
             return response()->json($result, 200);
         } catch (\Throwable $e) {
-            Log::error('impersonate failed', [
+            Log::error('employee impersonate failed', [
                 'employee_id' => $employeeId,
                 'message' => $e->getMessage(),
             ]);
