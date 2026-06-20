@@ -29,6 +29,7 @@ class SalesOrder extends Model
         'delivery_company_id',
         'delivery_company_name',
         'customer_delivery_fee',
+        'shiply_quoted_delivery_fee',
         'carrier_delivery_cost',
         'subtotal',
         'discount',
@@ -52,6 +53,7 @@ class SalesOrder extends Model
 
     protected $casts = [
         'customer_delivery_fee' => 'float',
+        'shiply_quoted_delivery_fee' => 'float',
         'carrier_delivery_cost' => 'float',
         'subtotal' => 'float',
         'discount' => 'float',

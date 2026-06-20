@@ -123,6 +123,7 @@ class SalesOrderService
                 'delivery_company_id' => $data['delivery_company_id'] ?? null,
                 'delivery_company_name' => $data['delivery_company_name'] ?? null,
                 'customer_delivery_fee' => $totals['customer_delivery_fee'],
+                'shiply_quoted_delivery_fee' => $data['shiply_quoted_delivery_fee'] ?? null,
                 'subtotal' => $totals['subtotal'],
                 'discount' => $totals['discount'],
                 'total' => $totals['total'],
@@ -193,6 +194,9 @@ class SalesOrderService
                 'delivery_company_id' => $data['delivery_company_id'] ?? $order->delivery_company_id,
                 'delivery_company_name' => $data['delivery_company_name'] ?? $order->delivery_company_name,
                 'customer_delivery_fee' => $totals['customer_delivery_fee'],
+                'shiply_quoted_delivery_fee' => array_key_exists('shiply_quoted_delivery_fee', $data)
+                    ? $data['shiply_quoted_delivery_fee']
+                    : $order->shiply_quoted_delivery_fee,
                 'subtotal' => $totals['subtotal'],
                 'discount' => $totals['discount'],
                 'total' => $totals['total'],
@@ -454,6 +458,12 @@ class SalesOrderService
             'tracking_number' => $order->deliveries->sortByDesc('id')->first()?->tracking_number
                 ?? $order->packages->sortByDesc('id')->first()?->tracking_number,
             'customer_delivery_fee' => (float) $order->customer_delivery_fee,
+            'shiply_quoted_delivery_fee' => $order->shiply_quoted_delivery_fee !== null
+                ? (float) $order->shiply_quoted_delivery_fee
+                : null,
+            'shiply_delivery_fee_adjustment' => $order->shiply_quoted_delivery_fee !== null
+                ? round((float) $order->customer_delivery_fee - (float) $order->shiply_quoted_delivery_fee, 2)
+                : null,
             'carrier_delivery_cost' => $order->carrier_delivery_cost !== null
                 ? (float) $order->carrier_delivery_cost
                 : null,
@@ -646,6 +656,7 @@ class SalesOrderService
             'delivery_company_id' => 'nullable|integer|exists:delivery_companies,id',
             'delivery_company_name' => 'nullable|string|max:255',
             'customer_delivery_fee' => 'nullable|numeric|min:0',
+            'shiply_quoted_delivery_fee' => 'nullable|numeric|min:0',
             'discount' => 'nullable|numeric|min:0',
             'debt_id' => 'nullable|integer|exists:debts,id',
             'is_debt_collection' => 'nullable|boolean',
