@@ -8,7 +8,9 @@ use App\Support\ShiplySettings;
 use App\Models\City;
 use App\Models\Customer;
 use App\Models\Product;
+use App\Models\DeliveryCompany;
 use App\Models\SalesOrder;
+use App\Models\SalesOrderDelivery;
 use App\Models\SalesOrderItem;
 use App\Models\Size;
 use App\Models\SizeColor;
@@ -455,7 +457,14 @@ class SalesOrderService
             'payment_amount' => (float) $order->payment_amount,
             'delivery_company_id' => $order->delivery_company_id,
             'delivery_company_name' => $order->delivery_company_name,
-            'tracking_number' => $order->deliveries->sortByDesc('id')->first()?->tracking_number
+            'delivery_company_code' => $order->deliveryCompany?->code
+                ? strtolower((string) $order->deliveryCompany->code)
+                : null,
+            'latest_handover' => ($latestDelivery = $order->deliveries->sortByDesc('id')->first())
+                ? $this->formatDeliveryRecord($latestDelivery, $order)
+                : null,
+            'tracking_number' => $latestDelivery?->tracking_number
+                ?? $order->deliveries->sortByDesc('id')->first()?->tracking_number
                 ?? $order->packages->sortByDesc('id')->first()?->tracking_number,
             'customer_delivery_fee' => (float) $order->customer_delivery_fee,
             'shiply_quoted_delivery_fee' => $order->shiply_quoted_delivery_fee !== null
@@ -542,13 +551,11 @@ class SalesOrderService
                 'url' => $media->path ? url('storage/'.$media->path) : null,
                 'status_at_upload' => $media->status_at_upload,
             ])->values()->all(),
-            'deliveries' => $order->deliveries->map(fn ($delivery) => [
-                'id' => $delivery->id,
-                'tracking_number' => $delivery->tracking_number,
-                'delivery_company_name' => $delivery->delivery_company_name,
-                'handed_over_at' => $delivery->handed_over_at?->toDateTimeString(),
-                'delivered_at' => $delivery->delivered_at?->toDateTimeString(),
-            ])->values()->all(),
+            'deliveries' => $order->deliveries
+                ->sortByDesc('id')
+                ->map(fn ($delivery) => $this->formatDeliveryRecord($delivery, $order))
+                ->values()
+                ->all(),
             'child_orders' => $order->childOrders->map(fn ($child) => [
                 'id' => $child->id,
                 'serial_number' => $child->serial_number,
@@ -557,6 +564,37 @@ class SalesOrderService
                 'created_at' => $child->created_at?->toDateTimeString(),
             ])->values()->all(),
             'shiply_tracking' => $this->shiplyTracking->buildTrackingPayload($order),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatDeliveryRecord(SalesOrderDelivery $delivery, ?SalesOrder $order = null): array
+    {
+        $companyCode = null;
+        if ($delivery->delivery_company_id) {
+            $companyCode = DeliveryCompany::query()
+                ->where('id', $delivery->delivery_company_id)
+                ->value('code');
+        }
+        $companyCode ??= $order?->deliveryCompany?->code;
+
+        return [
+            'id' => $delivery->id,
+            'delivery_company_id' => $delivery->delivery_company_id,
+            'delivery_company_name' => $delivery->delivery_company_name,
+            'delivery_company_code' => $companyCode !== null
+                ? strtolower(trim((string) $companyCode))
+                : null,
+            'tracking_number' => $delivery->tracking_number,
+            'carrier_contact_name' => $delivery->carrier_contact_name,
+            'carrier_contact_phone' => $delivery->carrier_contact_phone,
+            'carrier_office_name' => $delivery->carrier_office_name,
+            'carrier_vehicle_number' => $delivery->carrier_vehicle_number,
+            'shiply_parcel_code' => $delivery->shiply_parcel_code,
+            'handed_over_at' => $delivery->handed_over_at?->toDateTimeString(),
+            'delivered_at' => $delivery->delivered_at?->toDateTimeString(),
         ];
     }
 

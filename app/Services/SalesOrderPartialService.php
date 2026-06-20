@@ -47,21 +47,6 @@ class SalesOrderPartialService
         return DB::transaction(function () use ($user, $order, $deliverMap, $data) {
             $from = $order->status;
             $deliveredSubtotal = $this->applyDeliveredQuantities($order, $deliverMap);
-            $portion = $order->subtotal > 0 ? $deliveredSubtotal / (float) $order->subtotal : 1.0;
-            $deliveryFee = round((float) $order->customer_delivery_fee * $portion, 2);
-            $discount = round((float) $order->discount * $portion, 2);
-            $partialTotal = max(0, round($deliveredSubtotal + $deliveryFee - $discount, 2));
-
-            $itemsForSale = $this->buildItemSubset($order, $deliverMap);
-            $instantSale = $this->fulfillmentService->createInstantSaleForItems(
-                $order,
-                $itemsForSale,
-                $user,
-                $partialTotal,
-                $deliveryFee,
-                $discount,
-                $data
-            );
 
             $fullyDelivered = $this->isFullyDelivered($order);
             $newStatus = $fullyDelivered
@@ -74,10 +59,15 @@ class SalesOrderPartialService
             ];
 
             if ($fullyDelivered) {
+                $financials = $this->fulfillmentService->postDeliveryFinancials(
+                    $order,
+                    $user,
+                    (float) $order->total,
+                    $data
+                );
                 $updates['financial_posted_at'] = now();
-                if (! $order->instant_sale_id) {
-                    $updates['instant_sale_id'] = $instantSale->id;
-                }
+                $updates['payment_box_id'] = $financials['payment_box_id'];
+                $updates['payment_amount'] = $financials['paid_amount'];
 
                 SalesOrderDelivery::query()
                     ->where('sales_order_id', $order->id)

@@ -602,7 +602,7 @@ return [
     'sales_order_requires_items' => 'يجب إضافة صنف واحد على الأقل.',
     'sales_order_debt_required' => 'يجب ربط طلبية تحصيل الدين بدين موجود.',
     'sales_order_handover' => 'تم تسليم الطلبية لشركة التوصيل.',
-    'sales_order_delivered' => 'تم توصيل الطلبية وتسجيل المبيعات.',
+    'sales_order_delivered' => 'تم تسجيل التوصيل والقيود المحاسبية للطلبية.',
     'sales_order_settled' => 'تمت تسوية شركة التوصيل.',
     'sales_order_archived' => 'تم أرشفة الطلبية.',
     'sales_order_returned' => 'تم تسجيل الطلبية كراجع.',

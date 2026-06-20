@@ -67,9 +67,7 @@ class SalesOrderFulfillmentService
         $companyCode = $this->resolveDeliveryCompanyCode($deliveryCompanyId);
         $isShiply = $companyCode === 'shiply';
 
-        if ($companyCode !== 'doctor_bike') {
-            $this->assertHandoverRecipient($order, $isShiply);
-        }
+        $this->assertHandoverRecipient($order, $isShiply);
         $this->assertManualCarrierDetails($data, $companyCode);
         $shiplyMode = ShiplySettings::mode();
         $employeeEmail = trim((string) $user->email);
@@ -172,8 +170,8 @@ class SalesOrderFulfillmentService
         $note = trim((string) ($meta['note'] ?? ''));
         $logNote = $note !== '' ? $note : 'تم التوصيل تلقائياً من Shiply';
 
-        return DB::transaction(function () use ($user, $order, $logNote, $meta) {
-            $instantSale = $this->createInstantSaleFromOrder($order, $user, null, []);
+        return DB::transaction(function () use ($user, $order, $logNote) {
+            $financials = $this->postDeliveryFinancials($order, $user, (float) $order->total, []);
 
             $order->items()->where('is_hidden', false)->update([
                 'delivered_qty' => DB::raw('quantity'),
@@ -190,10 +188,9 @@ class SalesOrderFulfillmentService
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Delivered->value,
-                'instant_sale_id' => $instantSale->id,
                 'financial_posted_at' => now(),
-                'payment_box_id' => $instantSale->payment_box_id,
-                'payment_amount' => (float) ($instantSale->payment_box_value ?? 0),
+                'payment_box_id' => $financials['payment_box_id'],
+                'payment_amount' => $financials['paid_amount'],
                 'updated_by' => $user->id,
             ]);
 
@@ -218,8 +215,7 @@ class SalesOrderFulfillmentService
         }
 
         return DB::transaction(function () use ($user, $order, $data) {
-            $session = $this->sessionService->assertCanCreateSale($user);
-            $instantSale = $this->createInstantSaleFromOrder($order, $user, $session, $data);
+            $financials = $this->postDeliveryFinancials($order, $user, (float) $order->total, $data);
 
             $order->items()->where('is_hidden', false)->update([
                 'delivered_qty' => DB::raw('quantity'),
@@ -236,10 +232,9 @@ class SalesOrderFulfillmentService
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Delivered->value,
-                'instant_sale_id' => $instantSale->id,
                 'financial_posted_at' => now(),
-                'payment_box_id' => $instantSale->payment_box_id,
-                'payment_amount' => (float) ($instantSale->payment_box_value ?? 0),
+                'payment_box_id' => $financials['payment_box_id'],
+                'payment_amount' => $financials['paid_amount'],
                 'updated_by' => $user->id,
             ]);
 
@@ -442,6 +437,56 @@ class SalesOrderFulfillmentService
         });
 
         return $order->fresh();
+    }
+
+    /**
+     * Post cash box and debt ledger entries when a sales order is delivered.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array{paid_amount: float, payment_box_id: int|null}
+     */
+    public function postDeliveryFinancials(
+        SalesOrder $order,
+        User $user,
+        float $recognizedTotal,
+        array $payload = []
+    ): array {
+        if ($order->financial_posted_at) {
+            return [
+                'paid_amount' => (float) $order->payment_amount,
+                'payment_box_id' => $order->payment_box_id,
+            ];
+        }
+
+        $this->sessionService->assertCanCreateSale($user);
+
+        $paidAmount = $this->resolvePaidAmountForTotal($order, $recognizedTotal, $payload);
+        $paymentBox = $this->resolvePaymentBox($user, $paidAmount, $payload);
+
+        if ($paidAmount > 0 && $paymentBox) {
+            $box = Box::lockForUpdate()->findOrFail($paymentBox['id']);
+            $box->total = round((float) $box->total + $paidAmount, 2);
+            $box->save();
+
+            BoxLogs::createBoxLog(
+                $box,
+                'قبض — طلبية '.($order->serial_number ?? '#'.$order->id),
+                'add',
+                $paidAmount,
+                'طلبية #'.$order->id.' — '.($order->serial_number ?? '')
+            );
+        }
+
+        if ($paymentBox) {
+            $order->payment_box_id = $paymentBox['id'];
+        }
+
+        $this->debtLedgerService->syncSalesOrderToLedger($order, $recognizedTotal, $paidAmount);
+
+        return [
+            'paid_amount' => $paidAmount,
+            'payment_box_id' => $paymentBox['id'] ?? $order->payment_box_id,
+        ];
     }
 
     /**

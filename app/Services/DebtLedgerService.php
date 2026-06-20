@@ -12,6 +12,7 @@ use App\Models\InstantSale;
 use App\Models\Log;
 use App\Models\OutgoingCheck;
 use App\Models\ProfitSale;
+use App\Models\SalesOrder;
 use App\Models\Seller;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -42,6 +43,7 @@ class DebtLedgerService
         return match ((string) $source) {
             'instant_sale' => 'بيع فوري',
             'profit_sale' => 'بيع ربحي',
+            'sales_order' => 'طلبية',
             'incoming_check' => 'شيك وارد',
             'outgoing_check' => 'شيك صادر',
             'manual', '' => 'إدخال يدوي',
@@ -680,6 +682,73 @@ class DebtLedgerService
             $debtAmount,
             $note,
             $sale->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+            $currency
+        );
+    }
+
+    /**
+     * Record sales order revenue on the debt ledger at delivery (without instant sale).
+     */
+    public function syncSalesOrderToLedger(
+        SalesOrder $order,
+        float $recognizedTotal,
+        float $paidAmount
+    ): ?DebtTransaction {
+        $order->loadMissing('customer');
+        $customerId = $order->customer_id ? (int) $order->customer_id : null;
+        $sellerId = null;
+
+        if (! $customerId && ! $sellerId) {
+            $this->deleteSourceLedger('sales_order', (int) $order->id);
+
+            return null;
+        }
+
+        $currency = 'شيكل';
+        if ($order->payment_box_id) {
+            $box = Box::query()->find($order->payment_box_id);
+            if ($box) {
+                $currency = $this->normalizeCurrency($box->currency);
+            }
+        }
+
+        $serial = trim((string) ($order->serial_number ?? ''));
+        $note = 'طلبية '.($serial !== '' ? $serial : '#'.$order->id);
+        $transactionDate = $order->financial_posted_at?->format('Y-m-d')
+            ?? now()->format('Y-m-d');
+
+        if ($order->is_debt_collection) {
+            $amount = round(max(0, min($paidAmount, $recognizedTotal)), 2);
+            if ($amount <= 0.0001) {
+                $this->deleteSourceLedger('sales_order', (int) $order->id);
+
+                return null;
+            }
+
+            return $this->upsertSourceLedgerEntry(
+                'sales_order',
+                (int) $order->id,
+                $customerId,
+                $sellerId,
+                'taken',
+                $amount,
+                $note,
+                $transactionDate,
+                $currency
+            );
+        }
+
+        $debtAmount = max(0, round($recognizedTotal - $paidAmount, 2));
+
+        return $this->upsertSourceLedgerEntry(
+            'sales_order',
+            (int) $order->id,
+            $customerId,
+            $sellerId,
+            'given',
+            $debtAmount,
+            $note,
+            $transactionDate,
             $currency
         );
     }

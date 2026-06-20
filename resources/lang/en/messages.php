@@ -590,7 +590,7 @@ return [
     'sales_order_requires_items' => 'At least one line item is required.',
     'sales_order_debt_required' => 'Debt collection order must be linked to an existing debt.',
     'sales_order_handover' => 'Order handed over to delivery company.',
-    'sales_order_delivered' => 'Order delivered and sale recorded.',
+    'sales_order_delivered' => 'Order delivered and accounting entries recorded.',
     'sales_order_settled' => 'Delivery company settlement recorded.',
     'sales_order_archived' => 'Order archived.',
     'sales_order_returned' => 'Order marked as returned.',
