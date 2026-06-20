@@ -107,6 +107,7 @@ class SalesOrderNotificationService
                     'sales_order_id' => (string) $order->id,
                     'serial_number' => (string) ($order->serial_number ?? ''),
                     'parcel_code' => $parcelCode,
+                    'parcel_status_id' => (string) config('shiply.parcel_status.submitted', 2),
                     'customer_name' => (string) ($order->customer_name ?? ''),
                     'actor_id' => (string) $actor->id,
                     'actor_name' => $actorName,

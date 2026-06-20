@@ -33,8 +33,14 @@ class FirebaseService
     /** Shiply delivered — coins + end whistle (res/raw/shiply_delivered). */
     public const SHIPLY_DELIVERED_CHANNEL_ID = 'dr_bike_shiply_delivered_finale';
 
-    /** Shiply sales-order updates — metallic piggy-bank coin tone (res/raw/shiply_coins). */
-    public const SHIPLY_COINS_CHANNEL_ID = 'dr_bike_shiply_piggy_coins';
+    /** Shiply tracking — motorcycle rev (res/raw/shiply_motorcycle). */
+    public const SHIPLY_MOTORCYCLE_CHANNEL_ID = 'dr_bike_shiply_motorcycle';
+
+    /** Shiply pending/stuck — crash impact (res/raw/shiply_stuck). */
+    public const SHIPLY_STUCK_CHANNEL_ID = 'dr_bike_shiply_stuck_alert';
+
+    /** Shiply returned — ambulance siren (res/raw/shiply_returned). */
+    public const SHIPLY_RETURNED_CHANNEL_ID = 'dr_bike_shiply_returned_ambulance';
 
     public const EMPLOYEE_TASK_SOUND_ANDROID = 'task_sos_alert';
 
@@ -48,18 +54,25 @@ class FirebaseService
 
     public const ADMIN_LOGIN_SOUND_IOS = 'admin_login_motivate.wav';
 
-    /** Metallic piggy-bank coins — res/raw/shiply_coins.wav */
-    public const SHIPLY_COINS_SOUND_ANDROID = 'shiply_coins';
-
-    public const SHIPLY_COINS_SOUND_IOS = 'shiply_coins.wav';
-
     /** Coins + end whistle — res/raw/shiply_delivered.wav */
     public const SHIPLY_DELIVERED_SOUND_ANDROID = 'shiply_delivered';
 
     public const SHIPLY_DELIVERED_SOUND_IOS = 'shiply_delivered.wav';
 
+    public const SHIPLY_MOTORCYCLE_SOUND_ANDROID = 'shiply_motorcycle';
+
+    public const SHIPLY_MOTORCYCLE_SOUND_IOS = 'shiply_motorcycle.wav';
+
+    public const SHIPLY_STUCK_SOUND_ANDROID = 'shiply_stuck';
+
+    public const SHIPLY_STUCK_SOUND_IOS = 'shiply_stuck.wav';
+
+    public const SHIPLY_RETURNED_SOUND_ANDROID = 'shiply_returned';
+
+    public const SHIPLY_RETURNED_SOUND_IOS = 'shiply_returned.wav';
+
     /** @var list<string> */
-    private const SHIPLY_COINS_NOTIFICATION_TYPES = [
+    private const SHIPLY_TRACKING_NOTIFICATION_TYPES = [
         'sales_order_shiply_handover',
         'sales_order_shiply_status',
     ];
@@ -566,18 +579,53 @@ class FirebaseService
             ];
         }
 
-        if (in_array($type, self::SHIPLY_COINS_NOTIFICATION_TYPES, true)) {
-            return [
-                'channel_id' => self::SHIPLY_COINS_CHANNEL_ID,
-                'sound' => self::SHIPLY_COINS_SOUND_ANDROID,
-                'ios_sound' => self::SHIPLY_COINS_SOUND_IOS,
-            ];
+        $shiplyTracking = $this->resolveShiplyTrackingDelivery($data);
+        if ($shiplyTracking !== null) {
+            return $shiplyTracking;
         }
 
         return [
             'channel_id' => self::ADMIN_CHANNEL_ID,
             'sound' => 'default',
             'ios_sound' => 'default',
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array{channel_id: string, sound: string, ios_sound: string}|null
+     */
+    protected function resolveShiplyTrackingDelivery(array $data): ?array
+    {
+        $type = (string) ($data['type'] ?? '');
+        if (! in_array($type, self::SHIPLY_TRACKING_NOTIFICATION_TYPES, true)) {
+            return null;
+        }
+
+        $statusId = (int) ($data['parcel_status_id'] ?? 0);
+        $pendingStatus = (int) config('shiply.parcel_status.pending', 5);
+        $returnedStatus = (int) config('shiply.parcel_status.returned', 7);
+
+        if ($statusId === $returnedStatus) {
+            return [
+                'channel_id' => self::SHIPLY_RETURNED_CHANNEL_ID,
+                'sound' => self::SHIPLY_RETURNED_SOUND_ANDROID,
+                'ios_sound' => self::SHIPLY_RETURNED_SOUND_IOS,
+            ];
+        }
+
+        if ($statusId === $pendingStatus) {
+            return [
+                'channel_id' => self::SHIPLY_STUCK_CHANNEL_ID,
+                'sound' => self::SHIPLY_STUCK_SOUND_ANDROID,
+                'ios_sound' => self::SHIPLY_STUCK_SOUND_IOS,
+            ];
+        }
+
+        return [
+            'channel_id' => self::SHIPLY_MOTORCYCLE_CHANNEL_ID,
+            'sound' => self::SHIPLY_MOTORCYCLE_SOUND_ANDROID,
+            'ios_sound' => self::SHIPLY_MOTORCYCLE_SOUND_IOS,
         ];
     }
 
