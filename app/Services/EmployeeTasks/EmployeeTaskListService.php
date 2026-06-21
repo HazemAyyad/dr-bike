@@ -18,7 +18,7 @@ class EmployeeTaskListService
     {
         [$subTotal, $subDone, $progress] = $this->legacySubtaskProgress($task);
 
-        return [
+        $payload = [
             'task_id' => $task->id,
             'occurrence_id' => null,
             'task_name' => $task->name,
@@ -49,7 +49,10 @@ class EmployeeTaskListService
                 ? $task->task_recurrence_time
                 : [],
             'source' => 'legacy',
+            'subtask_names' => $this->legacySubtaskNames($task),
         ];
+
+        return $this->appendAssigneeFields($payload, $task, $photoResolver);
     }
 
     public function formatOccurrence(EmployeeTaskOccurrence $task, callable $photoResolver): array
@@ -59,7 +62,7 @@ class EmployeeTaskListService
             ?? $task->subtasks()->where('status', 'completed')->count());
         $progress = $this->calcProgressPercent($task, $subTotal, $subDone);
 
-        return [
+        $payload = [
             'task_id' => $task->legacy_task_id ?? $task->id,
             'occurrence_id' => $task->id,
             'task_name' => $task->name,
@@ -91,7 +94,14 @@ class EmployeeTaskListService
             'template_id' => $task->template_id,
             'task_recurrence' => $task->template?->recurrence_type ?? 'noRepeat',
             'source' => 'occurrence',
+            'subtask_names' => $this->occurrenceSubtaskNames($task),
         ];
+
+        $legacyTask = $task->relationLoaded('legacyTask')
+            ? $task->legacyTask
+            : ($task->legacy_task_id ? EmployeeTask::find($task->legacy_task_id) : null);
+
+        return $this->appendAssigneeFields($payload, $legacyTask, $photoResolver);
     }
 
     /**
@@ -137,7 +147,7 @@ class EmployeeTaskListService
             app(EmployeeTaskRecurrenceService::class)->ensureActiveTemplateOccurrences();
         }
 
-        $legacy = EmployeeTask::with('employee.user')
+        $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
             ->withCount([
                 'subTasks',
                 'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
@@ -154,7 +164,12 @@ class EmployeeTaskListService
             return $legacy->values();
         }
 
-        $occurrences = EmployeeTaskOccurrence::with(['employee.user', 'template'])
+        $occurrences = EmployeeTaskOccurrence::with([
+            'employee.user',
+            'template',
+            'legacyTask',
+            'subtasks:id,occurrence_id,name',
+        ])
             ->withCount([
                 'subtasks',
                 'subtasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
@@ -169,7 +184,7 @@ class EmployeeTaskListService
 
     public function getCompletedItems(callable $photoResolver): Collection
     {
-        $legacy = EmployeeTask::with('employee.user')
+        $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
             ->withCount([
                 'subTasks',
                 'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
@@ -185,7 +200,12 @@ class EmployeeTaskListService
             return $legacy->values();
         }
 
-        $occurrences = EmployeeTaskOccurrence::with(['employee.user', 'template'])
+        $occurrences = EmployeeTaskOccurrence::with([
+            'employee.user',
+            'template',
+            'legacyTask',
+            'subtasks:id,occurrence_id,name',
+        ])
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
             ->get()
@@ -196,7 +216,7 @@ class EmployeeTaskListService
 
     public function getCanceledItems(callable $photoResolver): Collection
     {
-        $legacy = EmployeeTask::with('employee.user')
+        $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
             ->where('is_canceled', 1)
             ->whereNull('parent_id')
             ->get()
@@ -206,7 +226,12 @@ class EmployeeTaskListService
             return $legacy->values();
         }
 
-        $occurrences = EmployeeTaskOccurrence::with(['employee.user', 'template'])
+        $occurrences = EmployeeTaskOccurrence::with([
+            'employee.user',
+            'template',
+            'legacyTask',
+            'subtasks:id,occurrence_id,name',
+        ])
             ->where('is_canceled', 1)
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
@@ -265,5 +290,80 @@ class EmployeeTaskListService
                         ->whereDate('start_time', '<=', $max->toDateString());
                 });
         });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function appendAssigneeFields(
+        array $payload,
+        ?EmployeeTask $legacyTask,
+        callable $photoResolver
+    ): array {
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+
+        if ($legacyTask instanceof EmployeeTask) {
+            $payload['assignee_ids'] = $assigneeService->idsForTask($legacyTask);
+            $payload['assignees'] = $assigneeService->profilesForTask($legacyTask, $photoResolver);
+        } else {
+            $employeeId = (int) ($payload['employee_id'] ?? 0);
+            $payload['assignee_ids'] = $employeeId > 0 ? [$employeeId] : [];
+            $payload['assignees'] = $employeeId > 0
+                ? [[
+                    'id' => $employeeId,
+                    'name' => (string) ($payload['employee_name'] ?? ''),
+                    'photo' => (string) ($payload['employee_photo'] ?? ''),
+                ]]
+                : [];
+        }
+
+        $payload['is_shared'] = count($payload['assignee_ids']) > 1;
+        $payload['assignee_label'] = collect($payload['assignees'])
+            ->pluck('name')
+            ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+            ->implode(' · ');
+
+        return $payload;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function legacySubtaskNames(EmployeeTask $task): array
+    {
+        if ($task->relationLoaded('subTasks')) {
+            return $task->subTasks
+                ->pluck('name')
+                ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+                ->values()
+                ->all();
+        }
+
+        return EmployeeSubTask::query()
+            ->forLegacyTask($task)
+            ->pluck('name')
+            ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function occurrenceSubtaskNames(EmployeeTaskOccurrence $occurrence): array
+    {
+        if ($occurrence->relationLoaded('subtasks')) {
+            return $occurrence->subtasks
+                ->pluck('name')
+                ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+                ->values()
+                ->all();
+        }
+
+        return $occurrence->subtasks()
+            ->pluck('name')
+            ->filter(fn ($name) => is_string($name) && trim($name) !== '')
+            ->values()
+            ->all();
     }
 }
