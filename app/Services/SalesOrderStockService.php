@@ -70,6 +70,38 @@ class SalesOrderStockService
         ));
     }
 
+    public function reservedQuantityForProduct(
+        int $productId,
+        ?int $excludeOrderId = null
+    ): int {
+        $query = SalesOrderItem::query()
+            ->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
+            ->where('sales_order_items.product_id', $productId)
+            ->where('sales_order_items.is_hidden', false)
+            ->whereIn('sales_orders.status', $this->reservingStatuses());
+
+        if ($excludeOrderId) {
+            $query->where('sales_orders.id', '!=', $excludeOrderId);
+        }
+
+        $unconfirmed = SalesOrderStatus::Unconfirmed->value;
+
+        return (int) $query->sum(DB::raw(
+            "GREATEST(
+                GREATEST(
+                    CAST(sales_order_items.reserved_qty AS SIGNED),
+                    CASE
+                        WHEN sales_orders.status = '{$unconfirmed}'
+                            AND CAST(sales_order_items.reserved_qty AS SIGNED) = 0
+                        THEN CAST(sales_order_items.quantity AS SIGNED)
+                        ELSE CAST(sales_order_items.reserved_qty AS SIGNED)
+                    END
+                ) - CAST(sales_order_items.dispatched_qty AS SIGNED),
+                0
+            )"
+        ));
+    }
+
     public function availableForOrder(Product $product, int $quantity, ?int $sizeColorId = null, ?int $excludeOrderId = null): int
     {
         $physical = $this->productStockService->resolveAvailableStock($product, $sizeColorId);
@@ -316,6 +348,7 @@ class SalesOrderStockService
                         $sizeColorId = (int) $variant->id;
                         $physical = (int) $variant->stock;
                         $reserved = $this->reservedQuantity($productId, $sizeColorId, $excludeOrderId);
+                        $variantTotalReserved = $this->reservedQuantity($productId, $sizeColorId, null);
                         $totalPhysical += $physical;
                         $totalReserved += $reserved;
 
@@ -324,28 +357,35 @@ class SalesOrderStockService
                             'size_color_id' => $sizeColorId,
                             'physical_stock' => $physical,
                             'reserved_qty' => $reserved,
+                            'total_reserved_qty' => $variantTotalReserved,
                             'available_qty' => max(0, $physical - $reserved),
                         ];
                     }
                 }
 
+                $productReserved = $this->reservedQuantityForProduct($productId, $excludeOrderId);
+                $totalReserved = $this->reservedQuantityForProduct($productId, null);
+
                 $rows[] = [
                     'product_id' => $productId,
                     'size_color_id' => null,
                     'physical_stock' => $totalPhysical,
-                    'reserved_qty' => $totalReserved,
-                    'available_qty' => max(0, $totalPhysical - $totalReserved),
+                    'reserved_qty' => $productReserved,
+                    'total_reserved_qty' => $totalReserved,
+                    'available_qty' => max(0, $totalPhysical - $productReserved),
                     'is_aggregate' => true,
                 ];
             } else {
                 $physical = $this->productStockService->resolveAvailableStock($product, null);
-                $reserved = $this->reservedQuantity($productId, null, $excludeOrderId);
+                $reserved = $this->reservedQuantityForProduct($productId, $excludeOrderId);
+                $totalReserved = $this->reservedQuantityForProduct($productId, null);
 
                 $rows[] = [
                     'product_id' => $productId,
                     'size_color_id' => null,
                     'physical_stock' => $physical,
                     'reserved_qty' => $reserved,
+                    'total_reserved_qty' => $totalReserved,
                     'available_qty' => max(0, $physical - $reserved),
                 ];
             }
