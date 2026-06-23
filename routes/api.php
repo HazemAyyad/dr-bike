@@ -381,6 +381,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/sales/orders', [SalesOrdersController::class, 'index']);
       Route::get('/sales/order', [SalesOrdersController::class, 'show']);
       Route::post('/sales/order', [SalesOrdersController::class, 'store']);
+      Route::post('/sales/order/check-stock', [SalesOrdersController::class, 'checkStock']);
+      Route::post('/sales/order/stock-availability', [SalesOrdersController::class, 'stockAvailability']);
       Route::post('/sales/order/update', [SalesOrdersController::class, 'update']);
       Route::post('/sales/order/confirm', [SalesOrdersController::class, 'confirm']);
       Route::post('/sales/order/ready', [SalesOrdersController::class, 'markReady']);

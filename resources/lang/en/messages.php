@@ -586,6 +586,7 @@ return [
     'sales_order_invalid_status_transition' => 'This action is not allowed for the current order status.',
     'sales_order_product_not_found' => 'Product not found.',
     'sales_order_insufficient_stock' => 'Insufficient stock for product: :product',
+    'sales_order_reserved_stock_conflict' => 'Some items are reserved by other unconfirmed orders. Continuing may make stock negative.',
     'sales_order_debt_collection_no_items' => 'Debt collection orders cannot have line items.',
     'sales_order_requires_items' => 'At least one line item is required.',
     'sales_order_debt_required' => 'Debt collection order must be linked to an existing debt.',

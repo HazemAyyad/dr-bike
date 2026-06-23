@@ -164,6 +164,8 @@ class SalesOrderPartialService
                 $user->id
             );
 
+            $this->stockService->reserveOrder($child->fresh(['items.product']));
+
             return $child->fresh([
                 'items',
                 'city:id,name_ar,name_en',
@@ -337,6 +339,8 @@ class SalesOrderPartialService
                     'line_total' => round($row['quantity'] * $row['unit_price'], 2),
                 ]);
             }
+
+            $this->stockService->reserveOrder($child->fresh(['items.product']));
 
             SalesReturn::create([
                 'sales_order_id' => $order->id,

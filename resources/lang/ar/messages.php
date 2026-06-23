@@ -598,6 +598,7 @@ return [
     'sales_order_invalid_status_transition' => 'لا يمكن تنفيذ هذا الإجراء على الطلبية في حالتها الحالية.',
     'sales_order_product_not_found' => 'المنتج غير موجود.',
     'sales_order_insufficient_stock' => 'المخزون غير كافٍ للمنتج: :product',
+    'sales_order_reserved_stock_conflict' => 'بعض الأصناف محجوزة لطلبيات أخرى غير مؤكدة. تأكيد المتابعة قد يجعل المخزون سالباً.',
     'sales_order_debt_collection_no_items' => 'طلبية تحصيل الدين لا يمكن أن تحتوي أصنافاً.',
     'sales_order_requires_items' => 'يجب إضافة صنف واحد على الأقل.',
     'sales_order_debt_required' => 'يجب ربط طلبية تحصيل الدين بدين موجود.',

@@ -22,6 +22,7 @@ enum SalesOrderStatus: string
     public function reservesStock(): bool
     {
         return in_array($this, [
+            self::Unconfirmed,
             self::Confirmed,
             self::Ready,
             self::Postponed,

@@ -37,6 +37,89 @@ class SalesOrderService
 
     /**
      * @param  array<string, mixed>  $filters
+     * @return array{has_conflicts: bool, conflicts: list<array<string, mixed>>}
+     */
+    public function checkStockImpact(array $filters): array
+    {
+        $items = $filters['items'] ?? [];
+        $excludeOrderId = ! empty($filters['sales_order_id']) ? (int) $filters['sales_order_id'] : null;
+        $conflicts = $this->stockService->analyzeItemsStockImpact($items, $excludeOrderId);
+
+        return [
+            'has_conflicts' => $conflicts !== [],
+            'conflicts' => $conflicts,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return list<array<string, mixed>>
+     */
+    public function productStockAvailability(array $filters): array
+    {
+        $productIds = array_map('intval', $filters['product_ids'] ?? []);
+        $excludeOrderId = ! empty($filters['sales_order_id']) ? (int) $filters['sales_order_id'] : null;
+
+        return $this->stockService->bulkAvailability($productIds, $excludeOrderId);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function guardReservedStockConflicts(SalesOrder $order, array $data): void
+    {
+        if ($order->stock_deducted_at || ! $order->statusEnum()->reservesStock()) {
+            return;
+        }
+
+        if ($this->shouldAllowNegativeStock($data, $order)) {
+            return;
+        }
+
+        $conflicts = $this->stockService->analyzeOrderStockImpact($order);
+        if ($conflicts === []) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'acknowledge_negative_stock' => [__('messages.sales_order_reserved_stock_conflict')],
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function applyUnconfirmedStockReservation(SalesOrder $order, array $data): void
+    {
+        if (! $order->statusEnum()->reservesStock() || $order->stock_deducted_at) {
+            return;
+        }
+
+        $allowNegative = $this->shouldAllowNegativeStock($data, $order);
+
+        $this->stockService->reserveOrder($order, $allowNegative);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function shouldAllowNegativeStock(array $data, ?SalesOrder $order = null): bool
+    {
+        if ((bool) ($data['acknowledge_negative_stock'] ?? false)) {
+            return true;
+        }
+
+        if ($order === null) {
+            return false;
+        }
+
+        $conflicts = $this->stockService->analyzeOrderStockImpact($order);
+
+        return $conflicts === [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
      * @return array<int, array<string, mixed>>
      */
     public function list(array $filters = []): array
@@ -149,6 +232,9 @@ class SalesOrderService
 
             if (! $order->is_debt_collection) {
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
+                $freshOrder = $order->fresh(['items.product']);
+                $this->guardReservedStockConflicts($freshOrder, $data);
+                $this->applyUnconfirmedStockReservation($freshOrder, $data);
             }
 
             $this->logStatus($order, null, SalesOrderStatus::Unconfirmed->value, 'إنشاء طلبية', $user->id);
@@ -214,7 +300,13 @@ class SalesOrderService
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
             }
 
-            $this->stockService->syncReservationsAfterEdit($order->fresh(['items.product']), (int) $user->id);
+            $freshOrder = $order->fresh(['items.product']);
+            $this->guardReservedStockConflicts($freshOrder, $data);
+            $this->stockService->syncReservationsAfterEdit(
+                $freshOrder,
+                (int) $user->id,
+                $this->shouldAllowNegativeStock($data, $freshOrder)
+            );
 
             return $order->fresh($this->detailRelations());
         });
@@ -334,6 +426,7 @@ class SalesOrderService
                 } else {
                     $this->stockService->releaseOrder($order);
                 }
+                $this->stockService->reserveOrder($order->fresh(['items.product']), allowNegative: true);
             }
 
             $order->update([
@@ -712,6 +805,7 @@ class SalesOrderService
             'packages' => 'nullable|array|max:2',
             'packages.*.package_index' => 'required_with:packages|integer|min:1|max:2',
             'packages.*.customer_delivery_fee' => 'nullable|numeric|min:0',
+            'acknowledge_negative_stock' => 'nullable|boolean',
         ];
 
         $data = $request->validate($rules);

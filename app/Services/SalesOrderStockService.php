@@ -21,6 +21,7 @@ class SalesOrderStockService
     public function reservingStatuses(): array
     {
         return [
+            SalesOrderStatus::Unconfirmed->value,
             SalesOrderStatus::Confirmed->value,
             SalesOrderStatus::Ready->value,
             SalesOrderStatus::Postponed->value,
@@ -84,7 +85,155 @@ class SalesOrderStockService
         }
     }
 
-    public function reserveOrder(SalesOrder $order): void
+    /**
+     * @param  array<int, array<string, mixed>>  $items
+     * @return list<array<string, mixed>>
+     */
+    public function analyzeItemsStockImpact(array $items, ?int $excludeOrderId = null): array
+    {
+        $aggregated = [];
+
+        foreach ($items as $item) {
+            if (! empty($item['is_hidden'])) {
+                continue;
+            }
+
+            $productId = (int) ($item['product_id'] ?? 0);
+            if ($productId <= 0) {
+                continue;
+            }
+
+            $sizeColorId = ! empty($item['size_color_id']) ? (int) $item['size_color_id'] : null;
+            $key = $productId.'_'.($sizeColorId ?? 0);
+            $aggregated[$key] = [
+                'product_id' => $productId,
+                'size_color_id' => $sizeColorId,
+                'quantity' => (int) ($aggregated[$key]['quantity'] ?? 0) + (int) ($item['quantity'] ?? 0),
+                'product_name' => $item['product_name'] ?? ($aggregated[$key]['product_name'] ?? null),
+            ];
+        }
+
+        $conflicts = [];
+
+        foreach ($aggregated as $row) {
+            $product = Product::query()->find($row['product_id']);
+            if (! $product) {
+                continue;
+            }
+
+            $sizeColorId = $row['size_color_id'];
+            $physical = $this->productStockService->resolveAvailableStock($product, $sizeColorId);
+            $reserved = $this->reservedQuantity($row['product_id'], $sizeColorId, $excludeOrderId);
+            $available = $physical - $reserved;
+            $requested = (int) $row['quantity'];
+
+            if ($available < $requested) {
+                $conflicts[] = [
+                    'product_id' => $row['product_id'],
+                    'product_name' => $row['product_name'] ?? $product->nameAr,
+                    'size_color_id' => $sizeColorId,
+                    'physical_stock' => $physical,
+                    'reserved_by_others' => $reserved,
+                    'available' => max(0, $available),
+                    'requested_qty' => $requested,
+                    'deficit' => $requested - max(0, $available),
+                ];
+            }
+        }
+
+        return $conflicts;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function analyzeOrderStockImpact(SalesOrder $order, ?int $excludeOrderId = null): array
+    {
+        $order->loadMissing('items');
+
+        $items = $order->items
+            ->where('is_hidden', false)
+            ->map(fn (SalesOrderItem $item) => [
+                'product_id' => (int) $item->product_id,
+                'size_color_id' => $item->size_color_id ? (int) $item->size_color_id : null,
+                'quantity' => (int) $item->quantity,
+                'product_name' => $item->product_name,
+                'is_hidden' => (bool) $item->is_hidden,
+            ])
+            ->values()
+            ->all();
+
+        return $this->analyzeItemsStockImpact(
+            $items,
+            $excludeOrderId ?? (int) $order->id
+        );
+    }
+
+    /**
+     * @param  list<int>  $productIds
+     * @return list<array<string, mixed>>
+     */
+    public function bulkAvailability(array $productIds, ?int $excludeOrderId = null): array
+    {
+        $productIds = array_values(array_unique(array_filter(array_map('intval', $productIds))));
+        $rows = [];
+
+        foreach ($productIds as $productId) {
+            $product = Product::query()->with(['sizes.colorSizes'])->find($productId);
+            if (! $product) {
+                continue;
+            }
+
+            $hasVariants = $this->productStockService->productHasVariants($product);
+
+            if ($hasVariants) {
+                $totalPhysical = 0;
+                $totalReserved = 0;
+
+                foreach ($product->sizes ?? [] as $size) {
+                    foreach ($size->colorSizes ?? [] as $variant) {
+                        $sizeColorId = (int) $variant->id;
+                        $physical = (int) $variant->stock;
+                        $reserved = $this->reservedQuantity($productId, $sizeColorId, $excludeOrderId);
+                        $totalPhysical += $physical;
+                        $totalReserved += $reserved;
+
+                        $rows[] = [
+                            'product_id' => $productId,
+                            'size_color_id' => $sizeColorId,
+                            'physical_stock' => $physical,
+                            'reserved_qty' => $reserved,
+                            'available_qty' => max(0, $physical - $reserved),
+                        ];
+                    }
+                }
+
+                $rows[] = [
+                    'product_id' => $productId,
+                    'size_color_id' => null,
+                    'physical_stock' => $totalPhysical,
+                    'reserved_qty' => $totalReserved,
+                    'available_qty' => max(0, $totalPhysical - $totalReserved),
+                    'is_aggregate' => true,
+                ];
+            } else {
+                $physical = $this->productStockService->resolveAvailableStock($product, null);
+                $reserved = $this->reservedQuantity($productId, null, $excludeOrderId);
+
+                $rows[] = [
+                    'product_id' => $productId,
+                    'size_color_id' => null,
+                    'physical_stock' => $physical,
+                    'reserved_qty' => $reserved,
+                    'available_qty' => max(0, $physical - $reserved),
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    public function reserveOrder(SalesOrder $order, bool $allowNegative = false): void
     {
         $order->loadMissing('items.product');
 
@@ -93,7 +242,10 @@ class SalesOrderStockService
                 continue;
             }
 
-            $this->assertItemCanReserve($item, (int) $order->id);
+            if (! $allowNegative) {
+                $this->assertItemCanReserve($item, (int) $order->id);
+            }
+
             $item->update(['reserved_qty' => (int) $item->quantity]);
         }
     }
@@ -105,8 +257,11 @@ class SalesOrderStockService
             ->update(['reserved_qty' => 0]);
     }
 
-    public function syncReservationsAfterEdit(SalesOrder $order, ?int $userId = null): void
-    {
+    public function syncReservationsAfterEdit(
+        SalesOrder $order,
+        ?int $userId = null,
+        bool $allowNegative = false
+    ): void {
         if ($order->stock_deducted_at) {
             $this->restoreDispatchedOrder($order, $userId);
             $this->dispatchOrder($order->fresh(['items.product']), $userId);
@@ -119,7 +274,7 @@ class SalesOrderStockService
         }
 
         $this->releaseOrder($order);
-        $this->reserveOrder($order->fresh(['items.product']));
+        $this->reserveOrder($order->fresh(['items.product']), $allowNegative);
     }
 
     public function dispatchOrder(SalesOrder $order, ?int $userId = null): void

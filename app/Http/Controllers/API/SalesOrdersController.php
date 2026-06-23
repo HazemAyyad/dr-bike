@@ -105,6 +105,68 @@ class SalesOrdersController extends Controller
         }
     }
 
+    public function checkStock(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_order_id' => 'nullable|integer|exists:sales_orders,id',
+                'items' => 'required|array|min:1',
+                'items.*.product_id' => 'required|integer|exists:products,id',
+                'items.*.size_color_id' => 'nullable|integer',
+                'items.*.quantity' => 'required|integer|min:1',
+                'items.*.is_hidden' => 'nullable|boolean',
+            ]);
+
+            $result = $this->service->checkStockImpact($data);
+
+            return response()->json([
+                'status' => 'success',
+                'has_conflicts' => $result['has_conflicts'],
+                'conflicts' => $result['conflicts'],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function stockAvailability(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_order_id' => 'nullable|integer|exists:sales_orders,id',
+                'product_ids' => 'required|array|min:1|max:500',
+                'product_ids.*' => 'integer|exists:products,id',
+            ]);
+
+            $availability = $this->service->productStockAvailability($data);
+
+            return response()->json([
+                'status' => 'success',
+                'availability' => $availability,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function update(Request $request)
     {
         try {
