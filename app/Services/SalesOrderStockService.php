@@ -35,24 +35,38 @@ class SalesOrderStockService
         ?int $excludeOrderId = null
     ): int {
         $query = SalesOrderItem::query()
-            ->where('product_id', $productId)
-            ->whereHas('salesOrder', function ($q) use ($excludeOrderId) {
-                $q->whereIn('status', $this->reservingStatuses());
-                if ($excludeOrderId) {
-                    $q->where('id', '!=', $excludeOrderId);
-                }
-            });
+            ->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
+            ->where('sales_order_items.product_id', $productId)
+            ->whereIn('sales_orders.status', $this->reservingStatuses());
+
+        if ($excludeOrderId) {
+            $query->where('sales_orders.id', '!=', $excludeOrderId);
+        }
 
         if ($sizeColorId !== null && $sizeColorId > 0) {
-            $query->where('size_color_id', $sizeColorId);
+            $query->where('sales_order_items.size_color_id', $sizeColorId);
         } else {
             $query->where(function ($q) {
-                $q->whereNull('size_color_id')->orWhere('size_color_id', 0);
+                $q->whereNull('sales_order_items.size_color_id')
+                    ->orWhere('sales_order_items.size_color_id', 0);
             });
         }
 
+        $unconfirmed = SalesOrderStatus::Unconfirmed->value;
+
         return (int) $query->sum(DB::raw(
-            'GREATEST(CAST(reserved_qty AS SIGNED) - CAST(dispatched_qty AS SIGNED), 0)'
+            "GREATEST(
+                GREATEST(
+                    CAST(sales_order_items.reserved_qty AS SIGNED),
+                    CASE
+                        WHEN sales_orders.status = '{$unconfirmed}'
+                            AND CAST(sales_order_items.reserved_qty AS SIGNED) = 0
+                        THEN CAST(sales_order_items.quantity AS SIGNED)
+                        ELSE CAST(sales_order_items.reserved_qty AS SIGNED)
+                    END
+                ) - CAST(sales_order_items.dispatched_qty AS SIGNED),
+                0
+            )"
         ));
     }
 
