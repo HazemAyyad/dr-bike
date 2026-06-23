@@ -151,6 +151,11 @@ class SalesOrderStockService
                     'available' => max(0, $available),
                     'requested_qty' => $requested,
                     'deficit' => $requested - max(0, $available),
+                    'reserving_orders' => $this->reservingOrdersForProduct(
+                        $row['product_id'],
+                        $sizeColorId,
+                        $excludeOrderId
+                    ),
                 ];
             }
         }
@@ -181,6 +186,108 @@ class SalesOrderStockService
             $items,
             $excludeOrderId ?? (int) $order->id
         );
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function reservingOrdersForProduct(
+        int $productId,
+        ?int $sizeColorId = null,
+        ?int $excludeOrderId = null
+    ): array {
+        $query = SalesOrderItem::query()
+            ->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
+            ->leftJoin('customers', 'customers.id', '=', 'sales_orders.customer_id')
+            ->where('sales_order_items.product_id', $productId)
+            ->where('sales_order_items.is_hidden', false)
+            ->whereIn('sales_orders.status', $this->reservingStatuses());
+
+        if ($excludeOrderId) {
+            $query->where('sales_orders.id', '!=', $excludeOrderId);
+        }
+
+        if ($sizeColorId !== null && $sizeColorId > 0) {
+            $query->where('sales_order_items.size_color_id', $sizeColorId);
+        } else {
+            $query->where(function ($q) {
+                $q->whereNull('sales_order_items.size_color_id')
+                    ->orWhere('sales_order_items.size_color_id', 0);
+            });
+        }
+
+        $rows = $query->get([
+            'sales_orders.id as order_id',
+            'sales_orders.serial_number',
+            'sales_orders.customer_name',
+            'sales_orders.customer_id',
+            'sales_orders.status as order_status',
+            'customers.type as customer_type',
+            'sales_order_items.quantity',
+            'sales_order_items.reserved_qty',
+            'sales_order_items.dispatched_qty',
+        ]);
+
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            $net = $this->effectiveReservedNet(
+                (int) $row->reserved_qty,
+                (int) $row->quantity,
+                (string) $row->order_status,
+                (int) $row->dispatched_qty
+            );
+
+            if ($net <= 0) {
+                continue;
+            }
+
+            $orderId = (int) $row->order_id;
+
+            if (! isset($grouped[$orderId])) {
+                $grouped[$orderId] = [
+                    'order_id' => $orderId,
+                    'serial_number' => $row->serial_number,
+                    'customer_name' => $row->customer_name,
+                    'party_type' => $this->resolvePartyType(
+                        $row->customer_id ? (int) $row->customer_id : null,
+                        $row->customer_type
+                    ),
+                    'status' => $row->order_status,
+                    'reserved_qty' => 0,
+                ];
+            }
+
+            $grouped[$orderId]['reserved_qty'] += $net;
+        }
+
+        return array_values($grouped);
+    }
+
+    private function effectiveReservedNet(
+        int $reservedQty,
+        int $quantity,
+        string $orderStatus,
+        int $dispatchedQty
+    ): int {
+        $reserved = $reservedQty;
+        if ($reserved <= 0 && $orderStatus === SalesOrderStatus::Unconfirmed->value) {
+            $reserved = $quantity;
+        }
+
+        return max(0, $reserved - $dispatchedQty);
+    }
+
+    private function resolvePartyType(?int $customerId, mixed $customerType): ?string
+    {
+        if (! $customerId) {
+            return null;
+        }
+
+        $type = strtolower(trim((string) $customerType));
+        $traderTypes = ['trader', 'تاجر', 'seller', 'مورد', 'supplier'];
+
+        return in_array($type, $traderTypes, true) ? 'trader' : 'customer';
     }
 
     /**
