@@ -2,8 +2,11 @@
 
 use App\Http\Controllers\API\Store\StoreAuthController;
 use App\Http\Controllers\API\Store\StoreCitiesController;
+use App\Http\Controllers\API\Store\StoreCommentsController;
 use App\Http\Controllers\API\Store\StoreItemsController;
 use App\Http\Controllers\API\Store\StoreMainCategoryController;
+use App\Http\Controllers\API\Store\StoreNotificationsController;
+use App\Http\Controllers\API\Store\StoreOnlineAdsController;
 use App\Http\Controllers\API\Store\StoreOrdersController;
 use App\Http\Controllers\API\Store\StoreSettingsController;
 use App\Http\Controllers\API\Store\StoreSupCategoryController;
@@ -33,6 +36,12 @@ Route::post('/Users/Edit', [StoreUsersController::class, 'edit']);
 Route::post('/Users/BlockUserAndNotActive', [StoreUsersController::class, 'blockUserAndNotActive']);
 
 Route::post('/Settings/CheckSetting', [StoreSettingsController::class, 'checkSetting']);
+
+Route::post('/OnlineAds/GetAllAds', [StoreOnlineAdsController::class, 'getAllAds']);
+Route::post('/Notifications/GetNotifications', [StoreNotificationsController::class, 'getNotifications']);
+Route::post('/Notifications/EditNotification', [StoreNotificationsController::class, 'editNotification']);
+Route::post('/Comments/GetAllCommentsToItem', [StoreCommentsController::class, 'getAllCommentsToItem']);
+Route::post('/Comments/ManageComment', [StoreCommentsController::class, 'manageComment']);
 
 Route::post('/MainCategorys/GetAllShowMainCategories', [StoreMainCategoryController::class, 'getAllShowMainCategories']);
 Route::post('/SupCategorys/GetAllShowSupCategories', [StoreSupCategoryController::class, 'getAllShowSupCategories']);
