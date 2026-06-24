@@ -9,6 +9,7 @@ use App\Models\Store\StoreSalesOrderItem;
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreShiplyVillage;
 use App\Services\AdminNotificationService;
+use App\Services\DocumentSerialService;
 use App\Services\ShiplyService;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
@@ -93,6 +94,14 @@ class StoreOrdersController extends StoreBaseController
                 $order->forceFill(['root_order_id' => $order->id])->save();
             }
 
+            if (empty($order->serial_number)) {
+                $serial = app(DocumentSerialService::class)->nextSerial(
+                    DocumentSerialService::TYPE_SALES_ORDER,
+                    $order->created_at
+                );
+                $order->forceFill(['serial_number' => 'S'.$serial])->save();
+            }
+
             return $order->fresh(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors']);
         });
 
@@ -131,6 +140,8 @@ class StoreOrdersController extends StoreBaseController
 
         return [
             'id' => (int) $order->id,
+            'serialNumber' => (string) ($order->serial_number ?? ''),
+            'orderNumber' => (string) ($order->serial_number ?? $order->id),
             'customerId' => (string) ($fallback['customerId'] ?? $order->created_by ?? ''),
             'customerName' => (string) ($order->customer_name ?? $fallback['customerName'] ?? ''),
             'phoneNum1' => (string) ($order->customer_phone ?? $fallback['phoneNum1'] ?? ''),
