@@ -238,6 +238,10 @@ return [
     'maintenance_created_successfully' => 'تم انشاء الصيانة بنجاح',
     'maintenance_not_found'=>'لم يتم العثور على الصيانة',
     'maintenance_updated_successfully'=>'تم تعديل حالة الصيانة بنجاح',
+    'maintenance_products_saved' => 'تم حفظ قطع الصيانة بنجاح',
+    'maintenance_delivered_successfully' => 'تم تسليم الصيانة وإنشاء الفاتورة بنجاح',
+    'maintenance_already_delivered' => 'تم تسليم هذه الصيانة مسبقاً',
+    'maintenance_invoice_already_created' => 'تم إنشاء فاتورة لهذه الصيانة مسبقاً',
 
     // Boxes
     'box_created_successfully'     => 'تم إنشاء الصندوق بنجاح.',

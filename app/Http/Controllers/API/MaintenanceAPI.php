@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Maintenance;
+use App\Services\MaintenanceDeliveryService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -12,6 +13,10 @@ use Illuminate\Validation\ValidationException;
 
 class MaintenanceAPI extends Controller
 {
+    public function __construct(
+        protected MaintenanceDeliveryService $deliveryService
+    ) {}
+
     private function resolveContactPhone($maintenance): ?string
     {
         $phone = null;
@@ -35,6 +40,7 @@ class MaintenanceAPI extends Controller
         $maintenances = Maintenance::where('status',$status)
         ->with('customer:id,name,phone')
         ->with('seller:id,name,phone')
+        ->withSum('products as parts_total', 'line_total')
         ->get();
         $formatted = $maintenances->map(function($maintenance){
 
@@ -71,6 +77,10 @@ class MaintenanceAPI extends Controller
                 "receipt_time"=> $maintenance->receipt_time??null,
                 "created_at" => $maintenance->created_at->format('Y-m-d'),
                 'status' => $maintenance->status?? 'unknown',
+                'parts_total' => round((float) ($maintenance->parts_total ?? 0), 2),
+                'labor_cost' => round((float) ($maintenance->labor_cost ?? 0), 2),
+                'invoice_total' => round((float) ($maintenance->invoice_total ?? 0), 2),
+                'instant_sale_id' => $maintenance->instant_sale_id,
                 //"remaining_time_in_hours" => $diffInHours,
                 "media_files" => $imagePath??'no image files',
             ];
@@ -187,7 +197,8 @@ class MaintenanceAPI extends Controller
         }
             return response()->json([
                 'status' => 'success',
-                'message' => __('messages.maintenance_created_successfully')
+                'message' => __('messages.maintenance_created_successfully'),
+                'maintenance_id' => $maintenance->id,
             ], 200);  
            }
   
@@ -219,6 +230,7 @@ class MaintenanceAPI extends Controller
             ]);
 
             $maintenance = Maintenance::with('customer:id,name')->with('seller:id,name')
+            ->with(['products.product:id,nameAr,nameEn', 'instantSale:id,serial_number'])
             ->findOrFail($request->maintenance_id);
 
             $files = [];
@@ -228,6 +240,7 @@ class MaintenanceAPI extends Controller
                 }
             }
             $maintenance['files']=$files;
+            $maintenance['billing'] = $this->deliveryService->formatProductsSummary($maintenance);
             $maintenance->makeHidden(['customer_id','seller_id']);
             return response()->json([
                 'status'=>'success',
@@ -275,6 +288,8 @@ class MaintenanceAPI extends Controller
             'files' => 'nullable|array',
             'files.*' => 'nullable',
             'status' => 'required|string|in:ongoing,ready,delivered,new',
+            'labor_cost' => 'nullable|numeric|min:0',
+            'discount' => 'nullable|numeric|min:0',
 
     ]);
         if (!$request->filled('customer_id') && !$request->filled('seller_id')) {
@@ -300,9 +315,17 @@ class MaintenanceAPI extends Controller
         // Merge existing and new files
         $data['files'] = CommonUse::handleImageUpdate($request,'files','MaintenanceFiles',$maintenance->files);
         $data['status'] = $request->status;
+        unset($data['labor_cost'], $data['discount']);
 
+        if ($request->has('labor_cost')) {
+            $maintenance->labor_cost = max(0, round((float) $request->labor_cost, 2));
+        }
+        if ($request->has('discount')) {
+            $maintenance->discount = max(0, round((float) $request->discount, 2));
+        }
 
         $maintenance->update($data);
+        $this->deliveryService->recalculateTotals($maintenance->fresh());
 
         if($request->status==='delivered' && $oldStatus !== 'delivered'){
             if($maintenance->customer_id){
@@ -364,6 +387,114 @@ class MaintenanceAPI extends Controller
     public function changeToDone(Request $request){
         return $this->commonUpdate($request,'delivered');
 
+    }
+
+    public function syncProducts(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'maintenance_id' => 'required|exists:maintenance,id',
+                'labor_cost' => 'nullable|numeric|min:0',
+                'discount' => 'nullable|numeric|min:0',
+                'products' => 'nullable|array',
+                'products.*.product_id' => 'required|exists:products,id',
+                'products.*.size_id' => 'nullable|integer|exists:sizes,id',
+                'products.*.size_color_id' => 'nullable|integer|exists:size_colors,id',
+                'products.*.quantity' => 'required|numeric|min:1',
+                'products.*.unit_price' => 'required|numeric|min:0',
+            ]);
+
+            $maintenance = Maintenance::findOrFail($data['maintenance_id']);
+            $maintenance = $this->deliveryService->syncProducts(
+                $maintenance,
+                $data['products'] ?? [],
+                isset($data['labor_cost']) ? (float) $data['labor_cost'] : null,
+                isset($data['discount']) ? (float) $data['discount'] : null,
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.maintenance_products_saved'),
+                'billing' => $this->deliveryService->formatProductsSummary($maintenance),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.maintenance_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function deliver(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'maintenance_id' => 'required|exists:maintenance,id',
+                'labor_cost' => 'nullable|numeric|min:0',
+                'discount' => 'nullable|numeric|min:0',
+                'payment_amount' => 'nullable|numeric|min:0',
+                'payment_box_id' => 'nullable|integer|exists:boxes,id',
+            ]);
+
+            $maintenance = Maintenance::findOrFail($data['maintenance_id']);
+            $result = $this->deliveryService->deliver(
+                $maintenance,
+                $request->user(),
+                $data
+            );
+
+            $maintenance = $result['maintenance'];
+            $instantSale = $result['instant_sale'];
+
+            if ($maintenance->customer_id) {
+                Logs::createLog(
+                    'تسليم صيانة',
+                    'تم تسليم الصيانة للزبون '.$maintenance->customer->name,
+                    'maintenances'
+                );
+            } else {
+                Logs::createLog(
+                    'تسليم صيانة',
+                    'تم تسليم الصيانة للتاجر '.$maintenance->seller->name,
+                    'maintenances'
+                );
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.maintenance_delivered_successfully'),
+                'billing' => $this->deliveryService->formatProductsSummary($maintenance),
+                'instant_sale_id' => $instantSale?->id,
+                'serial_number' => $instantSale?->serial_number,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.maintenance_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 
   

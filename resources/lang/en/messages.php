@@ -232,6 +232,10 @@ return [
     'maintenance_created_successfully' => 'maintenance created successfully',
     'maintenance_not_found'=>'maintenance was not found',
     'maintenance_updated_successfully'=>'maintenance was updated successfully',
+    'maintenance_products_saved' => 'Maintenance parts saved successfully',
+    'maintenance_delivered_successfully' => 'Maintenance delivered and invoice created successfully',
+    'maintenance_already_delivered' => 'This maintenance has already been delivered',
+    'maintenance_invoice_already_created' => 'An invoice was already created for this maintenance',
 
     // Boxes
     'box_created_successfully'     => 'Box created successfully.',

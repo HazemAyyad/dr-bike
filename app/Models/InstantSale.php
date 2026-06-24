@@ -41,6 +41,7 @@ class InstantSale extends Model
         'updated_by',
         'sales_daily_session_id',
         'sales_order_id',
+        'maintenance_id',
         'serial_number',
     ];
 
@@ -115,6 +116,11 @@ class InstantSale extends Model
     public function salesOrder()
     {
         return $this->belongsTo(SalesOrder::class, 'sales_order_id');
+    }
+
+    public function maintenance()
+    {
+        return $this->belongsTo(Maintenance::class);
     }
 
     public function isCancelled(): bool
