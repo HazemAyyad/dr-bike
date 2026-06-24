@@ -9,9 +9,17 @@ class StoreItemsController extends StoreBaseController
 {
     public function getAllItemIsMoreSales()
     {
-        $rows = $this->baseProductQuery()
+        $products = $this->baseProductQuery()
             ->where('isMoreSales', true)
-            ->get()
+            ->get();
+
+        if ($products->isEmpty()) {
+            $products = $this->baseProductQuery()
+                ->limit(30)
+                ->get();
+        }
+
+        $rows = $products
             ->map(fn (StoreProduct $product) => $this->productPayload($product));
 
         return response()->json($this->rowsResponse($rows));
