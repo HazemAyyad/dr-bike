@@ -605,9 +605,9 @@ class Stocks extends Controller
             $subs = $filteredPivots->map(function ($pivot) {
                 return [
                     'sub_category_id' => $pivot->sub_category_id,
-                    'sub_category_name' => $pivot->subCategory->nameAr,
-                    'main_category_id' => $pivot->subCategory->category->id,
-                    'main_category_name' => $pivot->subCategory->category->nameAr,
+                    'sub_category_name' => $pivot->subCategory?->nameAr,
+                    'main_category_id' => $pivot->subCategory?->category?->id,
+                    'main_category_name' => $pivot->subCategory?->category?->nameAr,
 
                 ];
             });
@@ -626,7 +626,7 @@ class Stocks extends Controller
             $purchase_prices = $product->purchasePrices->map(function ($pivot) {
                 return [
                     'seller_id' => $pivot->seller_id,
-                    'seller_id' => $pivot->seller->name,
+                    'seller_name' => $pivot->seller?->name,
                     'price' => $pivot->price,
 
                 ];

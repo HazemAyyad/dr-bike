@@ -342,6 +342,7 @@ class MaintenanceAPI extends Controller
         return response()->json([
             'status'=>'success',
             'message'=>__('messages.maintenance_updated_successfully'),
+            'maintenance_id' => $maintenance->id,
         ]);
 
         }

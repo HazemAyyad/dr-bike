@@ -132,6 +132,37 @@ class StoreOrdersController extends StoreBaseController
         return response()->json($this->rowsResponse($rows));
     }
 
+    public function cancelOrder(Request $request)
+    {
+        $orderId = $request->query('id', $request->input('id', $request->input('orderId')));
+        $userId = $request->query('userId', $request->input('userId', $request->input('userUpdate')));
+
+        if (! is_numeric($orderId)) {
+            return response()->json(['message' => 'OrderIdRequired'], 400);
+        }
+
+        $query = StoreSalesOrder::query()
+            ->with(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors'])
+            ->where('id', (int) $orderId);
+
+        if (is_numeric($userId)) {
+            $query->where('created_by', (int) $userId);
+        }
+
+        $order = $query->first();
+
+        if (! $order) {
+            return response()->json(['message' => 'OrderNotFound'], 404);
+        }
+
+        $order->forceFill([
+            'status' => 'canceled',
+            'updated_by' => is_numeric($userId) ? (int) $userId : $order->updated_by,
+        ])->save();
+
+        return response()->json($this->orderPayload($order->fresh(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors'])));
+    }
+
     private function orderPayload(StoreSalesOrder $order, array $fallback = []): array
     {
         $cityId = $order->shiply_city_id ? (int) $order->shiply_city_id : (int) ($fallback['cityId'] ?? 0);

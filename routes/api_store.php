@@ -57,4 +57,5 @@ Route::post('/Cities/GetVillagesByCityId', [StoreCitiesController::class, 'getVi
 Route::post('/Cities/CalculateDeliveryFee', [StoreCitiesController::class, 'calculateDeliveryFee']);
 
 Route::post('/Orders/ManageOrder', [StoreOrdersController::class, 'manageOrder']);
+Route::post('/Orders/CancelOrder', [StoreOrdersController::class, 'cancelOrder']);
 Route::post('/Orders/GetAllOrdersByUserId', [StoreOrdersController::class, 'getAllOrdersByUserId']);
