@@ -56,6 +56,8 @@ class AdminNotificationService
 
     public const TYPE_ATTENDANCE_OVERTIME_REQUEST = 'attendance_overtime_request';
 
+    public const TYPE_STORE_USER_REGISTERED = 'store_user_registered';
+
     /**
      * @param  array<string, mixed>  $data
      */
@@ -300,6 +302,37 @@ class AdminNotificationService
                 $employee->id,
                 'attendance_overtime_request',
                 (int) $request->id,
+                true
+            );
+        });
+    }
+
+    public function notifyStoreUserRegistered(\Illuminate\Foundation\Auth\User $user): AdminNotification
+    {
+        return $this->withArabicLocale(function () use ($user) {
+            $name = $user->name ?: $user->email;
+            $email = (string) $user->email;
+            $phone = (string) ($user->phone ?? '');
+
+            return $this->create(
+                self::TYPE_STORE_USER_REGISTERED,
+                __('messages.admin_notify_store_user_registered_title'),
+                __('messages.admin_notify_store_user_registered_body', [
+                    'user' => $name,
+                    'email' => $email,
+                    'phone' => $phone,
+                ]),
+                [
+                    'user_id' => (string) $user->id,
+                    'user_name' => (string) $name,
+                    'email' => $email,
+                    'phone' => $phone,
+                    'registered_at' => now()->toIso8601String(),
+                    'source' => 'store',
+                ],
+                null,
+                'store_user',
+                (int) $user->id,
                 true
             );
         });

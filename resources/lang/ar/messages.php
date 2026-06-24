@@ -516,6 +516,8 @@ return [
     'admin_notify_auto_checkout_body' => 'سجّل النظام خروج :count موظف ليوم :date: :names',
     'admin_notify_absent_title' => 'موظفون لم يدوّموا اليوم',
     'admin_notify_absent_body' => 'حتى الساعة :time لم يبصمو دخولاً (:count): :names',
+    'admin_notify_store_user_registered_title' => 'مشترك جديد في المتجر',
+    'admin_notify_store_user_registered_body' => 'سجّل :user اشتراكاً جديداً في المتجر (:email، :phone).',
     'admin_notify_source_fingerprint' => ' (بصمة)',
     'admin_notify_source_qr' => ' (مسح QR)',
     'admin_notify_source_manual' => ' (يدوي)',

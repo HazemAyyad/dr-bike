@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API\Store;
 
 use App\Models\Store\StoreUser;
+use App\Services\AdminNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
@@ -13,6 +14,7 @@ class StoreUsersController extends StoreBaseController
     {
         $data = $request->validate([
             'email' => ['required', 'email', 'unique:users,email'],
+            'phoneNumber' => ['required', 'string'],
             'password' => ['required', 'string'],
             'confirmPassword' => ['required', 'same:password'],
         ]);
@@ -21,10 +23,13 @@ class StoreUsersController extends StoreBaseController
         $user->forceFill([
             'name' => strstr($data['email'], '@', true) ?: $data['email'],
             'email' => $data['email'],
+            'phone' => $data['phoneNumber'],
             'password' => Hash::make($data['password']),
             'type' => 'User',
             'is_blocked' => false,
         ])->save();
+
+        app(AdminNotificationService::class)->notifyStoreUserRegistered($user);
 
         return response()->json($this->userPayload($user));
     }
