@@ -92,7 +92,12 @@ class Stocks extends Controller
             }
 
             if ($request->filled('store_section_id')) {
-                $query->where('store_section_id', (int) $request->input('store_section_id'));
+                $storeSectionId = $request->input('store_section_id');
+                if (in_array((string) $storeSectionId, ['none', 'null', '0'], true)) {
+                    $query->whereNull('store_section_id');
+                } else {
+                    $query->where('store_section_id', (int) $storeSectionId);
+                }
             }
 
             if ($request->filled('date_from')) {

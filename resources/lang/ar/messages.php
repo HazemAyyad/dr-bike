@@ -517,6 +517,7 @@ return [
     'admin_notify_absent_title' => 'موظفون لم يدوّموا اليوم',
     'admin_notify_absent_body' => 'حتى الساعة :time لم يبصمو دخولاً (:count): :names',
     'admin_notify_source_fingerprint' => ' (بصمة)',
+    'admin_notify_source_qr' => ' (مسح QR)',
     'admin_notify_source_manual' => ' (يدوي)',
     'admin_notify_source_auto' => ' (تلقائي من النظام)',
     'employee_default_name' => 'موظف',

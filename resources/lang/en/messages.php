@@ -506,6 +506,7 @@ return [
     'admin_notify_absent_title' => 'Employees absent today',
     'admin_notify_absent_body' => 'By :time, :count employee(s) have not checked in: :names',
     'admin_notify_source_fingerprint' => ' (fingerprint)',
+    'admin_notify_source_qr' => ' (QR scan)',
     'admin_notify_source_manual' => ' (manual)',
     'admin_notify_source_auto' => ' (system auto)',
     'employee_default_name' => 'Employee',

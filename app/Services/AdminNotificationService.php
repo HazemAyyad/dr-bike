@@ -610,6 +610,7 @@ class AdminNotificationService
     {
         return match ($source) {
             'fingerprint' => __('messages.admin_notify_source_fingerprint'),
+            'qr' => __('messages.admin_notify_source_qr'),
             'manual' => __('messages.admin_notify_source_manual'),
             'auto' => __('messages.admin_notify_source_auto'),
             default => '',

@@ -191,18 +191,36 @@ class StoreSectionController extends Controller
     {
         try {
             $request->validate([
-                'section_id' => ['required', 'integer', 'exists:store_sections,id'],
+                'section_id' => ['required'],
                 'page' => ['nullable', 'integer', 'min:1'],
             ]);
 
-            $sectionId = (int) $request->input('section_id');
-            $section = StoreSection::query()->findOrFail($sectionId);
+            $sectionIdRaw = $request->input('section_id');
+            $withoutLocation = in_array((string) $sectionIdRaw, ['none', 'null', '0'], true);
 
-            $products = Product::query()
-                ->where('store_section_id', $sectionId)
+            if (! $withoutLocation) {
+                $request->validate([
+                    'section_id' => ['integer', 'exists:store_sections,id'],
+                ]);
+            }
+
+            $sectionId = $withoutLocation ? null : (int) $sectionIdRaw;
+            $section = $withoutLocation
+                ? null
+                : StoreSection::query()->findOrFail($sectionId);
+
+            $productsQuery = Product::query()
                 ->with(['viewImages', 'normalImages', 'storeSection:id,name'])
                 ->select('id', 'nameAr', 'stock', 'product_code', 'store_section_id')
-                ->orderBy('nameAr')
+                ->orderBy('nameAr');
+
+            if ($withoutLocation) {
+                $productsQuery->whereNull('store_section_id');
+            } else {
+                $productsQuery->where('store_section_id', $sectionId);
+            }
+
+            $products = $productsQuery
                 ->paginate(15, ['*'], 'page', (int) $request->input('page', 1));
 
             $formatted = $products->getCollection()->map(function (Product $product) {
@@ -223,7 +241,7 @@ class StoreSectionController extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'section' => $section->only(['id', 'name', 'description', 'sort_order', 'is_active']),
+                'section' => $section?->only(['id', 'name', 'description', 'sort_order', 'is_active']),
                 'products' => $formatted,
                 'pagination' => [
                     'current_page' => $products->currentPage(),

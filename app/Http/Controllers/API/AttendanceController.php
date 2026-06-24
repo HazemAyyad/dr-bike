@@ -179,7 +179,12 @@ class AttendanceController extends Controller
 
                 try {
                     $attendance->refresh();
-                    app(\App\Services\AdminNotificationService::class)->notifyEmployeeLogin($employee, (int) $attendance->id);
+                    app(\App\Services\AdminNotificationService::class)->notifyEmployeeLogin(
+                        $employee,
+                        (int) $attendance->id,
+                        'qr',
+                        now()->toIso8601String()
+                    );
                 } catch (\Throwable $e) {
                     \Illuminate\Support\Facades\Log::error('Admin notification (employee login): '.$e->getMessage());
                 }
@@ -253,12 +258,21 @@ class AttendanceController extends Controller
             }
 
             try {
+                $notifier = app(\App\Services\AdminNotificationService::class);
+                $logoutTime = now()->toIso8601String();
+                $notifier->notifyEmployeeLogout(
+                    $employee,
+                    (int) $attendance->id,
+                    $logoutTime,
+                    'qr',
+                    false
+                );
                 $pending = \App\Support\EmployeePendingTasksForToday::forEmployee($employee_id);
-                app(\App\Services\AdminNotificationService::class)->notifyEmployeeLogoutWithPendingTasks(
+                $notifier->notifyEmployeeLogoutWithPendingTasks(
                     $employee,
                     (int) $attendance->id,
                     $pending,
-                    now()->toIso8601String()
+                    $logoutTime
                 );
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::error('Admin notification (checkout pending tasks): '.$e->getMessage());
