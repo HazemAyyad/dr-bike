@@ -723,12 +723,24 @@ class AdminNotificationService
         $checkNumber = (string) ($check->check_id ?? $check->id);
         $dueDate = $check->due_date ? Carbon::parse($check->due_date)->toDateString() : '';
         $amount = (string) ($check->total ?? '');
+        $bank = trim((string) ($check->bank_name ?? ''));
+        $notes = trim((string) ($check->notes ?? ''));
 
         if ($this->checkDueReminderExists($relatedType, (int) $check->id, $reminderDate)) {
             return null;
         }
 
-        $dirLabel = $direction === 'incoming' ? 'Incoming' : 'Outgoing';
+        $dirLabel = $direction === 'incoming' ? 'وارد' : 'صادر';
+
+        $bodyParts = ["شيك {$dirLabel} رقم {$checkNumber}"];
+        if ($bank !== '') {
+            $bodyParts[] = "البنك: {$bank}";
+        }
+        $bodyParts[] = "تاريخ الاستحقاق: {$dueDate}";
+        if ($notes !== '') {
+            $bodyParts[] = "ملاحظة: {$notes}";
+        }
+        $body = implode(' - ', $bodyParts);
 
         $data = [
             'check_id' => (string) $check->id,
@@ -736,13 +748,15 @@ class AdminNotificationService
             'check_type' => $direction,
             'amount' => $amount,
             'due_date' => $dueDate,
+            'bank_name' => $bank,
+            'notes' => $notes,
             'reminder_date' => $reminderDate,
         ];
 
         return $this->create(
             self::TYPE_CHECK_DUE_REMINDER,
-            'Check Due Soon',
-            "{$dirLabel} check #{$checkNumber} is due on {$dueDate}.",
+            'تذكير باستحقاق شيك',
+            $body,
             $data,
             null,
             $relatedType,

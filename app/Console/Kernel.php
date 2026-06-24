@@ -14,7 +14,9 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        $schedule->command('checks:send-due-reminders')->dailyAt('00:00');
+        $schedule->command('checks:send-due-reminders')
+            ->dailyAt('00:00')
+            ->timezone('Asia/Hebron');
 
         $schedule->command('checks:dispatch-sms-notifications')
             ->everyFiveMinutes()
