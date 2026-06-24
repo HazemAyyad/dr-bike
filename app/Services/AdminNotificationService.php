@@ -11,6 +11,7 @@ use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
+use App\Models\Store\StoreSalesOrder;
 use App\Support\EmployeePendingTasksForToday;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\App;
@@ -57,6 +58,8 @@ class AdminNotificationService
     public const TYPE_ATTENDANCE_OVERTIME_REQUEST = 'attendance_overtime_request';
 
     public const TYPE_STORE_USER_REGISTERED = 'store_user_registered';
+
+    public const TYPE_STORE_ORDER_CREATED = 'store_order_created';
 
     /**
      * @param  array<string, mixed>  $data
@@ -333,6 +336,45 @@ class AdminNotificationService
                 null,
                 'store_user',
                 (int) $user->id,
+                true
+            );
+        });
+    }
+
+    public function notifyStoreOrderCreated(StoreSalesOrder $order): AdminNotification
+    {
+        return $this->withArabicLocale(function () use ($order) {
+            $serial = (string) ($order->serial_number ?: $order->id);
+            $customer = (string) ($order->customer_name ?: __('messages.sales_order_unknown_customer'));
+            $phone = (string) ($order->customer_phone ?? '');
+            $city = (string) ($order->shiply_city_name ?? '');
+            $total = number_format((float) ($order->total ?? 0), 2);
+
+            return $this->create(
+                self::TYPE_STORE_ORDER_CREATED,
+                __('messages.admin_notify_store_order_created_title', [
+                    'serial' => $serial,
+                ]),
+                __('messages.admin_notify_store_order_created_body', [
+                    'serial' => $serial,
+                    'customer' => $customer,
+                    'phone' => $phone,
+                    'city' => $city,
+                    'total' => $total,
+                ]),
+                [
+                    'order_id' => (string) $order->id,
+                    'serial' => $serial,
+                    'customer_name' => $customer,
+                    'phone' => $phone,
+                    'city' => $city,
+                    'total' => $total,
+                    'source' => 'store',
+                    'created_at' => now()->toIso8601String(),
+                ],
+                null,
+                'store_order',
+                (int) $order->id,
                 true
             );
         });

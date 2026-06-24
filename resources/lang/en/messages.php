@@ -507,6 +507,8 @@ return [
     'admin_notify_absent_body' => 'By :time, :count employee(s) have not checked in: :names',
     'admin_notify_store_user_registered_title' => 'New store subscriber',
     'admin_notify_store_user_registered_body' => ':user registered a new store subscription (:email, :phone).',
+    'admin_notify_store_order_created_title' => 'New store order — :serial',
+    'admin_notify_store_order_created_body' => 'New store order :serial for :customer (:phone), city: :city, total: :total.',
     'admin_notify_source_fingerprint' => ' (fingerprint)',
     'admin_notify_source_qr' => ' (QR scan)',
     'admin_notify_source_manual' => ' (manual)',

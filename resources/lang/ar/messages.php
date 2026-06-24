@@ -518,6 +518,8 @@ return [
     'admin_notify_absent_body' => 'حتى الساعة :time لم يبصمو دخولاً (:count): :names',
     'admin_notify_store_user_registered_title' => 'مشترك جديد في المتجر',
     'admin_notify_store_user_registered_body' => 'سجّل :user اشتراكاً جديداً في المتجر (:email، :phone).',
+    'admin_notify_store_order_created_title' => 'طلب جديد من المتجر — :serial',
+    'admin_notify_store_order_created_body' => 'وصل طلب متجر جديد رقم :serial للزبون :customer (:phone)، المدينة: :city، الإجمالي: :total.',
     'admin_notify_source_fingerprint' => ' (بصمة)',
     'admin_notify_source_qr' => ' (مسح QR)',
     'admin_notify_source_manual' => ' (يدوي)',

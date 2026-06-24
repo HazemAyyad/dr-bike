@@ -53,6 +53,8 @@ Route::post('/Items/GetItemById', [StoreItemsController::class, 'getItemById']);
 Route::post('/Items/GetAllShowItemsBySupCatId', [StoreItemsController::class, 'getAllShowItemsBySupCatId']);
 
 Route::post('/Cities/GetAllCities', [StoreCitiesController::class, 'getAllCities']);
+Route::post('/Cities/GetVillagesByCityId', [StoreCitiesController::class, 'getVillagesByCityId']);
+Route::post('/Cities/CalculateDeliveryFee', [StoreCitiesController::class, 'calculateDeliveryFee']);
 
 Route::post('/Orders/ManageOrder', [StoreOrdersController::class, 'manageOrder']);
 Route::post('/Orders/GetAllOrdersByUserId', [StoreOrdersController::class, 'getAllOrdersByUserId']);

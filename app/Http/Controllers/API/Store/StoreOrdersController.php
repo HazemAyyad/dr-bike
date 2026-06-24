@@ -2,10 +2,15 @@
 
 namespace App\Http\Controllers\API\Store;
 
+use App\Models\City;
 use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreSalesOrder;
 use App\Models\Store\StoreSalesOrderItem;
 use App\Models\Store\StoreShiplyCity;
+use App\Models\Store\StoreShiplyVillage;
+use App\Services\AdminNotificationService;
+use App\Services\ShiplyService;
+use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -19,16 +24,27 @@ class StoreOrdersController extends StoreBaseController
         }
 
         $cityId = $request->input('cityId');
+        $mode = ShiplySettings::mode();
         $shiplyCity = is_numeric($cityId)
-            ? StoreShiplyCity::query()->where('shiply_id', (int) $cityId)->first()
+            ? StoreShiplyCity::query()
+                ->where('mode', $mode)
+                ->where('shiply_id', (int) $cityId)
+                ->whereNull('deleted_at_remote')
+                ->first()
             : null;
+        $shiplyVillage = $this->resolveVillageForCity(
+            $shiplyCity,
+            $mode,
+            $request->input('shiplyVillageId', $request->input('villageId'))
+        );
 
-        $order = DB::transaction(function () use ($request, $details, $cityId, $shiplyCity) {
+        $order = DB::transaction(function () use ($request, $details, $cityId, $shiplyCity, $shiplyVillage, $mode) {
             $subtotal = (float) $request->input('totalPriceWithOutDiscound', 0);
             $discounted = (float) $request->input('totalPriceWithDiscound', $subtotal);
-            $delivery = (float) $request->input('priceDelivery', 0);
             $couponTotal = $request->input('totalPriceWithDiscoundCode');
-            $total = ($couponTotal !== null ? (float) $couponTotal : $discounted) + $delivery;
+            $totalBeforeDelivery = $couponTotal !== null ? (float) $couponTotal : $discounted;
+            $delivery = $this->deliveryFeeForShiplyCity($shiplyCity, $shiplyVillage, $totalBeforeDelivery, $mode);
+            $total = $totalBeforeDelivery + $delivery;
 
             $order = StoreSalesOrder::query()->create([
                 'serial_number' => null,
@@ -38,7 +54,9 @@ class StoreOrdersController extends StoreBaseController
                 'customer_address' => $request->input('address'),
                 'city_id' => null,
                 'shiply_city_id' => is_numeric($cityId) ? (int) $cityId : null,
+                'shiply_village_id' => $shiplyVillage?->shiply_id,
                 'shiply_city_name' => $shiplyCity?->name,
+                'shiply_village_name' => $shiplyVillage?->name,
                 'status' => $this->toSalesOrderStatus($request->input('status', 'New')),
                 'payment_type' => 'cash',
                 'customer_delivery_fee' => $delivery,
@@ -77,6 +95,8 @@ class StoreOrdersController extends StoreBaseController
 
             return $order->fresh(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors']);
         });
+
+        app(AdminNotificationService::class)->notifyStoreOrderCreated($order);
 
         return response()->json($this->orderPayload($order, $request->all()));
     }
@@ -159,6 +179,74 @@ class StoreOrdersController extends StoreBaseController
         }
 
         return is_numeric($value) ? (int) $value : null;
+    }
+
+    private function resolveVillageForCity(?StoreShiplyCity $shiplyCity, string $mode, $villageId): ?StoreShiplyVillage
+    {
+        if (! $shiplyCity) {
+            return null;
+        }
+
+        $query = StoreShiplyVillage::query()
+            ->where('mode', $mode)
+            ->where('shiply_city_id', (int) $shiplyCity->shiply_id)
+            ->whereNull('deleted_at_remote')
+            ->where('is_closed', false);
+
+        if (is_numeric($villageId)) {
+            $selected = (clone $query)
+                ->where('shiply_id', (int) $villageId)
+                ->first();
+
+            if ($selected) {
+                return $selected;
+            }
+        }
+
+        return $query->orderBy('name')->first();
+    }
+
+    private function deliveryFeeForShiplyCity(
+        ?StoreShiplyCity $shiplyCity,
+        ?StoreShiplyVillage $shiplyVillage,
+        float $parcelPrice,
+        string $mode
+    ): float {
+        if (! $shiplyCity) {
+            return 0.0;
+        }
+
+        $city = City::query()
+            ->where('is_active', true)
+            ->where(function ($query) use ($shiplyCity) {
+                $query
+                    ->where('shiply_area_code', (string) $shiplyCity->shiply_id)
+                    ->orWhere('name_ar', $shiplyCity->name)
+                    ->orWhere('name_en', $shiplyCity->name);
+            })
+            ->first();
+
+        $fee = $city?->currentDeliveryFee();
+
+        if ($fee !== null && (float) $fee > 0) {
+            return round((float) $fee, 2);
+        }
+
+        if (! $shiplyVillage) {
+            return 0.0;
+        }
+
+        try {
+            $quote = app(ShiplyService::class)->calculateDeliveryCost(
+                (int) $shiplyVillage->shiply_id,
+                max(0, $parcelPrice),
+                $mode
+            );
+
+            return round((float) ($quote['delivery_cost'] ?? 0), 2);
+        } catch (\Throwable) {
+            return 0.0;
+        }
     }
 
     private function toSalesOrderStatus($status): string
