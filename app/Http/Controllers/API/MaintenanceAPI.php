@@ -230,7 +230,7 @@ class MaintenanceAPI extends Controller
             ]);
 
             $maintenance = Maintenance::with('customer:id,name')->with('seller:id,name')
-            ->with(['products.product:id,nameAr,nameEn', 'instantSale:id,serial_number'])
+            ->with(['products.product:id,nameAr,nameEng', 'instantSale:id,serial_number'])
             ->findOrFail($request->maintenance_id);
 
             $files = [];

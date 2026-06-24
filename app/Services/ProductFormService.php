@@ -725,6 +725,11 @@ class ProductFormService
      */
     private function applyPurchasePriceFromRequest(Request $request, int $productId): void
     {
+        // سعر التكلفة لا يُحفظ إلا للأدمن أو الموظف المصرّح له بصلاحية "Cost Price".
+        if (! ($request->user()?->canViewCostPrice() ?? false)) {
+            return;
+        }
+
         if (! $request->filled('purchase_price')) {
             return;
         }

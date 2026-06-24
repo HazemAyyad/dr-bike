@@ -623,15 +623,22 @@ class Stocks extends Controller
             $product->unsetRelation('category');
             unset($product->subCategories);
 
-            $purchase_prices = $product->purchasePrices->map(function ($pivot) {
-                return [
-                    'seller_id' => $pivot->seller_id,
-                    'seller_name' => $pivot->seller?->name,
-                    'price' => $pivot->price,
+            $canViewCostPrice = $request->user()?->canViewCostPrice() ?? false;
+            $product['can_view_cost_price'] = $canViewCostPrice;
 
-                ];
-            });
-            $product['purchase_prices'] = $purchase_prices;
+            if ($canViewCostPrice) {
+                $purchase_prices = $product->purchasePrices->map(function ($pivot) {
+                    return [
+                        'seller_id' => $pivot->seller_id,
+                        'seller_name' => $pivot->seller?->name,
+                        'price' => $pivot->price,
+
+                    ];
+                });
+                $product['purchase_prices'] = $purchase_prices;
+            } else {
+                $product['purchase_prices'] = [];
+            }
 
             unset($product->purchasePrices);
 

@@ -16,6 +16,9 @@ class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable, SoftDeletes;
 
+    /** اسم صلاحية عرض/تعديل سعر التكلفة (name_en في جدول permissions). */
+    public const COST_PRICE_PERMISSION = 'Cost Price';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -59,6 +62,27 @@ class User extends Authenticatable
 
     public function employee(){
         return $this->hasOne(EmployeeDetail::class);
+    }
+
+    /**
+     * هل يحق لهذا المستخدم رؤية/تعديل سعر التكلفة؟
+     * الأدمن دائماً مسموح، والموظف فقط إذا منحه الأدمن صلاحية "Cost Price".
+     */
+    public function canViewCostPrice(): bool
+    {
+        if ($this->type === 'admin') {
+            return true;
+        }
+
+        if ($this->type === 'employee' && $this->employee) {
+            return $this->employee->permissions()
+                ->whereHas('permission', function ($q) {
+                    $q->where('name_en', self::COST_PRICE_PERMISSION);
+                })
+                ->exists();
+        }
+
+        return false;
     }
 
     public function adminDeviceTokens()

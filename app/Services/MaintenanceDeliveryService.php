@@ -27,13 +27,13 @@ class MaintenanceDeliveryService
      */
     public function formatProductsSummary(Maintenance $maintenance): array
     {
-        $maintenance->loadMissing(['products.product:id,nameAr,nameEn']);
+        $maintenance->loadMissing(['products.product:id,nameAr,nameEng']);
 
         $items = $maintenance->products->map(function (MaintenanceProduct $item) {
             return [
                 'id' => $item->id,
                 'product_id' => $item->product_id,
-                'product_name' => $item->product?->nameAr ?? $item->product?->nameEn ?? '-',
+                'product_name' => $item->product?->nameAr ?? $item->product?->nameEng ?? '-',
                 'size_id' => $item->size_id,
                 'size_color_id' => $item->size_color_id,
                 'quantity' => (int) $item->quantity,
