@@ -8,6 +8,7 @@ use App\Models\Store\StoreSalesOrder;
 use App\Models\Store\StoreSalesOrderItem;
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreShiplyVillage;
+use App\Models\SalesOrderStatusLog;
 use App\Services\AdminNotificationService;
 use App\Services\DocumentSerialService;
 use App\Services\ShiplyService;
@@ -102,7 +103,15 @@ class StoreOrdersController extends StoreBaseController
                 $order->forceFill(['serial_number' => 'S'.$serial])->save();
             }
 
-            return $order->fresh(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors']);
+            SalesOrderStatusLog::query()->create([
+                'sales_order_id' => $order->id,
+                'from_status' => null,
+                'to_status' => $order->status,
+                'note' => 'Store order created',
+                'user_id' => is_numeric($request->input('userAddId')) ? (int) $request->input('userAddId') : null,
+            ]);
+
+            return $order->fresh($this->orderRelations());
         });
 
         app(AdminNotificationService::class)->notifyStoreOrderCreated($order);
@@ -116,7 +125,7 @@ class StoreOrdersController extends StoreBaseController
         $status = $request->query('statusOrder', $request->input('statusOrder'));
 
         $query = StoreSalesOrder::query()
-            ->with(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors'])
+            ->with($this->orderRelations())
             ->orderByDesc('id');
 
         if (is_numeric($userId)) {
@@ -142,7 +151,7 @@ class StoreOrdersController extends StoreBaseController
         }
 
         $query = StoreSalesOrder::query()
-            ->with(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors'])
+            ->with($this->orderRelations())
             ->where('id', (int) $orderId);
 
         if (is_numeric($userId)) {
@@ -155,12 +164,24 @@ class StoreOrdersController extends StoreBaseController
             return response()->json(['message' => 'OrderNotFound'], 404);
         }
 
+        $fromStatus = $order->status;
+
         $order->forceFill([
             'status' => 'canceled',
             'updated_by' => is_numeric($userId) ? (int) $userId : $order->updated_by,
         ])->save();
 
-        return response()->json($this->orderPayload($order->fresh(['details.product.subCategories', 'details.product.normalImages', 'details.product.viewImages', 'details.product.image3d', 'details.product.sizes.colors'])));
+        SalesOrderStatusLog::query()->create([
+            'sales_order_id' => $order->id,
+            'from_status' => $fromStatus,
+            'to_status' => 'canceled',
+            'note' => 'Store customer canceled the order',
+            'user_id' => is_numeric($userId) ? (int) $userId : null,
+        ]);
+
+        app(AdminNotificationService::class)->notifyStoreOrderCanceled($order);
+
+        return response()->json($this->orderPayload($order->fresh($this->orderRelations())));
     }
 
     private function orderPayload(StoreSalesOrder $order, array $fallback = []): array
@@ -192,6 +213,18 @@ class StoreOrdersController extends StoreBaseController
             'dateAdd' => $this->dateString($order->created_at),
             'userUpdate' => (string) ($order->updated_by ?? $fallback['userUpdate'] ?? ''),
             'dateUpdate' => $this->dateString($order->updated_at),
+            'latestHandover' => $this->handoverPayload($order->latestHandover),
+            'statusLogs' => $order->statusLogs
+                ->sortByDesc('created_at')
+                ->map(fn ($log) => [
+                    'fromStatus' => $this->fromSalesOrderStatus($log->from_status),
+                    'toStatus' => $this->fromSalesOrderStatus($log->to_status),
+                    'note' => (string) ($log->note ?? ''),
+                    'userName' => (string) ($log->user?->name ?? ''),
+                    'createdAt' => $this->dateString($log->created_at),
+                ])
+                ->values(),
+            'shiplyTracking' => $this->shiplyTrackingPayload($order),
             'details' => $order->details->map(function (StoreSalesOrderItem $detail) {
                 $product = $detail->product;
 
@@ -211,6 +244,72 @@ class StoreOrdersController extends StoreBaseController
                     'item' => $product ? $this->productPayload($product) : null,
                 ];
             })->values(),
+        ];
+    }
+
+    private function orderRelations(): array
+    {
+        return [
+            'details.product.subCategories',
+            'details.product.normalImages',
+            'details.product.viewImages',
+            'details.product.image3d',
+            'details.product.sizes.colors',
+            'latestHandover',
+            'statusLogs.user',
+            'shiplyEvents',
+        ];
+    }
+
+    private function handoverPayload($handover): ?array
+    {
+        if (! $handover) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $handover->id,
+            'deliveryCompanyName' => (string) ($handover->delivery_company_name ?? ''),
+            'deliveryCompanyCode' => (string) ($handover->delivery_company_code ?? ''),
+            'trackingNumber' => (string) ($handover->tracking_number ?? ''),
+            'carrierContactName' => (string) ($handover->carrier_contact_name ?? ''),
+            'carrierContactPhone' => (string) ($handover->carrier_contact_phone ?? ''),
+            'carrierOfficeName' => (string) ($handover->carrier_office_name ?? ''),
+            'carrierVehicleNumber' => (string) ($handover->carrier_vehicle_number ?? ''),
+            'shiplyParcelCode' => (string) ($handover->shiply_parcel_code ?? ''),
+            'handedOverAt' => $this->dateString($handover->handed_over_at),
+            'deliveredAt' => $this->dateString($handover->delivered_at),
+        ];
+    }
+
+    private function shiplyTrackingPayload(StoreSalesOrder $order): ?array
+    {
+        $events = $order->shiplyEvents->sortBy('occurred_at')->values();
+        $parcelCode = (string) ($order->latestHandover?->shiply_parcel_code ?? $events->last()?->parcel_code ?? '');
+
+        if ($parcelCode === '' && $events->isEmpty()) {
+            return null;
+        }
+
+        $currentEvent = $events->last();
+        $currentStatusId = (int) ($currentEvent?->parcel_status_id ?? 0);
+
+        return [
+            'parcelCode' => $parcelCode,
+            'shiplyMode' => (string) ($order->latestHandover?->shiply_mode ?? $currentEvent?->shiply_mode ?? ''),
+            'currentStatusId' => $currentStatusId,
+            'currentStatusKey' => $this->shiplyStatusKey($currentStatusId),
+            'currentStatusLabel' => $this->shiplyStatusLabel($currentStatusId),
+            'statusSequence' => [1, 2, 3, 4, 5, 6, 7],
+            'events' => $events->map(fn ($event) => [
+                'id' => (int) $event->id,
+                'parcelStatusId' => (int) $event->parcel_status_id,
+                'statusKey' => $this->shiplyStatusKey((int) $event->parcel_status_id),
+                'statusLabel' => $this->shiplyStatusLabel((int) $event->parcel_status_id),
+                'note' => (string) ($event->note ?? ''),
+                'source' => (string) ($event->source ?? ''),
+                'occurredAt' => $this->dateString($event->occurred_at),
+            ])->values(),
         ];
     }
 
@@ -306,6 +405,34 @@ class StoreOrdersController extends StoreBaseController
             'delivered' => 'Done',
             'canceled' => 'Canceled',
             default => 'New',
+        };
+    }
+
+    private function shiplyStatusKey(int $statusId): string
+    {
+        return match ($statusId) {
+            1 => 'draft',
+            2 => 'submitted',
+            3 => 'on_the_way',
+            4 => 'attempt_to_deliver',
+            5 => 'pending',
+            6 => 'delivered',
+            7 => 'returned',
+            default => 'pending',
+        };
+    }
+
+    private function shiplyStatusLabel(int $statusId): string
+    {
+        return match ($statusId) {
+            1 => 'Draft',
+            2 => 'Submitted to Shiply',
+            3 => 'On the way',
+            4 => 'Delivery attempt',
+            5 => 'Pending',
+            6 => 'Delivered',
+            7 => 'Returned',
+            default => 'Pending',
         };
     }
 }

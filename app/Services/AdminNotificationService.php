@@ -61,6 +61,8 @@ class AdminNotificationService
 
     public const TYPE_STORE_ORDER_CREATED = 'store_order_created';
 
+    public const TYPE_STORE_ORDER_CANCELED = 'store_order_canceled';
+
     /**
      * @param  array<string, mixed>  $data
      */
@@ -371,6 +373,34 @@ class AdminNotificationService
                     'total' => $total,
                     'source' => 'store',
                     'created_at' => now()->toIso8601String(),
+                ],
+                null,
+                'store_order',
+                (int) $order->id,
+                true
+            );
+        });
+    }
+
+    public function notifyStoreOrderCanceled(StoreSalesOrder $order): AdminNotification
+    {
+        return $this->withArabicLocale(function () use ($order) {
+            $serial = (string) ($order->serial_number ?: $order->id);
+            $customer = (string) ($order->customer_name ?: __('messages.sales_order_unknown_customer'));
+            $phone = (string) ($order->customer_phone ?? '');
+
+            return $this->create(
+                self::TYPE_STORE_ORDER_CANCELED,
+                'إلغاء طلب متجر #'.$serial,
+                'تم إلغاء طلب المتجر #'.$serial.' للزبون '.$customer.($phone !== '' ? ' - '.$phone : ''),
+                [
+                    'order_id' => (string) $order->id,
+                    'serial' => $serial,
+                    'customer_name' => $customer,
+                    'phone' => $phone,
+                    'source' => 'store',
+                    'status' => 'canceled',
+                    'canceled_at' => now()->toIso8601String(),
                 ],
                 null,
                 'store_order',
