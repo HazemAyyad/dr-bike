@@ -281,7 +281,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
       // employee tasks
  
     Route::post('/create/employee/task' , [EmployeeTasks::class,'createEmployeeTask']);
-    Route::post('/edit/employee/task' , [EmployeeTasks::class,'updateEmployeeTask']);
+    // تعديل مهمة موظف يتطلب (بالإضافة لصلاحية "مهام الموظفين") صلاحية "تعديل مهمة موظف" — والأدمن يتجاوزهما.
+    Route::post('/edit/employee/task' , [EmployeeTasks::class,'updateEmployeeTask'])
+        ->middleware('check.permission:Edit Employee Task');
  
     Route::get('/employee/completed/tasks' , [EmployeeTasks::class,'completedTasks']);
     Route::get('/employee/ongoing/tasks' , [EmployeeTasks::class,'ongoingTasks']);
