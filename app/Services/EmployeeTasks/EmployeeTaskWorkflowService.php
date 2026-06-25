@@ -478,7 +478,7 @@ class EmployeeTaskWorkflowService
         $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_SUBTASK_COMPLETED, $subTask->name);
 
         $fresh = $subTask->fresh();
-        $this->notifyAdminLegacySubtaskCompleted($fresh);
+        // لا نُشعر الإدارة عند إكمال مهمة فرعية — إشعار الإدارة يُرسَل فقط عند إكمال/تسليم المهمة كاملة.
         $subTask->loadMissing('employeeTask.employee');
         $this->notifyDailyTasksCompletedIfApplicable($subTask->employeeTask?->employee);
         if ($actorId > 0 && $task) {
@@ -516,7 +516,7 @@ class EmployeeTaskWorkflowService
         );
 
         $fresh = $subTask->fresh();
-        $this->notifyAdminOccurrenceSubtaskCompleted($fresh);
+        // لا نُشعر الإدارة عند إكمال مهمة فرعية — إشعار الإدارة يُرسَل فقط عند إكمال/تسليم المهمة كاملة.
         $subTask->loadMissing('occurrence.employee');
         $this->notifyDailyTasksCompletedIfApplicable($subTask->occurrence?->employee);
         $legacy = $this->legacyTaskForOccurrence($subTask->occurrence);
