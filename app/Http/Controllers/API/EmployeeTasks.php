@@ -1638,7 +1638,8 @@ public function updateEmployeeTask(Request $request)
 
             $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id)->fresh();
 
-            if ($employeeTask->status === EmployeeTaskStatus::Pending->value) {
+            if ($employeeTask->status === EmployeeTaskStatus::Pending->value
+                || $employeeTask->status === EmployeeTaskStatus::Overdue->value) {
                 $this->workflow->startTask($employeeTask);
                 $employeeTask->refresh();
             }

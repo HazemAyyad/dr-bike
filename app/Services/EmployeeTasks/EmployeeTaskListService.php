@@ -241,6 +241,16 @@ class EmployeeTaskListService
 
     private function passesRecurrenceFilter(EmployeeTask $task): bool
     {
+        // Always show tasks the employee has already acted on (in progress,
+        // overdue, submitted for review, or completed) so admins can review
+        // them even when the task is late or its recurrence day is not today.
+        if (EmployeeTaskStatus::normalize($task->status) !== EmployeeTaskStatus::Pending) {
+            return true;
+        }
+        if (! empty($task->submitted_at) || (int) ($task->completed_by_employee_id ?? 0) > 0) {
+            return true;
+        }
+
         $recurrence = $task->task_recurrence;
         $times = is_array($task->task_recurrence_time) ? $task->task_recurrence_time : [];
         $dayName = strtolower(Carbon::parse($task->start_time)->format('l'));
