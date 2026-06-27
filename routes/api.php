@@ -964,6 +964,10 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/change/sub/employee/occurrence/task/to/completed',
      [EmployeeTaskOperationsController::class, 'completeOccurrenceSubtask'])
     ;
+    Route::post('/change/sub/employee/task/to/rejected' ,
+     [EmployeeTasks::class,'rejectSubTask']);
+    Route::post('/change/sub/employee/occurrence/task/to/rejected',
+     [EmployeeTaskOperationsController::class, 'rejectOccurrenceSubtask']);
 
     Route::post('/employee/task/start', [EmployeeTaskOperationsController::class, 'startTask']);
     Route::post('/employee/task/submit', [EmployeeTaskOperationsController::class, 'submitTask']);

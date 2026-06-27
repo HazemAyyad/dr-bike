@@ -23,6 +23,7 @@ class EmployeeSubTask extends Model
         'bonus_points',
         'admin_img',
         'status',
+        'rejection_reason',
         'completed_by_employee_id',
         'employee_img',
         'sort_order',

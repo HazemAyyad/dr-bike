@@ -1629,7 +1629,7 @@ public function updateEmployeeTask(Request $request)
         
         $allSubTasks = EmployeeSubTask::where('employee_task_id',$subTask->employee_task_id)
         ->whereNotIn('id',[$request->sub_task_id])
-        ->where('status', '!=', 'completed')
+        ->whereNotIn('status', ['completed', 'rejected'])
         ->exists();
 
 
@@ -1699,6 +1699,64 @@ public function updateEmployeeTask(Request $request)
             ],200);
         }
     
+    catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => __('messages.unexpected_error'),
+        ], 200);
+    }
+    }
+
+    public function rejectSubTask(Request $request){
+        try{
+        $request->validate([
+            'sub_task_id'=>'required|exists:sub_employee_tasks,id',
+            'rejection_reason'=>'required|string|max:1000',
+        ]);
+
+        $subTask = EmployeeSubTask::findOrFail($request->sub_task_id);
+        $actorId = (int) (auth()->user()->employee->id ?? 0);
+        $parent = $subTask->employeeTask;
+        if (! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, $actorId)) {
+           return response()->json([
+                'status' => 'error',
+                'message' => __('messages.unauthorized'),
+            ], 200);
+        }
+
+        $this->workflow->rejectSubtask($subTask, $request->rejection_reason);
+
+        Logs::createLog('رفض مهمة موظف فرعية','رفض تنفيذ مهمة فرعية باسم'.' '.$subTask->name
+        .' '.'التابعة للمهمة الرئيسية باسم'.' '.$subTask->employeeTask->name
+        .' '.'السبب:'.' '.$request->rejection_reason
+        ,'employee_tasks');
+
+            return response()->json([
+            'status' => 'success',
+            'message' => __('messages.subtask_rejected'),
+        ], 200);
+      }
+         catch (ModelNotFoundException $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => __('messages.task_not_found'),
+        ], 200);
+
+    } catch (ValidationException $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => __('messages.validation_failed'),
+        ], 200);
+
+    }
+
+    catch(QueryException $e){
+               return response([
+                'status'=>'error',
+                'message' => __('messages.something_wrong'),
+            ],200);
+        }
+
     catch (\Exception $e) {
         return response()->json([
             'status' => 'error',

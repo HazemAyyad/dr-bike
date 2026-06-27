@@ -315,6 +315,9 @@ class EmployeeTaskWorkflowService
         if (Schema::hasColumn('sub_employee_tasks', 'employee_img')) {
             $payload['employee_img'] = null;
         }
+        if (Schema::hasColumn('sub_employee_tasks', 'rejection_reason')) {
+            $payload['rejection_reason'] = null;
+        }
         $task->subTasks()->update($payload);
     }
 
@@ -339,6 +342,9 @@ class EmployeeTaskWorkflowService
         }
         if (Schema::hasColumn('employee_task_occurrence_subtasks', 'employee_img')) {
             $subPayload['employee_img'] = null;
+        }
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'rejection_reason')) {
+            $subPayload['rejection_reason'] = null;
         }
         $occurrence->subtasks()->update($subPayload);
     }
@@ -532,6 +538,57 @@ class EmployeeTaskWorkflowService
         return $fresh;
     }
 
+    /**
+     * Employee declines to execute a subtask (with a reason). A rejected subtask
+     * does NOT block submitting the parent task and earns no bonus points.
+     */
+    public function rejectSubtask(EmployeeSubTask $subTask, string $reason): EmployeeSubTask
+    {
+        $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+        $payload = [
+            'status' => 'rejected',
+            'rejection_reason' => $reason,
+        ];
+        if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = $actorId > 0 ? $actorId : null;
+        }
+        $subTask->update($payload);
+
+        $task = $subTask->employeeTask;
+        if ($task) {
+            $this->timeline->recordForTask(
+                $task,
+                EmployeeTaskTimeline::EVENT_SUBTASK_REJECTED,
+                $subTask->name.($reason !== '' ? ' — '.$reason : '')
+            );
+        }
+
+        return $subTask->fresh();
+    }
+
+    public function rejectOccurrenceSubtask(EmployeeTaskOccurrenceSubtask $subTask, string $reason): EmployeeTaskOccurrenceSubtask
+    {
+        $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+        $payload = [
+            'status' => 'rejected',
+            'rejection_reason' => $reason,
+        ];
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = $actorId > 0 ? $actorId : null;
+        }
+        $subTask->update($payload);
+
+        if ($subTask->occurrence) {
+            $this->timeline->recordForOccurrence(
+                $subTask->occurrence,
+                EmployeeTaskTimeline::EVENT_SUBTASK_REJECTED,
+                $subTask->name.($reason !== '' ? ' — '.$reason : '')
+            );
+        }
+
+        return $subTask->fresh();
+    }
+
     private function legacyTaskForOccurrence(?EmployeeTaskOccurrence $occurrence): ?EmployeeTask
     {
         if (! $occurrence?->legacy_task_id) {
@@ -543,14 +600,15 @@ class EmployeeTaskWorkflowService
 
     private function assertSubtasksComplete(EmployeeTask $task): void
     {
-        if ($task->subTasks()->where('status', '!=', 'completed')->exists()) {
+        // A 'rejected' subtask is considered handled and does not block submission.
+        if ($task->subTasks()->whereNotIn('status', ['completed', 'rejected'])->exists()) {
             throw new \RuntimeException(__('messages.can_not_complete_employee_task'));
         }
     }
 
     private function assertOccurrenceSubtasksComplete(EmployeeTaskOccurrence $occurrence): void
     {
-        if ($occurrence->subtasks()->where('status', '!=', 'completed')->exists()) {
+        if ($occurrence->subtasks()->whereNotIn('status', ['completed', 'rejected'])->exists()) {
             throw new \RuntimeException(__('messages.can_not_complete_employee_task'));
         }
     }

@@ -36,4 +36,5 @@ class EmployeeTaskTimeline extends Model
     public const EVENT_OVERDUE = 'task_overdue';
     public const EVENT_CANCELED = 'task_canceled';
     public const EVENT_SUBTASK_COMPLETED = 'subtask_completed';
+    public const EVENT_SUBTASK_REJECTED = 'subtask_rejected';
 }

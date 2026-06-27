@@ -304,6 +304,9 @@ class EmployeeTaskDetailsService
             'name' => $sub->name,
             'description' => $sub->description,
             'status' => $sub->status,
+            'rejection_reason' => Schema::hasColumn('sub_employee_tasks', 'rejection_reason')
+                ? $sub->rejection_reason
+                : null,
             'is_forced_to_upload_img' => (bool) $sub->is_forced_to_upload_img,
             'proof_media_type' => $this->proofMediaType($sub->proof_media_type ?? null, (bool) $sub->is_forced_to_upload_img),
             'bonus_points' => (int) ($sub->bonus_points ?? 0),
@@ -327,6 +330,9 @@ class EmployeeTaskDetailsService
             'name' => $sub->name,
             'description' => $sub->description,
             'status' => $sub->status,
+            'rejection_reason' => Schema::hasColumn('employee_task_occurrence_subtasks', 'rejection_reason')
+                ? $sub->rejection_reason
+                : null,
             'is_forced_to_upload_img' => (bool) $sub->requires_image,
             'proof_media_type' => $this->proofMediaType($sub->proof_media_type ?? null, (bool) $sub->requires_image),
             'bonus_points' => (int) $sub->bonus_points,

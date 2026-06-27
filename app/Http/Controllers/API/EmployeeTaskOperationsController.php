@@ -810,7 +810,7 @@ class EmployeeTaskOperationsController extends Controller
             $this->workflow->completeOccurrenceSubtask($sub);
 
             $occurrence = $sub->occurrence->fresh();
-            $pending = $occurrence->subtasks()->where('status', '!=', 'completed')->exists();
+            $pending = $occurrence->subtasks()->whereNotIn('status', ['completed', 'rejected'])->exists();
 
             if (! $pending) {
                 if (! \App\Support\TaskMediaFiles::hasRequiredProof(
@@ -829,6 +829,28 @@ class EmployeeTaskOperationsController extends Controller
             }
 
             return response()->json(['status' => 'success', 'message' => __('messages.task_completed')], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
+        }
+    }
+
+    public function rejectOccurrenceSubtask(Request $request)
+    {
+        try {
+            $request->validate([
+                'sub_task_id' => 'required|exists:employee_task_occurrence_subtasks,id',
+                'rejection_reason' => 'required|string|max:1000',
+            ]);
+            $sub = EmployeeTaskOccurrenceSubtask::findOrFail($request->sub_task_id);
+
+            $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+            if ($actorId <= 0 || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) {
+                return response()->json(['status' => 'error', 'message' => __('messages.unauthorized')], 200);
+            }
+
+            $this->workflow->rejectOccurrenceSubtask($sub, $request->rejection_reason);
+
+            return response()->json(['status' => 'success', 'message' => __('messages.subtask_rejected')], 200);
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
         }

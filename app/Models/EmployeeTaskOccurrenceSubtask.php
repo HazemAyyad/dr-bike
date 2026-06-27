@@ -18,6 +18,7 @@ class EmployeeTaskOccurrenceSubtask extends Model
         'proof_media_type',
         'bonus_points',
         'status',
+        'rejection_reason',
         'completed_by_employee_id',
         'admin_img',
         'employee_img',
