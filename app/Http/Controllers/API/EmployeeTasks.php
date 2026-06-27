@@ -1731,6 +1731,41 @@ public function updateEmployeeTask(Request $request)
         .' '.'السبب:'.' '.$request->rejection_reason
         ,'employee_tasks');
 
+        // إذا لم يتبقَّ أي مهمة فرعية بانتظار التنفيذ (الكل مكتمل أو مرفوض)
+        // تُسلَّم المهمة الرئيسية تلقائياً للمراجعة.
+        $pendingRemains = EmployeeSubTask::where('employee_task_id', $subTask->employee_task_id)
+            ->whereNotIn('status', ['completed', 'rejected'])
+            ->exists();
+
+        if (! $pendingRemains) {
+            $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id)->fresh();
+
+            if ($employeeTask->status === EmployeeTaskStatus::Pending->value
+                || $employeeTask->status === EmployeeTaskStatus::Overdue->value) {
+                $this->workflow->startTask($employeeTask);
+                $employeeTask->refresh();
+            }
+
+            // إثبات المهمة الرئيسية منفصل — إن كان مطلوباً ولم يُرفع، ننتظر رفعه ثم التسليم.
+            if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+                $employeeTask->employee_img,
+                $employeeTask->proof_media_type,
+                (bool) $employeeTask->is_forced_to_upload_img
+            )) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => __('messages.subtask_completed_upload_proof'),
+                    'all_subtasks_done' => true,
+                ], 200);
+            }
+
+            try {
+                $this->workflow->submitTaskForReview($employeeTask);
+            } catch (\Throwable $e) {
+                return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
+            }
+        }
+
             return response()->json([
             'status' => 'success',
             'message' => __('messages.subtask_rejected'),

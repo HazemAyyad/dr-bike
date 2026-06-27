@@ -850,6 +850,25 @@ class EmployeeTaskOperationsController extends Controller
 
             $this->workflow->rejectOccurrenceSubtask($sub, $request->rejection_reason);
 
+            $occurrence = $sub->occurrence->fresh();
+            $pending = $occurrence->subtasks()->whereNotIn('status', ['completed', 'rejected'])->exists();
+
+            if (! $pending) {
+                if (! \App\Support\TaskMediaFiles::hasRequiredProof(
+                    $occurrence->employee_img,
+                    $occurrence->proof_media_type,
+                    (bool) $occurrence->is_forced_to_upload_img
+                )) {
+                    return response()->json([
+                        'status' => 'success',
+                        'message' => __('messages.subtask_completed_upload_proof'),
+                        'all_subtasks_done' => true,
+                    ], 200);
+                }
+
+                $this->workflow->submitOccurrenceForReview($occurrence);
+            }
+
             return response()->json(['status' => 'success', 'message' => __('messages.subtask_rejected')], 200);
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
