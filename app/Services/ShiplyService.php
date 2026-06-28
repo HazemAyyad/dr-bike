@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use ArPHP\I18N\Arabic;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderItem;
 use App\Models\SalesOrderMedia;
@@ -11,17 +10,18 @@ use App\Models\ShiplyVillage;
 use App\Support\SalesOrderMediaCategory;
 use App\Support\ShiplyPhoneFormatter;
 use App\Support\ShiplySettings;
-use Barryvdh\DomPDF\Facade\Pdf;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\ImageManager;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Mpdf\Mpdf;
 
 class ShiplyService
 {
@@ -289,10 +289,21 @@ class ShiplyService
             && preg_match('/^<!doctype\s+html|^<html/i', $content) === 1) {
             try {
                 $printHtml = $this->prepareShiplyPrintHtml($content, $url);
-                $pdf = Pdf::loadHTML($printHtml)
-                    ->setPaper('a4')
-                    ->setOption('isRemoteEnabled', true)
-                    ->output();
+                $tempDir = storage_path('framework/cache/mpdf');
+                File::ensureDirectoryExists($tempDir);
+                $mpdf = new Mpdf([
+                    'mode' => 'utf-8',
+                    'format' => 'A4',
+                    'margin_left' => 2,
+                    'margin_right' => 2,
+                    'margin_top' => 2,
+                    'margin_bottom' => 2,
+                    'tempDir' => $tempDir,
+                    'autoScriptToLang' => true,
+                    'autoLangToFont' => true,
+                ]);
+                $mpdf->WriteHTML($printHtml);
+                $pdf = $mpdf->OutputBinaryData();
 
                 if (is_string($pdf) && str_starts_with($pdf, '%PDF-')) {
                     return $pdf;
@@ -328,111 +339,151 @@ class ShiplyService
 
     private function prepareShiplyPrintHtml(string $html, string $sourceUrl): string
     {
-        // Shiply embeds an SVG XML declaration/doctype in the middle of the
-        // HTML document. DomPDF treats those as document-level declarations.
         $html = preg_replace('/<\?xml\b.*?\?>/is', '', $html) ?? $html;
         $html = preg_replace('/<!DOCTYPE\s+svg\b.*?>/is', '', $html) ?? $html;
-        // Fix the unclosed QR table cell in Shiply's current template.
         $html = preg_replace(
             '/(<\/div>)\s*<td>\s*(<\/tr>)/i',
             '$1</td>$2',
             $html
         ) ?? $html;
-        $html = preg_replace(
-            '/<td\s+style="width:\s*80%;">(\s*<table\s+style="height:\s*100%;\s*width:\s*100%;">)/i',
-            '<td class="shiplyDetailsColumn"><table style="width: 100%;">',
-            $html,
-            1
-        ) ?? $html;
-
         $html = $this->inlineShiplyPrintImages($html, $sourceUrl);
 
-        // Shiply's HTML leaves a top padding that pushes a small overflow onto
-        // a second PDF page in DomPDF.
-        $printCss = <<<'CSS'
+        $dom = new \DOMDocument('1.0', 'UTF-8');
+        $previous = libxml_use_internal_errors(true);
+        $loaded = $dom->loadHTML(
+            '<?xml encoding="UTF-8">'.$html,
+            LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD
+        );
+        libxml_clear_errors();
+        libxml_use_internal_errors($previous);
+        if (! $loaded) {
+            throw new \RuntimeException('Unable to parse Shiply print HTML.');
+        }
+
+        $xpath = new \DOMXPath($dom);
+        $fields = [];
+        foreach ($xpath->query('//td[@dir="rtl"]') ?: [] as $cell) {
+            $text = preg_replace('/\s+/u', ' ', trim((string) $cell->textContent)) ?? '';
+            $key = match (true) {
+                str_contains($text, 'اسم المستلم') => 'recipient',
+                str_contains($text, 'جوال:') => 'phone',
+                str_contains($text, 'السعر:') => 'price',
+                str_contains($text, 'المنطقة:') => 'region',
+                str_contains($text, 'المدينة:') => 'city',
+                str_contains($text, 'الشارع:') => 'street',
+                str_contains($text, 'الوصف:') => 'description',
+                str_contains($text, 'ملاحظات:') => 'notes',
+                str_contains($text, 'اسم المرسل:') => 'sender',
+                default => null,
+            };
+            if ($key !== null) {
+                $fields[$key] = $cell;
+            }
+        }
+        $requiredFields = [
+            'phone', 'recipient', 'price', 'region', 'city',
+            'street', 'description', 'notes', 'sender',
+        ];
+        if (array_diff($requiredFields, array_keys($fields)) !== []) {
+            throw new \RuntimeException('Shiply print template fields are incomplete.');
+        }
+
+        $field = fn (string $key): string => $this->shiplyNodeInnerHtml($fields[$key]);
+        $images = $xpath->query('//img');
+        $logo = $images?->item(0);
+        $qrImage = $images?->item(1);
+        $qrText = $xpath->query(
+            '//div[contains(concat(" ", normalize-space(@class), " "), " qrText ")]'
+        )?->item(0);
+        $barcode = $xpath->query('//svg')?->item(0);
+        $license = $xpath->query(
+            '//div[contains(concat(" ", normalize-space(@class), " "), " qrContainer ")]/p'
+        )?->item(0);
+
+        $logoSrc = htmlspecialchars((string) ($logo?->attributes?->getNamedItem('src')?->nodeValue ?? ''), ENT_QUOTES);
+        $qrSrc = htmlspecialchars((string) ($qrImage?->attributes?->getNamedItem('src')?->nodeValue ?? ''), ENT_QUOTES);
+        $qrCode = htmlspecialchars(trim((string) $qrText?->textContent), ENT_QUOTES);
+        $licenseText = htmlspecialchars(trim((string) $license?->textContent), ENT_QUOTES);
+        $barcodeHtml = $barcode ? (string) $dom->saveHTML($barcode) : '';
+        $barcodeHtml = preg_replace(
+            '/<rect\b[^>]*\bwidth=["\']0["\'][^>]*\/?>/i',
+            '',
+            $barcodeHtml
+        ) ?? $barcodeHtml;
+
+        return <<<HTML
+<!doctype html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
 <style>
-@page { size: A4 portrait; margin: 0 !important; }
-* { box-sizing: border-box; }
-html, body {
-    width: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    font-family: "DejaVu Sans", sans-serif !important;
-}
-body {
-    height: auto !important;
-    padding: 0 !important;
-}
-table {
-    max-width: 100% !important;
-    border-spacing: 1px !important;
-}
-.shiplyDetailsColumn {
-    width: 72% !important;
-    vertical-align: top !important;
-}
-.qrImg {
-    width: 28% !important;
-    vertical-align: top !important;
-}
-.qrContainer {
-    width: 100% !important;
-    overflow: hidden !important;
-}
-.qrContainer > img {
-    width: 38mm !important;
-    height: 38mm !important;
-}
-.qrContainer > svg {
-    width: 100% !important;
-    height: 12mm !important;
-}
-img { max-width: 100% !important; }
-[dir="rtl"] {
-    font-family: "DejaVu Sans", sans-serif !important;
-    /* Arabic text is converted below to visual order for DomPDF. Applying
-       RTL again here reverses mixed numbers and Latin names a second time. */
-    direction: ltr !important;
-    text-align: right !important;
-}
+body { margin: 0; padding: 2mm; font-family: dejavusans, sans-serif; font-size: 11px; }
+table { width: 100%; border-collapse: separate; border-spacing: 1px; }
+td { padding: 0; vertical-align: top; }
+.box { border: 1px solid #000; border-radius: 4px; padding: 4px; }
+.rtl { direction: rtl; text-align: right; }
+.logo { height: 18mm; max-width: 75%; }
+.qr { width: 38mm; height: 38mm; }
+.barcode svg { width: 100%; height: 11mm; }
 </style>
-CSS;
-        $html = preg_replace('/<\/head>/i', $printCss.'</head>', $html, 1) ?? $html;
+</head>
+<body>
+<table class="box">
+<tr>
+<td>
+  <table>
+    <tr>
+      <td style="width:80%;text-align:center"><img class="logo" src="{$logoSrc}"></td>
+      <td style="width:20%;text-align:right;vertical-align:bottom">1700-801-801</td>
+    </tr>
+  </table>
+</td>
+</tr>
+<tr>
+<td>
+  <table>
+    <tr>
+      <td style="width:72%">
+        <table>
+          <tr>
+            <td class="box" style="width:30%"><div class="rtl" lang="ar">{$field('phone')}</div></td>
+            <td class="box" style="width:70%"><div class="rtl" lang="ar">{$field('recipient')}</div></td>
+          </tr>
+          <tr>
+            <td class="box" style="width:40%"><div class="rtl" lang="ar">{$field('price')}</div></td>
+            <td class="box" style="width:30%"><div class="rtl" lang="ar">{$field('region')}</div></td>
+            <td class="box" style="width:30%"><div class="rtl" lang="ar">{$field('city')}</div></td>
+          </tr>
+          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('street')}</div></td></tr>
+          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('description')}</div></td></tr>
+          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('notes')}</div></td></tr>
+          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('sender')}</div></td></tr>
+        </table>
+      </td>
+      <td class="box" style="width:28%;text-align:center">
+        <img class="qr" src="{$qrSrc}">
+        <div>{$qrCode}</div>
+        <div class="barcode">{$barcodeHtml}</div>
+        <div class="rtl" lang="ar">{$licenseText}</div>
+      </td>
+    </tr>
+  </table>
+</td>
+</tr>
+</table>
+</body>
+</html>
+HTML;
+    }
 
-        // DomPDF does not implement Arabic bidi. Shape each complete text node
-        // so punctuation, Western digits and Latin names stay with the Arabic
-        // phrase in the correct visual order.
-        $arabic = new Arabic();
-        $html = preg_replace_callback(
-            '/>([^<>]*\p{Arabic}[^<>]*)</us',
-            function (array $matches) use ($arabic): string {
-                $text = $matches[1];
-                preg_match('/^\s*/u', $text, $leading);
-                preg_match('/\s*$/u', $text, $trailing);
-                $content = trim($text);
+    private function shiplyNodeInnerHtml(\DOMNode $node): string
+    {
+        $html = '';
+        foreach ($node->childNodes as $child) {
+            $html .= $node->ownerDocument?->saveHTML($child) ?? '';
+        }
 
-                if ($content === '') {
-                    return $matches[0];
-                }
-
-                $visualText = $arabic->utf8Glyphs(
-                    $content,
-                    1000,
-                    false,
-                    false
-                );
-
-                // DomPDF applies its own bidi pass even after Arabic glyph
-                // shaping and ignores CSS direction for mixed text. LRO/PDF
-                // keeps the prepared visual order (phone, colon, label).
-                return '>'.($leading[0] ?? '')
-                    ."\u{202D}".$visualText."\u{202C}"
-                    .($trailing[0] ?? '').'<';
-            },
-            $html
-        ) ?? $html;
-
-        return $html;
+        return trim($html);
     }
 
     private function inlineShiplyPrintImages(string $html, string $sourceUrl): string
