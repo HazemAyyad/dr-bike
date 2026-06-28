@@ -417,14 +417,20 @@ class ShiplyService
 <head>
 <meta charset="utf-8">
 <style>
-body { margin: 0; padding: 2mm; font-family: dejavusans, sans-serif; font-size: 11px; }
+body {
+    margin: 0;
+    padding: 2mm;
+    font-family: dejavusans, sans-serif;
+    font-size: 14px;
+    line-height: 1.35;
+}
 table { width: 100%; border-collapse: separate; border-spacing: 1px; }
 td { padding: 0; vertical-align: top; }
-.box { border: 1px solid #000; border-radius: 4px; padding: 4px; }
+.box { border: 1px solid #000; border-radius: 4px; padding: 6px; }
 .rtl { direction: rtl; text-align: right; }
-.logo { height: 18mm; max-width: 75%; }
-.qr { width: 38mm; height: 38mm; }
-.barcode svg { width: 100%; height: 11mm; }
+.logo { height: 22mm; max-width: 78%; }
+.qr { width: 42mm; height: 42mm; }
+.barcode svg { width: 100%; height: 12mm; }
 </style>
 </head>
 <body>
