@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Mpdf\Mpdf;
+use setasign\Fpdi\PdfParser\StreamReader;
 
 class ShiplyService
 {
@@ -282,7 +283,7 @@ class ShiplyService
 
         $content = ltrim($response->body());
         if (! $response->failed() && str_starts_with($content, '%PDF-')) {
-            return $content;
+            return $this->firstPageOnlyPdf($content);
         }
 
         if (! $response->failed()
@@ -405,11 +406,13 @@ class ShiplyService
         if (! $response->failed()
             && preg_match('/^<!doctype\s+html|^<html/i', $content) === 1) {
             try {
-                return $this->convertShiplyV2HtmlToPdf(
-                    $content,
-                    $url,
-                    $size,
-                    $language
+                return $this->firstPageOnlyPdf(
+                    $this->convertShiplyV2HtmlToPdf(
+                        $content,
+                        $url,
+                        $size,
+                        $language
+                    )
                 );
             } catch (\Throwable $e) {
                 Log::error('shiply.print_parcel_v2_html_conversion_failed', [
@@ -489,6 +492,50 @@ class ShiplyService
         }
 
         return $pdf;
+    }
+
+    private function firstPageOnlyPdf(string $sourcePdf): string
+    {
+        $tempDir = storage_path('framework/cache/mpdf');
+        File::ensureDirectoryExists($tempDir);
+        $pdf = new Mpdf([
+            'mode' => 'utf-8',
+            'tempDir' => $tempDir,
+            'margin_left' => 0,
+            'margin_right' => 0,
+            'margin_top' => 0,
+            'margin_bottom' => 0,
+        ]);
+        $pageCount = $pdf->setSourceFile(
+            StreamReader::createByString($sourcePdf)
+        );
+        if ($pageCount < 1) {
+            throw new \RuntimeException('Shiply V2 PDF has no pages.');
+        }
+
+        $template = $pdf->importPage(1);
+        $size = $pdf->getTemplateSize($template);
+        $width = (float) ($size['width'] ?? 0);
+        $height = (float) ($size['height'] ?? 0);
+        if ($width <= 0 || $height <= 0) {
+            throw new \RuntimeException('Shiply V2 PDF page size is invalid.');
+        }
+
+        $pdf->AddPageByArray([
+            'orientation' => $width > $height ? 'L' : 'P',
+            'sheet-size' => [$width, $height],
+            'margin-left' => 0,
+            'margin-right' => 0,
+            'margin-top' => 0,
+            'margin-bottom' => 0,
+        ]);
+        $pdf->useTemplate($template, 0, 0, $width, $height);
+        $result = $pdf->OutputBinaryData();
+        if (! str_starts_with($result, '%PDF-')) {
+            throw new \RuntimeException('Unable to normalize Shiply V2 PDF.');
+        }
+
+        return $result;
     }
 
     private function prepareShiplyPrintHtml(string $html, string $sourceUrl): string
