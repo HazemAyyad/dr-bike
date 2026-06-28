@@ -390,7 +390,9 @@ table {
 img { max-width: 100% !important; }
 [dir="rtl"] {
     font-family: "DejaVu Sans", sans-serif !important;
-    direction: rtl;
+    /* Arabic text is converted below to visual order for DomPDF. Applying
+       RTL again here reverses mixed numbers and Latin names a second time. */
+    direction: ltr !important;
     text-align: right !important;
 }
 </style>
