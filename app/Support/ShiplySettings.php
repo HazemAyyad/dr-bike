@@ -67,7 +67,12 @@ class ShiplySettings
 
     public static function webhookUrl(): string
     {
-        return rtrim((string) config('app.url'), '/').(string) config('shiply.webhook_path');
+        $url = rtrim((string) config('app.url'), '/').(string) config('shiply.webhook_path');
+        $secret = trim((string) config('shiply.webhook_secret', ''));
+
+        return $secret === ''
+            ? $url
+            : $url.'?secret='.rawurlencode($secret);
     }
 
     /**

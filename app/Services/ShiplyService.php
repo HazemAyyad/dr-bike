@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use Barryvdh\DomPDF\Facade\Pdf;
+use ArPHP\I18N\Arabic;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderItem;
 use App\Models\SalesOrderMedia;
@@ -11,6 +11,7 @@ use App\Models\ShiplyVillage;
 use App\Support\SalesOrderMediaCategory;
 use App\Support\ShiplyPhoneFormatter;
 use App\Support\ShiplySettings;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Intervention\Image\Drivers\Gd\Driver;
 use Intervention\Image\ImageManager;
 use Illuminate\Http\Client\ConnectionException;
@@ -287,7 +288,8 @@ class ShiplyService
         if (! $response->failed()
             && preg_match('/^<!doctype\s+html|^<html/i', $content) === 1) {
             try {
-                $pdf = Pdf::loadHTML($content)
+                $printHtml = $this->prepareShiplyPrintHtml($content, $url);
+                $pdf = Pdf::loadHTML($printHtml)
                     ->setPaper('a4')
                     ->setOption('isRemoteEnabled', true)
                     ->output();
@@ -322,6 +324,109 @@ class ShiplyService
         }
 
         return $content;
+    }
+
+    private function prepareShiplyPrintHtml(string $html, string $sourceUrl): string
+    {
+        $html = $this->inlineShiplyPrintImages($html, $sourceUrl);
+
+        // Shiply's HTML leaves a top padding that pushes a small overflow onto
+        // a second PDF page in DomPDF.
+        $printCss = <<<'CSS'
+<style>
+@page { size: A4 portrait; margin: 0 !important; }
+html, body {
+    width: 210mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+body { padding-top: 0 !important; }
+img { max-width: 100% !important; }
+</style>
+CSS;
+        $html = preg_replace('/<\/head>/i', $printCss.'</head>', $html, 1) ?? $html;
+
+        // DomPDF does not shape Arabic glyphs by itself.
+        $arabic = new Arabic();
+        $positions = $arabic->arIdentify($html);
+        for ($i = count($positions) - 1; $i >= 1; $i -= 2) {
+            $start = $positions[$i - 1];
+            $length = $positions[$i] - $start;
+            $html = substr_replace(
+                $html,
+                $arabic->utf8Glyphs(substr($html, $start, $length)),
+                $start,
+                $length
+            );
+        }
+
+        return $html;
+    }
+
+    private function inlineShiplyPrintImages(string $html, string $sourceUrl): string
+    {
+        return preg_replace_callback(
+            '/(<img\b[^>]*\bsrc\s*=\s*)(["\'])(.*?)\2/si',
+            function (array $matches) use ($sourceUrl): string {
+                $src = html_entity_decode(trim($matches[3]), ENT_QUOTES | ENT_HTML5);
+                if ($src === '' || str_starts_with($src, 'data:')) {
+                    return $matches[0];
+                }
+
+                $imageUrl = $this->resolveShiplyPrintAssetUrl($src, $sourceUrl);
+                if ($imageUrl === null) {
+                    return $matches[0];
+                }
+
+                try {
+                    $response = Http::timeout((int) config('shiply.http_timeout', 30))
+                        ->get($imageUrl);
+                    if ($response->failed() || $response->body() === '') {
+                        return $matches[0];
+                    }
+
+                    $mime = trim(explode(';', (string) $response->header('Content-Type'))[0]);
+                    if (! str_starts_with($mime, 'image/')) {
+                        $mime = 'image/png';
+                    }
+
+                    $dataUri = 'data:'.$mime.';base64,'.base64_encode($response->body());
+
+                    return $matches[1].$matches[2].$dataUri.$matches[2];
+                } catch (\Throwable $e) {
+                    Log::warning('shiply.print_parcel_image_failed', [
+                        'url_host' => parse_url($imageUrl, PHP_URL_HOST),
+                        'message' => $e->getMessage(),
+                    ]);
+
+                    return $matches[0];
+                }
+            },
+            $html
+        ) ?? $html;
+    }
+
+    private function resolveShiplyPrintAssetUrl(string $src, string $sourceUrl): ?string
+    {
+        if (preg_match('#^https?://#i', $src) === 1) {
+            return $src;
+        }
+
+        $scheme = parse_url($sourceUrl, PHP_URL_SCHEME);
+        $host = parse_url($sourceUrl, PHP_URL_HOST);
+        if (! is_string($scheme) || ! is_string($host)) {
+            return null;
+        }
+
+        if (str_starts_with($src, '//')) {
+            return $scheme.':'.$src;
+        }
+
+        if (str_starts_with($src, '/')) {
+            return $scheme.'://'.$host.$src;
+        }
+
+        return rtrim(dirname($sourceUrl), '/').'/'.ltrim($src, '/');
     }
 
     /**
