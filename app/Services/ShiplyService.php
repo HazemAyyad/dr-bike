@@ -541,11 +541,21 @@ class ShiplyService
         $targetHeight = in_array($requestedSize, ['10', 'QR'], true)
             ? 100.0
             : $height;
-        $scale = min($targetWidth / $width, $targetHeight / $height);
-        $renderWidth = $width * $scale;
-        $renderHeight = $height * $scale;
-        $x = ($targetWidth - $renderWidth) / 2;
-        $y = ($targetHeight - $renderHeight) / 2;
+        if ($requestedSize === '10') {
+            // Shiply's 10x10 output reserves roughly 30mm as an empty strip
+            // on the left. Render the full source at 130mm and shift it left,
+            // so the actual right-hand label fills the final 100x100 page.
+            $renderWidth = 130.0;
+            $renderHeight = $height * ($renderWidth / $width);
+            $x = $targetWidth - $renderWidth;
+            $y = 0.0;
+        } else {
+            $scale = min($targetWidth / $width, $targetHeight / $height);
+            $renderWidth = $width * $scale;
+            $renderHeight = $height * $scale;
+            $x = ($targetWidth - $renderWidth) / 2;
+            $y = ($targetHeight - $renderHeight) / 2;
+        }
 
         $pdf->AddPageByArray([
             'orientation' => $targetWidth > $targetHeight ? 'L' : 'P',
