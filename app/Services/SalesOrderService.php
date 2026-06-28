@@ -208,6 +208,7 @@ class SalesOrderService
                 'delivery_company_id' => $data['delivery_company_id'] ?? null,
                 'delivery_company_name' => $data['delivery_company_name'] ?? null,
                 'customer_delivery_fee' => $totals['customer_delivery_fee'],
+                'price_includes_delivery' => (bool) ($data['price_includes_delivery'] ?? false),
                 'shiply_quoted_delivery_fee' => $data['shiply_quoted_delivery_fee'] ?? null,
                 'subtotal' => $totals['subtotal'],
                 'discount' => $totals['discount'],
@@ -282,6 +283,8 @@ class SalesOrderService
                 'delivery_company_id' => $data['delivery_company_id'] ?? $order->delivery_company_id,
                 'delivery_company_name' => $data['delivery_company_name'] ?? $order->delivery_company_name,
                 'customer_delivery_fee' => $totals['customer_delivery_fee'],
+                'price_includes_delivery' => (bool) ($data['price_includes_delivery']
+                    ?? $order->price_includes_delivery),
                 'shiply_quoted_delivery_fee' => array_key_exists('shiply_quoted_delivery_fee', $data)
                     ? $data['shiply_quoted_delivery_fee']
                     : $order->shiply_quoted_delivery_fee,
@@ -560,6 +563,7 @@ class SalesOrderService
                 ?? $order->deliveries->sortByDesc('id')->first()?->tracking_number
                 ?? $order->packages->sortByDesc('id')->first()?->tracking_number,
             'customer_delivery_fee' => (float) $order->customer_delivery_fee,
+            'price_includes_delivery' => (bool) $order->price_includes_delivery,
             'shiply_quoted_delivery_fee' => $order->shiply_quoted_delivery_fee !== null
                 ? (float) $order->shiply_quoted_delivery_fee
                 : null,
@@ -788,7 +792,9 @@ class SalesOrderService
             'delivery_company_id' => 'nullable|integer|exists:delivery_companies,id',
             'delivery_company_name' => 'nullable|string|max:255',
             'customer_delivery_fee' => 'nullable|numeric|min:0',
+            'price_includes_delivery' => 'nullable|boolean',
             'shiply_quoted_delivery_fee' => 'nullable|numeric|min:0',
+            'total' => 'nullable|numeric|min:0',
             'discount' => 'nullable|numeric|min:0',
             'debt_id' => 'nullable|integer|exists:debts,id',
             'is_debt_collection' => 'nullable|boolean',
@@ -884,7 +890,10 @@ class SalesOrderService
             ? (float) $data['customer_delivery_fee']
             : $this->resolveDeliveryFee($data, $order);
 
-        $total = max(0, round($subtotal + $deliveryFee - $discount, 2));
+        $calculatedTotal = max(0, round($subtotal + $deliveryFee - $discount, 2));
+        $total = array_key_exists('total', $data)
+            ? round((float) $data['total'], 2)
+            : $calculatedTotal;
 
         return [
             'subtotal' => round($subtotal, 2),

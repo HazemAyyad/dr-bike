@@ -450,8 +450,12 @@ class ShiplyService
         $html = preg_replace('/@page\s*\{.*?\}/is', '', $html) ?? $html;
         $html = $this->inlineShiplyPrintImages($html, $sourceUrl);
         $direction = in_array($language, ['arabic', 'hebrew'], true) ? 'rtl' : 'ltr';
-        $style = '<style>body{font-family:dejavusans,sans-serif;}'
-            .'[dir="rtl"]{direction:rtl;text-align:right;}</style>';
+        $style = '<style>'
+            .'html,body{margin:0!important;padding:0!important;'
+            .'width:100%!important;height:auto!important;'
+            .'font-family:dejavusans,sans-serif;}'
+            .'[dir="rtl"]{direction:rtl;text-align:right;}'
+            .'</style>';
         $html = preg_replace('/<\/head>/i', $style.'</head>', $html, 1) ?? $style.$html;
         $html = preg_replace(
             '/<html\b([^>]*)>/i',
@@ -466,14 +470,18 @@ class ShiplyService
         $mpdf = new Mpdf([
             'mode' => 'utf-8',
             'format' => $format,
-            'margin_left' => 2,
-            'margin_right' => 2,
-            'margin_top' => 2,
-            'margin_bottom' => 2,
+            'margin_left' => 0,
+            'margin_right' => 0,
+            'margin_top' => 0,
+            'margin_bottom' => 0,
             'tempDir' => $tempDir,
             'autoScriptToLang' => true,
             'autoLangToFont' => true,
         ]);
+        // One parcel must always remain one physical label. Shiply templates
+        // often declare a body exactly as large as the selected paper size;
+        // even a rounding difference can otherwise create blank extra pages.
+        $mpdf->SetAutoPageBreak(false, 0);
         $mpdf->WriteHTML($html);
         $pdf = $mpdf->OutputBinaryData();
         if (! str_starts_with($pdf, '%PDF-')) {
@@ -1237,7 +1245,10 @@ HTML;
                 'village_id' => (int) $order->shiply_village_id,
                 'street_name' => mb_substr($this->scalarString($order->customer_address), 0, 500),
             ],
-            'total_price' => (int) round((float) $order->total),
+            'total_price' => (int) max(0, round(
+                (float) $order->total
+                - ($order->price_includes_delivery ? (float) $order->customer_delivery_fee : 0)
+            )),
             'actual_price' => (int) max(0, round((float) $order->subtotal - (float) $order->discount)),
             'description' => $description,
             'note' => $notes !== '' ? mb_substr($notes, 0, 1023) : null,
