@@ -338,6 +338,12 @@ class ShiplyService
             '$1</td>$2',
             $html
         ) ?? $html;
+        $html = preg_replace(
+            '/<td\s+style="width:\s*80%;">(\s*<table\s+style="height:\s*100%;\s*width:\s*100%;">)/i',
+            '<td class="shiplyDetailsColumn"><table style="width: 100%;">',
+            $html,
+            1
+        ) ?? $html;
 
         $html = $this->inlineShiplyPrintImages($html, $sourceUrl);
 
@@ -346,13 +352,41 @@ class ShiplyService
         $printCss = <<<'CSS'
 <style>
 @page { size: A4 portrait; margin: 0 !important; }
+* { box-sizing: border-box; }
 html, body {
-    width: 210mm !important;
+    width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
     font-family: "DejaVu Sans", sans-serif !important;
 }
-body { padding-top: 0 !important; }
+body {
+    height: auto !important;
+    padding: 0 !important;
+}
+table {
+    max-width: 100% !important;
+    border-spacing: 1px !important;
+}
+.shiplyDetailsColumn {
+    width: 72% !important;
+    vertical-align: top !important;
+}
+.qrImg {
+    width: 28% !important;
+    vertical-align: top !important;
+}
+.qrContainer {
+    width: 100% !important;
+    overflow: hidden !important;
+}
+.qrContainer > img {
+    width: 38mm !important;
+    height: 38mm !important;
+}
+.qrContainer > svg {
+    width: 100% !important;
+    height: 12mm !important;
+}
 img { max-width: 100% !important; }
 [dir="rtl"] {
     font-family: "DejaVu Sans", sans-serif !important;
