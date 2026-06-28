@@ -328,6 +328,17 @@ class ShiplyService
 
     private function prepareShiplyPrintHtml(string $html, string $sourceUrl): string
     {
+        // Shiply embeds an SVG XML declaration/doctype in the middle of the
+        // HTML document. DomPDF treats those as document-level declarations.
+        $html = preg_replace('/<\?xml\b.*?\?>/is', '', $html) ?? $html;
+        $html = preg_replace('/<!DOCTYPE\s+svg\b.*?>/is', '', $html) ?? $html;
+        // Fix the unclosed QR table cell in Shiply's current template.
+        $html = preg_replace(
+            '/(<\/div>)\s*<td>\s*(<\/tr>)/i',
+            '$1</td>$2',
+            $html
+        ) ?? $html;
+
         $html = $this->inlineShiplyPrintImages($html, $sourceUrl);
 
         // Shiply's HTML leaves a top padding that pushes a small overflow onto
@@ -339,9 +350,14 @@ html, body {
     width: 210mm !important;
     margin: 0 !important;
     padding: 0 !important;
+    font-family: "DejaVu Sans", sans-serif !important;
 }
 body { padding-top: 0 !important; }
 img { max-width: 100% !important; }
+[dir="rtl"] {
+    font-family: "DejaVu Sans", sans-serif !important;
+    direction: rtl;
+}
 </style>
 CSS;
         $html = preg_replace('/<\/head>/i', $printCss.'</head>', $html, 1) ?? $html;
@@ -354,7 +370,14 @@ CSS;
             $length = $positions[$i] - $start;
             $html = substr_replace(
                 $html,
-                $arabic->utf8Glyphs(substr($html, $start, $length)),
+                // Keep Western digits/codes intact and avoid wrapping a text
+                // fragment independently from its table cell.
+                $arabic->utf8Glyphs(
+                    substr($html, $start, $length),
+                    1000,
+                    false,
+                    false
+                ),
                 $start,
                 $length
             );
