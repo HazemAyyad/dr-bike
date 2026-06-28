@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Barryvdh\DomPDF\Facade\Pdf;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderItem;
 use App\Models\SalesOrderMedia;
@@ -279,6 +280,30 @@ class ShiplyService
         }
 
         $content = ltrim($response->body());
+        if (! $response->failed() && str_starts_with($content, '%PDF-')) {
+            return $content;
+        }
+
+        if (! $response->failed()
+            && preg_match('/^<!doctype\s+html|^<html/i', $content) === 1) {
+            try {
+                $pdf = Pdf::loadHTML($content)
+                    ->setPaper('a4')
+                    ->setOption('isRemoteEnabled', true)
+                    ->output();
+
+                if (is_string($pdf) && str_starts_with($pdf, '%PDF-')) {
+                    return $pdf;
+                }
+            } catch (\Throwable $e) {
+                Log::error('shiply.print_parcel_html_conversion_failed', [
+                    'parcel_code' => $parcelCode,
+                    'mode' => $mode,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
         if ($response->failed() || ! str_starts_with($content, '%PDF-')) {
             $json = $response->json();
             Log::warning('shiply.print_parcel_failed', [
