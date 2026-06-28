@@ -454,10 +454,13 @@ class ShiplyService
         $html = preg_replace('/@page\s*\{.*?\}/is', '', $html) ?? $html;
         $html = $this->inlineShiplyPrintImages($html, $sourceUrl);
         $direction = in_array($language, ['arabic', 'hebrew'], true) ? 'rtl' : 'ltr';
+        $renderWidth = $size === '10' ? '130mm' : '100%';
         $style = '<style>'
             .'html,body{margin:0!important;padding:0!important;'
-            .'width:100%!important;height:auto!important;'
+            .'width:'.$renderWidth.'!important;height:auto!important;'
             .'font-family:dejavusans,sans-serif;}'
+            .'body>*{width:100%!important;max-width:100%!important;'
+            .'margin-left:0!important;margin-right:0!important;}'
             .'[dir="rtl"]{direction:rtl;text-align:right;}'
             .'</style>';
         $html = preg_replace('/<\/head>/i', $style.'</head>', $html, 1) ?? $style.$html;

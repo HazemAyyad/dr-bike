@@ -212,6 +212,7 @@ class SalesOrderService
                 'shiply_quoted_delivery_fee' => $data['shiply_quoted_delivery_fee'] ?? null,
                 'subtotal' => $totals['subtotal'],
                 'discount' => $totals['discount'],
+                'calculated_total' => $totals['calculated_total'],
                 'total' => $totals['total'],
                 'debt_id' => $data['debt_id'] ?? null,
                 'is_debt_collection' => (bool) ($data['is_debt_collection'] ?? false),
@@ -290,6 +291,7 @@ class SalesOrderService
                     : $order->shiply_quoted_delivery_fee,
                 'subtotal' => $totals['subtotal'],
                 'discount' => $totals['discount'],
+                'calculated_total' => $totals['calculated_total'],
                 'total' => $totals['total'],
                 'debt_id' => $data['debt_id'] ?? $order->debt_id,
                 'is_debt_collection' => (bool) ($data['is_debt_collection'] ?? $order->is_debt_collection),
@@ -575,6 +577,7 @@ class SalesOrderService
                 : null,
             'subtotal' => (float) $order->subtotal,
             'discount' => (float) $order->discount,
+            'calculated_total' => (float) ($order->calculated_total ?? $order->total),
             'total' => (float) $order->total,
             'debt_id' => $order->debt_id,
             'is_debt_collection' => (bool) $order->is_debt_collection,
@@ -869,7 +872,7 @@ class SalesOrderService
 
     /**
      * @param  array<string, mixed>  $data
-     * @return array{subtotal: float, discount: float, customer_delivery_fee: float, total: float}
+     * @return array{subtotal: float, discount: float, customer_delivery_fee: float, calculated_total: float, total: float}
      */
     private function calculateTotals(array $data, ?SalesOrder $order = null): array
     {
@@ -899,6 +902,7 @@ class SalesOrderService
             'subtotal' => round($subtotal, 2),
             'discount' => round($discount, 2),
             'customer_delivery_fee' => round($deliveryFee, 2),
+            'calculated_total' => $calculatedTotal,
             'total' => $total,
         ];
     }
