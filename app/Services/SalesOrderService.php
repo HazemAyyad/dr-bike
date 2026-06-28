@@ -686,6 +686,7 @@ class SalesOrderService
             'carrier_office_name' => $delivery->carrier_office_name,
             'carrier_vehicle_number' => $delivery->carrier_vehicle_number,
             'shiply_parcel_code' => $delivery->shiply_parcel_code,
+            'shiply_qr_code' => $delivery->shiply_qr_code,
             'handed_over_at' => $delivery->handed_over_at?->toDateTimeString(),
             'delivered_at' => $delivery->delivered_at?->toDateTimeString(),
         ];

@@ -79,14 +79,16 @@ class SalesOrderFulfillmentService
         }
 
         $parcelCode = null;
+        $qrCode = null;
         if ($isShiply) {
             $order = $order->fresh(['items', 'media']);
             $parcel = $this->shiplyService->createAndSubmitParcel($order, $shiplyMode);
             $parcelCode = $parcel['parcel_code'];
+            $qrCode = $parcel['qr_code'] ?? null;
             $data['tracking_number'] = $parcelCode;
         }
 
-        return DB::transaction(function () use ($user, $order, $data, $isShiply, $shiplyMode, $employeeEmail, $parcelCode, $deliveryCompanyId) {
+        return DB::transaction(function () use ($user, $order, $data, $isShiply, $shiplyMode, $employeeEmail, $parcelCode, $qrCode, $deliveryCompanyId) {
             $companyName = $data['delivery_company_name'] ?? null;
             if ($deliveryCompanyId && ! $companyName) {
                 $companyName = DeliveryCompany::query()->find($deliveryCompanyId)?->name;
@@ -103,6 +105,7 @@ class SalesOrderFulfillmentService
                 'carrier_vehicle_number' => $data['carrier_vehicle_number'] ?? null,
                 'external_reference' => $parcelCode,
                 'shiply_parcel_code' => $parcelCode,
+                'shiply_qr_code' => $isShiply ? $qrCode : null,
                 'shiply_employee_email' => $isShiply ? $employeeEmail : null,
                 'shiply_mode' => $isShiply ? $shiplyMode : null,
                 'handed_over_by_user_id' => $user->id,

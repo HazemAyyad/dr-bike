@@ -22,6 +22,7 @@ class SalesOrderDelivery extends Model
         'shiply_employee_email',
         'shiply_mode',
         'shiply_parcel_code',
+        'shiply_qr_code',
         'handed_over_at',
         'delivered_at',
     ];
