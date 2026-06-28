@@ -283,7 +283,7 @@ class ShiplyService
 
         $content = ltrim($response->body());
         if (! $response->failed() && str_starts_with($content, '%PDF-')) {
-            return $this->firstPageOnlyPdf($content);
+            return $this->firstPageOnlyPdf($content, $size);
         }
 
         if (! $response->failed()
@@ -412,7 +412,8 @@ class ShiplyService
                         $url,
                         $size,
                         $language
-                    )
+                    ),
+                    $size
                 );
             } catch (\Throwable $e) {
                 Log::error('shiply.print_parcel_v2_html_conversion_failed', [
@@ -469,7 +470,14 @@ class ShiplyService
 
         $tempDir = storage_path('framework/cache/mpdf');
         File::ensureDirectoryExists($tempDir);
-        $format = $size === 'A4' ? 'A4' : [100, 100];
+        // The Shiply 10x10 HTML template slightly overflows its nominal page.
+        // Render it on a larger square first; firstPageOnlyPdf() then scales
+        // the complete page proportionally into the final 100x100 label.
+        $format = match ($size) {
+            'A4' => 'A4',
+            '10' => [130, 130],
+            default => [100, 100],
+        };
         $mpdf = new Mpdf([
             'mode' => 'utf-8',
             'format' => $format,
@@ -494,7 +502,10 @@ class ShiplyService
         return $pdf;
     }
 
-    private function firstPageOnlyPdf(string $sourcePdf): string
+    private function firstPageOnlyPdf(
+        string $sourcePdf,
+        string $requestedSize = 'A4'
+    ): string
     {
         $tempDir = storage_path('framework/cache/mpdf');
         File::ensureDirectoryExists($tempDir);
@@ -521,15 +532,33 @@ class ShiplyService
             throw new \RuntimeException('Shiply V2 PDF page size is invalid.');
         }
 
+        $targetWidth = in_array($requestedSize, ['10', 'QR'], true)
+            ? 100.0
+            : $width;
+        $targetHeight = in_array($requestedSize, ['10', 'QR'], true)
+            ? 100.0
+            : $height;
+        $scale = min($targetWidth / $width, $targetHeight / $height);
+        $renderWidth = $width * $scale;
+        $renderHeight = $height * $scale;
+        $x = ($targetWidth - $renderWidth) / 2;
+        $y = ($targetHeight - $renderHeight) / 2;
+
         $pdf->AddPageByArray([
-            'orientation' => $width > $height ? 'L' : 'P',
-            'sheet-size' => [$width, $height],
+            'orientation' => $targetWidth > $targetHeight ? 'L' : 'P',
+            'sheet-size' => [$targetWidth, $targetHeight],
             'margin-left' => 0,
             'margin-right' => 0,
             'margin-top' => 0,
             'margin-bottom' => 0,
         ]);
-        $pdf->useTemplate($template, 0, 0, $width, $height);
+        $pdf->useTemplate(
+            $template,
+            $x,
+            $y,
+            $renderWidth,
+            $renderHeight
+        );
         $result = $pdf->OutputBinaryData();
         if (! str_starts_with($result, '%PDF-')) {
             throw new \RuntimeException('Unable to normalize Shiply V2 PDF.');
