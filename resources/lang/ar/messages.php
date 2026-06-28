@@ -649,6 +649,7 @@ return [
     'shiply_connection_failed' => 'تعذّر الاتصال بخوادم Shiply. تحقق من اتصال السيرفر بالإنترنت ومفتاح API ووضع التجريبي/الفعلي.',
     'shiply_sync_failed' => 'فشل مزامنة مدن وقرى Shiply.',
     'shiply_create_parcel_failed' => 'فشل إنشاء الطرد في Shiply.',
+    'shiply_total_price_limit' => 'لا يمكن إرسال الطرد عبر Shiply لأن سعره الكلي يتجاوز الحد المسموح (:limit ₪). استخدم شركة توصيل أخرى أو قسّم الطلبية.',
     'shiply_content_items_group' => 'صور الأصناف مجتمعة',
     'shiply_content_packaged' => 'صورة بعد التغليف',
     'shiply_village_required' => 'يجب اختيار قرية Shiply قبل التسليم.',

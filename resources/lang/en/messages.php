@@ -637,6 +637,7 @@ return [
     'shiply_connection_failed' => 'Could not reach Shiply servers. Check server internet access, API key, and test/live mode.',
     'shiply_sync_failed' => 'Failed to sync Shiply cities and villages.',
     'shiply_create_parcel_failed' => 'Failed to create Shiply parcel.',
+    'shiply_total_price_limit' => 'Cannot send this parcel via Shiply because its total price exceeds the allowed limit (:limit ₪). Use another carrier or split the order.',
     'shiply_content_items_group' => 'Grouped item photos',
     'shiply_content_packaged' => 'Photo after packaging',
     'shiply_village_required' => 'Shiply village is required before handover.',

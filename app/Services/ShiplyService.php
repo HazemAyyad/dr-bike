@@ -857,16 +857,41 @@ class ShiplyService
         }
 
         $errors = $json['errors'] ?? null;
-        if ($errors !== null) {
+
+        if ($errors !== null && $this->isUnauthorizedShiplyError($errors)) {
             return $this->formatShiplyError($errors, '');
+        }
+
+        // الأخطاء التفصيلية قد تكون مصفوفة فارغة ([]) — في هذه الحالة نتجاهلها
+        // ونعتمد على رسالة Shiply الأساسية (message) لأنها تحمل السبب الحقيقي.
+        $flattened = $this->flattenShiplyErrors($errors);
+        if ($flattened !== '') {
+            return $this->localizeShiplyMessage($flattened);
         }
 
         $message = trim((string) ($json['message'] ?? ''));
         if ($message !== '') {
-            return $message;
+            return $this->localizeShiplyMessage($message);
         }
 
         return null;
+    }
+
+    /// ترجمة رسائل Shiply المعروفة إلى رسائل عربية واضحة للمبيعات.
+    private function localizeShiplyMessage(string $message): string
+    {
+        $normalized = mb_strtolower($message);
+
+        if (str_contains($normalized, 'total price more than')) {
+            $limit = '2000';
+            if (preg_match('/more than\s*([0-9]+)/i', $message, $matches)) {
+                $limit = $matches[1];
+            }
+
+            return __('messages.shiply_total_price_limit', ['limit' => $limit]);
+        }
+
+        return $message;
     }
 
     private function formatShiplyError(mixed $errors, string $employeeEmail): string
