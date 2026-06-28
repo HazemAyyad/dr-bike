@@ -852,7 +852,9 @@ class SalesOrderService
         }
 
         return [
-            'customer_id' => $data['customer_id'] ?? $order?->customer_id,
+            'customer_id' => array_key_exists('customer_id', $data)
+                ? $data['customer_id']
+                : $order?->customer_id,
             'customer_name' => $data['customer_name'] ?? $order?->customer_name,
             'customer_phone' => $data['customer_phone'] ?? $order?->customer_phone,
             'customer_address' => $data['customer_address'] ?? $order?->customer_address,

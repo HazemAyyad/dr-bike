@@ -244,11 +244,18 @@ class ShiplyService
         ];
 
         try {
-            // Shiply documents this endpoint as a GET request with a JSON body.
-            $response = Http::timeout((int) config('shiply.http_timeout', 30))
-                ->accept('application/pdf')
-                ->withBody((string) json_encode($body), 'application/json')
-                ->send('GET', $url);
+            // Shiply documents a GET body, while some of their deployments only
+            // expose GET parameters to Laravel. Try the same query convention
+            // used by the other working Shiply GET endpoints first.
+            $client = Http::timeout((int) config('shiply.http_timeout', 30))
+                ->accept('application/pdf');
+            $response = $client->withOptions(['query' => $body])->get($url);
+
+            if (! str_starts_with(ltrim($response->body()), '%PDF-')) {
+                $response = $client
+                    ->withBody((string) json_encode($body), 'application/json')
+                    ->send('GET', $url);
+            }
         } catch (ConnectionException $e) {
             Log::error('shiply.print_parcel_connection_failed', [
                 'parcel_code' => $parcelCode,
@@ -271,7 +278,7 @@ class ShiplyService
             ]);
         }
 
-        $content = $response->body();
+        $content = ltrim($response->body());
         if ($response->failed() || ! str_starts_with($content, '%PDF-')) {
             $json = $response->json();
             Log::warning('shiply.print_parcel_failed', [
