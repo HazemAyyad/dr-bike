@@ -212,6 +212,87 @@ class ShiplyService
     }
 
     /**
+     * Fetch Shiply's printable parcel label as a PDF.
+     */
+    public function getParcelPdf(string $parcelCode, ?string $mode = null): string
+    {
+        $parcelCode = trim($parcelCode);
+        if ($parcelCode === '') {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_request_failed')],
+            ]);
+        }
+
+        if (! ShiplySettings::isEnabled()) {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_disabled')],
+            ]);
+        }
+
+        $mode = $mode ?? ShiplySettings::mode();
+        $apiKey = ShiplySettings::apiKey($mode);
+        if ($apiKey === '') {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_api_key_missing')],
+            ]);
+        }
+
+        $url = rtrim(ShiplySettings::baseUrl($mode), '/').'/parcels/getParcelAsPDF';
+        $body = [
+            'id' => $parcelCode,
+            'Shiply_API_KEY' => $apiKey,
+        ];
+
+        try {
+            // Shiply documents this endpoint as a GET request with a JSON body.
+            $response = Http::timeout((int) config('shiply.http_timeout', 30))
+                ->accept('application/pdf')
+                ->withBody((string) json_encode($body), 'application/json')
+                ->send('GET', $url);
+        } catch (ConnectionException $e) {
+            Log::error('shiply.print_parcel_connection_failed', [
+                'parcel_code' => $parcelCode,
+                'mode' => $mode,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_connection_failed')],
+            ]);
+        } catch (RequestException $e) {
+            Log::error('shiply.print_parcel_http_failed', [
+                'parcel_code' => $parcelCode,
+                'mode' => $mode,
+                'status' => $e->response?->status(),
+            ]);
+
+            throw ValidationException::withMessages([
+                'shiply' => [$this->formatHttpErrorMessage($e)],
+            ]);
+        }
+
+        $content = $response->body();
+        if ($response->failed() || ! str_starts_with($content, '%PDF-')) {
+            $json = $response->json();
+            Log::warning('shiply.print_parcel_failed', [
+                'parcel_code' => $parcelCode,
+                'mode' => $mode,
+                'status' => $response->status(),
+                'body' => is_array($json) ? $json : mb_substr($content, 0, 500),
+            ]);
+
+            throw ValidationException::withMessages([
+                'shiply' => [
+                    $this->extractResponseErrorMessage(is_array($json) ? $json : null)
+                        ?? __('messages.shiply_request_failed'),
+                ],
+            ]);
+        }
+
+        return $content;
+    }
+
+    /**
      * @return array{delivery_cost: float, extra_price: float, returned_extra_price: float}
      */
     public function calculateDeliveryCost(int $villageId, float $parcelPrice = 0, ?string $mode = null): array
@@ -874,6 +955,11 @@ class ShiplyService
             return $this->localizeShiplyMessage($message);
         }
 
+        $error = trim((string) ($json['error'] ?? ''));
+        if ($error !== '') {
+            return $this->localizeShiplyMessage($error);
+        }
+
         return null;
     }
 
@@ -976,4 +1062,3 @@ class ShiplyService
         return $default;
     }
 }
-

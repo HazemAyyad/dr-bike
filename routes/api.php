@@ -407,6 +407,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/delivery/companies', [CitiesController::class, 'deliveryCompanies']);
       Route::get('/shiply/address-options', [ShiplyController::class, 'addressOptions']);
       Route::post('/shiply/calculate-delivery-fee', [ShiplyController::class, 'calculateDeliveryFee']);
+      Route::get('/shiply/print-parcel', [ShiplyController::class, 'printParcel']);
 
       //Route::post('/attach/project/of/product/to/sale' , [InstantSales::class,'attachProjectToProductInSale']);
 
