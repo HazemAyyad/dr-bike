@@ -458,7 +458,7 @@ td { padding: 0; vertical-align: top; }
         <table>
           <tr>
             <td class="box" align="right" style="width:30%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('phone')}</div></td>
-            <td class="box" align="right" style="width:70%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('recipient')}</div></td>
+            <td colspan="2" class="box" align="right" style="width:70%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('recipient')}</div></td>
           </tr>
           <tr>
             <td class="box" align="right" style="width:40%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('price')}</div></td>
