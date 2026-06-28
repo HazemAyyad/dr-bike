@@ -427,7 +427,12 @@ body {
 table { width: 100%; border-collapse: separate; border-spacing: 1px; }
 td { padding: 0; vertical-align: top; }
 .box { border: 1px solid #000; border-radius: 4px; padding: 6px; }
-.rtl { direction: rtl; text-align: right; }
+.rtl {
+    display: block;
+    width: 100%;
+    direction: rtl;
+    text-align: right;
+}
 .logo { height: 22mm; max-width: 78%; }
 .qr { width: 42mm; height: 42mm; }
 .barcode svg { width: 100%; height: 12mm; }
@@ -452,25 +457,25 @@ td { padding: 0; vertical-align: top; }
       <td style="width:72%">
         <table>
           <tr>
-            <td class="box" style="width:30%"><div class="rtl" lang="ar">{$field('phone')}</div></td>
-            <td class="box" style="width:70%"><div class="rtl" lang="ar">{$field('recipient')}</div></td>
+            <td class="box" align="right" style="width:30%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('phone')}</div></td>
+            <td class="box" align="right" style="width:70%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('recipient')}</div></td>
           </tr>
           <tr>
-            <td class="box" style="width:40%"><div class="rtl" lang="ar">{$field('price')}</div></td>
-            <td class="box" style="width:30%"><div class="rtl" lang="ar">{$field('region')}</div></td>
-            <td class="box" style="width:30%"><div class="rtl" lang="ar">{$field('city')}</div></td>
+            <td class="box" align="right" style="width:40%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('price')}</div></td>
+            <td class="box" align="right" style="width:30%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('region')}</div></td>
+            <td class="box" align="right" style="width:30%"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('city')}</div></td>
           </tr>
-          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('street')}</div></td></tr>
-          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('description')}</div></td></tr>
-          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('notes')}</div></td></tr>
-          <tr><td colspan="3" class="box"><div class="rtl" lang="ar">{$field('sender')}</div></td></tr>
+          <tr><td colspan="3" class="box" align="right"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('street')}</div></td></tr>
+          <tr><td colspan="3" class="box" align="right"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('description')}</div></td></tr>
+          <tr><td colspan="3" class="box" align="right"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('notes')}</div></td></tr>
+          <tr><td colspan="3" class="box" align="right"><div class="rtl" dir="rtl" align="right" lang="ar">{$field('sender')}</div></td></tr>
         </table>
       </td>
       <td class="box" style="width:28%;text-align:center">
         <img class="qr" src="{$qrSrc}">
         <div>{$qrCode}</div>
         <div class="barcode">{$barcodeHtml}</div>
-        <div class="rtl" lang="ar">{$licenseText}</div>
+        <div class="rtl" dir="rtl" align="right" lang="ar">{$licenseText}</div>
       </td>
     </tr>
   </table>
