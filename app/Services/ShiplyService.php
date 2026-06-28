@@ -337,6 +337,152 @@ class ShiplyService
         return $content;
     }
 
+    public function getParcelPdfV2(
+        string $parcelCode,
+        string $size = 'A4',
+        string $language = 'arabic',
+        ?string $mode = null
+    ): string {
+        $parcelCode = trim($parcelCode);
+        $size = strtoupper(trim($size));
+        $language = strtolower(trim($language));
+        if ($parcelCode === ''
+            || ! in_array($size, ['A4', '10', 'QR'], true)
+            || ! in_array($language, ['arabic', 'english', 'hebrew'], true)) {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_request_failed')],
+            ]);
+        }
+
+        if (! ShiplySettings::isEnabled()) {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_disabled')],
+            ]);
+        }
+
+        $mode = $mode ?? ShiplySettings::mode();
+        $apiKey = ShiplySettings::apiKey($mode);
+        if ($apiKey === '') {
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_api_key_missing')],
+            ]);
+        }
+
+        $url = rtrim(ShiplySettings::baseUrl($mode), '/').'/parcels/parcel-as-pdf';
+        $body = [
+            'id' => $parcelCode,
+            'size' => $size,
+            'language' => $language,
+            'Shiply_API_KEY' => $apiKey,
+        ];
+
+        try {
+            $client = Http::timeout((int) config('shiply.http_timeout', 30))
+                ->accept('application/pdf');
+            $response = $client->withOptions(['query' => $body])->get($url);
+            if (! str_starts_with(ltrim($response->body()), '%PDF-')
+                && preg_match('/^<!doctype\s+html|^<html/i', ltrim($response->body())) !== 1) {
+                $response = $client
+                    ->withBody((string) json_encode($body), 'application/json')
+                    ->send('GET', $url);
+            }
+        } catch (ConnectionException $e) {
+            Log::error('shiply.print_parcel_v2_connection_failed', [
+                'parcel_code' => $parcelCode,
+                'mode' => $mode,
+                'message' => $e->getMessage(),
+            ]);
+            throw ValidationException::withMessages([
+                'shiply' => [__('messages.shiply_connection_failed')],
+            ]);
+        }
+
+        $content = ltrim($response->body());
+        if (! $response->failed() && str_starts_with($content, '%PDF-')) {
+            return $content;
+        }
+
+        if (! $response->failed()
+            && preg_match('/^<!doctype\s+html|^<html/i', $content) === 1) {
+            try {
+                return $this->convertShiplyV2HtmlToPdf(
+                    $content,
+                    $url,
+                    $size,
+                    $language
+                );
+            } catch (\Throwable $e) {
+                Log::error('shiply.print_parcel_v2_html_conversion_failed', [
+                    'parcel_code' => $parcelCode,
+                    'mode' => $mode,
+                    'size' => $size,
+                    'language' => $language,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $json = $response->json();
+        Log::warning('shiply.print_parcel_v2_failed', [
+            'parcel_code' => $parcelCode,
+            'mode' => $mode,
+            'size' => $size,
+            'language' => $language,
+            'status' => $response->status(),
+            'body' => is_array($json) ? $json : mb_substr($content, 0, 500),
+        ]);
+        throw ValidationException::withMessages([
+            'shiply' => [
+                $this->extractResponseErrorMessage(is_array($json) ? $json : null)
+                    ?? __('messages.shiply_request_failed'),
+            ],
+        ]);
+    }
+
+    private function convertShiplyV2HtmlToPdf(
+        string $html,
+        string $sourceUrl,
+        string $size,
+        string $language
+    ): string {
+        $html = preg_replace('/<\?xml\b.*?\?>/is', '', $html) ?? $html;
+        $html = preg_replace('/<!DOCTYPE\s+svg\b.*?>/is', '', $html) ?? $html;
+        $html = preg_replace('/@page\s*\{.*?\}/is', '', $html) ?? $html;
+        $html = $this->inlineShiplyPrintImages($html, $sourceUrl);
+        $direction = in_array($language, ['arabic', 'hebrew'], true) ? 'rtl' : 'ltr';
+        $style = '<style>body{font-family:dejavusans,sans-serif;}'
+            .'[dir="rtl"]{direction:rtl;text-align:right;}</style>';
+        $html = preg_replace('/<\/head>/i', $style.'</head>', $html, 1) ?? $style.$html;
+        $html = preg_replace(
+            '/<html\b([^>]*)>/i',
+            '<html$1 lang="'.$language.'" dir="'.$direction.'">',
+            $html,
+            1
+        ) ?? $html;
+
+        $tempDir = storage_path('framework/cache/mpdf');
+        File::ensureDirectoryExists($tempDir);
+        $format = $size === 'A4' ? 'A4' : [100, 100];
+        $mpdf = new Mpdf([
+            'mode' => 'utf-8',
+            'format' => $format,
+            'margin_left' => 2,
+            'margin_right' => 2,
+            'margin_top' => 2,
+            'margin_bottom' => 2,
+            'tempDir' => $tempDir,
+            'autoScriptToLang' => true,
+            'autoLangToFont' => true,
+        ]);
+        $mpdf->WriteHTML($html);
+        $pdf = $mpdf->OutputBinaryData();
+        if (! str_starts_with($pdf, '%PDF-')) {
+            throw new \RuntimeException('Shiply V2 HTML did not produce a PDF.');
+        }
+
+        return $pdf;
+    }
+
     private function prepareShiplyPrintHtml(string $html, string $sourceUrl): string
     {
         $html = preg_replace('/<\?xml\b.*?\?>/is', '', $html) ?? $html;

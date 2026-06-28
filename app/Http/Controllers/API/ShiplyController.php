@@ -72,6 +72,9 @@ class ShiplyController extends Controller
         try {
             $data = $request->validate([
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
+                'version' => 'nullable|string|in:v1,v2',
+                'size' => 'nullable|string|in:A4,10,QR',
+                'language' => 'nullable|string|in:arabic,english,hebrew',
             ]);
 
             $order = SalesOrder::query()
@@ -88,15 +91,28 @@ class ShiplyController extends Controller
                 ], 422);
             }
 
-            $pdf = $shiply->getParcelPdf(
-                (string) $delivery->shiply_parcel_code,
-                $delivery->shiply_mode ?: null
-            );
+            $version = $data['version'] ?? 'v1';
+            $size = $data['size'] ?? 'A4';
+            $language = $data['language'] ?? 'arabic';
+            $pdf = $version === 'v2'
+                ? $shiply->getParcelPdfV2(
+                    (string) $delivery->shiply_parcel_code,
+                    $size,
+                    $language,
+                    $delivery->shiply_mode ?: null
+                )
+                : $shiply->getParcelPdf(
+                    (string) $delivery->shiply_parcel_code,
+                    $delivery->shiply_mode ?: null
+                );
             $safeCode = preg_replace('/[^A-Za-z0-9_-]+/', '_', (string) $delivery->shiply_parcel_code);
+            $suffix = $version === 'v2'
+                ? '-v2-'.strtolower($size).'-'.$language
+                : '-v1';
 
             return response($pdf, 200, [
                 'Content-Type' => 'application/pdf',
-                'Content-Disposition' => 'inline; filename="shiply-parcel-'.$safeCode.'.pdf"',
+                'Content-Disposition' => 'inline; filename="shiply-parcel-'.$safeCode.$suffix.'.pdf"',
                 'Content-Length' => (string) strlen($pdf),
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
