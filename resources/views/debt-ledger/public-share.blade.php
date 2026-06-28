@@ -5,100 +5,240 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ $person['name'] ?? 'دفتر الديون' }} - دكتور بايك</title>
     <style>
+        :root {
+            --primary: #6B65BD;
+            --primary-soft: #f1efff;
+            --border: #d0d7e2;
+            --surface: #ffffff;
+            --background: #f5f6f8;
+            --text: #1a1a1a;
+            --muted: #667085;
+            --taken: #1b8a4a;
+            --given: #c62828;
+        }
+        * { box-sizing: border-box; }
         body {
-            font-family: system-ui, -apple-system, 'Segoe UI', Tahoma, sans-serif;
             margin: 0;
-            padding: 16px;
-            background: #f3f4f6;
-            color: #1a1a1a;
+            padding: 20px 12px;
+            background: var(--background);
+            color: var(--text);
             direction: rtl;
+            font-family: Tahoma, Arial, sans-serif;
         }
-        .card {
-            background: #fff;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,.06);
+        .report {
+            width: min(1050px, 100%);
+            margin: 0 auto;
+            padding: 24px 28px;
+            background: var(--surface);
+            border-radius: 14px;
+            box-shadow: 0 4px 18px rgba(16, 24, 40, .08);
         }
-        h1 {
-            margin: 0 0 8px;
-            font-size: 1.25rem;
-            color: #4a7fd4;
-        }
-        .summary {
+        .header {
             display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            font-size: 0.95rem;
-            margin-top: 12px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 18px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--primary);
         }
-        .balance {
-            font-size: 1.5rem;
-            font-weight: bold;
-            margin-top: 8px;
+        .header h1 {
+            margin: 0;
+            color: var(--primary);
+            font-size: 22px;
         }
-        .taken { color: #1b8a4a; }
-        .given { color: #c62828; }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
+        .header img {
+            width: auto;
+            height: 55px;
+            object-fit: contain;
+            border-radius: 6px;
         }
-        th, td {
-            border: 1px solid #e5e7eb;
-            padding: 8px 6px;
+        h2 {
+            margin: 10px 0 18px;
+            text-align: center;
+            font-size: 18px;
+        }
+        .meta {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 7px 20px;
+        }
+        .meta p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 14px;
+        }
+        .meta strong { color: var(--text); }
+        .summary {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+            margin: 18px 0;
+            padding: 14px;
+            background: var(--primary-soft);
+            border: 1px solid rgba(107, 101, 189, .16);
+            border-radius: 9px;
+        }
+        .summary-item {
+            padding: 8px;
             text-align: center;
         }
-        th {
-            background: #4a7fd4;
-            color: #fff;
+        .summary-label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--muted);
+            font-size: 12px;
         }
-        tr:nth-child(even) { background: #f8faff; }
+        .summary-value {
+            font-size: 17px;
+            font-weight: 700;
+        }
+        .taken { color: var(--taken); font-weight: 700; }
+        .given { color: var(--given); font-weight: 700; }
+        .table-wrap {
+            width: 100%;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+        }
+        table {
+            width: 100%;
+            min-width: 820px;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 9px 7px;
+            border-bottom: 1px solid var(--border);
+            border-left: 1px solid var(--border);
+            text-align: right;
+            white-space: nowrap;
+        }
+        th:last-child, td:last-child { border-left: 0; }
+        tr:last-child td { border-bottom: 0; }
+        th {
+            background: var(--primary);
+            color: #fff;
+            text-align: center;
+        }
+        tbody tr:nth-child(even) { background: #f8faff; }
+        .num {
+            direction: ltr;
+            text-align: center;
+        }
+        .note {
+            min-width: 150px;
+            white-space: normal;
+        }
+        .empty {
+            padding: 28px;
+            color: var(--muted);
+            text-align: center;
+        }
+        @media (max-width: 640px) {
+            body { padding: 0; }
+            .report {
+                min-height: 100vh;
+                padding: 18px 12px;
+                border-radius: 0;
+                box-shadow: none;
+            }
+            .header h1 { font-size: 17px; }
+            .header img { height: 42px; }
+            .meta { grid-template-columns: 1fr; }
+            .summary {
+                grid-template-columns: 1fr;
+                gap: 2px;
+            }
+            .summary-item {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 6px;
+                text-align: right;
+            }
+            .summary-label { margin: 0; }
+            .summary-value { font-size: 15px; }
+        }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>{{ $person['name'] ?? '-' }}</h1>
-        @if(!empty($person['phone']))
-            <p style="margin:0;color:#666">{{ $person['phone'] }}</p>
-        @endif
-        <div class="summary">
-            <span>أخذت: <strong class="taken">{{ number_format($total_taken, 2) }} ₪</strong></span>
-            <span>أعطيت: <strong class="given">{{ number_format($total_given, 2) }} ₪</strong></span>
-        </div>
-        <div class="balance {{ $balance >= 0 ? 'taken' : 'given' }}">
-            الرصيد: {{ number_format($balance, 2) }} ₪
-        </div>
-    </div>
+    <main class="report">
+        <header class="header">
+            <h1>دكتور بايك - دفتر الديون</h1>
+            <img src="{{ asset('appImages/logo.jpg') }}" alt="Doctor Bike">
+        </header>
 
-    <div class="card">
-        <h2 style="font-size:1rem;margin:0 0 12px;color:#4a7fd4">المعاملات ({{ $transactions->count() }})</h2>
+        <h2>كشف حساب</h2>
+
+        <section class="meta">
+            <p><strong>الاسم:</strong> {{ $person['name'] ?? '—' }}</p>
+            <p><strong>الهاتف:</strong> {{ $person['phone'] ?? '—' }}</p>
+            <p><strong>الفترة:</strong> جميع المعاملات</p>
+            <p><strong>تاريخ الإنشاء:</strong> {{ now()->format('Y-m-d H:i') }}</p>
+            <p><strong>عدد المعاملات:</strong> {{ $transactions->count() }}</p>
+        </section>
+
+        <section class="summary">
+            <div class="summary-item">
+                <span class="summary-label">إجمالي أخذت</span>
+                <span class="summary-value taken">{{ number_format($total_taken, 2) }} ₪</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">إجمالي أعطيت</span>
+                <span class="summary-value given">{{ number_format($total_given, 2) }} ₪</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-label">الرصيد النهائي</span>
+                <span class="summary-value {{ $balance >= 0 ? 'taken' : 'given' }}">
+                    {{ number_format($balance, 2) }} ₪
+                </span>
+            </div>
+        </section>
+
         @if($transactions->isEmpty())
-            <p>لا توجد معاملات</p>
+            <div class="empty">لا توجد معاملات</div>
         @else
-            <table>
-                <thead>
-                    <tr>
-                        <th>التاريخ</th>
-                        <th>النوع</th>
-                        <th>المبلغ</th>
-                        <th>الرصيد بعد</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach($transactions as $tx)
+            <div class="table-wrap">
+                <table>
+                    <thead>
                         <tr>
-                            <td>{{ $tx->transaction_date?->format('Y-m-d') }}</td>
-                            <td class="{{ $tx->type === 'taken' ? 'taken' : 'given' }}">
-                                {{ $tx->type === 'taken' ? 'أخذت' : 'أعطيت' }}
-                            </td>
-                            <td>{{ number_format($tx->amount, 2) }} ₪</td>
-                            <td>{{ number_format($tx->balance_after, 2) }} ₪</td>
+                            <th class="num">#</th>
+                            <th>التاريخ</th>
+                            <th>ملاحظة</th>
+                            <th class="num">أعطيت</th>
+                            <th class="num">أخذت</th>
+                            <th class="num">الرصيد السابق</th>
+                            <th class="num">الرصيد بعد</th>
                         </tr>
-                    @endforeach
-                </tbody>
-            </table>
+                    </thead>
+                    <tbody>
+                        @foreach($transactions as $index => $transaction)
+                            @php
+                                $before = $transaction->type === 'taken'
+                                    ? $transaction->balance_after - $transaction->amount
+                                    : $transaction->balance_after + $transaction->amount;
+                            @endphp
+                            <tr>
+                                <td class="num">{{ $index + 1 }}</td>
+                                <td class="num">{{ $transaction->transaction_date?->format('Y-m-d') }}</td>
+                                <td class="note">{{ $transaction->note ?? '—' }}</td>
+                                <td class="num given">
+                                    {{ $transaction->type === 'given' ? number_format($transaction->amount, 2) . ' ₪' : '—' }}
+                                </td>
+                                <td class="num taken">
+                                    {{ $transaction->type === 'taken' ? number_format($transaction->amount, 2) . ' ₪' : '—' }}
+                                </td>
+                                <td class="num">{{ number_format($before, 2) }} ₪</td>
+                                <td class="num {{ $transaction->balance_after >= 0 ? 'taken' : 'given' }}">
+                                    {{ number_format($transaction->balance_after, 2) }} ₪
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
         @endif
-    </div>
+    </main>
 </body>
 </html>
