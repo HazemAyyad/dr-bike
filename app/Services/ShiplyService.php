@@ -415,8 +415,18 @@ CSS;
                     return $matches[0];
                 }
 
+                $visualText = $arabic->utf8Glyphs(
+                    $content,
+                    1000,
+                    false,
+                    false
+                );
+
+                // DomPDF applies its own bidi pass even after Arabic glyph
+                // shaping and ignores CSS direction for mixed text. LRO/PDF
+                // keeps the prepared visual order (phone, colon, label).
                 return '>'.($leading[0] ?? '')
-                    .$arabic->utf8Glyphs($content, 1000, false, false)
+                    ."\u{202D}".$visualText."\u{202C}"
                     .($trailing[0] ?? '').'<';
             },
             $html
