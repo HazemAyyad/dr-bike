@@ -6,6 +6,7 @@ use App\Enums\SalesOrderStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class SalesOrder extends Model
 {
@@ -123,6 +124,11 @@ class SalesOrder extends Model
     public function deliveries(): HasMany
     {
         return $this->hasMany(SalesOrderDelivery::class);
+    }
+
+    public function latestDelivery(): HasOne
+    {
+        return $this->hasOne(SalesOrderDelivery::class)->latestOfMany();
     }
 
     public function shiplyEvents(): HasMany
