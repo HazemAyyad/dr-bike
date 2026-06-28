@@ -391,31 +391,34 @@ img { max-width: 100% !important; }
 [dir="rtl"] {
     font-family: "DejaVu Sans", sans-serif !important;
     direction: rtl;
+    text-align: right !important;
 }
 </style>
 CSS;
         $html = preg_replace('/<\/head>/i', $printCss.'</head>', $html, 1) ?? $html;
 
-        // DomPDF does not shape Arabic glyphs by itself.
+        // DomPDF does not implement Arabic bidi. Shape each complete text node
+        // so punctuation, Western digits and Latin names stay with the Arabic
+        // phrase in the correct visual order.
         $arabic = new Arabic();
-        $positions = $arabic->arIdentify($html);
-        for ($i = count($positions) - 1; $i >= 1; $i -= 2) {
-            $start = $positions[$i - 1];
-            $length = $positions[$i] - $start;
-            $html = substr_replace(
-                $html,
-                // Keep Western digits/codes intact and avoid wrapping a text
-                // fragment independently from its table cell.
-                $arabic->utf8Glyphs(
-                    substr($html, $start, $length),
-                    1000,
-                    false,
-                    false
-                ),
-                $start,
-                $length
-            );
-        }
+        $html = preg_replace_callback(
+            '/>([^<>]*\p{Arabic}[^<>]*)</us',
+            function (array $matches) use ($arabic): string {
+                $text = $matches[1];
+                preg_match('/^\s*/u', $text, $leading);
+                preg_match('/\s*$/u', $text, $trailing);
+                $content = trim($text);
+
+                if ($content === '') {
+                    return $matches[0];
+                }
+
+                return '>'.($leading[0] ?? '')
+                    .$arabic->utf8Glyphs($content, 1000, false, false)
+                    .($trailing[0] ?? '').'<';
+            },
+            $html
+        ) ?? $html;
 
         return $html;
     }
