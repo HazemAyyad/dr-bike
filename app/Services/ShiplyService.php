@@ -400,7 +400,7 @@ class ShiplyService
 
         $content = ltrim($response->body());
         if (! $response->failed() && str_starts_with($content, '%PDF-')) {
-            return $content;
+            return $this->firstPageOnlyPdf($content, $size);
         }
 
         if (! $response->failed()
@@ -572,6 +572,19 @@ class ShiplyService
             $renderWidth,
             $renderHeight
         );
+        if ($requestedSize === 'A4') {
+            $doctorBikeLogo = public_path('appImages/logo.jpg');
+            if (File::isFile($doctorBikeLogo)) {
+                $pdf->Image(
+                    $doctorBikeLogo,
+                    8,
+                    8,
+                    38,
+                    0,
+                    'jpg'
+                );
+            }
+        }
         $result = $pdf->OutputBinaryData();
         if (! str_starts_with($result, '%PDF-')) {
             throw new \RuntimeException('Unable to normalize Shiply V2 PDF.');
