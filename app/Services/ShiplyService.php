@@ -1338,12 +1338,15 @@ HTML;
         $notes = $this->scalarString($order->notes);
         $deliveryFee = max(0, (float) $order->customer_delivery_fee);
         $editedTotal = max(0, (float) $order->total);
-        $totalPrice = (int) max(0, round(
-            $editedTotal - ($order->price_includes_delivery ? $deliveryFee : 0)
-        ));
+        // Shiply must receive the full customer collection amount. When the
+        // order price includes delivery, Shiply deducts its fee internally;
+        // we must not subtract that fee before creating the parcel.
+        $totalPrice = (int) max(0, round($editedTotal));
         $actualPrice = (int) min(
             $totalPrice,
-            max(0, round($editedTotal - $deliveryFee))
+            max(0, round(
+                $editedTotal - ($order->price_includes_delivery ? $deliveryFee : 0)
+            ))
         );
 
         return [
