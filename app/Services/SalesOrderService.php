@@ -896,7 +896,7 @@ class SalesOrderService
         $calculatedTotal = max(0, round($subtotal + $deliveryFee - $discount, 2));
         $total = array_key_exists('total', $data)
             ? round((float) $data['total'], 2)
-            : $calculatedTotal;
+            : ($order !== null ? round((float) $order->total, 2) : $calculatedTotal);
 
         return [
             'subtotal' => round($subtotal, 2),
