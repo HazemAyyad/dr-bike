@@ -1336,6 +1336,15 @@ HTML;
         }
 
         $notes = $this->scalarString($order->notes);
+        $deliveryFee = max(0, (float) $order->customer_delivery_fee);
+        $editedTotal = max(0, (float) $order->total);
+        $totalPrice = (int) max(0, round(
+            $editedTotal - ($order->price_includes_delivery ? $deliveryFee : 0)
+        ));
+        $actualPrice = (int) min(
+            $totalPrice,
+            max(0, round($editedTotal - $deliveryFee))
+        );
 
         return [
             'recipient' => [
@@ -1347,11 +1356,8 @@ HTML;
                 'village_id' => (int) $order->shiply_village_id,
                 'street_name' => mb_substr($this->scalarString($order->customer_address), 0, 500),
             ],
-            'total_price' => (int) max(0, round(
-                (float) $order->total
-                - ($order->price_includes_delivery ? (float) $order->customer_delivery_fee : 0)
-            )),
-            'actual_price' => (int) max(0, round((float) $order->subtotal - (float) $order->discount)),
+            'total_price' => $totalPrice,
+            'actual_price' => $actualPrice,
             'description' => $description,
             'note' => $notes !== '' ? mb_substr($notes, 0, 1023) : null,
             'reference_number' => $order->serial_number ?: (string) $order->id,
