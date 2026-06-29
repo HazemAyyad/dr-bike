@@ -34,6 +34,7 @@ class ProcessShiplyWebhookJob implements ShouldQueue
         SalesOrderNotificationService $notifications,
     ): void
     {
+        $event = (string) ($this->payload['event'] ?? '');
         $parcelCode = trim((string) ($this->payload['parcel_code'] ?? ''));
         $statusId = (int) ($this->payload['parcel_status_id'] ?? 0);
         $reference = trim((string) ($this->payload['reference_number'] ?? ''));
@@ -68,6 +69,17 @@ class ProcessShiplyWebhookJob implements ShouldQueue
             return;
         }
 
+        if ($event === 'parcel_deleted') {
+            $actor = $this->resolveActor($delivery, $order);
+            $fulfillment->markCanceledFromShiply(
+                $actor,
+                $order->id,
+                'تم إلغاء الطرد وحذفه من Shiply',
+            );
+
+            return;
+        }
+
         $newEvent = null;
         try {
             $newEvent = $tracking->recordFromWebhook($order, $this->payload);
@@ -78,18 +90,33 @@ class ProcessShiplyWebhookJob implements ShouldQueue
             ]);
         }
 
-        if ($newEvent !== null && $statusId > 0) {
-            $note = trim((string) ($this->payload['note'] ?? ''));
-            $notifications->notifyShiplyStatusChange(
-                $order,
-                $statusId,
-                $parcelCode !== '' ? $parcelCode : (string) ($newEvent->parcel_code ?? ''),
-                $note !== '' ? $note : null,
-            );
-        }
-
+        $draftStatus = (int) config('shiply.parcel_status.draft', 1);
         $deliveredStatus = (int) config('shiply.parcel_status.delivered', 6);
         $returnedStatus = (int) config('shiply.parcel_status.returned', 7);
+        $notificationParcelCode = $parcelCode !== ''
+            ? $parcelCode
+            : (string) ($newEvent?->parcel_code ?? '');
+        $note = trim((string) ($this->payload['note'] ?? ''));
+
+        if ($statusId === $draftStatus) {
+            $actor = $this->resolveActor($delivery, $order);
+            $fulfillment->markCanceledFromShiply(
+                $actor,
+                $order->id,
+                $note !== '' ? $note : 'تم إلغاء الطرد في Shiply',
+            );
+
+            if ($newEvent !== null) {
+                $notifications->notifyShiplyStatusChange(
+                    $order->fresh(),
+                    $statusId,
+                    $notificationParcelCode,
+                    $note !== '' ? $note : null,
+                );
+            }
+
+            return;
+        }
 
         if ($statusId === $deliveredStatus) {
             if ($order->status === 'delivered') {
@@ -98,7 +125,15 @@ class ProcessShiplyWebhookJob implements ShouldQueue
 
             $actor = $this->resolveActor($delivery, $order);
             try {
-                $fulfillment->markDeliveredFromShiply($actor, $order->id, $this->payload);
+                $deliveredOrder = $fulfillment->markDeliveredFromShiply($actor, $order->id, $this->payload);
+                if ($newEvent !== null) {
+                    $notifications->notifyShiplyStatusChange(
+                        $deliveredOrder,
+                        $statusId,
+                        $notificationParcelCode,
+                        $note !== '' ? $note : null,
+                    );
+                }
             } catch (ValidationException $e) {
                 if ($this->shouldRetryDeliver($e)) {
                     $delay = max(1, (int) config('shiply.deliver_retry_minutes', 15));
@@ -120,12 +155,30 @@ class ProcessShiplyWebhookJob implements ShouldQueue
             }
 
             $actor = $this->resolveActor($delivery, $order);
-            $note = trim((string) ($this->payload['note'] ?? ''));
-            $fulfillment->markReturned(
+            $returnedOrder = $fulfillment->markReturned(
                 $actor,
                 $order->id,
                 $note !== '' ? $note : 'راجع تلقائياً من Shiply',
                 skipNotification: true,
+            );
+            if ($newEvent !== null) {
+                $notifications->notifyShiplyStatusChange(
+                    $returnedOrder,
+                    $statusId,
+                    $notificationParcelCode,
+                    $note !== '' ? $note : null,
+                );
+            }
+
+            return;
+        }
+
+        if ($newEvent !== null && $statusId > 0) {
+            $notifications->notifyShiplyStatusChange(
+                $order,
+                $statusId,
+                $notificationParcelCode,
+                $note !== '' ? $note : null,
             );
         }
     }

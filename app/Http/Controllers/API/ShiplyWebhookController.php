@@ -24,7 +24,7 @@ class ShiplyWebhookController extends Controller
         }
 
         $payload = $request->all();
-        if (($payload['event'] ?? null) !== 'parcel') {
+        if (! in_array(($payload['event'] ?? null), ['parcel', 'parcel_deleted'], true)) {
             return response()->json(['success' => true, 'ignored' => true]);
         }
 

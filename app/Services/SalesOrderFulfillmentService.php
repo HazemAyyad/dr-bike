@@ -172,9 +172,13 @@ class SalesOrderFulfillmentService
 
         $note = trim((string) ($meta['note'] ?? ''));
         $logNote = $note !== '' ? $note : 'تم التوصيل تلقائياً من Shiply';
+        $globalSession = $this->sessionService->findGlobalOpenSession();
+        $financialActor = $globalSession?->allowsSales() === true
+            ? ($globalSession->user ?? $user)
+            : $user;
 
-        return DB::transaction(function () use ($user, $order, $logNote) {
-            $financials = $this->postDeliveryFinancials($order, $user, (float) $order->total, []);
+        return DB::transaction(function () use ($financialActor, $order, $logNote) {
+            $financials = $this->postDeliveryFinancials($order, $financialActor, (float) $order->total, []);
 
             $order->items()->where('is_hidden', false)->update([
                 'delivered_qty' => DB::raw('quantity'),
@@ -195,10 +199,57 @@ class SalesOrderFulfillmentService
                 'payment_box_id' => $financials['payment_box_id'],
                 'payment_amount' => $financials['paid_amount'],
                 'sales_daily_session_id' => $financials['sales_daily_session_id'],
-                'updated_by' => $user->id,
+                'updated_by' => $financialActor->id,
             ]);
 
-            $this->logStatus($order, $from, SalesOrderStatus::Delivered->value, $logNote, $user->id);
+            $this->logStatus($order, $from, SalesOrderStatus::Delivered->value, $logNote, $financialActor->id);
+
+            return $order->fresh();
+        });
+    }
+
+    public function markCanceledFromShiply(User $user, int $orderId, ?string $note = null): SalesOrder
+    {
+        $order = SalesOrder::query()->findOrFail($orderId);
+
+        if (in_array($order->statusEnum(), [
+            SalesOrderStatus::Canceled,
+            SalesOrderStatus::Returned,
+            SalesOrderStatus::Archived,
+        ], true)) {
+            return $order;
+        }
+
+        if ($order->statusEnum() === SalesOrderStatus::Delivered) {
+            throw ValidationException::withMessages([
+                'order' => [__('messages.sales_order_invalid_status_transition')],
+            ]);
+        }
+
+        return DB::transaction(function () use ($user, $order, $note) {
+            if ($order->stock_deducted_at) {
+                $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
+            } else {
+                $this->stockService->releaseOrder($order);
+            }
+
+            $from = $order->status;
+            $order->update([
+                'status' => SalesOrderStatus::Canceled->value,
+                'stock_deducted_at' => null,
+                'updated_by' => $user->id,
+            ]);
+            $order->packages()->update(['status' => 'canceled']);
+
+            $logNote = $note ?? 'تم إلغاء الطرد في Shiply';
+            $this->logStatus($order, $from, SalesOrderStatus::Canceled->value, $logNote, $user->id);
+            $this->notifications->notifyStatusChange(
+                $order->fresh(),
+                $from,
+                SalesOrderStatus::Canceled->value,
+                $user,
+                $logNote,
+            );
 
             return $order->fresh();
         });
