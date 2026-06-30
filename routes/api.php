@@ -84,6 +84,10 @@ use App\Http\Controllers\API\Stocks;
 use App\Http\Controllers\API\Treasuries;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\API\WhatsAppController;
+use App\Http\Controllers\API\WhatsAppTemplateController;
+use App\Http\Controllers\API\WhatsAppSettingsController;
+use App\Http\Controllers\API\WhatsAppWebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -97,6 +101,9 @@ use Illuminate\Support\Facades\Route;
 */
 
 // public routes
+
+    Route::get('/whatsapp/webhook', [WhatsAppWebhookController::class, 'verify']);
+    Route::post('/whatsapp/webhook', [WhatsAppWebhookController::class, 'handle']);
 
     /** صور المتجر القديم (.NET) — بروكسي لـ Flutter Web (CORS) */
     Route::get('/legacy-store-image', [LegacyStoreImageController::class, 'show']);
@@ -818,6 +825,22 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
 });
 // admin routes
 Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , function() {
+
+    // WhatsApp Center
+    Route::get('/whatsapp/dashboard', [WhatsAppController::class, 'dashboard']);
+    Route::get('/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
+    Route::get('/whatsapp/conversations/{id}', [WhatsAppController::class, 'showConversation'])->whereNumber('id');
+    Route::post('/whatsapp/conversations/{id}/send', [WhatsAppController::class, 'sendToConversation'])->whereNumber('id')->middleware('throttle:20,1');
+    Route::post('/whatsapp/send-text', [WhatsAppController::class, 'sendText'])->middleware('throttle:20,1');
+    Route::post('/whatsapp/send-template', [WhatsAppController::class, 'sendTemplate'])->middleware('throttle:20,1');
+    Route::get('/whatsapp/messages', [WhatsAppController::class, 'messages']);
+    Route::get('/whatsapp/templates', [WhatsAppTemplateController::class, 'index']);
+    Route::post('/whatsapp/templates', [WhatsAppTemplateController::class, 'store']);
+    Route::put('/whatsapp/templates/{id}', [WhatsAppTemplateController::class, 'update'])->whereNumber('id');
+    Route::delete('/whatsapp/templates/{id}', [WhatsAppTemplateController::class, 'destroy'])->whereNumber('id');
+    Route::get('/whatsapp/settings', [WhatsAppSettingsController::class, 'show']);
+    Route::post('/whatsapp/settings', [WhatsAppSettingsController::class, 'store']);
+    Route::post('/whatsapp/test-message', [WhatsAppController::class, 'testMessage'])->middleware('throttle:10,1');
 
 
 
