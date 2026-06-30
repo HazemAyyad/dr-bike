@@ -57,6 +57,14 @@ $allowedCommands = [
         'label' => '=== تشغيل migrations (php artisan migrate --force) ===',
     ],
     [
+        'name' => 'db:seed',
+        'params' => [
+            '--class' => 'WhatsAppTemplateSeeder',
+            '--force' => true,
+        ],
+        'label' => '=== إضافة قوالب واتساب (php artisan db:seed --class=WhatsAppTemplateSeeder --force) ===',
+    ],
+    [
         'name' => 'shiply:sync-addresses',
         'params' => ['--mode' => 'test', '--register-webhook' => true],
         'label' => '=== Shiply: مزامنة عناوين test + تسجيل webhook ===',

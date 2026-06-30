@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class WhatsAppContact extends Model
 {
+    protected $table = 'whatsapp_contacts';
+
     protected $fillable = ['name', 'phone', 'customer_id', 'supplier_id', 'employee_id', 'last_message_at'];
     protected $casts = ['last_message_at' => 'datetime'];
 

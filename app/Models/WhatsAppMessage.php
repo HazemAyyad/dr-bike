@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class WhatsAppMessage extends Model
 {
+    protected $table = 'whatsapp_messages';
+
     protected $fillable = [
         'whatsapp_conversation_id', 'whatsapp_contact_id', 'phone', 'direction', 'message_type',
         'body', 'template_name', 'media_url', 'meta_message_id', 'meta_status', 'raw_payload',
