@@ -44,6 +44,7 @@ use App\Http\Controllers\API\FollowupAPI;
 use App\Http\Controllers\API\Goals;
 use App\Http\Controllers\API\IncomingChecks;
 use App\Http\Controllers\API\InstantSales;
+use App\Http\Controllers\API\PersonProductSettingsController;
 use App\Http\Controllers\API\SuspendedInstantSaleController;
 use App\Http\Controllers\API\SalesOrdersController;
 use App\Http\Controllers\API\ShiplyController;
@@ -686,6 +687,12 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales,Follow-up 
     Route::get('/all/products' , [Products::class,'allproducts']);
     Route::post('/product/retail-price' , [Products::class,'updateRetailPrice']);
   });
+
+Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Sales','refresh.token.expiry']], function () {
+    Route::get('/person-product-settings', [PersonProductSettingsController::class, 'index']);
+    Route::post('/person-product-settings', [PersonProductSettingsController::class, 'store']);
+    Route::post('/person-product-settings/delete', [PersonProductSettingsController::class, 'destroy']);
+});
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:Boxes Section,Checks,Sales,Goal Creation','refresh.token.expiry']], function () {
 

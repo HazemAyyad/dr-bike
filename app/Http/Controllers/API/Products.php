@@ -7,6 +7,7 @@ use App\Models\Category;
 use App\Models\Image3dProduct;
 use App\Models\NormalImageProduct;
 use App\Models\Product;
+use App\Models\PersonProductSetting;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SubCategory;
@@ -23,9 +24,19 @@ use function PHPUnit\Framework\isEmpty;
 
 class Products extends Controller
 {
-    public function allProducts(){
+    public function allProducts(Request $request){
       try{
         $stockService = app(ProductStockService::class);
+
+        $customerId = $request->filled('customer_id') ? (int) $request->input('customer_id') : null;
+        $sellerId = $request->filled('seller_id') ? (int) $request->input('seller_id') : null;
+        $settings = collect();
+        if (($customerId !== null) xor ($sellerId !== null)) {
+            $settings = PersonProductSetting::query()
+                ->where($customerId !== null ? 'customer_id' : 'seller_id', $customerId ?? $sellerId)
+                ->get()
+                ->keyBy('product_id');
+        }
 
         $products = Product::query()
             ->with([
@@ -50,7 +61,9 @@ class Products extends Controller
                 'store_section_id',
             ]);
 
-        $formatted = $products->map(function ($product) use ($stockService) {
+        $formatted = $products
+          ->reject(fn ($product) => (bool) ($settings->get($product->id)?->is_hidden ?? false))
+          ->map(function ($product) use ($stockService, $settings) {
             $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
             if ($unitPrice <= 0) {
                 $unitPrice = (float) ($product->min_sale_price ?? 0);
@@ -77,6 +90,14 @@ class Products extends Controller
                 ],
                 \App\Support\ProductImageResolver::formatForList($product),
             );
+
+            $setting = $settings->get($product->id);
+            if ($setting !== null && $setting->custom_price !== null) {
+                $row['custom_price'] = (float) $setting->custom_price;
+                $row['has_custom_price'] = true;
+            } else {
+                $row['has_custom_price'] = false;
+            }
 
             if (auth()->user()?->type === 'admin') {
                 $row['purchase_cost'] = (float) ($product->purchasePrices->first()?->price ?? 0);

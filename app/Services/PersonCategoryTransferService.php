@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ContactCategoryAssignment;
 use App\Models\Customer;
+use App\Models\PersonProductSetting;
 use App\Models\Seller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -25,6 +26,12 @@ class PersonCategoryTransferService
 
             $this->rewireCustomerReferences((int) $customer->id, (int) $seller->id);
             $this->migrateContactCategories((int) $customer->id, (int) $seller->id);
+            $this->migrateProductSettings(
+                'customer_id',
+                (int) $customer->id,
+                'seller_id',
+                (int) $seller->id
+            );
 
             $customer->update(['is_canceled' => 1]);
 
@@ -47,6 +54,12 @@ class PersonCategoryTransferService
 
             $this->rewireSellerReferences((int) $seller->id, (int) $customer->id);
             $this->migrateContactCategoriesToCustomer((int) $seller->id, (int) $customer->id);
+            $this->migrateProductSettings(
+                'seller_id',
+                (int) $seller->id,
+                'customer_id',
+                (int) $customer->id
+            );
 
             $seller->update(['is_canceled' => 1]);
 
@@ -213,5 +226,38 @@ class PersonCategoryTransferService
                 'seller_id' => null,
             ]);
         }
+    }
+
+    private function migrateProductSettings(
+        string $fromColumn,
+        int $fromId,
+        string $toColumn,
+        int $toId
+    ): void {
+        if (! Schema::hasTable('person_product_settings')) {
+            return;
+        }
+
+        $settings = PersonProductSetting::query()
+            ->where($fromColumn, $fromId)
+            ->get();
+
+        foreach ($settings as $setting) {
+            PersonProductSetting::query()->updateOrCreate(
+                [
+                    $toColumn => $toId,
+                    'product_id' => $setting->product_id,
+                ],
+                [
+                    $fromColumn => null,
+                    'custom_price' => $setting->custom_price,
+                    'is_hidden' => $setting->is_hidden,
+                ]
+            );
+        }
+
+        PersonProductSetting::query()
+            ->where($fromColumn, $fromId)
+            ->delete();
     }
 }
