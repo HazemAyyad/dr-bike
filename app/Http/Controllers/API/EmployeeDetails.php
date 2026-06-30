@@ -32,6 +32,32 @@ use Illuminate\Validation\ValidationException;
 
 class EmployeeDetails extends Controller
 {
+    private function normalizeEmployeePhone(mixed $value): ?string
+    {
+        if ($value === null || trim((string) $value) === '') {
+            return null;
+        }
+
+        $digits = preg_replace('/\D+/', '', (string) $value);
+        if (str_starts_with($digits, '00')) {
+            $digits = substr($digits, 2);
+        }
+
+        $dialCode = '+972';
+        if (str_starts_with($digits, '972')) {
+            $digits = substr($digits, 3);
+        } elseif (str_starts_with($digits, '970')) {
+            $dialCode = '+970';
+            $digits = substr($digits, 3);
+        } elseif (str_starts_with($digits, '0')) {
+            $digits = substr($digits, 1);
+        }
+
+        return strlen($digits) === 9
+            ? $dialCode.' '.$digits
+            : trim((string) $value);
+    }
+
     /**
      * @return string[]
      */
@@ -689,6 +715,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 }
     public function addEmployee(Request $request){
         try {
+        $request->merge([
+            'phone' => $this->normalizeEmployeePhone($request->input('phone')),
+            'sub_phone' => $this->normalizeEmployeePhone($request->input('sub_phone')),
+        ]);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', $this->uniqueActiveUserEmailRule()],
@@ -815,6 +845,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
     public function editEmployee(Request $request)
     {
         try{
+            $request->merge([
+                'phone' => $this->normalizeEmployeePhone($request->input('phone')),
+                'sub_phone' => $this->normalizeEmployeePhone($request->input('sub_phone')),
+            ]);
             $request->validate(['employee_id' => ['required', 'exists:employee_details,id'],
         ]);
         $employee = EmployeeDetail::findOrFail($request->employee_id);
