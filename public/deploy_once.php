@@ -76,6 +76,16 @@ $allowedCommands = [
     ],
     ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'cache:clear', 'params' => []],
+    [
+        'name' => 'queue:work',
+        'params' => [
+            'connection' => 'database',
+            '--stop-when-empty' => true,
+            '--tries' => 3,
+            '--timeout' => 120,
+        ],
+        'label' => '=== معالجة مهام Queue الموجودة ثم التوقف (Meta Catalog وغيرها) ===',
+    ],
     // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
     ['name' => '__composer_dump_autoload__', 'params' => []],
 ];

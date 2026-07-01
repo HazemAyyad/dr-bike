@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -21,6 +22,10 @@ class MetaCatalogHierarchyService
     {
         $this->meta->validateConfig();
         $result = ['synced' => 0, 'failed' => 0, 'deleted' => 0, 'errors' => []];
+        Log::info('[MetaCatalogHierarchy] sync started', [
+            'categories' => Category::query()->count(),
+            'sub_categories' => SubCategory::query()->count(),
+        ]);
 
         Category::query()
             ->with('subCategories.category')
@@ -35,6 +40,7 @@ class MetaCatalogHierarchyService
             });
 
         $this->deleteOrphanedSets($result);
+        Log::info('[MetaCatalogHierarchy] sync completed', $result);
 
         return $result;
     }
@@ -152,6 +158,12 @@ class MetaCatalogHierarchyService
                 'id' => $source->getKey(),
                 'message' => $e->getMessage(),
             ];
+            Log::error('[MetaCatalogHierarchy] set sync failed', [
+                'source_type' => $source instanceof Category ? 'category' : 'sub_category',
+                'source_id' => $source->getKey(),
+                'name' => $source->nameAr ?? $source->nameEng ?? null,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 
@@ -169,6 +181,11 @@ class MetaCatalogHierarchyService
                 } catch (Throwable $e) {
                     $set->forceFill(['sync_status' => 'failed', 'last_error' => $e->getMessage()])->save();
                     $result['failed']++;
+                    Log::error('[MetaCatalogHierarchy] orphan set delete failed', [
+                        'set_id' => $set->id,
+                        'meta_product_set_id' => $set->meta_product_set_id,
+                        'error' => $e->getMessage(),
+                    ]);
                 }
             }
         });

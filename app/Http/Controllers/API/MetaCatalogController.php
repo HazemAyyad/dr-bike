@@ -11,7 +11,6 @@ use App\Models\MetaCatalogProductSet;
 use App\Models\Product;
 use App\Models\SizeColor;
 use App\Services\Meta\MetaCatalogService;
-use App\Services\Meta\MetaCatalogHierarchyService;
 use App\Support\ProductImageResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -128,20 +127,19 @@ class MetaCatalogController extends Controller
         ]);
     }
 
-    public function syncHierarchy(MetaCatalogHierarchyService $service)
+    public function syncHierarchy()
     {
-        $result = $service->syncAll();
-        BulkSyncMetaCatalogJob::dispatch();
+        SyncMetaCatalogHierarchyJob::dispatch()->onConnection('database');
         return response()->json([
-            'status' => $result['failed'] > 0 && $result['synced'] === 0 ? 'error' : 'success',
-            'message' => "تمت مزامنة {$result['synced']} مجموعة، وفشلت {$result['failed']}. تمت جدولة تحديث عضوية المنتجات.",
-            'result' => $result,
-        ], $result['failed'] > 0 && $result['synced'] === 0 ? 422 : 200);
+            'status' => 'success',
+            'message' => 'بدأت مزامنة التصنيفات في الخلفية. ستظهر النتيجة في السجل بعد اكتمالها.',
+            'queued' => true,
+        ], 202);
     }
 
     public function queueHierarchySync()
     {
-        SyncMetaCatalogHierarchyJob::dispatch();
+        SyncMetaCatalogHierarchyJob::dispatch()->onConnection('database');
         return response()->json([
             'status' => 'success',
             'message' => 'تمت إضافة مزامنة التصنيفات والمجموعات إلى قائمة الانتظار.',
@@ -191,7 +189,7 @@ class MetaCatalogController extends Controller
     public function bulkSync()
     {
         MetaCatalogSyncLog::query()->create(['action' => 'bulk_sync', 'status' => 'queued']);
-        BulkSyncMetaCatalogJob::dispatch();
+        BulkSyncMetaCatalogJob::dispatch()->onConnection('database');
         return response()->json(['status' => 'success', 'message' => 'تمت إضافة مزامنة المنتجات إلى قائمة الانتظار.']);
     }
 

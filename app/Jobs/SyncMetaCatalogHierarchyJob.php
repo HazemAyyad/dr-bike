@@ -8,6 +8,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 class SyncMetaCatalogHierarchyJob implements ShouldQueue
 {
@@ -23,9 +24,19 @@ class SyncMetaCatalogHierarchyJob implements ShouldQueue
 
     public function handle(MetaCatalogHierarchyService $service): void
     {
-        $service->syncAll();
-        if ($this->resyncProducts) {
-            BulkSyncMetaCatalogJob::dispatch();
+        Log::info('[MetaCatalogHierarchyJob] started', ['resync_products' => $this->resyncProducts]);
+        try {
+            $result = $service->syncAll();
+            if ($this->resyncProducts) {
+                BulkSyncMetaCatalogJob::dispatch()->onConnection('database');
+            }
+            Log::info('[MetaCatalogHierarchyJob] completed', $result);
+        } catch (\Throwable $e) {
+            Log::error('[MetaCatalogHierarchyJob] failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
         }
     }
 }

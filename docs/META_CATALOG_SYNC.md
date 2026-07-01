@@ -39,6 +39,21 @@ php artisan queue:work
 
 Keep a queue worker running in production using Supervisor or the hosting control panel. Bulk sync adds one retry-safe job per catalog item.
 
+Hierarchy and bulk catalog jobs are explicitly stored on the `database` queue
+to prevent API/CORS timeouts even when the application's default queue is
+`sync`. Migration `2026_07_01_000003_create_jobs_table.php` creates the required
+table. Keep this command running:
+
+```bash
+php artisan queue:work database --tries=3 --timeout=120
+```
+
+Operational results are written to `storage/logs/laravel.log` using the
+prefixes `[MetaCatalogHierarchy]`, `[MetaCatalogHierarchyJob]`, and
+`[MetaCatalogBulk]`. Product-level failures remain available in
+`meta_catalog_sync_logs` and on each product record. Access tokens are never
+written to these logs.
+
 ## API usage
 
 All endpoints require the existing authenticated admin/stock permission:
