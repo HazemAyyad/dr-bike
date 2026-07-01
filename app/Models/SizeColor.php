@@ -21,9 +21,20 @@ class SizeColor extends Model
         'discount',
         'stock',
         'image_url',
+        'meta_catalog_item_id',
+        'meta_catalog_retailer_id',
+        'meta_catalog_sync_status',
+        'meta_catalog_last_synced_at',
+        'meta_catalog_last_error',
+        'meta_catalog_payload',
     ];
 
    public $incrementing = false;
+
+    protected $casts = [
+        'meta_catalog_last_synced_at' => 'datetime',
+        'meta_catalog_payload' => 'array',
+    ];
 
     public function size()
     {

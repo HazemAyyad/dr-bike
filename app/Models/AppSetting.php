@@ -39,6 +39,11 @@ class AppSetting extends Model
     /** Master switch for Shiply API calls */
     public const KEY_SHIPLY_ENABLED = 'shiply_enabled';
 
+    public const KEY_AUTO_SYNC_META_CATALOG = 'auto_sync_meta_catalog';
+    public const KEY_SHOW_QUANTITY_IN_META_CATALOG = 'enable_show_quantity_in_catalog';
+    public const KEY_META_CATALOG_CURRENCY = 'meta_catalog_currency';
+    public const KEY_META_CATALOG_DEFAULT_BRAND = 'meta_catalog_default_brand';
+
     protected $fillable = [
         'key',
         'value',

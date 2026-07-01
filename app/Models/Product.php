@@ -54,9 +54,20 @@ class Product extends Model
         'min_sale_price', 'rotation_date', 'min_stock',
         'project_id', // اسم الشروة فقط
         'store_section_id',
+        'meta_catalog_item_id',
+        'meta_catalog_retailer_id',
+        'meta_catalog_sync_status',
+        'meta_catalog_last_synced_at',
+        'meta_catalog_last_error',
+        'meta_catalog_payload',
     ];
 
     protected $hidden = ['wholesalePrice'];
+
+    protected $casts = [
+        'meta_catalog_last_synced_at' => 'datetime',
+        'meta_catalog_payload' => 'array',
+    ];
 
     public function goals()
     {

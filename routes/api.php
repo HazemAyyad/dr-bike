@@ -88,6 +88,7 @@ use App\Http\Controllers\API\WhatsAppController;
 use App\Http\Controllers\API\WhatsAppTemplateController;
 use App\Http\Controllers\API\WhatsAppSettingsController;
 use App\Http\Controllers\API\WhatsAppWebhookController;
+use App\Http\Controllers\API\MetaCatalogController;
 
 /*
 |--------------------------------------------------------------------------
@@ -743,6 +744,22 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Stock,Sales','re
 //end mutual
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.token.expiry']] , function() {
+
+    Route::prefix('meta/catalog')->group(function () {
+        Route::get('/status', [MetaCatalogController::class, 'status']);
+        Route::get('/products', [MetaCatalogController::class, 'products']);
+        Route::get('/sync-log', [MetaCatalogController::class, 'syncLog']);
+        Route::post('/products/{id}/sync', [MetaCatalogController::class, 'syncProduct']);
+        Route::post('/products/{id}/resync', [MetaCatalogController::class, 'resyncProduct']);
+        Route::post('/products/{id}/disable', [MetaCatalogController::class, 'disableProduct']);
+        Route::post('/variants/{id}/sync', [MetaCatalogController::class, 'syncVariant']);
+        Route::post('/variants/{id}/resync', [MetaCatalogController::class, 'syncVariant']);
+        Route::post('/variants/{id}/disable', [MetaCatalogController::class, 'disableVariant']);
+        Route::post('/bulk-sync', [MetaCatalogController::class, 'bulkSync']);
+        Route::post('/test-product', [MetaCatalogController::class, 'testProduct']);
+        Route::get('/settings', [MetaCatalogController::class, 'settings']);
+        Route::post('/settings', [MetaCatalogController::class, 'saveSettings']);
+    });
 
     Route::get('/get/products/list' , [Stocks::class,'allProducts']);
     Route::get('/products/export-csv' , [Stocks::class,'exportProductsCsv']);
