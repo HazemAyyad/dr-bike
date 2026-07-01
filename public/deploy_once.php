@@ -47,7 +47,7 @@ if (! config('app.debug')) {
 }
 
 $queueOnly = ($_GET['queue'] ?? '') === '1';
-$queueBatchSize = max(1, min(10, (int) ($_GET['max_jobs'] ?? 5)));
+$queueBatchSize = max(1, min(100, (int) ($_GET['max_jobs'] ?? 5)));
 
 // ترتيب النشر: config ثم storage:link قبل migrate — إذا فشل migrate يُرمى استثناء ويُوقف الحلقة؛
 // وضع الرابط مبكراً يضمن إنشاء public/storage حتى عند فشل قاعدة البيانات.
