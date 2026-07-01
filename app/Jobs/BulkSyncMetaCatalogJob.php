@@ -25,11 +25,21 @@ class BulkSyncMetaCatalogJob implements ShouldQueue
                 foreach ($products as $product) {
                     $variants = $product->sizes->flatMap->colorSizes;
                     if ($variants->isEmpty()) {
-                        SyncMetaCatalogProductJob::dispatch((int) $product->id);
+                        try {
+                            SyncMetaCatalogProductJob::dispatch((int) $product->id);
+                        } catch (\Throwable) {
+                            // The sync job already stores its failed status/error.
+                            // A single invalid product must not abort the bulk run,
+                            // especially when QUEUE_CONNECTION=sync.
+                        }
                         continue;
                     }
                     foreach ($variants as $variant) {
-                        SyncMetaCatalogProductJob::dispatch((int) $product->id, (int) $variant->id);
+                        try {
+                            SyncMetaCatalogProductJob::dispatch((int) $product->id, (int) $variant->id);
+                        } catch (\Throwable) {
+                            // Continue syncing the remaining variants/products.
+                        }
                     }
                 }
             });

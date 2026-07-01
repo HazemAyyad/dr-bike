@@ -31,7 +31,12 @@ class SyncMetaCatalogProductJob implements ShouldQueue
             $variants = $product->sizes->flatMap->colorSizes;
             if ($variants->isNotEmpty()) {
                 foreach ($variants as $variant) {
-                    self::dispatch((int) $product->id, (int) $variant->id);
+                    try {
+                        self::dispatch((int) $product->id, (int) $variant->id);
+                    } catch (\Throwable) {
+                        // Keep the remaining variants moving when the queue
+                        // driver executes jobs synchronously.
+                    }
                 }
                 return;
             }
