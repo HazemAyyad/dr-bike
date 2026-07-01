@@ -129,11 +129,13 @@ class EmployeeVisibleTasks
         }
 
         $legacy = $legacyRows
-            ->map(fn (EmployeeTask $task) => self::mapLegacyForDashboard($task->fresh(), $employeeId));
+            ->map(fn (EmployeeTask $task) => self::mapLegacyForDashboard($task->fresh(), $employeeId))
+            ->toBase();
 
         $occurrences = self::occurrencesForEmployee($employeeId)
             ->filter(fn (EmployeeTaskOccurrence $task) => self::passesOccurrenceDayFilter($task))
-            ->map(fn (EmployeeTaskOccurrence $task) => self::mapOccurrenceForDashboard($task, $employeeId));
+            ->map(fn (EmployeeTaskOccurrence $task) => self::mapOccurrenceForDashboard($task, $employeeId))
+            ->toBase();
 
         return $legacy->merge($occurrences)->values();
     }
