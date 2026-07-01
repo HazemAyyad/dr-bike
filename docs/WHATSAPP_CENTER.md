@@ -18,6 +18,7 @@ WHATSAPP_API_VERSION=v23.0
 WHATSAPP_ACCESS_TOKEN=your_server_side_access_token
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
 WHATSAPP_BUSINESS_ACCOUNT_ID=your_business_account_id
+WHATSAPP_DISPLAY_PHONE_NUMBER=970594672857
 WHATSAPP_VERIFY_TOKEN=a_long_random_private_verify_token
 WHATSAPP_HTTP_TIMEOUT=20
 ```
@@ -45,6 +46,13 @@ Content-Type: application/json
 ```
 
 Phone numbers must use international format without spaces. The sending endpoints are rate limited.
+
+## Media and QR
+
+- Laravel uploads outgoing images and attachments to Meta; Flutter never receives the Meta access token.
+- Incoming image, document, audio and video payloads are saved by the webhook and served through authenticated Laravel endpoints.
+- Supported outgoing files include images, PDF, Office documents, audio and MP4 up to 16 MB.
+- The center displays a `wa.me` QR for `WHATSAPP_DISPLAY_PHONE_NUMBER` and provides an A4 PDF for printing, saving and sharing.
 
 ## Production notes
 

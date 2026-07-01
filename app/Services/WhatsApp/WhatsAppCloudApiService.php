@@ -10,6 +10,8 @@ use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessage;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
 use RuntimeException;
 
 class WhatsAppCloudApiService
@@ -62,6 +64,86 @@ class WhatsAppCloudApiService
             'template_name' => $templateName,
             'body' => $templateName,
         ], $adminId);
+    }
+
+    public function sendMedia(string $phone, UploadedFile $file, ?string $caption = null, ?int $adminId = null): array
+    {
+        $this->validateConfig();
+        $type = $this->mediaType($file->getMimeType());
+        $upload = Http::withToken(config('whatsapp.access_token'))
+            ->acceptJson()
+            ->timeout(config('whatsapp.timeout', 20))
+            ->attach('file', fopen($file->getRealPath(), 'r'), $file->getClientOriginalName(), [
+                'Content-Type' => $file->getMimeType(),
+            ])
+            ->post($this->graphEndpoint(config('whatsapp.phone_number_id').'/media'), [
+                'messaging_product' => 'whatsapp',
+            ]);
+
+        if (! $upload->successful() || ! $upload->json('id')) {
+            throw new RuntimeException($upload->json('error.message') ?: 'WhatsApp media upload failed.');
+        }
+
+        $mediaId = (string) $upload->json('id');
+        $media = array_filter([
+            'id' => $mediaId,
+            'caption' => in_array($type, ['image', 'video', 'document'], true) ? $caption : null,
+            'filename' => $type === 'document' ? $file->getClientOriginalName() : null,
+        ]);
+
+        return $this->send($phone, [
+            'type' => $type,
+            $type => $media,
+        ], [
+            'message_type' => $type,
+            'body' => $caption ?: $file->getClientOriginalName(),
+            'media_url' => $mediaId,
+        ], $adminId);
+    }
+
+    public function downloadMedia(string $mediaId): array
+    {
+        $this->validateConfig();
+        $metadata = Http::withToken(config('whatsapp.access_token'))
+            ->acceptJson()->timeout(config('whatsapp.timeout', 20))
+            ->get($this->graphEndpoint($mediaId));
+
+        if (! $metadata->successful() || ! $metadata->json('url')) {
+            throw new RuntimeException($metadata->json('error.message') ?: 'Unable to read WhatsApp media.');
+        }
+
+        $content = Http::withToken(config('whatsapp.access_token'))
+            ->timeout(config('whatsapp.timeout', 20))
+            ->get($metadata->json('url'));
+
+        if (! $content->successful()) {
+            throw new RuntimeException('Unable to download WhatsApp media.');
+        }
+
+        return [
+            'body' => $content->body(),
+            'mime_type' => $metadata->json('mime_type') ?: $content->header('Content-Type') ?: 'application/octet-stream',
+            'file_size' => $metadata->json('file_size'),
+        ];
+    }
+
+    public function businessPhoneNumber(): string
+    {
+        if (filled(config('whatsapp.display_phone_number'))) {
+            return $this->normalizePhone((string) config('whatsapp.display_phone_number'));
+        }
+
+        $this->validateConfig();
+        return Cache::remember('whatsapp.business_phone_number', now()->addHour(), function () {
+            $response = Http::withToken(config('whatsapp.access_token'))->acceptJson()
+                ->get($this->graphEndpoint(config('whatsapp.phone_number_id')), [
+                    'fields' => 'display_phone_number',
+                ]);
+            if (! $response->successful() || ! $response->json('display_phone_number')) {
+                throw new RuntimeException($response->json('error.message') ?: 'Unable to read WhatsApp business number.');
+            }
+            return $this->normalizePhone($response->json('display_phone_number'));
+        });
     }
 
     public function markAsRead(string $messageId): array
@@ -162,6 +244,21 @@ class WhatsAppCloudApiService
             trim(config('whatsapp.api_version'), '/'),
             config('whatsapp.phone_number_id')
         );
+    }
+
+    private function graphEndpoint(string $path): string
+    {
+        return sprintf('https://graph.facebook.com/%s/%s', trim(config('whatsapp.api_version'), '/'), ltrim($path, '/'));
+    }
+
+    private function mediaType(?string $mime): string
+    {
+        return match (true) {
+            str_starts_with((string) $mime, 'image/') => 'image',
+            str_starts_with((string) $mime, 'audio/') => 'audio',
+            str_starts_with((string) $mime, 'video/') => 'video',
+            default => 'document',
+        };
     }
 
     private function responseArray(Response $response): array

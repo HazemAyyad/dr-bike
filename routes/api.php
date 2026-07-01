@@ -831,6 +831,11 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
     Route::get('/whatsapp/conversations/{id}', [WhatsAppController::class, 'showConversation'])->whereNumber('id');
     Route::post('/whatsapp/conversations/{id}/send', [WhatsAppController::class, 'sendToConversation'])->whereNumber('id')->middleware('throttle:20,1');
+    Route::post('/whatsapp/conversations/{id}/send-media', [WhatsAppController::class, 'sendMediaToConversation'])->whereNumber('id')->middleware('throttle:10,1');
+    Route::post('/whatsapp/conversations/{id}/link-person', [WhatsAppController::class, 'linkPerson'])->whereNumber('id');
+    Route::get('/whatsapp/messages/{id}/media', [WhatsAppController::class, 'media'])->whereNumber('id');
+    Route::get('/whatsapp/qr', [WhatsAppController::class, 'qr']);
+    Route::get('/whatsapp/qr/a4', [WhatsAppController::class, 'qrA4']);
     Route::post('/whatsapp/send-text', [WhatsAppController::class, 'sendText'])->middleware('throttle:20,1');
     Route::post('/whatsapp/send-template', [WhatsAppController::class, 'sendTemplate'])->middleware('throttle:20,1');
     Route::get('/whatsapp/messages', [WhatsAppController::class, 'messages']);
