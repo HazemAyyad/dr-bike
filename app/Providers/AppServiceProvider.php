@@ -7,6 +7,10 @@ use App\Models\SizeColor;
 use App\Models\NormalImageProduct;
 use App\Models\ViewImageProduct;
 use App\Models\Image3dProduct;
+use App\Models\Category;
+use App\Models\SubCategory;
+use App\Models\SubCategoryProduct;
+use App\Observers\MetaCatalogHierarchyObserver;
 use App\Observers\ProductImageMetaCatalogObserver;
 use App\Observers\ProductMetaCatalogObserver;
 use App\Observers\SizeColorMetaCatalogObserver;
@@ -32,5 +36,8 @@ class AppServiceProvider extends ServiceProvider
         NormalImageProduct::observe(ProductImageMetaCatalogObserver::class);
         ViewImageProduct::observe(ProductImageMetaCatalogObserver::class);
         Image3dProduct::observe(ProductImageMetaCatalogObserver::class);
+        Category::observe(MetaCatalogHierarchyObserver::class);
+        SubCategory::observe(MetaCatalogHierarchyObserver::class);
+        SubCategoryProduct::observe(MetaCatalogHierarchyObserver::class);
     }
 }

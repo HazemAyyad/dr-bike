@@ -21,6 +21,12 @@ Never send the access token to Flutter. The token should be a long-lived System 
 
 The System User must have access to catalog `1014695750934512`.
 
+If Meta returns error code `100` with subcode `33` (`Unsupported get/post request`),
+the token cannot see the catalog. In Meta Business Settings, open **Users → System
+Users**, select the System User that generated the token, choose **Add assets →
+Catalogs**, select **Dr Bike Products**, and grant **Manage catalog**. Then generate
+a new long-lived token with `catalog_management` and `business_management`.
+
 ## Deploy
 
 ```bash
@@ -55,3 +61,24 @@ Retailer IDs are stable:
 - Variant: `DRBIKE-V-{size_color_id}`
 
 Never change these identifiers after catalog items have been created.
+
+## Category hierarchy and Product Sets
+
+Meta Catalog does not support Laravel-style nested categories. Dr Bike preserves
+the hierarchy using flat Product Sets:
+
+- main category: `اسم التصنيف`
+- subcategory: `اسم التصنيف / اسم التصنيف الفرعي`
+
+Products carry stable Meta custom labels (`DRBIKE-C-{id}` and
+`DRBIKE-S-{id}`), and Product Sets use dynamic filters for those labels. A
+product can therefore belong to its main-category set and to multiple
+subcategory sets. Changing a product category or subcategory updates its labels
+on the next sync and Meta updates set membership automatically.
+
+Use `POST /api/meta/catalog/sync-hierarchy` to create or update every set and
+queue product membership refreshes. `GET /api/meta/catalog/product-sets` returns
+the local-to-Meta mapping and errors. When automatic catalog sync is enabled,
+category, subcategory, and product-category changes queue the required updates.
+Orphaned sets are deleted only after their corresponding local category no
+longer exists and no local products remain assigned.

@@ -30,7 +30,10 @@ class MetaCatalogService
 
     public function buildProductPayload(Product $product, ?SizeColor $variant = null): array
     {
-        $product->loadMissing(['category', 'normalImages', 'viewImages', 'image3d', 'sizes.colorSizes']);
+        $product->loadMissing([
+            'category', 'normalImages', 'viewImages', 'image3d',
+            'sizes.colorSizes', 'subCategories.subCategory',
+        ]);
         $price = $variant
             ? (float) ($variant->normailPrice ?? 0)
             : (float) ($product->normailPrice ?: $product->price ?: 0);
@@ -71,6 +74,10 @@ class MetaCatalogService
             'url' => rtrim((string) config('app.url'), '/').'/product/'.$product->id,
             'brand' => (string) AppSetting::get(AppSetting::KEY_META_CATALOG_DEFAULT_BRAND, 'Dr Bike'),
             'category' => $product->category?->nameAr ?: $product->category?->nameEng,
+            'custom_label_0' => $product->category_id
+                ? 'DRBIKE-C-'.$product->category_id
+                : null,
+            'custom_label_1' => $this->subCategoryLabel($product),
             'inventory' => max(0, $quantity),
         ], fn ($value) => $value !== null && $value !== '');
     }
@@ -121,6 +128,36 @@ class MetaCatalogService
     public function createCatalogItem(array $payload): array
     {
         return $this->request('post', '/'.config('meta_commerce.catalog_id').'/products', $payload);
+    }
+
+    public function getCatalogInfo(): array
+    {
+        return $this->request(
+            'get',
+            '/'.config('meta_commerce.catalog_id'),
+            ['fields' => 'id,name,product_count']
+        );
+    }
+
+    public function createProductSet(string $name, array $filter): array
+    {
+        return $this->request('post', '/'.config('meta_commerce.catalog_id').'/product_sets', [
+            'name' => $name,
+            'filter' => json_encode($filter, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ]);
+    }
+
+    public function updateProductSet(string $productSetId, string $name, array $filter): array
+    {
+        return $this->request('post', '/'.$productSetId, [
+            'name' => $name,
+            'filter' => json_encode($filter, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ]);
+    }
+
+    public function deleteProductSet(string $productSetId): array
+    {
+        return $this->request('delete', '/'.$productSetId);
     }
 
     public function updateCatalogItem(string $metaCatalogItemId, array $payload): array
@@ -192,10 +229,29 @@ class MetaCatalogService
         /** @var Response $response */
         $response = $client->{$method}($url, $payload);
         if ($response->failed()) {
-            $message = data_get($response->json(), 'error.message') ?: 'Meta Catalog request failed (HTTP '.$response->status().').';
+            $error = $response->json('error') ?: [];
+            $message = $error['message'] ?? 'Meta Catalog request failed (HTTP '.$response->status().').';
+            if ((int) ($error['code'] ?? 0) === 100 && (int) ($error['error_subcode'] ?? 0) === 33) {
+                $message = 'تعذر الوصول إلى Meta Catalog ID '.config('meta_commerce.catalog_id')
+                    .'. تأكد أن الكتالوج صحيح، وأن System User الخاص بالتوكن مُضاف إلى الكتالوج بصلاحية Manage catalog،'
+                    .' وأن التوكن يحتوي catalog_management و business_management.';
+            }
             throw new RuntimeException($message);
         }
         return $response->json() ?: ['success' => true];
+    }
+
+    private function subCategoryLabel(Product $product): ?string
+    {
+        $tokens = $product->subCategories
+            ->pluck('sub_category_id')
+            ->filter()
+            ->unique()
+            ->sort()
+            ->map(fn ($id) => '|DRBIKE-S-'.$id.'|')
+            ->implode('');
+
+        return $tokens !== '' ? mb_substr($tokens, 0, 100) : null;
     }
 
     private function log(

@@ -749,6 +749,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
         Route::get('/status', [MetaCatalogController::class, 'status']);
         Route::get('/products', [MetaCatalogController::class, 'products']);
         Route::get('/sync-log', [MetaCatalogController::class, 'syncLog']);
+        Route::get('/product-sets', [MetaCatalogController::class, 'productSets']);
+        Route::post('/sync-hierarchy', [MetaCatalogController::class, 'syncHierarchy']);
+        Route::post('/queue-hierarchy-sync', [MetaCatalogController::class, 'queueHierarchySync']);
         Route::post('/products/{id}/sync', [MetaCatalogController::class, 'syncProduct']);
         Route::post('/products/{id}/resync', [MetaCatalogController::class, 'resyncProduct']);
         Route::post('/products/{id}/disable', [MetaCatalogController::class, 'disableProduct']);

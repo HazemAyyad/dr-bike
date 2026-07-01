@@ -4,11 +4,14 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\BulkSyncMetaCatalogJob;
+use App\Jobs\SyncMetaCatalogHierarchyJob;
 use App\Models\AppSetting;
 use App\Models\MetaCatalogSyncLog;
+use App\Models\MetaCatalogProductSet;
 use App\Models\Product;
 use App\Models\SizeColor;
 use App\Services\Meta\MetaCatalogService;
+use App\Services\Meta\MetaCatalogHierarchyService;
 use App\Support\ProductImageResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,8 +22,10 @@ class MetaCatalogController extends Controller
     public function status(MetaCatalogService $service)
     {
         $error = null;
+        $catalogInfo = null;
         try {
             $service->validateConfig();
+            $catalogInfo = $service->getCatalogInfo();
         } catch (Throwable $e) {
             $error = $e->getMessage();
         }
@@ -41,11 +46,18 @@ class MetaCatalogController extends Controller
                 'configured' => $error === null,
                 'configuration_error' => $error,
                 'catalog_id' => $this->mask((string) config('meta_commerce.catalog_id')),
+                'catalog_name' => $catalogInfo['name'] ?? null,
+                'meta_product_count' => isset($catalogInfo['product_count'])
+                    ? (int) $catalogInfo['product_count']
+                    : null,
                 'total_local_products' => Product::query()->count(),
                 'synced_products' => (int) ($counts->synced ?? 0),
                 'failed_products' => (int) ($counts->failed ?? 0),
                 'pending_products' => (int) ($counts->pending ?? 0),
                 'disabled_products' => (int) ($counts->disabled ?? 0),
+                'total_product_sets' => MetaCatalogProductSet::query()->count(),
+                'synced_product_sets' => MetaCatalogProductSet::query()->where('sync_status', 'synced')->count(),
+                'failed_product_sets' => MetaCatalogProductSet::query()->where('sync_status', 'failed')->count(),
                 'last_synced_at' => MetaCatalogSyncLog::query()->where('status', 'success')->max('created_at'),
                 ...$this->settingsPayload(),
             ],
@@ -93,6 +105,46 @@ class MetaCatalogController extends Controller
         return response()->json([
             'status' => 'success',
             'logs' => $query->latest()->paginate((int) ($data['per_page'] ?? 30)),
+        ]);
+    }
+
+    public function productSets(Request $request)
+    {
+        $data = $request->validate([
+            'status' => 'nullable|in:synced,failed,pending,disabled',
+            'type' => 'nullable|in:category,sub_category',
+            'search' => 'nullable|string|max:100',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+        $query = MetaCatalogProductSet::query();
+        if (! empty($data['status'])) $query->where('sync_status', $data['status']);
+        if (! empty($data['type'])) $query->where('source_type', $data['type']);
+        if (! empty($data['search'])) $query->where('name', 'like', '%'.trim($data['search']).'%');
+
+        return response()->json([
+            'status' => 'success',
+            'product_sets' => $query->orderBy('source_type')->orderBy('name')
+                ->paginate((int) ($data['per_page'] ?? 50)),
+        ]);
+    }
+
+    public function syncHierarchy(MetaCatalogHierarchyService $service)
+    {
+        $result = $service->syncAll();
+        BulkSyncMetaCatalogJob::dispatch();
+        return response()->json([
+            'status' => $result['failed'] > 0 && $result['synced'] === 0 ? 'error' : 'success',
+            'message' => "تمت مزامنة {$result['synced']} مجموعة، وفشلت {$result['failed']}. تمت جدولة تحديث عضوية المنتجات.",
+            'result' => $result,
+        ], $result['failed'] > 0 && $result['synced'] === 0 ? 422 : 200);
+    }
+
+    public function queueHierarchySync()
+    {
+        SyncMetaCatalogHierarchyJob::dispatch();
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تمت إضافة مزامنة التصنيفات والمجموعات إلى قائمة الانتظار.',
         ]);
     }
 
