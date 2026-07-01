@@ -8,6 +8,7 @@ Create the catalog in Meta Commerce Manager and connect it to the same WhatsApp 
 
 ```env
 META_CATALOG_ID=1014695750934512
+META_CATALOG_PUBLIC_URL=https://dr-bike.duosparktech.com/public
 WHATSAPP_ACCESS_TOKEN=your_server_side_system_user_token
 WHATSAPP_API_VERSION=v25.0
 ```
@@ -53,7 +54,10 @@ A product needs an Arabic or English name, a price greater than zero, active dis
 
 Meta availability is `in stock` when quantity is greater than zero and `out of stock` otherwise. Meta may show availability rather than an exact quantity in some WhatsApp surfaces. Enable **إظهار الكمية داخل وصف المنتج** if the exact local quantity should also be appended to the description.
 
-Local relative images are expanded using `APP_URL`, which must be the public HTTPS Laravel URL. Inaccessible, HTTP-only, placeholder, or missing images fail clearly and are not sent.
+Local relative images are expanded using `META_CATALOG_PUBLIC_URL` (falling
+back to `APP_URL`). It must be the public HTTPS Laravel root. Legacy
+`Images/Items/...` images are exposed through Laravel's HTTPS image proxy.
+Placeholder or genuinely missing images fail clearly and are not sent.
 
 Retailer IDs are stable:
 

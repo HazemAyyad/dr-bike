@@ -198,8 +198,33 @@ class MetaCatalogService
     {
         $path = trim((string) $path);
         if ($path === '' || strtolower($path) === 'no image') return null;
+
+        $path = str_replace('\\', '/', $path);
+        $publicBase = rtrim((string) config('meta_commerce.public_url'), '/');
+
+        if (preg_match('#^https?://mjsall-001-site1\.jtempurl\.com/(Images/Items/[^/?]+)#i', $path, $match)) {
+            return $publicBase !== ''
+                ? $publicBase.'/api/legacy-store-image?path='.rawurlencode($match[1])
+                : preg_replace('#^http://#i', 'https://', $path);
+        }
+
+        if (preg_match('#^Images/Items/[^/?]+$#i', ltrim($path, '/'))) {
+            return $publicBase !== ''
+                ? $publicBase.'/api/legacy-store-image?path='.rawurlencode(ltrim($path, '/'))
+                : null;
+        }
+
         if (! str_starts_with($path, 'http://') && ! str_starts_with($path, 'https://')) {
-            $path = rtrim((string) config('app.url'), '/').'/'.ltrim(str_replace('\\', '/', $path), '/');
+            if ($publicBase === '' || ! str_starts_with($publicBase, 'https://')) return null;
+            $path = $publicBase.'/'.ltrim($path, '/');
+        }
+
+        if (str_starts_with($path, 'http://') && $publicBase !== '') {
+            $imageHost = parse_url($path, PHP_URL_HOST);
+            $publicHost = parse_url($publicBase, PHP_URL_HOST);
+            if ($imageHost && $imageHost === $publicHost) {
+                $path = preg_replace('#^http://#i', 'https://', $path);
+            }
         }
         return str_starts_with($path, 'https://') ? $path : null;
     }
