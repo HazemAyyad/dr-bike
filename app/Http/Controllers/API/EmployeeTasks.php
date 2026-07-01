@@ -1102,14 +1102,9 @@ public function updateEmployeeTask(Request $request)
         }
 
         $assigneeService = app(EmployeeTaskAssigneeService::class);
-        $assigneeIdsForRoute = $assigneeService->resolveAssigneeIdsFromRequest(
-            $request,
-            (int) $request->input('employee_id', 0)
-        );
 
         if (
             ($request->boolean('use_v2_recurrence') || $request->filled('template_id'))
-            && count($assigneeIdsForRoute) <= 1
         ) {
             return app(EmployeeTaskOperationsController::class)->updateWithTemplate($request);
         }

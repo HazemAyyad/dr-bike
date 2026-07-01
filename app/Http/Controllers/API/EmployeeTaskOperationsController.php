@@ -9,7 +9,6 @@ use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\EmployeeTaskTemplate;
 use App\Models\EmployeeTaskTemplateSubtask;
-use App\Models\Logs;
 use App\Models\EmployeeTaskTimeline;
 use App\Services\EmployeeTasks\EmployeeTaskPerformanceService;
 use App\Services\EmployeeTasks\EmployeeTaskRecurrenceService;
@@ -484,12 +483,6 @@ class EmployeeTaskOperationsController extends Controller
                 (int) ($data['employee_id'] ?? 0)
             );
 
-            if (count($assigneeIds) > 1) {
-                $request->merge(['use_v2_recurrence' => false, 'template_id' => null]);
-
-                return app(EmployeeTasks::class)->updateEmployeeTask($request);
-            }
-
             if ($assigneeIds !== []) {
                 $data['employee_id'] = $assigneeIds[0];
             }
@@ -595,19 +588,59 @@ class EmployeeTaskOperationsController extends Controller
 
                 $occurrence->update($occurrencePayload);
 
-                if ($occurrence->legacy_task_id) {
-                    $legacy = EmployeeTask::find($occurrence->legacy_task_id);
-                    if ($legacy) {
-                        if ($shouldResetCompletion) {
-                            $this->resetLegacyTaskCompletion($legacy);
-                        }
+                $legacy = $occurrence->legacy_task_id
+                    ? EmployeeTask::find($occurrence->legacy_task_id)
+                    : null;
 
-                        $assigneeService->syncForTaskAndNotifyNewAssignees(
-                            $legacy,
-                            $assigneeIds !== [] ? $assigneeIds : [(int) $data['employee_id']],
-                            (int) $occurrence->id
-                        );
+                if (count($assigneeIds) > 1 && ! $legacy) {
+                    $legacy = EmployeeTask::create([
+                        'name' => $data['name'],
+                        'description' => $data['description'] ?? null,
+                        'notes' => $data['notes'] ?? null,
+                        'points' => $data['points'],
+                        'priority' => $data['priority'] ?? 'medium',
+                        'employee_id' => $data['employee_id'],
+                        'start_time' => $data['start_time'],
+                        'end_time' => $data['end_time'],
+                        'task_recurrence' => 'noRepeat',
+                        'status' => EmployeeTaskStatus::Pending->value,
+                        'is_forced_to_upload_img' => $proofRequired,
+                        'proof_media_type' => $proofMediaType,
+                        'requires_admin_review' => $request->boolean('requires_admin_review', true),
+                        'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
+                        'template_id' => $template->id,
+                    ]);
+
+                    EmployeeTaskOccurrence::query()
+                        ->where('template_id', $template->id)
+                        ->update(['legacy_task_id' => $legacy->id]);
+                }
+
+                if ($legacy) {
+                    $legacy->update([
+                        'name' => $data['name'],
+                        'description' => $data['description'] ?? null,
+                        'notes' => $data['notes'] ?? null,
+                        'points' => $data['points'],
+                        'priority' => $data['priority'] ?? 'medium',
+                        'employee_id' => $data['employee_id'],
+                        'start_time' => $data['start_time'],
+                        'end_time' => $data['end_time'],
+                        'is_forced_to_upload_img' => $proofRequired,
+                        'proof_media_type' => $proofMediaType,
+                        'requires_admin_review' => $request->boolean('requires_admin_review', true),
+                        'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
+                    ]);
+
+                    if ($shouldResetCompletion) {
+                        $this->resetLegacyTaskCompletion($legacy);
                     }
+
+                    $assigneeService->syncForTaskAndNotifyNewAssignees(
+                        $legacy,
+                        $assigneeIds !== [] ? $assigneeIds : [(int) $data['employee_id']],
+                        (int) $occurrence->id
+                    );
                 } elseif (
                     $oldOccurrenceEmployeeId > 0
                     && (int) $data['employee_id'] !== $oldOccurrenceEmployeeId
