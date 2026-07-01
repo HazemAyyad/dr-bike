@@ -46,6 +46,9 @@ if (! config('app.debug')) {
     exit('Deploy script disabled.');
 }
 
+$queueOnly = ($_GET['queue'] ?? '') === '1';
+$queueBatchSize = max(1, min(10, (int) ($_GET['max_jobs'] ?? 5)));
+
 // ترتيب النشر: config ثم storage:link قبل migrate — إذا فشل migrate يُرمى استثناء ويُوقف الحلقة؛
 // وضع الرابط مبكراً يضمن إنشاء public/storage حتى عند فشل قاعدة البيانات.
 $allowedCommands = [
@@ -76,19 +79,27 @@ $allowedCommands = [
     ],
     ['name' => 'optimize:clear', 'params' => []],
     ['name' => 'cache:clear', 'params' => []],
-    [
+    // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
+    ['name' => '__composer_dump_autoload__', 'params' => []],
+];
+
+// Queue jobs must not all run inside the normal deployment HTTP request.
+// Use ?queue=1 to process a small bounded batch and return before shared-hosting timeout.
+if ($queueOnly) {
+    $allowedCommands = [[
         'name' => 'queue:work',
         'params' => [
             'connection' => 'database',
             '--stop-when-empty' => true,
+            '--max-jobs' => $queueBatchSize,
+            '--max-time' => 20,
+            '--sleep' => 0,
             '--tries' => 3,
             '--timeout' => 120,
         ],
-        'label' => '=== معالجة مهام Queue الموجودة ثم التوقف (Meta Catalog وغيرها) ===',
-    ],
-    // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
-    ['name' => '__composer_dump_autoload__', 'params' => []],
-];
+        'label' => "=== معالجة دفعة Queue بحد أقصى {$queueBatchSize} مهام ===",
+    ]];
+}
 
 $lines = [];
 $lines[] = 'Deploy script started at '.date('Y-m-d H:i:s T');
@@ -156,11 +167,23 @@ foreach ($allowedCommands as $cmd) {
     echo htmlspecialchars(">>> Running: php artisan {$commandName}\n", ENT_QUOTES, 'UTF-8');
 
     try {
+        if ($cmd['name'] === 'queue:work' && \Illuminate\Support\Facades\Schema::hasTable('jobs')) {
+            $pendingBefore = \Illuminate\Support\Facades\DB::table('jobs')->count();
+            echo htmlspecialchars("Pending jobs before: {$pendingBefore}\n", ENT_QUOTES, 'UTF-8');
+        }
+
         $exitCode = $kernel->call($cmd['name'], $cmd['params']);
         $output = $kernel->output();
 
         echo htmlspecialchars($output, ENT_QUOTES, 'UTF-8');
         echo htmlspecialchars("\nExit code: {$exitCode}\n", ENT_QUOTES, 'UTF-8');
+        if ($cmd['name'] === 'queue:work' && \Illuminate\Support\Facades\Schema::hasTable('jobs')) {
+            $pendingAfter = \Illuminate\Support\Facades\DB::table('jobs')->count();
+            echo htmlspecialchars("Pending jobs after: {$pendingAfter}\n", ENT_QUOTES, 'UTF-8');
+            if ($pendingAfter > 0) {
+                echo "INFO: Run this queue URL again to process the next bounded batch.\n";
+            }
+        }
         echo "----------------------------------------\n";
     } catch (\Throwable $e) {
         echo htmlspecialchars('ERROR: '.$e->getMessage()."\n", ENT_QUOTES, 'UTF-8');
