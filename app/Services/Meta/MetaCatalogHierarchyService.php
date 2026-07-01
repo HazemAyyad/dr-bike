@@ -55,7 +55,7 @@ class MetaCatalogHierarchyService
             name: $name,
             filterField: 'custom_label_0',
             filterValue: 'DRBIKE-C-'.$category->id,
-            filter: ['custom_label_0' => ['is_any' => ['DRBIKE-C-'.$category->id]]],
+            filter: ['custom_label_0' => ['i_contains' => 'DRBIKE-C-'.$category->id]],
             enabled: (bool) $category->isShow,
         );
     }

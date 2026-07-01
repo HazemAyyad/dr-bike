@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Exceptions\MetaCatalogValidationException;
 use App\Models\Product;
 use App\Models\SizeColor;
 use App\Services\Meta\MetaCatalogService;
@@ -10,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 
 class SyncMetaCatalogProductJob implements ShouldQueue
 {
@@ -42,6 +44,16 @@ class SyncMetaCatalogProductJob implements ShouldQueue
             }
         }
         $variant = $this->variantId ? SizeColor::query()->find($this->variantId) : null;
-        $service->syncProduct($product, $variant);
+        try {
+            $service->syncProduct($product, $variant);
+        } catch (MetaCatalogValidationException $e) {
+            Log::warning('[MetaCatalogProduct] skipped invalid item', [
+                'product_id' => $product->id,
+                'variant_id' => $variant?->id,
+                'reason' => $e->getMessage(),
+            ]);
+            // Local eligibility errors are permanent until the product is
+            // corrected. The service already marked the item as failed.
+        }
     }
 }

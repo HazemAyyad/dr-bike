@@ -2,6 +2,7 @@
 
 namespace App\Services\Meta;
 
+use App\Exceptions\MetaCatalogValidationException;
 use App\Models\AppSetting;
 use App\Models\MetaCatalogSyncLog;
 use App\Models\Product;
@@ -60,7 +61,7 @@ class MetaCatalogService
         if ($quantity < 0) $errors[] = 'كمية المخزون غير صالحة.';
         if (! $product->isShow) $errors[] = 'المنتج غير مفعّل للعرض.';
         if ($image === null) $errors[] = 'صورة عامة بصيغة HTTPS مطلوبة.';
-        if ($errors !== []) throw new RuntimeException(implode(' ', $errors));
+        if ($errors !== []) throw new MetaCatalogValidationException(implode(' ', $errors));
 
         return array_filter([
             'retailer_id' => $this->generateRetailerId($product, $variant),
