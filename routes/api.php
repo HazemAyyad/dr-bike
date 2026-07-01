@@ -823,10 +823,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
     Route::post('/change/return/purchase/to/delivered' , [ReturnsAPI::class,'changeToDelivered']);
 
 });
-// admin routes
-Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , function() {
 
-    // WhatsApp Center
+Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section','refresh.token.expiry']] , function() {
+    // WhatsApp Center — admins and employees with Messages Section permission.
     Route::get('/whatsapp/dashboard', [WhatsAppController::class, 'dashboard']);
     Route::get('/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
     Route::get('/whatsapp/conversations/{id}', [WhatsAppController::class, 'showConversation'])->whereNumber('id');
@@ -846,6 +845,10 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/whatsapp/settings', [WhatsAppSettingsController::class, 'show']);
     Route::post('/whatsapp/settings', [WhatsAppSettingsController::class, 'store']);
     Route::post('/whatsapp/test-message', [WhatsAppController::class, 'testMessage'])->middleware('throttle:10,1');
+});
+
+// admin routes
+Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , function() {
 
 
 

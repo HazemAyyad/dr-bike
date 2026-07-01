@@ -14,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
+use ArPHP\I18N\Arabic;
 
 class WhatsAppController extends Controller
 {
@@ -129,10 +130,23 @@ class WhatsAppController extends Controller
     {
         $phone = $service->businessPhoneNumber();
         $svg = QrCode::format('svg')->size(900)->margin(2)->generate('https://wa.me/'.$phone);
-        return Pdf::loadView('whatsapp.qr-a4', [
+        $html = view('whatsapp.qr-a4', [
             'qr' => base64_encode($svg),
             'phone' => $phone,
-        ])->setPaper('a4')->download('dr-bike-whatsapp-qr.pdf');
+        ])->render();
+
+        $arabic = new Arabic();
+        $positions = $arabic->arIdentify($html);
+        for ($i = count($positions) - 1; $i >= 0; $i -= 2) {
+            $html = substr_replace(
+                $html,
+                $arabic->utf8Glyphs(substr($html, $positions[$i - 1], $positions[$i] - $positions[$i - 1])),
+                $positions[$i - 1],
+                $positions[$i] - $positions[$i - 1]
+            );
+        }
+
+        return Pdf::loadHTML($html)->setPaper('a4')->download('dr-bike-whatsapp-qr.pdf');
     }
 
     public function sendText(Request $request, WhatsAppCloudApiService $service)

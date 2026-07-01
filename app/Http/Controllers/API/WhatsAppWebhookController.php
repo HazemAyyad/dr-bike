@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\WhatsAppMessage;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
+use App\Services\WhatsApp\WhatsAppIncomingNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -23,7 +24,11 @@ class WhatsAppWebhookController extends Controller
         return response('Invalid verification token', 403);
     }
 
-    public function handle(Request $request, WhatsAppCloudApiService $service)
+    public function handle(
+        Request $request,
+        WhatsAppCloudApiService $service,
+        WhatsAppIncomingNotificationService $notificationService
+    )
     {
         try {
             foreach ((array) data_get($request->all(), 'entry', []) as $entry) {
@@ -33,7 +38,10 @@ class WhatsAppWebhookController extends Controller
                         ->mapWithKeys(fn ($contact) => [(string) data_get($contact, 'wa_id') => data_get($contact, 'profile.name')]);
 
                     foreach ((array) data_get($value, 'messages', []) as $incoming) {
-                        $this->saveIncoming($service, $incoming, $names->get((string) data_get($incoming, 'from')));
+                        $message = $this->saveIncoming($service, $incoming, $names->get((string) data_get($incoming, 'from')));
+                        if ($message) {
+                            $notificationService->notify($message);
+                        }
                     }
                     foreach ((array) data_get($value, 'statuses', []) as $status) {
                         $this->updateStatus($status);
@@ -46,11 +54,11 @@ class WhatsAppWebhookController extends Controller
         return response()->json(['status' => 'success'], 200);
     }
 
-    private function saveIncoming(WhatsAppCloudApiService $service, array $incoming, ?string $name): void
+    private function saveIncoming(WhatsAppCloudApiService $service, array $incoming, ?string $name): ?WhatsAppMessage
     {
         $metaId = data_get($incoming, 'id');
         if (! $metaId || WhatsAppMessage::query()->where('meta_message_id', $metaId)->exists()) {
-            return;
+            return null;
         }
         $phone = $service->normalizePhone((string) data_get($incoming, 'from'));
         $contact = $service->findOrCreateContact($phone, $name);
@@ -66,7 +74,7 @@ class WhatsAppWebhookController extends Controller
         };
         $timestamp = data_get($incoming, 'timestamp') ? now()->setTimestamp((int) data_get($incoming, 'timestamp')) : now();
 
-        WhatsAppMessage::query()->create([
+        $message = WhatsAppMessage::query()->create([
             'whatsapp_conversation_id' => $conversation->id,
             'whatsapp_contact_id' => $contact->id,
             'phone' => $phone,
@@ -87,6 +95,8 @@ class WhatsAppWebhookController extends Controller
             'unread_count' => $conversation->unread_count + 1,
         ]);
         $contact->update(['last_message_at' => $timestamp]);
+
+        return $message;
     }
 
     private function updateStatus(array $status): void
