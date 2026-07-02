@@ -63,13 +63,30 @@ class WhatsAppController extends Controller
             'sender:id,name',
         ])
             ->orderByDesc('created_at')->orderByDesc('id')->paginate($this->perPage($request, 30));
+        $lastInboundAt = $conversation->messages()
+            ->where('direction', 'inbound')
+            ->latest('created_at')
+            ->value('created_at');
+        $windowExpiresAt = $lastInboundAt
+            ? \Carbon\Carbon::parse($lastInboundAt)->addHours(24)
+            : null;
         $conversation->update(['unread_count' => 0]);
-        return response()->json(['status' => 'success', 'conversation' => $conversation->fresh('contact'), 'messages' => $messages]);
+        return response()->json([
+            'status' => 'success',
+            'conversation' => $conversation->fresh('contact'),
+            'messages' => $messages,
+            'customer_service_window' => [
+                'open' => $windowExpiresAt?->isFuture() === true,
+                'last_inbound_at' => $lastInboundAt,
+                'expires_at' => $windowExpiresAt?->toIso8601String(),
+            ],
+        ]);
     }
 
     public function sendToConversation(Request $request, int $id, WhatsAppCloudApiService $service)
     {
         $conversation = WhatsAppConversation::query()->findOrFail($id);
+        $this->ensureCustomerServiceWindow($conversation);
         $data = $request->validate([
             'message' => 'required|string|max:4096',
             'reply_to_message_id' => 'nullable|integer',
@@ -88,6 +105,7 @@ class WhatsAppController extends Controller
     public function sendMediaToConversation(Request $request, int $id, WhatsAppCloudApiService $service)
     {
         $conversation = WhatsAppConversation::query()->findOrFail($id);
+        $this->ensureCustomerServiceWindow($conversation);
         $data = $request->validate([
             'file' => 'required|file|max:16384|mimes:jpg,jpeg,png,webp,pdf,doc,docx,xls,xlsx,mp3,m4a,ogg,wav,mp4',
             'caption' => 'nullable|string|max:1024',
@@ -182,6 +200,7 @@ class WhatsAppController extends Controller
     public function sendProducts(Request $request, int $id, WhatsAppCloudApiService $service)
     {
         $conversation = WhatsAppConversation::query()->findOrFail($id);
+        $this->ensureCustomerServiceWindow($conversation);
         $data = $request->validate([
             'product_ids' => 'required|array|min:1|max:30',
             'product_ids.*' => 'required|string',
@@ -384,5 +403,18 @@ class WhatsAppController extends Controller
             );
         }
         return $html;
+    }
+
+    private function ensureCustomerServiceWindow(WhatsAppConversation $conversation): void
+    {
+        $lastInboundAt = $conversation->messages()
+            ->where('direction', 'inbound')
+            ->latest('created_at')
+            ->value('created_at');
+        if (! $lastInboundAt || \Carbon\Carbon::parse($lastInboundAt)->addHours(24)->isPast()) {
+            throw ValidationException::withMessages([
+                'conversation' => 'انتهت نافذة خدمة العملاء (24 ساعة). يجب أن يرسل الزبون رسالة جديدة أو استخدام قالب Meta معتمد.',
+            ]);
+        }
     }
 }

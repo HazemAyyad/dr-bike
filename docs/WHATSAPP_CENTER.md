@@ -65,6 +65,7 @@ Phone numbers must use international format without spaces. The sending endpoint
 - Swipe or long-press a message to reply. Incoming and outgoing reply context is preserved using Meta message IDs.
 - The conversation menu opens an instant-sale-style product picker. Selected products are rendered into a PDF with image, name, price, code, model, category, stock and description, then sent as a WhatsApp document.
 - While an admin composes text, Laravel sends Meta's typing indicator using the latest inbound message ID. This is best-effort and never blocks sending.
+- Free-form text and media are only allowed during the 24-hour customer-service window after the customer's latest inbound message. Flutter disables the composer when the window is closed, and Laravel enforces the same rule before uploading media or generating product PDFs. Re-engagement outside this window requires an approved Meta template.
 - A welcome reply is sent after the first inbound message and at most once per configured cooldown period. A cache lock prevents duplicate welcomes from simultaneous inbound messages.
 - When enabled, the welcome is followed by a native WhatsApp interactive list for products, maintenance, inquiries, or contacting an employee.
 - Outgoing bubbles identify the employee who replied; automatic messages are labeled `الرد التلقائي`.
