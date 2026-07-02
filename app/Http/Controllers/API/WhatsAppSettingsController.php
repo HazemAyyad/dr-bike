@@ -4,12 +4,16 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\WhatsAppSetting;
+use App\Models\EmployeeDetail;
+use App\Models\EmployeePermission;
+use App\Models\Permission;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class WhatsAppSettingsController extends Controller
 {
-    public function show(WhatsAppCloudApiService $service)
+    public function show(Request $request, WhatsAppCloudApiService $service)
     {
         $configurationError = null;
         try {
@@ -31,6 +35,10 @@ class WhatsAppSettingsController extends Controller
                 'phone_number_id' => $this->mask(config('whatsapp.phone_number_id')),
                 'business_account_id' => $this->mask(config('whatsapp.business_account_id')),
             ],
+            'can_manage_employees' => $request->user()?->type === 'admin',
+            'employees' => $request->user()?->type === 'admin'
+                ? $this->employeesWithAccess()
+                : [],
         ]);
     }
 
@@ -54,7 +62,60 @@ class WhatsAppSettingsController extends Controller
                 ['value' => $setting['value'] ?? null, 'type' => $setting['type'] ?? 'string']
             );
         }
-        return $this->show(app(WhatsAppCloudApiService::class));
+        return $this->show($request, app(WhatsAppCloudApiService::class));
+    }
+
+    public function updateEmployees(Request $request)
+    {
+        abort_unless($request->user()?->type === 'admin', 403);
+        $data = $request->validate([
+            'employee_ids' => 'present|array',
+            'employee_ids.*' => 'integer|exists:employee_details,id',
+        ]);
+        $permission = Permission::query()
+            ->where('name_en', 'Messages Section')
+            ->firstOrFail();
+        $employeeIds = collect($data['employee_ids'])->map(fn ($id) => (int) $id)->unique()->values();
+
+        DB::transaction(function () use ($permission, $employeeIds) {
+            EmployeePermission::query()
+                ->where('permission_id', $permission->id)
+                ->delete();
+            foreach ($employeeIds as $employeeId) {
+                EmployeePermission::query()->create([
+                    'employee_id' => $employeeId,
+                    'permission_id' => $permission->id,
+                ]);
+            }
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'employees' => $this->employeesWithAccess(),
+        ]);
+    }
+
+    private function employeesWithAccess(): array
+    {
+        $permissionId = Permission::query()
+            ->where('name_en', 'Messages Section')
+            ->value('id');
+
+        return EmployeeDetail::query()
+            ->with('user:id,name,phone')
+            ->whereHas('user', fn ($query) => $query->where('type', 'employee'))
+            ->orderBy('id')
+            ->get(['id', 'user_id', 'job_title'])
+            ->map(fn (EmployeeDetail $employee) => [
+                'id' => $employee->id,
+                'name' => $employee->user?->name ?: 'موظف #'.$employee->id,
+                'phone' => $employee->user?->phone,
+                'job_title' => $employee->job_title,
+                'has_whatsapp_access' => $permissionId
+                    ? $employee->permissions()->where('permission_id', $permissionId)->exists()
+                    : false,
+            ])
+            ->all();
     }
 
     private function mask(?string $value): ?string

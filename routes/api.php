@@ -868,6 +868,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section',
     Route::delete('/whatsapp/templates/{id}', [WhatsAppTemplateController::class, 'destroy'])->whereNumber('id');
     Route::get('/whatsapp/settings', [WhatsAppSettingsController::class, 'show']);
     Route::post('/whatsapp/settings', [WhatsAppSettingsController::class, 'store']);
+    Route::post('/whatsapp/settings/employees', [WhatsAppSettingsController::class, 'updateEmployees']);
     Route::post('/whatsapp/test-message', [WhatsAppController::class, 'testMessage'])->middleware('throttle:10,1');
 });
 

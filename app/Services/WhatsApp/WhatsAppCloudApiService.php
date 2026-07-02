@@ -79,15 +79,27 @@ class WhatsAppCloudApiService
         ], $adminId);
     }
 
-    public function sendMedia(string $phone, UploadedFile $file, ?string $caption = null, ?int $adminId = null): array
+    public function sendMedia(
+        string $phone,
+        UploadedFile $file,
+        ?string $caption = null,
+        ?int $adminId = null,
+        ?string $forcedType = null
+    ): array
     {
         $this->validateConfig();
-        $type = $this->mediaType($file->getMimeType());
+        $type = $forcedType ?: $this->mediaType($file->getMimeType());
+        $uploadMime = $type === 'audio' && $file->getClientOriginalExtension() === 'mp4'
+            ? 'audio/mp4'
+            : $file->getMimeType();
+        $uploadName = $type === 'audio' && $file->getClientOriginalExtension() === 'mp4'
+            ? pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME).'.m4a'
+            : $file->getClientOriginalName();
         $upload = Http::withToken(config('whatsapp.access_token'))
             ->acceptJson()
             ->timeout(config('whatsapp.timeout', 20))
-            ->attach('file', fopen($file->getRealPath(), 'r'), $file->getClientOriginalName(), [
-                'Content-Type' => $file->getMimeType(),
+            ->attach('file', fopen($file->getRealPath(), 'r'), $uploadName, [
+                'Content-Type' => $uploadMime,
             ])
             ->post($this->graphEndpoint(config('whatsapp.phone_number_id').'/media'), [
                 'messaging_product' => 'whatsapp',

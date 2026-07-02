@@ -14,6 +14,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Http\UploadedFile;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use ArPHP\I18N\Arabic;
 
@@ -90,9 +91,14 @@ class WhatsAppController extends Controller
         $data = $request->validate([
             'file' => 'required|file|max:16384|mimes:jpg,jpeg,png,webp,pdf,doc,docx,xls,xlsx,mp3,m4a,ogg,wav,mp4',
             'caption' => 'nullable|string|max:1024',
+            'media_kind' => 'nullable|in:image,audio,video,document',
         ]);
         return $this->sendSafely(fn () => $service->sendMedia(
-            $conversation->phone, $data['file'], $data['caption'] ?? null, $request->user()->id
+            $conversation->phone,
+            $data['file'],
+            $data['caption'] ?? null,
+            $request->user()->id,
+            $data['media_kind'] ?? null
         ));
     }
 
@@ -144,7 +150,10 @@ class WhatsAppController extends Controller
     {
         $search = trim((string) $request->input('search'));
         $query = Product::query()
-            ->with(['normalImages' => fn ($q) => $q->select('id', 'itemId', 'imageUrl')])
+            ->with([
+                'normalImages' => fn ($q) => $q->select('id', 'itemId', 'imageUrl'),
+                'category:id,nameAr',
+            ])
             ->where('isShow', 1);
 
         if ($search !== '') {
@@ -160,6 +169,10 @@ class WhatsAppController extends Controller
                 'name' => $product->nameAr ?: $product->nameEng,
                 'price' => $product->normailPrice,
                 'image' => $product->normalImages->first()?->imageUrl,
+                'code' => $product->product_code,
+                'stock' => $product->stock,
+                'model' => $product->model,
+                'category' => $product->category?->nameAr,
                 'retailer_id' => $product->meta_catalog_retailer_id,
                 'catalog_synced' => $product->meta_catalog_sync_status === 'synced'
                     && filled($product->meta_catalog_retailer_id),
@@ -174,35 +187,51 @@ class WhatsAppController extends Controller
             'product_ids.*' => 'required|string',
         ]);
         $products = Product::query()
+            ->with(['normalImages', 'category'])
             ->whereIn('id', $data['product_ids'])
             ->get();
         abort_if($products->count() !== count(array_unique($data['product_ids'])), 422, 'Some products were not found.');
+        $order = array_flip(array_map('strval', $data['product_ids']));
+        $products = $products->sortBy(fn (Product $product) => $order[(string) $product->id] ?? PHP_INT_MAX);
+        $rows = $products->map(fn (Product $product) => [
+            'name' => $product->nameAr ?: $product->nameEng ?: 'منتج',
+            'price' => number_format((float) $product->normailPrice, 2),
+            'code' => $product->product_code,
+            'stock' => $product->stock ?? 0,
+            'model' => $product->model,
+            'category' => $product->category?->nameAr,
+            'description' => $product->descriptionAr,
+            'image' => $this->productImageDataUri($product->normalImages->first()?->imageUrl),
+        ])->values()->all();
 
-        $allCatalogSynced = $products->every(fn (Product $product) =>
-            $product->meta_catalog_sync_status === 'synced'
-            && filled($product->meta_catalog_retailer_id));
+        $html = view('whatsapp.products-pdf', [
+            'products' => $rows,
+            'generatedAt' => now()->format('Y-m-d H:i'),
+        ])->render();
+        $html = $this->shapeArabicHtml($html);
+        $path = storage_path('app/whatsapp-products-'.uniqid().'.pdf');
+        Pdf::loadHTML($html)->setPaper('a4')->save($path);
 
-        return $this->sendSafely(function () use ($service, $conversation, $products, $request, $allCatalogSynced) {
-            if ($allCatalogSynced) {
-                return $service->sendProductList(
-                    $conversation->phone,
-                    $products,
-                    $request->user()->id
-                );
-            }
-
-            $body = "منتجات دكتور بايك:\n\n".$products->values()
-                ->map(fn (Product $product, int $index) =>
-                    ($index + 1).'. '.($product->nameAr ?: $product->nameEng)
-                    .(filled($product->normailPrice) ? "\nالسعر: {$product->normailPrice} ₪" : ''))
-                ->join("\n\n");
-
-            return $service->sendText(
-                $conversation->phone,
-                mb_substr($body, 0, 4096),
-                $request->user()->id
+        try {
+            $file = new UploadedFile(
+                $path,
+                'doctor-bike-products.pdf',
+                'application/pdf',
+                null,
+                true
             );
-        });
+            return $this->sendSafely(fn () => $service->sendMedia(
+                $conversation->phone,
+                $file,
+                'تفاصيل المنتجات المختارة',
+                $request->user()->id,
+                'document'
+            ));
+        } finally {
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
     }
 
     public function media(int $id, WhatsAppCloudApiService $service)
@@ -328,5 +357,32 @@ class WhatsAppController extends Controller
     private function erpPhone(string $phone): string
     {
         return '+'.substr($phone, 0, 3).' '.substr($phone, 3);
+    }
+
+    private function productImageDataUri(?string $url): ?string
+    {
+        if (blank($url)) return null;
+        $path = parse_url($url, PHP_URL_PATH) ?: $url;
+        $file = public_path(ltrim($path, '/'));
+        if (! is_file($file) || filesize($file) > 8 * 1024 * 1024) {
+            return null;
+        }
+        $mime = mime_content_type($file) ?: 'image/jpeg';
+        return 'data:'.$mime.';base64,'.base64_encode(file_get_contents($file));
+    }
+
+    private function shapeArabicHtml(string $html): string
+    {
+        $arabic = new Arabic();
+        $positions = $arabic->arIdentify($html);
+        for ($i = count($positions) - 1; $i >= 0; $i -= 2) {
+            $html = substr_replace(
+                $html,
+                $arabic->utf8Glyphs(substr($html, $positions[$i - 1], $positions[$i] - $positions[$i - 1])),
+                $positions[$i - 1],
+                $positions[$i] - $positions[$i - 1]
+            );
+        }
+        return $html;
     }
 }

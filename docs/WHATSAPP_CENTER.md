@@ -58,8 +58,12 @@ Phone numbers must use international format without spaces. The sending endpoint
 - Supported outgoing files include images, PDF, Office documents, audio and MP4 up to 16 MB.
 - The Flutter conversation plays voice notes and videos inline, records and sends voice notes, and sends camera/gallery videos.
 - Voice notes are recorded as MP4/AAC for WhatsApp compatibility and displayed with an inline waveform.
+- Recorded MP4 containers are explicitly uploaded as `audio/mp4`, so Meta stores and renders them as voice notes rather than videos.
+- Holding the microphone records until release, horizontal movement cancels, and sliding upward locks recording to expose pause/delete/send controls.
+- Sent and received voice notes render with a sender avatar, play/pause control, seekable waveform, and duration.
+- The composer includes an emoji panel, an in-app photo/video camera, and separate gallery/file attachment choices.
 - Swipe or long-press a message to reply. Incoming and outgoing reply context is preserved using Meta message IDs.
-- The conversation menu can share selected products. Synced products are sent as a native WhatsApp catalog list; unsynced products fall back to a formatted text list.
+- The conversation menu opens an instant-sale-style product picker. Selected products are rendered into a PDF with image, name, price, code, model, category, stock and description, then sent as a WhatsApp document.
 - While an admin composes text, Laravel sends Meta's typing indicator using the latest inbound message ID. This is best-effort and never blocks sending.
 - A welcome reply is sent after the first inbound message and at most once per configured cooldown period. A cache lock prevents duplicate welcomes from simultaneous inbound messages.
 - When enabled, the welcome is followed by a native WhatsApp interactive list for products, maintenance, inquiries, or contacting an employee.
@@ -68,9 +72,11 @@ Phone numbers must use international format without spaces. The sending endpoint
 - If Meta supplies a deleted/revoked inbound-message event with the original message ID, the stored copy remains visible with a customer-deleted warning. Cloud API does not provide an endpoint for deleting a sent message from the customer's phone.
 - WhatsApp Cloud API does not expose the customer's live typing state to the webhook, so the admin app cannot reliably display that the customer is typing.
 - The center displays a `wa.me` QR for `WHATSAPP_DISPLAY_PHONE_NUMBER` and provides an A4 PDF for printing, saving and sharing.
+- Flutter centers the QR on a square white canvas with a WhatsApp-green frame before sharing it as an image.
 
 ## Production notes
 
+- Access is controlled by the existing `Messages Section` employee permission. Admins can grant it either from employee add/edit or from the WhatsApp settings employee-access list; both update the same `employee_permissions` records.
 - Use a permanent system-user token, HTTPS, a queue worker, and restricted Meta permissions.
 - Never commit `.env`, expose the access token to Flutter, or log credentials.
 - Set the app to Live mode after Meta business verification and test-number validation.
