@@ -56,7 +56,8 @@ class MetaCatalogHierarchyService
             filterField: 'custom_label_0',
             filterValue: 'DRBIKE-C-'.$category->id,
             filter: ['custom_label_0' => ['i_contains' => 'DRBIKE-C-'.$category->id]],
-            enabled: (bool) $category->isShow,
+            enabled: (bool) $category->isShow
+                && $this->hasSyncedMembers('category', (int) $category->id),
         );
     }
 
@@ -76,7 +77,9 @@ class MetaCatalogHierarchyService
             filterField: 'custom_label_1',
             filterValue: $token,
             filter: ['custom_label_1' => ['i_contains' => $token]],
-            enabled: (bool) $subCategory->isShow && (bool) ($subCategory->category?->isShow ?? true),
+            enabled: (bool) $subCategory->isShow
+                && (bool) ($subCategory->category?->isShow ?? true)
+                && $this->hasSyncedMembers('sub_category', (int) $subCategory->id),
         );
     }
 
@@ -196,5 +199,23 @@ class MetaCatalogHierarchyService
         return $set->source_type === 'category'
             ? Product::query()->where('category_id', $set->source_id)->count()
             : SubCategoryProduct::query()->where('sub_category_id', $set->source_id)->count();
+    }
+
+    private function hasSyncedMembers(string $sourceType, int $sourceId): bool
+    {
+        $query = Product::query()
+            ->where('isShow', true)
+            ->where(function ($q) {
+                $q->where('meta_catalog_sync_status', 'synced')
+                    ->orWhereHas('sizes.colorSizes', fn ($variants) => $variants->where('meta_catalog_sync_status', 'synced'));
+            });
+
+        if ($sourceType === 'category') {
+            $query->where('category_id', $sourceId);
+        } else {
+            $query->whereHas('subCategories', fn ($pivots) => $pivots->where('sub_category_id', $sourceId));
+        }
+
+        return $query->exists();
     }
 }

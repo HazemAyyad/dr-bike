@@ -26,10 +26,12 @@ class SyncMetaCatalogHierarchyJob implements ShouldQueue
     {
         Log::info('[MetaCatalogHierarchyJob] started', ['resync_products' => $this->resyncProducts]);
         try {
-            $result = $service->syncAll();
             if ($this->resyncProducts) {
-                BulkSyncMetaCatalogJob::dispatch()->onConnection('database');
+                BulkSyncMetaCatalogJob::dispatch(true, true)->onConnection('database');
+                Log::info('[MetaCatalogHierarchyJob] membership refresh queued');
+                return;
             }
+            $result = $service->syncAll();
             Log::info('[MetaCatalogHierarchyJob] completed', $result);
         } catch (\Throwable $e) {
             Log::error('[MetaCatalogHierarchyJob] failed', [
