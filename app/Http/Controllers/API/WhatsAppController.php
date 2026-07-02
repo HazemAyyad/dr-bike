@@ -379,7 +379,21 @@ class WhatsAppController extends Controller
         try {
             $result = $callback();
             $failed = data_get($result, 'message.status') === 'failed';
-            return response()->json(['status' => $failed ? 'error' : 'success'] + $result, $failed ? 422 : 200);
+            if ($failed) {
+                $error = (string) data_get($result, 'message.error_message', '');
+                $message = str_contains($error, '132001')
+                    ? 'قالب واتساب غير متاح بعد. تأكد أن اسمه ولغته مطابقان وأن حالته Approved في Meta.'
+                    : ($error ?: 'تعذر إرسال رسالة واتساب.');
+
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $message,
+                    'failed_message' => data_get($result, 'message'),
+                    'api_response' => data_get($result, 'api_response'),
+                ], 422);
+            }
+
+            return response()->json(['status' => 'success'] + $result);
         } catch (ValidationException $e) {
             throw $e;
         } catch (\Throwable $e) {
