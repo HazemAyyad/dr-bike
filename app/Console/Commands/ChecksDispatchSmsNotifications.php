@@ -6,6 +6,7 @@ use App\Models\CheckNotificationRule;
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
 use App\Services\CheckSmsNotificationService;
+use App\Services\CheckPushNotificationService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -15,7 +16,10 @@ class ChecksDispatchSmsNotifications extends Command
 
     protected $description = 'Dispatch scheduled SMS notifications for checks.';
 
-    public function handle(CheckSmsNotificationService $service): int
+    public function handle(
+        CheckSmsNotificationService $smsService,
+        CheckPushNotificationService $pushService
+    ): int
     {
         $now = now();
         $sent = 0;
@@ -32,7 +36,9 @@ class ChecksDispatchSmsNotifications extends Command
 
             $checks = $this->checksForRule($rule);
             foreach ($checks as $check) {
-                $log = $service->sendForCheck($rule, $check, $rule->type);
+                $log = $rule->channel === 'push'
+                    ? $pushService->sendForCheck($rule, $check, $rule->type)
+                    : $smsService->sendForCheck($rule, $check, $rule->type);
                 if ($log->wasRecentlyCreated || $log->sent_at) {
                     $sent++;
                 }
@@ -61,22 +67,16 @@ class ChecksDispatchSmsNotifications extends Command
         if ($rule->type === 'before_due') {
             $dueOn = now()->copy()->addDays($rule->days)->toDateString();
 
-            return IncomingCheck::query()
+            $query = $rule->check_direction === 'incoming'
+                ? IncomingCheck::query()->with(['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller'])
+                : OutgoingCheck::query()->with(['customer', 'seller']);
+
+            return $query
                 ->whereDate('due_date', $dueOn)
                 ->where(function ($q) {
                     $this->applyNotCashedScope($q);
                 })
-                ->with(['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller'])
-                ->get()
-                ->concat(
-                    OutgoingCheck::query()
-                        ->whereDate('due_date', $dueOn)
-                        ->where(function ($q) {
-                            $this->applyNotCashedScope($q);
-                        })
-                        ->with(['customer', 'seller'])
-                        ->get()
-                );
+                ->get();
         }
 
         $statuses = $rule->type === 'cashed'
@@ -84,18 +84,14 @@ class ChecksDispatchSmsNotifications extends Command
             : ['returned'];
         $actionDate = now()->copy()->subDays($rule->days)->toDateString();
 
-        return IncomingCheck::query()
+        $query = $rule->check_direction === 'incoming'
+            ? IncomingCheck::query()->with(['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller'])
+            : OutgoingCheck::query()->with(['customer', 'seller']);
+
+        return $query
             ->whereIn('status', $statuses)
             ->whereDate('updated_at', $actionDate)
-            ->with(['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller'])
-            ->get()
-            ->concat(
-                OutgoingCheck::query()
-                    ->whereIn('status', $statuses)
-                    ->whereDate('updated_at', $actionDate)
-                    ->with(['customer', 'seller'])
-                    ->get()
-            );
+            ->get();
     }
 
     private function applyNotCashedScope($query): void

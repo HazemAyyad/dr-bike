@@ -226,6 +226,9 @@ class WhatsAppController extends Controller
         $html = view('whatsapp.products-pdf', [
             'products' => $rows,
             'generatedAt' => now()->format('Y-m-d H:i'),
+            'logo' => 'data:image/jpeg;base64,'.base64_encode(
+                file_get_contents(public_path('appImages/logo.jpg'))
+            ),
         ])->render();
         $html = $this->shapeArabicHtml($html);
         $path = storage_path('app/whatsapp-products-'.uniqid().'.pdf');

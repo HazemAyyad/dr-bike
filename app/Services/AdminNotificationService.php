@@ -814,7 +814,10 @@ class AdminNotificationService
             ->exists();
     }
 
-    public function pushToAdminDevices(AdminNotification $notification): void
+    /**
+     * @return array{sent: int, failed: int, token_count: int}
+     */
+    public function pushToAdminDevices(AdminNotification $notification): array
     {
         $tokens = AdminDeviceToken::query()->pluck('fcm_token')->all();
         $tokenCount = count($tokens);
@@ -830,7 +833,7 @@ class AdminNotificationService
         if ($tokens === []) {
             Log::warning('Admin FCM broadcast skipped: no device tokens');
 
-            return;
+            return ['sent' => 0, 'failed' => 0, 'token_count' => 0];
         }
 
         $data = $this->buildFcmDataPayload($notification);
@@ -866,6 +869,12 @@ class AdminNotificationService
             'failed' => $failed,
             'token_count' => $tokenCount,
         ]);
+
+        return [
+            'sent' => $sent,
+            'failed' => $failed,
+            'token_count' => $tokenCount,
+        ];
     }
 
     /**

@@ -576,6 +576,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Checks','refresh.t
       Route::post('/add/incoming/checks/batch' , [IncomingChecks::class,'storeBatch']);
       Route::get('/check-notification-rules' , [CheckNotificationRulesController::class,'index']);
       Route::post('/check-notification-rules' , [CheckNotificationRulesController::class,'store']);
+      Route::get('/check-notification-rules/check-owner' , [CheckNotificationRulesController::class,'checkOwner']);
+      Route::put('/check-notification-rules/check-owner-phone' , [CheckNotificationRulesController::class,'updateCheckOwnerPhone']);
       Route::put('/check-notification-rules/{rule}' , [CheckNotificationRulesController::class,'update']);
       Route::delete('/check-notification-rules/{rule}' , [CheckNotificationRulesController::class,'destroy']);
       Route::post('/cash/incoming/check/to/person' , [IncomingChecks::class,'cashCheckToPerson']);

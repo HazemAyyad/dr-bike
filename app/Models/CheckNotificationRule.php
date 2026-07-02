@@ -11,6 +11,9 @@ class CheckNotificationRule extends Model
 
     protected $fillable = [
         'type',
+        'check_direction',
+        'channel',
+        'recipient',
         'days',
         'trigger_mode',
         'send_time',

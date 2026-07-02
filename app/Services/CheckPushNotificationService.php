@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CheckNotificationLog;
 use App\Models\CheckNotificationRule;
+use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
 
 class CheckPushNotificationService
@@ -13,12 +14,18 @@ class CheckPushNotificationService
         protected AdminNotificationService $adminNotificationService
     ) {}
 
-    public function dispatchForAction(OutgoingCheck $check, string $eventType): void
+    public function dispatchForAction(IncomingCheck|OutgoingCheck $check, string $eventType): void
     {
-        $check->loadMissing(['customer', 'seller']);
+        $direction = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
+        $check->loadMissing($check instanceof IncomingCheck
+            ? ['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller']
+            : ['customer', 'seller']);
 
         $rules = CheckNotificationRule::query()
             ->where('type', $eventType)
+            ->where('check_direction', $direction)
+            ->where('channel', 'push')
+            ->where('recipient', 'admin')
             ->where('trigger_mode', 'on_action')
             ->where('is_active', true)
             ->get();
@@ -30,17 +37,20 @@ class CheckPushNotificationService
 
     public function sendForCheck(
         CheckNotificationRule $rule,
-        OutgoingCheck $check,
+        IncomingCheck|OutgoingCheck $check,
         string $eventType
     ): CheckNotificationLog {
-        $check->loadMissing(['customer', 'seller']);
+        $direction = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
+        $check->loadMissing($check instanceof IncomingCheck
+            ? ['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller']
+            : ['customer', 'seller']);
 
         $message = $this->messageService->renderMessageForCheck($rule->message, $check);
 
         $log = CheckNotificationLog::firstOrCreate(
             [
                 'rule_id' => $rule->id,
-                'check_type' => 'outgoing',
+                'check_type' => $direction,
                 'check_id' => $check->id,
                 'event_type' => $eventType,
             ],
@@ -60,7 +70,7 @@ class CheckPushNotificationService
         ]);
 
         $notificationType = $this->notificationTypeForEvent($eventType);
-        $title = $this->titleForEvent($eventType);
+        $title = $this->titleForEvent($eventType, $direction);
 
         $checkNumber = (string) ($check->check_id ?? $check->id);
         $dueDate = $check->due_date ? (string) $check->due_date : '';
@@ -68,7 +78,7 @@ class CheckPushNotificationService
         $data = [
             'check_id' => (string) $check->id,
             'check_number' => $checkNumber,
-            'check_type' => 'outgoing',
+            'check_type' => $direction,
             'amount' => (string) ($check->total ?? ''),
             'due_date' => $dueDate,
             'event_type' => $eventType,
@@ -76,21 +86,26 @@ class CheckPushNotificationService
         ];
 
         try {
-            $this->adminNotificationService->create(
+            $notification = $this->adminNotificationService->create(
                 $notificationType,
                 $title,
                 $message,
                 $data,
                 null,
-                'outgoing_check',
+                $direction.'_check',
                 (int) $check->id,
-                true
+                false
             );
 
+            $delivery = $this->adminNotificationService->pushToAdminDevices($notification);
+            $wasSent = $delivery['sent'] > 0;
+
             $log->fill([
-                'status' => 'sent',
-                'response' => 'Admin push notification sent.',
-                'sent_at' => now(),
+                'status' => $wasSent ? 'sent' : 'failed',
+                'response' => $wasSent
+                    ? "Admin push sent to {$delivery['sent']} device(s); {$delivery['failed']} failed."
+                    : "Admin push failed: {$delivery['failed']} failed from {$delivery['token_count']} token(s).",
+                'sent_at' => $wasSent ? now() : null,
             ])->save();
         } catch (\Throwable $e) {
             $log->fill([
@@ -111,12 +126,14 @@ class CheckPushNotificationService
         };
     }
 
-    private function titleForEvent(string $eventType): string
+    private function titleForEvent(string $eventType, string $direction): string
     {
+        $label = $direction === 'incoming' ? 'Incoming' : 'Outgoing';
+
         return match ($eventType) {
-            'cashed' => 'Outgoing Check Cashed',
-            'returned' => 'Outgoing Check Returned',
-            default => 'Outgoing Check Reminder',
+            'cashed' => "{$label} Check Cashed",
+            'returned' => "{$label} Check Returned",
+            default => "{$label} Check Reminder",
         };
     }
 }

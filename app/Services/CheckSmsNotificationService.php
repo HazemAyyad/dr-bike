@@ -15,35 +15,31 @@ class CheckSmsNotificationService
 {
     public function dispatchForAction(IncomingCheck|OutgoingCheck $check, string $eventType): void
     {
-        if ($check instanceof OutgoingCheck) {
-            app(CheckPushNotificationService::class)->dispatchForAction($check, $eventType);
-
-            return;
-        }
-
         $check->loadMissing($this->relationsFor($check));
+        $checkDirection = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
 
         $rules = CheckNotificationRule::query()
             ->where('type', $eventType)
+            ->where('check_direction', $checkDirection)
             ->where('trigger_mode', 'on_action')
             ->where('is_active', true)
             ->get();
 
         foreach ($rules as $rule) {
-            $this->sendForCheck($rule, $check, $eventType);
+            if ($rule->channel === 'push') {
+                app(CheckPushNotificationService::class)->sendForCheck($rule, $check, $eventType);
+            } else {
+                $this->sendForCheck($rule, $check, $eventType);
+            }
         }
     }
 
     public function sendForCheck(CheckNotificationRule $rule, IncomingCheck|OutgoingCheck $check, string $eventType): CheckNotificationLog
     {
-        if ($check instanceof OutgoingCheck) {
-            return app(CheckPushNotificationService::class)->sendForCheck($rule, $check, $eventType);
-        }
-
         $check->loadMissing($this->relationsFor($check));
 
         $checkType = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
-        $phones = $this->resolveRecipientPhones($check, $eventType);
+        $phones = $this->resolveRecipientPhones($rule, $check);
         $message = $this->renderMessage($rule->message, $check);
         $phoneLabel = implode(', ', $phones);
 
@@ -73,9 +69,9 @@ class CheckSmsNotificationService
         if ($phones === []) {
             $log->fill([
                 'status' => 'no_phone',
-                'response' => $eventType === 'before_due'
-                    ? 'No admin phone number found for check reminder SMS.'
-                    : 'No phone number found for check owner or admin.',
+                'response' => $rule->recipient === 'admin'
+                    ? 'No admin phone number found.'
+                    : 'Check owner phone is missing.',
             ])->save();
 
             return $log;
@@ -129,18 +125,18 @@ class CheckSmsNotificationService
     /**
      * @return array<int, string>
      */
-    private function resolveRecipientPhones(IncomingCheck|OutgoingCheck $check, string $eventType): array
+    private function resolveRecipientPhones(
+        CheckNotificationRule $rule,
+        IncomingCheck|OutgoingCheck $check
+    ): array
     {
-        if ($eventType === 'before_due') {
+        if ($rule->recipient === 'admin') {
             return $this->resolveAdminPhones();
         }
 
         $personPhone = $this->resolveCheckPersonPhone($check);
-        if ($personPhone) {
-            return [$personPhone];
-        }
 
-        return $this->resolveAdminPhones();
+        return $personPhone ? [$personPhone] : [];
     }
 
     /**
