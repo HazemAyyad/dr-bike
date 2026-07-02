@@ -42,12 +42,25 @@ class WhatsAppCloudApiService
         return $phone;
     }
 
-    public function sendText(string $phone, string $message, ?int $adminId = null): array
+    public function sendText(
+        string $phone,
+        string $message,
+        ?int $adminId = null,
+        ?WhatsAppMessage $replyTo = null,
+        bool $automatic = false
+    ): array
     {
         return $this->send($phone, [
+            'context' => $replyTo?->meta_message_id ? ['message_id' => $replyTo->meta_message_id] : null,
             'type' => 'text',
             'text' => ['preview_url' => false, 'body' => $message],
-        ], ['message_type' => 'text', 'body' => $message], $adminId);
+        ], [
+            'message_type' => 'text',
+            'body' => $message,
+            'reply_to_message_id' => $replyTo?->id,
+            'reply_to_meta_message_id' => $replyTo?->meta_message_id,
+            'is_automatic' => $automatic,
+        ], $adminId);
     }
 
     public function sendTemplate(string $phone, string $templateName, string $language = 'ar', array $components = [], ?int $adminId = null): array
@@ -96,9 +109,96 @@ class WhatsAppCloudApiService
             $type => $media,
         ], [
             'message_type' => $type,
-            'body' => $caption ?: $file->getClientOriginalName(),
+            'body' => $type === 'document'
+                ? ($caption ?: $file->getClientOriginalName())
+                : $caption,
             'media_url' => $mediaId,
         ], $adminId);
+    }
+
+    public function sendProductList(string $phone, array $products, ?int $adminId = null): array
+    {
+        $catalogId = (string) config('meta_commerce.catalog_id');
+        if ($catalogId === '') {
+            throw new RuntimeException('META_CATALOG_ID is not configured.');
+        }
+
+        $rows = collect($products)
+            ->map(fn ($product) => ['product_retailer_id' => $product->meta_catalog_retailer_id])
+            ->values()
+            ->all();
+
+        return $this->send($phone, [
+            'type' => 'interactive',
+            'interactive' => [
+                'type' => 'product_list',
+                'header' => ['type' => 'text', 'text' => 'منتجات دكتور بايك'],
+                'body' => ['text' => 'المنتجات التي اخترناها لك'],
+                'footer' => ['text' => 'اضغط على المنتج لعرض التفاصيل'],
+                'action' => [
+                    'catalog_id' => $catalogId,
+                    'sections' => [[
+                        'title' => 'المنتجات',
+                        'product_items' => $rows,
+                    ]],
+                ],
+            ],
+        ], [
+            'message_type' => 'interactive',
+            'body' => 'مشاركة '.count($rows).' منتجات',
+        ], $adminId);
+    }
+
+    public function sendWelcomeMenu(string $phone): array
+    {
+        return $this->send($phone, [
+            'type' => 'interactive',
+            'interactive' => [
+                'type' => 'list',
+                'header' => [
+                    'type' => 'text',
+                    'text' => 'كيف يمكننا مساعدتك؟',
+                ],
+                'body' => [
+                    'text' => 'اختر القسم المناسب حتى نوجّه طلبك بسرعة.',
+                ],
+                'footer' => [
+                    'text' => 'د. بايك لخدمات الدراجات',
+                ],
+                'action' => [
+                    'button' => 'اختر الخدمة',
+                    'sections' => [[
+                        'title' => 'الخدمات',
+                        'rows' => [
+                            [
+                                'id' => 'products',
+                                'title' => 'المنتجات',
+                                'description' => 'استعراض وطلب منتجات د. بايك',
+                            ],
+                            [
+                                'id' => 'maintenance',
+                                'title' => 'الصيانة',
+                                'description' => 'طلب صيانة أو متابعة حالة الدراجة',
+                            ],
+                            [
+                                'id' => 'inquiries',
+                                'title' => 'الاستفسارات',
+                                'description' => 'الأسئلة العامة والأسعار والخدمات',
+                            ],
+                            [
+                                'id' => 'employee',
+                                'title' => 'التواصل مع موظف',
+                                'description' => 'تحويل المحادثة مباشرة إلى أحد الموظفين',
+                            ],
+                        ],
+                    ]],
+                ],
+            ],
+        ], [
+            'message_type' => 'interactive',
+            'body' => 'قائمة الخدمات: المنتجات، الصيانة، الاستفسارات، والتواصل مع موظف',
+            'is_automatic' => true,
+        ], null);
     }
 
     public function downloadMedia(string $mediaId): array
@@ -216,11 +316,11 @@ class WhatsAppCloudApiService
         ]));
 
         try {
-            $response = $this->client()->post($this->endpoint(), array_merge([
+            $response = $this->client()->post($this->endpoint(), array_filter(array_merge([
                 'messaging_product' => 'whatsapp',
                 'recipient_type' => 'individual',
                 'to' => $phone,
-            ], $payload));
+            ], $payload), fn ($value) => $value !== null));
             $data = $this->responseArray($response);
             $metaId = data_get($data, 'body.messages.0.id');
             $message->update([

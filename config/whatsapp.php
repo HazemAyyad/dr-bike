@@ -8,4 +8,14 @@ return [
     'display_phone_number' => env('WHATSAPP_DISPLAY_PHONE_NUMBER'),
     'verify_token' => env('WHATSAPP_VERIFY_TOKEN'),
     'timeout' => (int) env('WHATSAPP_HTTP_TIMEOUT', 20),
+    'welcome_enabled' => filter_var(env('WHATSAPP_WELCOME_ENABLED', true), FILTER_VALIDATE_BOOL),
+    'welcome_cooldown_hours' => (int) env('WHATSAPP_WELCOME_COOLDOWN_HOURS', 24),
+    'welcome_message' => env(
+        'WHATSAPP_WELCOME_MESSAGE',
+        "أهلًا بك في د. بايك 👋\nتم استلام رسالتك وسيقوم أحد الموظفين بالرد عليك قريبًا."
+    ),
+    'welcome_menu_enabled' => filter_var(
+        env('WHATSAPP_WELCOME_MENU_ENABLED', true),
+        FILTER_VALIDATE_BOOL
+    ),
 ];

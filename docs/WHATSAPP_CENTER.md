@@ -21,6 +21,10 @@ WHATSAPP_BUSINESS_ACCOUNT_ID=your_business_account_id
 WHATSAPP_DISPLAY_PHONE_NUMBER=970594672857
 WHATSAPP_VERIFY_TOKEN=a_long_random_private_verify_token
 WHATSAPP_HTTP_TIMEOUT=20
+WHATSAPP_WELCOME_ENABLED=true
+WHATSAPP_WELCOME_COOLDOWN_HOURS=24
+WHATSAPP_WELCOME_MESSAGE="أهلًا بك في د. بايك 👋\nتم استلام رسالتك وسيقوم أحد الموظفين بالرد عليك قريبًا."
+WHATSAPP_WELCOME_MENU_ENABLED=true
 ```
 
 Run:
@@ -53,7 +57,15 @@ Phone numbers must use international format without spaces. The sending endpoint
 - Incoming image, document, audio and video payloads are saved by the webhook and served through authenticated Laravel endpoints.
 - Supported outgoing files include images, PDF, Office documents, audio and MP4 up to 16 MB.
 - The Flutter conversation plays voice notes and videos inline, records and sends voice notes, and sends camera/gallery videos.
+- Voice notes are recorded as MP4/AAC for WhatsApp compatibility and displayed with an inline waveform.
+- Swipe or long-press a message to reply. Incoming and outgoing reply context is preserved using Meta message IDs.
+- The conversation menu can share selected products. Synced products are sent as a native WhatsApp catalog list; unsynced products fall back to a formatted text list.
 - While an admin composes text, Laravel sends Meta's typing indicator using the latest inbound message ID. This is best-effort and never blocks sending.
+- A welcome reply is sent after the first inbound message and at most once per configured cooldown period. A cache lock prevents duplicate welcomes from simultaneous inbound messages.
+- When enabled, the welcome is followed by a native WhatsApp interactive list for products, maintenance, inquiries, or contacting an employee.
+- Outgoing bubbles identify the employee who replied; automatic messages are labeled `الرد التلقائي`.
+- Employees can hide any message from their own view without deleting the stored message or affecting other employees.
+- If Meta supplies a deleted/revoked inbound-message event with the original message ID, the stored copy remains visible with a customer-deleted warning. Cloud API does not provide an endpoint for deleting a sent message from the customer's phone.
 - WhatsApp Cloud API does not expose the customer's live typing state to the webhook, so the admin app cannot reliably display that the customer is typing.
 - The center displays a `wa.me` QR for `WHATSAPP_DISPLAY_PHONE_NUMBER` and provides an A4 PDF for printing, saving and sharing.
 

@@ -852,6 +852,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section',
     Route::post('/whatsapp/conversations/{id}/send', [WhatsAppController::class, 'sendToConversation'])->whereNumber('id')->middleware('throttle:20,1');
     Route::post('/whatsapp/conversations/{id}/send-media', [WhatsAppController::class, 'sendMediaToConversation'])->whereNumber('id')->middleware('throttle:10,1');
     Route::post('/whatsapp/conversations/{id}/typing', [WhatsAppController::class, 'typing'])->whereNumber('id')->middleware('throttle:12,1');
+    Route::get('/whatsapp/products', [WhatsAppController::class, 'products']);
+    Route::post('/whatsapp/conversations/{id}/send-products', [WhatsAppController::class, 'sendProducts'])->whereNumber('id')->middleware('throttle:10,1');
+    Route::delete('/whatsapp/conversations/{id}/messages/{messageId}', [WhatsAppController::class, 'hideMessage'])->whereNumber(['id', 'messageId']);
     Route::post('/whatsapp/conversations/{id}/link-person', [WhatsAppController::class, 'linkPerson'])->whereNumber('id');
     Route::get('/whatsapp/messages/{id}/media', [WhatsAppController::class, 'media'])->whereNumber('id');
     Route::get('/whatsapp/qr', [WhatsAppController::class, 'qr']);

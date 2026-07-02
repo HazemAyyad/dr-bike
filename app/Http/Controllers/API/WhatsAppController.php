@@ -8,6 +8,7 @@ use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessage;
 use App\Models\Customer;
 use App\Models\Seller;
+use App\Models\Product;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -51,7 +52,16 @@ class WhatsAppController extends Controller
     public function showConversation(Request $request, int $id)
     {
         $conversation = WhatsAppConversation::query()->with('contact')->findOrFail($id);
-        $messages = $conversation->messages()->orderByDesc('created_at')->orderByDesc('id')->paginate($this->perPage($request, 30));
+        $hiddenIds = DB::table('whatsapp_message_user_hides')
+            ->where('user_id', $request->user()->id)
+            ->pluck('whatsapp_message_id');
+        $messages = $conversation->messages()
+            ->whereNotIn('id', $hiddenIds)
+            ->with([
+            'replyTo:id,message_type,body,direction',
+            'sender:id,name',
+        ])
+            ->orderByDesc('created_at')->orderByDesc('id')->paginate($this->perPage($request, 30));
         $conversation->update(['unread_count' => 0]);
         return response()->json(['status' => 'success', 'conversation' => $conversation->fresh('contact'), 'messages' => $messages]);
     }
@@ -59,8 +69,19 @@ class WhatsAppController extends Controller
     public function sendToConversation(Request $request, int $id, WhatsAppCloudApiService $service)
     {
         $conversation = WhatsAppConversation::query()->findOrFail($id);
-        $data = $request->validate(['message' => 'required|string|max:4096']);
-        return $this->sendSafely(fn () => $service->sendText($conversation->phone, $data['message'], $request->user()->id));
+        $data = $request->validate([
+            'message' => 'required|string|max:4096',
+            'reply_to_message_id' => 'nullable|integer',
+        ]);
+        $replyTo = isset($data['reply_to_message_id'])
+            ? $conversation->messages()->findOrFail($data['reply_to_message_id'])
+            : null;
+        return $this->sendSafely(fn () => $service->sendText(
+            $conversation->phone,
+            $data['message'],
+            $request->user()->id,
+            $replyTo
+        ));
     }
 
     public function sendMediaToConversation(Request $request, int $id, WhatsAppCloudApiService $service)
@@ -99,6 +120,89 @@ class WhatsAppController extends Controller
             'typing_sent' => $result['successful'],
             'api_response' => $result,
         ], $result['successful'] ? 200 : 422);
+    }
+
+    public function hideMessage(Request $request, int $id, int $messageId)
+    {
+        $conversation = WhatsAppConversation::query()->findOrFail($id);
+        $message = $conversation->messages()->findOrFail($messageId);
+
+        DB::table('whatsapp_message_user_hides')->insertOrIgnore([
+            'whatsapp_message_id' => $message->id,
+            'user_id' => $request->user()->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Message hidden for this user only.',
+        ]);
+    }
+
+    public function products(Request $request)
+    {
+        $search = trim((string) $request->input('search'));
+        $query = Product::query()
+            ->with(['normalImages' => fn ($q) => $q->select('id', 'itemId', 'imageUrl')])
+            ->where('isShow', 1);
+
+        if ($search !== '') {
+            $query->where(fn ($q) => $q
+                ->where('nameAr', 'like', "%{$search}%")
+                ->orWhere('nameEng', 'like', "%{$search}%")
+                ->orWhere('product_code', 'like', "%{$search}%"));
+        }
+
+        return $this->ok($query->orderBy('nameAr')->paginate($this->perPage($request, 40))
+            ->through(fn (Product $product) => [
+                'id' => (string) $product->id,
+                'name' => $product->nameAr ?: $product->nameEng,
+                'price' => $product->normailPrice,
+                'image' => $product->normalImages->first()?->imageUrl,
+                'retailer_id' => $product->meta_catalog_retailer_id,
+                'catalog_synced' => $product->meta_catalog_sync_status === 'synced'
+                    && filled($product->meta_catalog_retailer_id),
+            ]), 'products');
+    }
+
+    public function sendProducts(Request $request, int $id, WhatsAppCloudApiService $service)
+    {
+        $conversation = WhatsAppConversation::query()->findOrFail($id);
+        $data = $request->validate([
+            'product_ids' => 'required|array|min:1|max:30',
+            'product_ids.*' => 'required|string',
+        ]);
+        $products = Product::query()
+            ->whereIn('id', $data['product_ids'])
+            ->get();
+        abort_if($products->count() !== count(array_unique($data['product_ids'])), 422, 'Some products were not found.');
+
+        $allCatalogSynced = $products->every(fn (Product $product) =>
+            $product->meta_catalog_sync_status === 'synced'
+            && filled($product->meta_catalog_retailer_id));
+
+        return $this->sendSafely(function () use ($service, $conversation, $products, $request, $allCatalogSynced) {
+            if ($allCatalogSynced) {
+                return $service->sendProductList(
+                    $conversation->phone,
+                    $products,
+                    $request->user()->id
+                );
+            }
+
+            $body = "منتجات دكتور بايك:\n\n".$products->values()
+                ->map(fn (Product $product, int $index) =>
+                    ($index + 1).'. '.($product->nameAr ?: $product->nameEng)
+                    .(filled($product->normailPrice) ? "\nالسعر: {$product->normailPrice} ₪" : ''))
+                ->join("\n\n");
+
+            return $service->sendText(
+                $conversation->phone,
+                mb_substr($body, 0, 4096),
+                $request->user()->id
+            );
+        });
     }
 
     public function media(int $id, WhatsAppCloudApiService $service)

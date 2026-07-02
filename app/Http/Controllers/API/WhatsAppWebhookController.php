@@ -8,6 +8,7 @@ use App\Services\WhatsApp\WhatsAppCloudApiService;
 use App\Services\WhatsApp\WhatsAppIncomingNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class WhatsAppWebhookController extends Controller
 {
@@ -38,9 +39,13 @@ class WhatsAppWebhookController extends Controller
                         ->mapWithKeys(fn ($contact) => [(string) data_get($contact, 'wa_id') => data_get($contact, 'profile.name')]);
 
                     foreach ((array) data_get($value, 'messages', []) as $incoming) {
+                        if ($this->markCustomerDeletion($incoming)) {
+                            continue;
+                        }
                         $message = $this->saveIncoming($service, $incoming, $names->get((string) data_get($incoming, 'from')));
                         if ($message) {
                             $notificationService->notify($message);
+                            $this->sendWelcomeIfNeeded($service, $message);
                         }
                     }
                     foreach ((array) data_get($value, 'statuses', []) as $status) {
@@ -52,6 +57,69 @@ class WhatsAppWebhookController extends Controller
             Log::warning('WhatsApp webhook processing failed', ['error' => $e->getMessage()]);
         }
         return response()->json(['status' => 'success'], 200);
+    }
+
+    private function markCustomerDeletion(array $incoming): bool
+    {
+        $type = (string) data_get($incoming, 'type');
+        if (! in_array($type, ['deleted', 'revoked'], true)) {
+            return false;
+        }
+
+        $originalMetaId = data_get($incoming, 'context.id')
+            ?: data_get($incoming, 'deleted_message_id');
+        if (! $originalMetaId) {
+            return true;
+        }
+
+        WhatsAppMessage::query()
+            ->where('meta_message_id', $originalMetaId)
+            ->where('direction', 'inbound')
+            ->update(['customer_deleted_at' => now()]);
+
+        return true;
+    }
+
+    private function sendWelcomeIfNeeded(
+        WhatsAppCloudApiService $service,
+        WhatsAppMessage $incoming
+    ): void {
+        if (! config('whatsapp.welcome_enabled') || blank(config('whatsapp.welcome_message'))) {
+            return;
+        }
+
+        try {
+            Cache::lock('whatsapp-welcome-'.$incoming->whatsapp_conversation_id, 10)
+                ->block(2, function () use ($service, $incoming) {
+                    $hours = max((int) config('whatsapp.welcome_cooldown_hours', 24), 1);
+                    $recentlyWelcomed = WhatsAppMessage::query()
+                        ->where('whatsapp_conversation_id', $incoming->whatsapp_conversation_id)
+                        ->where('is_automatic', true)
+                        ->where('created_at', '>=', now()->subHours($hours))
+                        ->exists();
+
+                    if ($recentlyWelcomed) {
+                        return;
+                    }
+
+                    $service->sendText(
+                        $incoming->phone,
+                        (string) config('whatsapp.welcome_message'),
+                        null,
+                        null,
+                        true
+                    );
+
+                    if (config('whatsapp.welcome_menu_enabled')) {
+                        $service->sendWelcomeMenu($incoming->phone);
+                    }
+                });
+        } catch (\Throwable $e) {
+            Log::warning('WhatsApp automatic welcome failed', [
+                'conversation_id' => $incoming->whatsapp_conversation_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function saveIncoming(WhatsAppCloudApiService $service, array $incoming, ?string $name): ?WhatsAppMessage
@@ -73,6 +141,10 @@ class WhatsAppWebhookController extends Controller
             default => data_get($incoming, $type.'.caption') ?: '['.$type.']',
         };
         $timestamp = data_get($incoming, 'timestamp') ? now()->setTimestamp((int) data_get($incoming, 'timestamp')) : now();
+        $replyToMetaId = data_get($incoming, 'context.id');
+        $replyTo = $replyToMetaId
+            ? WhatsAppMessage::query()->where('meta_message_id', $replyToMetaId)->first()
+            : null;
 
         $message = WhatsAppMessage::query()->create([
             'whatsapp_conversation_id' => $conversation->id,
@@ -86,6 +158,8 @@ class WhatsAppWebhookController extends Controller
             'meta_status' => 'received',
             'raw_payload' => $incoming,
             'status' => 'received',
+            'reply_to_message_id' => $replyTo?->id,
+            'reply_to_meta_message_id' => $replyToMetaId,
             'created_at' => $timestamp,
             'updated_at' => $timestamp,
         ]);
