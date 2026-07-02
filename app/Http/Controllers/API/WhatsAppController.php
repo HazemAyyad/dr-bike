@@ -75,6 +75,32 @@ class WhatsAppController extends Controller
         ));
     }
 
+    public function typing(int $id, WhatsAppCloudApiService $service)
+    {
+        $conversation = WhatsAppConversation::query()->findOrFail($id);
+        $messageId = $conversation->messages()
+            ->where('direction', 'inbound')
+            ->whereNotNull('meta_message_id')
+            ->latest('id')
+            ->value('meta_message_id');
+
+        if (! $messageId) {
+            return response()->json([
+                'status' => 'success',
+                'typing_sent' => false,
+                'message' => 'No inbound WhatsApp message is available for the typing indicator.',
+            ]);
+        }
+
+        $result = $service->sendTypingIndicator($messageId);
+
+        return response()->json([
+            'status' => $result['successful'] ? 'success' : 'error',
+            'typing_sent' => $result['successful'],
+            'api_response' => $result,
+        ], $result['successful'] ? 200 : 422);
+    }
+
     public function media(int $id, WhatsAppCloudApiService $service)
     {
         $message = WhatsAppMessage::query()->findOrFail($id);

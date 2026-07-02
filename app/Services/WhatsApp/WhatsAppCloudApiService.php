@@ -157,6 +157,18 @@ class WhatsAppCloudApiService
         return $this->responseArray($response);
     }
 
+    public function sendTypingIndicator(string $messageId): array
+    {
+        $this->validateConfig();
+        $response = $this->client()->post($this->endpoint(), [
+            'messaging_product' => 'whatsapp',
+            'status' => 'read',
+            'message_id' => $messageId,
+            'typing_indicator' => ['type' => 'text'],
+        ]);
+        return $this->responseArray($response);
+    }
+
     public function findOrCreateContact(string $phone, ?string $name = null): WhatsAppContact
     {
         $phone = $this->normalizePhone($phone);

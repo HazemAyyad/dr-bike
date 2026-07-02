@@ -52,6 +52,9 @@ Phone numbers must use international format without spaces. The sending endpoint
 - Laravel uploads outgoing images and attachments to Meta; Flutter never receives the Meta access token.
 - Incoming image, document, audio and video payloads are saved by the webhook and served through authenticated Laravel endpoints.
 - Supported outgoing files include images, PDF, Office documents, audio and MP4 up to 16 MB.
+- The Flutter conversation plays voice notes and videos inline, records and sends voice notes, and sends camera/gallery videos.
+- While an admin composes text, Laravel sends Meta's typing indicator using the latest inbound message ID. This is best-effort and never blocks sending.
+- WhatsApp Cloud API does not expose the customer's live typing state to the webhook, so the admin app cannot reliably display that the customer is typing.
 - The center displays a `wa.me` QR for `WHATSAPP_DISPLAY_PHONE_NUMBER` and provides an A4 PDF for printing, saving and sharing.
 
 ## Production notes
