@@ -18,4 +18,12 @@ return [
         env('WHATSAPP_WELCOME_MENU_ENABLED', true),
         FILTER_VALIDATE_BOOL
     ),
+    'reengagement_template_name' => env(
+        'WHATSAPP_REENGAGEMENT_TEMPLATE_NAME',
+        'continue_with_doctor_bike'
+    ),
+    'reengagement_template_language' => env(
+        'WHATSAPP_REENGAGEMENT_TEMPLATE_LANGUAGE',
+        'ar'
+    ),
 ];

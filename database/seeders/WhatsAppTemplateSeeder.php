@@ -14,6 +14,12 @@ class WhatsAppTemplateSeeder extends Seeder
     public function run(): void
     {
         $templates = [
+            [
+                'name' => 'continue_with_doctor_bike',
+                'category' => 're_engagement',
+                'body' => 'مرحباً بك 👋 هل تريد الاستمرار مع دكتور بايك؟ اضغط على الزر أدناه للمتابعة.',
+                'variables' => [],
+            ],
             ['name' => 'task_assigned', 'category' => 'tasks', 'body' => 'مرحباً {{1}}، تم إسناد مهمة جديدة إليك: {{2}}.'],
             ['name' => 'cheque_due_reminder', 'category' => 'cheques', 'body' => 'تذكير: الشيك رقم {{1}} بقيمة {{2}} مستحق بتاريخ {{3}}.'],
             ['name' => 'invoice_created', 'category' => 'invoices', 'body' => 'تم إنشاء الفاتورة رقم {{1}} بقيمة {{2}}. شكراً لتعاملكم معنا.'],

@@ -102,6 +102,19 @@ class WhatsAppController extends Controller
         ));
     }
 
+    public function requestContinuation(Request $request, int $id, WhatsAppCloudApiService $service)
+    {
+        $conversation = WhatsAppConversation::query()->findOrFail($id);
+
+        return $this->sendSafely(fn () => $service->sendTemplate(
+            $conversation->phone,
+            (string) config('whatsapp.reengagement_template_name'),
+            (string) config('whatsapp.reengagement_template_language', 'ar'),
+            [],
+            $request->user()->id
+        ));
+    }
+
     public function sendMediaToConversation(Request $request, int $id, WhatsAppCloudApiService $service)
     {
         $conversation = WhatsAppConversation::query()->findOrFail($id);

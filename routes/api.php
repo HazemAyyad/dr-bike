@@ -852,6 +852,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section',
     Route::get('/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
     Route::get('/whatsapp/conversations/{id}', [WhatsAppController::class, 'showConversation'])->whereNumber('id');
     Route::post('/whatsapp/conversations/{id}/send', [WhatsAppController::class, 'sendToConversation'])->whereNumber('id')->middleware('throttle:20,1');
+    Route::post('/whatsapp/conversations/{id}/request-continuation', [WhatsAppController::class, 'requestContinuation'])->whereNumber('id')->middleware('throttle:5,1');
     Route::post('/whatsapp/conversations/{id}/send-media', [WhatsAppController::class, 'sendMediaToConversation'])->whereNumber('id')->middleware('throttle:10,1');
     Route::post('/whatsapp/conversations/{id}/typing', [WhatsAppController::class, 'typing'])->whereNumber('id')->middleware('throttle:12,1');
     Route::get('/whatsapp/products', [WhatsAppController::class, 'products']);

@@ -872,10 +872,10 @@ class DebtLedgerService
                 $check->id,
                 $customerId,
                 $sellerId,
-                'taken',
+                'given',
                 $amount,
                 $note,
-                $check->created_at?->format('Y-m-d') ?? now()->format('Y-m-d'),
+                now()->format('Y-m-d'),
                 $currency
             );
         }

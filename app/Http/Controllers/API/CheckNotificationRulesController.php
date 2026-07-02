@@ -18,11 +18,15 @@ class CheckNotificationRulesController extends Controller
     private array $channels = ['push', 'sms'];
     private array $recipients = ['admin', 'check_owner'];
 
-    public function index()
+    public function index(Request $request)
     {
+        $direction = $request->query('check_direction');
+        abort_if($direction !== null && ! in_array($direction, $this->directions, true), 422);
+
         return response()->json([
             'status' => 'success',
             'rules' => CheckNotificationRule::query()
+                ->when($direction, fn ($query) => $query->where('check_direction', $direction))
                 ->latest('id')
                 ->get(),
         ], 200);

@@ -25,6 +25,8 @@ WHATSAPP_WELCOME_ENABLED=true
 WHATSAPP_WELCOME_COOLDOWN_HOURS=24
 WHATSAPP_WELCOME_MESSAGE="أهلًا بك في د. بايك 👋\nتم استلام رسالتك وسيقوم أحد الموظفين بالرد عليك قريبًا."
 WHATSAPP_WELCOME_MENU_ENABLED=true
+WHATSAPP_REENGAGEMENT_TEMPLATE_NAME=continue_with_doctor_bike
+WHATSAPP_REENGAGEMENT_TEMPLATE_LANGUAGE=ar
 ```
 
 Run:
@@ -36,6 +38,15 @@ php artisan optimize:clear
 ```
 
 The default Arabic records are local Dr Bike drafting templates. They are not approved Meta templates. Any template sent outside the customer-service window must be separately created and approved in WhatsApp Manager with the same name, language and components.
+
+Create and approve this re-engagement template in WhatsApp Manager:
+
+- Name: `continue_with_doctor_bike`
+- Language: Arabic (`ar`)
+- Body: `مرحباً بك 👋 هل تريد الاستمرار مع دكتور بايك؟ اضغط على الزر أدناه للمتابعة.`
+- Button: Quick reply — `نعم، أريد الاستمرار`
+
+The closed-conversation banner sends this template. Once the customer taps the quick-reply button, the inbound reply opens a new 24-hour customer-service window.
 
 ## Test message
 
