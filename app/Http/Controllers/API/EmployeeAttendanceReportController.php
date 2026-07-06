@@ -15,11 +15,13 @@ class EmployeeAttendanceReportController extends Controller
     public function index(Request $request)
     {
         $validated = $request->validate([
-            'report_type' => ['required', Rule::in(['daily', 'weekly', 'monthly'])],
+            'report_type' => ['required', Rule::in(['daily', 'weekly', 'monthly', 'custom'])],
             'month' => ['required', 'integer', 'between:1,12'],
             'year' => ['required', 'integer', 'min:2000', 'max:2100'],
             'day' => ['nullable', 'integer', 'between:1,31'],
             'week' => ['nullable', 'integer', 'min:1', 'max:6'],
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'employee_ids' => ['nullable', 'array'],
             'employee_ids.*' => ['integer'],
         ]);
@@ -38,8 +40,21 @@ class EmployeeAttendanceReportController extends Controller
                 'week' => __('The week field is required when report type is weekly.'),
             ]);
         }
+        if ($reportType === 'custom' && (empty($validated['date_from']) || empty($validated['date_to']))) {
+            throw ValidationException::withMessages([
+                'date_from' => __('The date from and date to fields are required when report type is custom.'),
+            ]);
+        }
 
-        [$periodStart, $periodEnd] = $this->resolveReportPeriod($reportType, $year, $month, $validated['day'] ?? null, $validated['week'] ?? null);
+        [$periodStart, $periodEnd] = $this->resolveReportPeriod(
+            $reportType,
+            $year,
+            $month,
+            $validated['day'] ?? null,
+            $validated['week'] ?? null,
+            $validated['date_from'] ?? null,
+            $validated['date_to'] ?? null,
+        );
 
         $employeeIds = $this->normalizeEmployeeIdsFromRequest($request);
         /** @phpstan-ignore-next-line */
@@ -81,6 +96,8 @@ class EmployeeAttendanceReportController extends Controller
                 'week' => $validated['week'] ?? null,
                 'period_from' => $periodStart->toDateString(),
                 'period_to' => $periodEnd->toDateString(),
+                'date_from' => $reportType === 'custom' ? $periodStart->toDateString() : null,
+                'date_to' => $reportType === 'custom' ? $periodEnd->toDateString() : null,
                 'employees' => $rows,
             ],
         ]);
@@ -89,10 +106,29 @@ class EmployeeAttendanceReportController extends Controller
     /**
      * @return array{0: Carbon, 1: Carbon}
      */
-    private function resolveReportPeriod(string $reportType, int $year, int $month, ?int $day, ?int $week): array
-    {
+    private function resolveReportPeriod(
+        string $reportType,
+        int $year,
+        int $month,
+        ?int $day,
+        ?int $week,
+        ?string $dateFrom = null,
+        ?string $dateTo = null,
+    ): array {
         $monthStart = Carbon::create($year, $month, 1)->startOfDay();
         $monthEnd = $monthStart->copy()->endOfMonth()->startOfDay();
+
+        if ($reportType === 'custom') {
+            $from = Carbon::parse((string) $dateFrom)->startOfDay();
+            $to = Carbon::parse((string) $dateTo)->startOfDay();
+            if ($to->lt($from)) {
+                throw ValidationException::withMessages([
+                    'date_to' => __('The date to must be after or equal to date from.'),
+                ]);
+            }
+
+            return [$from->copy(), $to->copy()];
+        }
 
         if ($reportType === 'monthly') {
             return [$monthStart->copy(), $monthEnd->copy()];
