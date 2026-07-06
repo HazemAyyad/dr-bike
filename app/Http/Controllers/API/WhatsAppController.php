@@ -381,9 +381,11 @@ class WhatsAppController extends Controller
             $failed = data_get($result, 'message.status') === 'failed';
             if ($failed) {
                 $error = (string) data_get($result, 'message.error_message', '');
-                $message = str_contains($error, '132001')
-                    ? 'قالب واتساب غير متاح بعد. تأكد أن اسمه ولغته مطابقان وأن حالته Approved في Meta.'
-                    : ($error ?: 'تعذر إرسال رسالة واتساب.');
+                $message = match (true) {
+                    str_contains($error, '132001') => 'قالب واتساب غير متاح بعد. تأكد أن اسمه ولغته مطابقان وأن حالته Approved في Meta.',
+                    str_contains(strtolower($error), 'business eligibility payment issue') => 'تعذر إرسال القالب بسبب مشكلة دفع/أهلية في حساب واتساب على Meta. راجع Billing أو Payment method داخل Meta Business.',
+                    default => $error ?: 'تعذر إرسال رسالة واتساب.',
+                };
 
                 return response()->json([
                     'status' => 'error',
