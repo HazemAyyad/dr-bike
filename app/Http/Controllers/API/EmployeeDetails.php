@@ -1605,6 +1605,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'name' => $employee->user?->name,
                 'start_work_time' => $employee->start_work_time,
                 'number_of_work_hours' => $employee->number_of_work_hours,
+                'hour_work_price' => number_format((float) ($employee->hour_work_price ?? 0), 2, '.', ''),
                 'currently_in_today' => $checkoutService->isCurrentlyIn((int) $employee->id),
                 'weekly_days_off' => collect(is_array($employee->weekly_days_off) ? $employee->weekly_days_off : [])
                     ->filter(fn ($v) => is_string($v))
