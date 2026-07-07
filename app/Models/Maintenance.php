@@ -25,6 +25,7 @@ class Maintenance extends Model
         'invoice_total',
         'paid_amount',
         'payment_box_id',
+        'maintenance_daily_session_id',
         'instant_sale_id',
     ];
 
@@ -62,5 +63,10 @@ class Maintenance extends Model
     public function instantSale()
     {
         return $this->belongsTo(InstantSale::class);
+    }
+
+    public function maintenanceDailySession()
+    {
+        return $this->belongsTo(MaintenanceDailySession::class);
     }
 }

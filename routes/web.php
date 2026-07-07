@@ -204,23 +204,27 @@ Route::get('/test/purge-sales-orders', function () {
 
     $confirm = strtolower(trim((string) request()->query('confirm', '')));
     if (! in_array($confirm, ['yes', '1', 'true'], true)) {
-        return response(
-            "Preview only. Add &confirm=yes to execute.\n".
-            "This clears sales order section tables and unlinks instant sales from sales orders.\n".
-            "It does not reset product stock, boxes, box logs, debt ledger, customers, or products.\n\n".
-            "Before: ".json_encode($before, JSON_UNESCAPED_UNICODE)."\n",
-            200,
-            ['Content-Type' => 'text/plain; charset=UTF-8']
-        );
+        return view('purge-sales-orders', [
+            'status' => 'preview',
+            'before' => $before,
+            'after' => null,
+            'token' => $token,
+            'lockPath' => null,
+        ]);
     }
 
     $lockPath = storage_path('framework/sales_orders_purge_once.lock');
     if (is_file($lockPath) && request()->query('force') !== 'yes') {
-        return response(
-            "Already executed.\nLock: {$lockPath}\n\n".(file_get_contents($lockPath) ?: ''),
-            200,
-            ['Content-Type' => 'text/plain; charset=UTF-8']
-        );
+        $lock = json_decode((string) file_get_contents($lockPath), true) ?: [];
+
+        return view('purge-sales-orders', [
+            'status' => 'locked',
+            'before' => $lock['before'] ?? $before,
+            'after' => $lock['after'] ?? null,
+            'token' => $token,
+            'lockPath' => $lockPath,
+            'executedAt' => $lock['executed_at'] ?? null,
+        ]);
     }
 
     \Illuminate\Support\Facades\DB::transaction(function () use ($existingTables) {
@@ -264,14 +268,14 @@ Route::get('/test/purge-sales-orders', function () {
         'via' => 'web-route',
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-    return response(
-        "=== Purge sales orders (one-time) ===\n".
-        "Before: ".json_encode($before, JSON_UNESCAPED_UNICODE)."\n".
-        "After: ".json_encode($after, JSON_UNESCAPED_UNICODE)."\n".
-        "Lock: {$lockPath}\n",
-        200,
-        ['Content-Type' => 'text/plain; charset=UTF-8']
-    );
+    return view('purge-sales-orders', [
+        'status' => 'done',
+        'before' => $before,
+        'after' => $after,
+        'token' => $token,
+        'lockPath' => $lockPath,
+        'executedAt' => now()->toIso8601String(),
+    ]);
 })->name('test.purge-sales-orders');
 
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */

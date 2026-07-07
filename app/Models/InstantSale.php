@@ -40,6 +40,7 @@ class InstantSale extends Model
         'created_by',
         'updated_by',
         'sales_daily_session_id',
+        'maintenance_daily_session_id',
         'sales_order_id',
         'maintenance_id',
         'serial_number',

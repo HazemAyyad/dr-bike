@@ -2,12 +2,10 @@
 
 namespace App\Services;
 
-use App\Http\Controllers\API\BoxLogs;
-use App\Models\Box;
-use App\Models\BoxLog;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenanceProduct;
+use App\Models\MaintenanceDailySession;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -17,10 +15,10 @@ use Illuminate\Validation\ValidationException;
 class MaintenanceDeliveryService
 {
     public function __construct(
-        protected SalesDailySessionService $sessionService,
         protected ProductStockService $stockService,
         protected DebtLedgerService $debtLedgerService,
         protected MaintenanceActivityLogger $activityLogger,
+        protected MaintenanceDailyBoxService $maintenanceDailyBoxService,
     ) {}
 
     /**
@@ -213,36 +211,37 @@ class MaintenanceDeliveryService
                 ? min((float) $payload['payment_amount'], $invoiceTotal)
                 : $invoiceTotal;
 
-            $paymentBox = $this->resolvePaymentBox($user, $paidAmount, $payload);
-            $session = $this->sessionService->assertCanCreateSale($user);
-
-            if ($paidAmount > 0 && $paymentBox) {
-                $box = Box::lockForUpdate()->findOrFail($paymentBox['id']);
-                $box->total = round((float) $box->total + $paidAmount, 2);
-                $box->save();
-
-                BoxLogs::createBoxLog(
-                    $box,
-                    'قبض — صيانة #'.$maintenance->id,
-                    'add',
-                    $paidAmount,
-                    'صيانة #'.$maintenance->id
-                );
-            }
+            $maintenanceSession = $paidAmount > 0
+                ? $this->maintenanceDailyBoxService->getOrOpenSession($user)
+                : null;
+            $paymentBox = $maintenanceSession?->box
+                ? ['id' => (int) $maintenanceSession->box->id, 'name' => (string) $maintenanceSession->box->name]
+                : null;
 
             $instantSale = $this->createInstantSaleFromMaintenance(
                 $maintenance,
                 $user,
-                $session->id,
+                $maintenanceSession,
                 $invoiceTotal,
                 $paidAmount,
                 $paymentBox
             );
 
+            $maintenanceBoxMovement = null;
+            if ($paidAmount > 0) {
+                $maintenanceBoxMovement = $this->maintenanceDailyBoxService->recordPayment(
+                    $maintenance,
+                    $user,
+                    $paidAmount,
+                    $instantSale->id
+                );
+            }
+
             $maintenance->update([
                 'status' => 'delivered',
                 'paid_amount' => $paidAmount,
                 'payment_box_id' => $paymentBox['id'] ?? null,
+                'maintenance_daily_session_id' => $maintenanceSession?->id,
                 'instant_sale_id' => $instantSale->id,
                 'invoice_total' => $invoiceTotal,
             ]);
@@ -261,6 +260,8 @@ class MaintenanceDeliveryService
                     'instant_sale_id' => $instantSale->id,
                     'serial_number' => $instantSale->serial_number,
                     'payment_box' => $paymentBox,
+                    'maintenance_daily_session_id' => $maintenanceSession?->id,
+                    'maintenance_daily_box_log_id' => $maintenanceBoxMovement['log']->id ?? null,
                 ]
             );
 
@@ -272,35 +273,12 @@ class MaintenanceDeliveryService
     }
 
     /**
-     * @return array{id: int, name: string}|null
-     */
-    private function resolvePaymentBox(User $user, float $paidAmount, array $payload): ?array
-    {
-        if ($paidAmount <= 0) {
-            return null;
-        }
-
-        if (! empty($payload['payment_box_id'])) {
-            $box = Box::query()->find($payload['payment_box_id']);
-            if ($box) {
-                return ['id' => (int) $box->id, 'name' => (string) $box->name];
-            }
-        }
-
-        $dailyBox = $this->sessionService->ensureDailyBoxes($user)->first();
-
-        return $dailyBox
-            ? ['id' => (int) $dailyBox->id, 'name' => (string) $dailyBox->name]
-            : null;
-    }
-
-    /**
      * @param  array{id: int, name: string}|null  $paymentBox
      */
     private function createInstantSaleFromMaintenance(
         Maintenance $maintenance,
         User $user,
-        int $sessionId,
+        ?MaintenanceDailySession $maintenanceSession,
         float $invoiceTotal,
         float $paidAmount,
         ?array $paymentBox
@@ -337,7 +315,8 @@ class MaintenanceDeliveryService
                 'payment_box_id' => $paymentBox['id'] ?? null,
                 'payment_box_name' => $paymentBox['name'] ?? null,
                 'payment_box_value' => $paidAmount,
-                'sales_daily_session_id' => $sessionId,
+                'sales_daily_session_id' => null,
+                'maintenance_daily_session_id' => $maintenanceSession?->id,
                 'created_by' => $user->id,
                 'status' => 'active',
                 'maintenance_id' => $maintenance->id,
@@ -401,7 +380,8 @@ class MaintenanceDeliveryService
             'payment_box_id' => $paymentBox['id'] ?? null,
             'payment_box_name' => $paymentBox['name'] ?? null,
             'payment_box_value' => $paidAmount,
-            'sales_daily_session_id' => $sessionId,
+            'sales_daily_session_id' => null,
+            'maintenance_daily_session_id' => $maintenanceSession?->id,
             'created_by' => $user->id,
             'status' => 'active',
             'maintenance_id' => $maintenance->id,
@@ -448,7 +428,8 @@ class MaintenanceDeliveryService
                 'buyer_name' => $buyer['buyer_name'],
                 'buyer_phone' => $buyer['buyer_phone'],
                 'seller_id' => $buyer['seller_id'],
-                'sales_daily_session_id' => $sessionId,
+                'sales_daily_session_id' => null,
+                'maintenance_daily_session_id' => $maintenanceSession?->id,
                 'created_by' => $user->id,
                 'status' => 'active',
                 'maintenance_id' => $maintenance->id,

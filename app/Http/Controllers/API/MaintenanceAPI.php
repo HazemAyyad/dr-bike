@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Maintenance;
 use App\Services\MaintenanceActivityLogger;
+use App\Services\MaintenanceDailyBoxService;
 use App\Services\MaintenanceDeliveryService;
 use App\Services\MaintenanceInvoiceService;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -19,7 +20,8 @@ class MaintenanceAPI extends Controller
     public function __construct(
         protected MaintenanceDeliveryService $deliveryService,
         protected MaintenanceActivityLogger $activityLogger,
-        protected MaintenanceInvoiceService $invoiceService
+        protected MaintenanceInvoiceService $invoiceService,
+        protected MaintenanceDailyBoxService $maintenanceDailyBoxService
     ) {}
 
     private function resolveContactPhone($maintenance): ?string
@@ -660,6 +662,31 @@ class MaintenanceAPI extends Controller
         return Pdf::loadHTML($html)
             ->setPaper('a4')
             ->stream('maintenance-invoice-'.$maintenance->id.'.pdf');
+    }
+
+    public function dailyBox(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'date' => 'nullable|date',
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'daily_box' => $this->maintenanceDailyBoxService->payload($data['date'] ?? null),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 
 }

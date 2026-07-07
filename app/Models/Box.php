@@ -23,6 +23,11 @@ class Box extends Model
         return $this->type === config('sales_daily.box_type', 'daily_sales');
     }
 
+    public function isDailyMaintenanceBox(): bool
+    {
+        return $this->type === config('maintenance_daily.box_type', 'daily_maintenance');
+    }
+
     public function employee()
     {
         return $this->belongsTo(EmployeeDetail::class,'employee_id');
