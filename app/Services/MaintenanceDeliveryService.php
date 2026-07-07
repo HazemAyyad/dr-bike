@@ -20,6 +20,7 @@ class MaintenanceDeliveryService
         protected SalesDailySessionService $sessionService,
         protected ProductStockService $stockService,
         protected DebtLedgerService $debtLedgerService,
+        protected MaintenanceActivityLogger $activityLogger,
     ) {}
 
     /**
@@ -76,7 +77,13 @@ class MaintenanceDeliveryService
     /**
      * @param  array<int, array<string, mixed>>  $items
      */
-    public function syncProducts(Maintenance $maintenance, array $items, ?float $laborCost = null, ?float $discount = null): Maintenance
+    public function syncProducts(
+        Maintenance $maintenance,
+        array $items,
+        ?float $laborCost = null,
+        ?float $discount = null,
+        ?User $actor = null
+    ): Maintenance
     {
         if ($maintenance->status === 'delivered') {
             throw ValidationException::withMessages([
@@ -84,8 +91,9 @@ class MaintenanceDeliveryService
             ]);
         }
 
-        return DB::transaction(function () use ($maintenance, $items, $laborCost, $discount) {
+        return DB::transaction(function () use ($maintenance, $items, $laborCost, $discount, $actor) {
             $maintenance = Maintenance::lockForUpdate()->findOrFail($maintenance->id);
+            $before = $this->formatProductsSummary($maintenance);
             $maintenance->products()->delete();
 
             foreach ($items as $row) {
@@ -120,7 +128,27 @@ class MaintenanceDeliveryService
                 $maintenance->update($updates);
             }
 
-            return $this->recalculateTotals($maintenance);
+            $fresh = $this->recalculateTotals($maintenance);
+            $after = $this->formatProductsSummary($fresh);
+
+            if ($before !== $after) {
+                $this->activityLogger->log(
+                    $fresh,
+                    $actor,
+                    'products_synced',
+                    'تعديل قطع وتكاليف الصيانة',
+                    'تم حفظ قطع الصيانة وتحديث الإجماليات.',
+                    $maintenance->status,
+                    $fresh->status,
+                    [
+                        'before' => $before,
+                        'after' => $after,
+                        'items_count' => count($after['items']),
+                    ]
+                );
+            }
+
+            return $fresh;
         });
     }
 
@@ -154,6 +182,7 @@ class MaintenanceDeliveryService
                 $maintenance->discount = max(0, round((float) $payload['discount'], 2));
             }
 
+            $oldStatus = $maintenance->status;
             $maintenance = $this->recalculateTotals($maintenance);
             $invoiceTotal = (float) $maintenance->invoice_total;
 
@@ -162,9 +191,20 @@ class MaintenanceDeliveryService
                     'status' => 'delivered',
                     'paid_amount' => 0,
                 ]);
+                $fresh = $maintenance->fresh(['products.product', 'instantSale']);
+                $this->activityLogger->log(
+                    $fresh,
+                    $user,
+                    'delivered_without_invoice',
+                    'تسليم الصيانة بدون فاتورة',
+                    'تم تسليم الصيانة بدون قطع أو مبلغ مستحق.',
+                    $oldStatus,
+                    'delivered',
+                    ['invoice_total' => 0]
+                );
 
                 return [
-                    'maintenance' => $maintenance->fresh(['products.product', 'instantSale']),
+                    'maintenance' => $fresh,
                     'instant_sale' => null,
                 ];
             }
@@ -206,9 +246,26 @@ class MaintenanceDeliveryService
                 'instant_sale_id' => $instantSale->id,
                 'invoice_total' => $invoiceTotal,
             ]);
+            $fresh = $maintenance->fresh(['products.product', 'instantSale']);
+            $this->activityLogger->log(
+                $fresh,
+                $user,
+                'delivered',
+                'تسليم الصيانة وإنشاء فاتورة',
+                'تم تسليم الصيانة وربطها بفاتورة بيع فوري.',
+                $oldStatus,
+                'delivered',
+                [
+                    'invoice_total' => $invoiceTotal,
+                    'paid_amount' => $paidAmount,
+                    'instant_sale_id' => $instantSale->id,
+                    'serial_number' => $instantSale->serial_number,
+                    'payment_box' => $paymentBox,
+                ]
+            );
 
             return [
-                'maintenance' => $maintenance->fresh(['products.product', 'instantSale']),
+                'maintenance' => $fresh,
                 'instant_sale' => $instantSale->fresh(['product', 'subProducts.product']),
             ];
         });

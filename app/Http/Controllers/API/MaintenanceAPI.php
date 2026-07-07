@@ -4,7 +4,10 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Maintenance;
+use App\Services\MaintenanceActivityLogger;
 use App\Services\MaintenanceDeliveryService;
+use App\Services\MaintenanceInvoiceService;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -14,7 +17,9 @@ use Illuminate\Validation\ValidationException;
 class MaintenanceAPI extends Controller
 {
     public function __construct(
-        protected MaintenanceDeliveryService $deliveryService
+        protected MaintenanceDeliveryService $deliveryService,
+        protected MaintenanceActivityLogger $activityLogger,
+        protected MaintenanceInvoiceService $invoiceService
     ) {}
 
     private function resolveContactPhone($maintenance): ?string
@@ -187,6 +192,24 @@ class MaintenanceAPI extends Controller
         $data['status'] = 'new';
 
         $maintenance = Maintenance::create($data);
+        $this->activityLogger->log(
+            $maintenance,
+            $request->user(),
+            'created',
+            'إنشاء صيانة جديدة',
+            $maintenance->customer_id
+                ? 'تم إنشاء صيانة للزبون '.$maintenance->customer->name
+                : 'تم إنشاء صيانة للتاجر '.$maintenance->seller->name,
+            null,
+            'new',
+            [
+                'customer_id' => $maintenance->customer_id,
+                'seller_id' => $maintenance->seller_id,
+                'receipt_date' => $maintenance->receipt_date,
+                'receipt_time' => $maintenance->receipt_time,
+                'files_count' => count($files),
+            ]
+        );
     
         if($maintenance->customer_id){
            Logs::createLog('اضافة صيانة جديدة','اضافة صيانة للزبون'.' '.$maintenance->customer->name,'maintenances');
@@ -230,7 +253,11 @@ class MaintenanceAPI extends Controller
             ]);
 
             $maintenance = Maintenance::with('customer:id,name')->with('seller:id,name')
-            ->with(['products.product:id,nameAr,nameEng', 'instantSale:id,serial_number'])
+            ->with([
+                'products.product:id,nameAr,nameEng',
+                'instantSale:id,serial_number',
+                'activityLogs' => fn ($query) => $query->latest()->limit(50),
+            ])
             ->findOrFail($request->maintenance_id);
 
             $files = [];
@@ -241,6 +268,18 @@ class MaintenanceAPI extends Controller
             }
             $maintenance['files']=$files;
             $maintenance['billing'] = $this->deliveryService->formatProductsSummary($maintenance);
+            $maintenance['activity_logs'] = $maintenance->activityLogs->map(fn ($log) => [
+                'id' => $log->id,
+                'action' => $log->action,
+                'title' => $log->title,
+                'description' => $log->description,
+                'actor_name' => $log->actor_name,
+                'actor_type' => $log->actor_type,
+                'old_status' => $log->old_status,
+                'new_status' => $log->new_status,
+                'metadata' => $log->metadata,
+                'created_at' => optional($log->created_at)->format('Y-m-d H:i:s'),
+            ])->values();
             $maintenance->makeHidden(['customer_id','seller_id']);
             return response()->json([
                 'status'=>'success',
@@ -309,6 +348,17 @@ class MaintenanceAPI extends Controller
         
         $maintenance = Maintenance::findOrFail($request->maintenance_id);
         $oldStatus = $maintenance->status;
+        $before = $maintenance->only([
+            'customer_id',
+            'seller_id',
+            'description',
+            'receipt_date',
+            'receipt_time',
+            'status',
+            'labor_cost',
+            'discount',
+            'files',
+        ]);
         $data['customer_id'] = $request->customer_id?? null;
         $data['seller_id'] = $request->seller_id?? null;
 
@@ -325,7 +375,34 @@ class MaintenanceAPI extends Controller
         }
 
         $maintenance->update($data);
-        $this->deliveryService->recalculateTotals($maintenance->fresh());
+        $maintenance = $this->deliveryService->recalculateTotals($maintenance->fresh());
+        $after = $maintenance->only([
+            'customer_id',
+            'seller_id',
+            'description',
+            'receipt_date',
+            'receipt_time',
+            'status',
+            'labor_cost',
+            'discount',
+            'files',
+        ]);
+        $changes = $this->activityLogger->diff($before, $after);
+
+        if ($changes !== []) {
+            $this->activityLogger->log(
+                $maintenance,
+                $request->user(),
+                $oldStatus !== $maintenance->status ? 'status_changed' : 'updated',
+                $oldStatus !== $maintenance->status ? 'تغيير حالة الصيانة' : 'تعديل بيانات الصيانة',
+                $oldStatus !== $maintenance->status
+                    ? 'تم تغيير حالة الصيانة من '.$oldStatus.' إلى '.$maintenance->status
+                    : 'تم تعديل بيانات الصيانة.',
+                $oldStatus,
+                $maintenance->status,
+                ['changes' => $changes]
+            );
+        }
 
         if($request->status==='delivered' && $oldStatus !== 'delivered'){
             if($maintenance->customer_id){
@@ -411,6 +488,7 @@ class MaintenanceAPI extends Controller
                 $data['products'] ?? [],
                 isset($data['labor_cost']) ? (float) $data['labor_cost'] : null,
                 isset($data['discount']) ? (float) $data['discount'] : null,
+                $request->user(),
             );
 
             return response()->json([
@@ -498,6 +576,90 @@ class MaintenanceAPI extends Controller
         }
     }
 
-  
+    public function activityLog(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'maintenance_id' => 'required|exists:maintenance,id',
+            ]);
+
+            $maintenance = Maintenance::findOrFail($data['maintenance_id']);
+            $logs = $maintenance->activityLogs()
+                ->latest()
+                ->get()
+                ->map(fn ($log) => [
+                    'id' => $log->id,
+                    'action' => $log->action,
+                    'title' => $log->title,
+                    'description' => $log->description,
+                    'actor_name' => $log->actor_name,
+                    'actor_type' => $log->actor_type,
+                    'old_status' => $log->old_status,
+                    'new_status' => $log->new_status,
+                    'metadata' => $log->metadata,
+                    'created_at' => optional($log->created_at)->format('Y-m-d H:i:s'),
+                ]);
+
+            return response()->json([
+                'status' => 'success',
+                'logs' => $logs,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function invoiceData(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'maintenance_id' => 'required|exists:maintenance,id',
+            ]);
+
+            $maintenance = Maintenance::findOrFail($data['maintenance_id']);
+
+            return response()->json([
+                'status' => 'success',
+                'invoice' => $this->invoiceService->build($maintenance),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function invoicePdf(Request $request)
+    {
+        $data = $request->validate([
+            'maintenance_id' => 'required|exists:maintenance,id',
+        ]);
+
+        $maintenance = Maintenance::findOrFail($data['maintenance_id']);
+        $invoice = $this->invoiceService->build($maintenance);
+        $html = view('pdf.maintenance-invoice', [
+            'invoice' => $invoice,
+        ])->render();
+
+        return Pdf::loadHTML($html)
+            ->setPaper('a4')
+            ->stream('maintenance-invoice-'.$maintenance->id.'.pdf');
+    }
 
 }

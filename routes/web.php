@@ -160,6 +160,120 @@ Route::get('/test/purge-attendance-data', function () {
     return response($body, 200, ['Content-Type' => 'text/plain; charset=UTF-8']);
 })->name('test.purge-attendance-data');
 
+/**
+ * مسح بيانات قسم الطلبيات عند الانتقال للتشغيل الحقيقي.
+ * GET /test/purge-sales-orders?token=TOKEN
+ * GET /test/purge-sales-orders?token=TOKEN&confirm=yes
+ */
+Route::get('/test/purge-sales-orders', function () {
+    $token = (string) request()->query('token', '');
+    $expected = (string) env('DEPLOY_ONCE_TOKEN', 'eshterelyDeploy2026SecureToken123');
+    if ($token === '' || ! hash_equals($expected, $token)) {
+        abort(403);
+    }
+
+    $tables = [
+        'sales_return_items',
+        'sales_returns',
+        'sales_order_shiply_events',
+        'sales_order_deliveries',
+        'sales_order_media',
+        'sales_order_status_logs',
+        'sales_order_items',
+        'sales_order_packages',
+        'sales_orders',
+    ];
+
+    $existingTables = array_values(array_filter(
+        $tables,
+        fn ($table) => \Illuminate\Support\Facades\Schema::hasTable($table)
+    ));
+
+    $before = [];
+    foreach ($existingTables as $table) {
+        $before[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+    }
+    if (
+        \Illuminate\Support\Facades\Schema::hasTable('instant_sales')
+        && \Illuminate\Support\Facades\Schema::hasColumn('instant_sales', 'sales_order_id')
+    ) {
+        $before['instant_sales_linked_to_sales_orders'] = (int) \Illuminate\Support\Facades\DB::table('instant_sales')
+            ->whereNotNull('sales_order_id')
+            ->count();
+    }
+
+    $confirm = strtolower(trim((string) request()->query('confirm', '')));
+    if (! in_array($confirm, ['yes', '1', 'true'], true)) {
+        return response(
+            "Preview only. Add &confirm=yes to execute.\n".
+            "This clears sales order section tables and unlinks instant sales from sales orders.\n".
+            "It does not reset product stock, boxes, box logs, debt ledger, customers, or products.\n\n".
+            "Before: ".json_encode($before, JSON_UNESCAPED_UNICODE)."\n",
+            200,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+
+    $lockPath = storage_path('framework/sales_orders_purge_once.lock');
+    if (is_file($lockPath) && request()->query('force') !== 'yes') {
+        return response(
+            "Already executed.\nLock: {$lockPath}\n\n".(file_get_contents($lockPath) ?: ''),
+            200,
+            ['Content-Type' => 'text/plain; charset=UTF-8']
+        );
+    }
+
+    \Illuminate\Support\Facades\DB::transaction(function () use ($existingTables) {
+        if (
+            \Illuminate\Support\Facades\Schema::hasTable('instant_sales')
+            && \Illuminate\Support\Facades\Schema::hasColumn('instant_sales', 'sales_order_id')
+        ) {
+            \Illuminate\Support\Facades\DB::table('instant_sales')->whereNotNull('sales_order_id')->update([
+                'sales_order_id' => null,
+            ]);
+        }
+
+        \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        try {
+            foreach ($existingTables as $table) {
+                \Illuminate\Support\Facades\DB::table($table)->delete();
+                \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+            }
+        } finally {
+            \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        }
+    });
+
+    $after = [];
+    foreach ($existingTables as $table) {
+        $after[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+    }
+    if (
+        \Illuminate\Support\Facades\Schema::hasTable('instant_sales')
+        && \Illuminate\Support\Facades\Schema::hasColumn('instant_sales', 'sales_order_id')
+    ) {
+        $after['instant_sales_linked_to_sales_orders'] = (int) \Illuminate\Support\Facades\DB::table('instant_sales')
+            ->whereNotNull('sales_order_id')
+            ->count();
+    }
+
+    file_put_contents($lockPath, json_encode([
+        'executed_at' => now()->toIso8601String(),
+        'before' => $before,
+        'after' => $after,
+        'via' => 'web-route',
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    return response(
+        "=== Purge sales orders (one-time) ===\n".
+        "Before: ".json_encode($before, JSON_UNESCAPED_UNICODE)."\n".
+        "After: ".json_encode($after, JSON_UNESCAPED_UNICODE)."\n".
+        "Lock: {$lockPath}\n",
+        200,
+        ['Content-Type' => 'text/plain; charset=UTF-8']
+    );
+})->name('test.purge-sales-orders');
+
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
 Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');

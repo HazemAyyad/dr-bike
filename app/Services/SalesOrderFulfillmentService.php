@@ -805,6 +805,13 @@ class SalesOrderFulfillmentService
             return null;
         }
 
+        if ((bool) config('sales_orders.payment_box.enabled', true)) {
+            $ordersBox = $this->resolveSalesOrdersBox();
+            if ($ordersBox) {
+                return ['id' => (int) $ordersBox->id, 'name' => (string) $ordersBox->name];
+            }
+        }
+
         if (! empty($payload['payment_box_id'])) {
             $box = Box::query()->find($payload['payment_box_id']);
             if ($box) {
@@ -817,6 +824,30 @@ class SalesOrderFulfillmentService
         return $dailyBox
             ? ['id' => (int) $dailyBox->id, 'name' => (string) $dailyBox->name]
             : null;
+    }
+
+    private function resolveSalesOrdersBox(): ?Box
+    {
+        $type = (string) config('sales_orders.payment_box.type', 'sales_orders');
+        $name = (string) config('sales_orders.payment_box.name', 'صندوق الطلبيات');
+        $currency = (string) config('sales_orders.payment_box.currency', 'شيكل');
+
+        $box = Box::query()
+            ->where('type', $type)
+            ->orWhere('name', $name)
+            ->first();
+
+        if ($box) {
+            return $box;
+        }
+
+        return Box::query()->create([
+            'name' => $name,
+            'type' => $type,
+            'total' => 0,
+            'is_shown' => 1,
+            'currency' => $currency,
+        ]);
     }
 
     private function assertTransition(SalesOrder $order, array $allowed): void

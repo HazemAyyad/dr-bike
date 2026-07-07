@@ -47,8 +47,37 @@ class Products extends Controller
                 'storeSection:id,name',
                 'sizes.colorSizes',
                 'purchasePrices' => fn ($q) => $q->orderByDesc('id')->limit(1),
-            ])
-            ->get([
+            ]);
+
+        if ($request->filled('search')) {
+            $term = '%'.$request->string('search').'%';
+            $products->where(function ($q) use ($term) {
+                $q->where('nameAr', 'like', $term)
+                    ->orWhere('product_code', 'like', $term)
+                    ->orWhereHas('storeSection', function ($section) use ($term) {
+                        $section->where('name', 'like', $term);
+                    })
+                    ->orWhereHas('sizes', function ($size) use ($term) {
+                        $size->where('size', 'like', $term)
+                            ->orWhereHas('colorSizes', function ($color) use ($term) {
+                                $color->where('colorAr', 'like', $term)
+                                    ->orWhere('colorEn', 'like', $term)
+                                    ->orWhere('colorAbbr', 'like', $term);
+                            });
+                    });
+            });
+        }
+
+        if ($request->filled('store_section_id')) {
+            $storeSectionId = $request->input('store_section_id');
+            if (in_array((string) $storeSectionId, ['none', 'null', '0'], true)) {
+                $products->whereNull('store_section_id');
+            } else {
+                $products->where('store_section_id', (int) $storeSectionId);
+            }
+        }
+
+        $products = $products->get([
                 'id',
                 'nameAr',
                 'stock',

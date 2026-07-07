@@ -20,6 +20,7 @@ class SalesOrderStatementService
 
         $reportHtml = view('pdf.sales-order-statement', [
             'order' => $order,
+            'statementItems' => $this->statementItems($order),
             'generated_at' => now()->format('Y-m-d H:i'),
         ])->render();
 
@@ -56,5 +57,34 @@ class SalesOrderStatementService
             'total' => (float) $order->total,
             'status' => $order->status,
         ];
+    }
+
+    private function statementItems(SalesOrder $order): array
+    {
+        return $order->items
+            ->where('is_hidden', false)
+            ->groupBy(fn ($item) => implode('|', [
+                $item->product_id,
+                $item->size_id,
+                $item->size_color_id,
+                $item->product_name,
+                (float) $item->unit_price,
+            ]))
+            ->map(function ($items) {
+                $first = $items->first();
+                $quantity = (int) $items->sum('quantity');
+                $delivered = (int) $items->sum('delivered_qty');
+                $lineTotal = (float) $items->sum('line_total');
+
+                return [
+                    'product_name' => $first->product_name ?? $first->product_id,
+                    'quantity' => $quantity,
+                    'delivered_qty' => $delivered,
+                    'unit_price' => (float) $first->unit_price,
+                    'line_total' => $lineTotal,
+                ];
+            })
+            ->values()
+            ->all();
     }
 }

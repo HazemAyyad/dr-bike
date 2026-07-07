@@ -1566,14 +1566,6 @@ class Stocks extends Controller
     public function updateSizeOptionPresets(Request $request)
     {
         try {
-            $admin = $request->user();
-            if (! $admin || $admin->type !== 'admin') {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => 'Unauthorized. Admins only.',
-                ], 200);
-            }
-
             $data = $request->validate([
                 'sizes' => ['required', 'array'],
                 'sizes.*' => ['required', 'string', 'max:50'],

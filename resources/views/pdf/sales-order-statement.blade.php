@@ -37,16 +37,14 @@
             </tr>
         </thead>
         <tbody>
-            @foreach($order->items as $item)
-                @if(!$item->is_hidden)
+            @foreach($statementItems as $item)
                 <tr>
-                    <td>{{ $item->product_name ?? $item->product_id }}</td>
-                    <td>{{ $item->quantity }}</td>
-                    <td>{{ $item->delivered_qty ?? 0 }}</td>
-                    <td>{{ number_format($item->unit_price, 2) }}</td>
-                    <td>{{ number_format($item->line_total, 2) }}</td>
+                    <td>{{ $item['product_name'] }}</td>
+                    <td>{{ $item['quantity'] }}</td>
+                    <td>{{ $item['delivered_qty'] }}</td>
+                    <td>{{ number_format($item['unit_price'], 2) }}</td>
+                    <td>{{ number_format($item['line_total'], 2) }}</td>
                 </tr>
-                @endif
             @endforeach
         </tbody>
     </table>

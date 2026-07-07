@@ -54,6 +54,11 @@ class Maintenance extends Model
         return $this->hasMany(MaintenanceProduct::class);
     }
 
+    public function activityLogs()
+    {
+        return $this->hasMany(MaintenanceActivityLog::class);
+    }
+
     public function instantSale()
     {
         return $this->belongsTo(InstantSale::class);
