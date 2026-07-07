@@ -745,6 +745,22 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Stock,Sales','re
 // });
 //end mutual
 
+Route::group(['middleware'=>['auth:sanctum','check.permission:Stock,Stock Inventory Settings','refresh.token.expiry']] , function() {
+    Route::get('/products/export-csv' , [Stocks::class,'exportProductsCsv']);
+    Route::post('/products/import-csv/preview' , [Stocks::class,'previewProductsCsvImport']);
+    Route::post('/products/import-csv' , [Stocks::class,'importProductsCsv']);
+    Route::get('/stock/size-option-presets' , [Stocks::class,'sizeOptionPresets']);
+    Route::put('/stock/size-option-presets' , [Stocks::class,'updateSizeOptionPresets']);
+    Route::get('/store/sections' , [StoreSectionController::class,'index']);
+    Route::post('/store/sections' , [StoreSectionController::class,'store']);
+    Route::post('/store/sections/update' , [StoreSectionController::class,'update']);
+    Route::post('/store/sections/deactivate' , [StoreSectionController::class,'deactivate']);
+    Route::post('/store/sections/delete' , [StoreSectionController::class,'destroy']);
+    Route::get('/products/by/location' , [StoreSectionController::class,'productsByLocation']);
+    Route::post('/products/location/move' , [StoreSectionController::class,'moveProducts']);
+    Route::post('/products/location/swap' , [StoreSectionController::class,'swapProductLocations']);
+});
+
 Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.token.expiry']] , function() {
 
     Route::prefix('meta/catalog')->group(function () {
@@ -767,12 +783,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     });
 
     Route::get('/get/products/list' , [Stocks::class,'allProducts']);
-    Route::get('/products/export-csv' , [Stocks::class,'exportProductsCsv']);
-    Route::post('/products/import-csv/preview' , [Stocks::class,'previewProductsCsvImport']);
-    Route::post('/products/import-csv' , [Stocks::class,'importProductsCsv']);
     Route::get('/get/product/size-options' , [Stocks::class,'productSizeOptions']);
-    Route::get('/stock/size-option-presets' , [Stocks::class,'sizeOptionPresets']);
-    Route::put('/stock/size-option-presets' , [Stocks::class,'updateSizeOptionPresets']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
     Route::post('/edit/product' , [Stocks::class,'editProduct']);
     /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */
@@ -805,15 +816,6 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::post('/product/tags/attach' , [ProductTagController::class,'attach']);
     Route::post('/product/tags/detach' , [ProductTagController::class,'detach']);
     Route::get('/products/by/tag' , [ProductTagController::class,'productsByTag']);
-
-    Route::get('/store/sections' , [StoreSectionController::class,'index']);
-    Route::post('/store/sections' , [StoreSectionController::class,'store']);
-    Route::post('/store/sections/update' , [StoreSectionController::class,'update']);
-    Route::post('/store/sections/deactivate' , [StoreSectionController::class,'deactivate']);
-    Route::post('/store/sections/delete' , [StoreSectionController::class,'destroy']);
-    Route::get('/products/by/location' , [StoreSectionController::class,'productsByLocation']);
-    Route::post('/products/location/move' , [StoreSectionController::class,'moveProducts']);
-    Route::post('/products/location/swap' , [StoreSectionController::class,'swapProductLocations']);
 
 });
 
