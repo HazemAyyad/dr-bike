@@ -31,14 +31,21 @@ class MaintenanceInvoiceService
             ? 'paid'
             : ($paidAmount > 0 ? 'partial' : 'unpaid');
 
+        $invoiceDate = $maintenance->instantSale?->created_at ?? $maintenance->updated_at;
+
         return [
             'maintenance_id' => $maintenance->id,
             'invoice_number' => $maintenance->instantSale?->serial_number
                 ?: 'MNT-'.str_pad((string) $maintenance->id, 6, '0', STR_PAD_LEFT),
-            'invoice_date' => optional($maintenance->instantSale?->created_at ?? $maintenance->updated_at)->format('Y-m-d H:i:s'),
+            'invoice_date' => optional($invoiceDate)->format('Y-m-d H:i:s'),
+            'invoice_date_display' => $this->formatArabicDateTime($invoiceDate),
             'status' => $maintenance->status,
             'receipt_date' => $maintenance->receipt_date,
             'receipt_time' => $maintenance->receipt_time,
+            'receipt_datetime_display' => $this->formatArabicDateAndTime(
+                $maintenance->receipt_date,
+                $maintenance->receipt_time
+            ),
             'description' => $maintenance->description,
             'maintenance_status_label' => $this->maintenanceStatusLabel((string) $maintenance->status),
             'payment_status' => $paymentStatus,
@@ -81,5 +88,36 @@ class MaintenanceInvoiceService
             'unpaid' => 'غير مدفوعة',
             default => $status,
         };
+    }
+
+    private function formatArabicDateTime($date): ?string
+    {
+        if (! $date) {
+            return null;
+        }
+
+        $suffix = $date->format('A') === 'AM' ? 'صباحاً' : 'مساءً';
+
+        return $date->format('Y-m-d h:i').' '.$suffix;
+    }
+
+    private function formatArabicDateAndTime(?string $date, ?string $time): ?string
+    {
+        if (! $date) {
+            return null;
+        }
+
+        if (! $time) {
+            return $date;
+        }
+
+        $parts = explode(':', $time);
+        $hour = isset($parts[0]) ? (int) $parts[0] : 0;
+        $minute = isset($parts[1]) ? (int) $parts[1] : 0;
+        $suffix = $hour < 12 ? 'صباحاً' : 'مساءً';
+        $displayHour = $hour % 12;
+        $displayHour = $displayHour === 0 ? 12 : $displayHour;
+
+        return sprintf('%s %02d:%02d %s', $date, $displayHour, $minute, $suffix);
     }
 }

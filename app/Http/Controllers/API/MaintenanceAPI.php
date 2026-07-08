@@ -258,7 +258,7 @@ class MaintenanceAPI extends Controller
             ->with([
                 'products.product:id,nameAr,nameEng',
                 'instantSale:id,serial_number',
-                'activityLogs' => fn ($query) => $query->latest()->limit(50),
+                'activityLogs' => fn ($query) => $query->latest()->limit(500),
             ])
             ->findOrFail($request->maintenance_id);
 

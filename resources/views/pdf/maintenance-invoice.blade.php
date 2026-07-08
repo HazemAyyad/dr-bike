@@ -35,20 +35,23 @@
             margin: 10px 0 18px;
             font-size: 16px;
         }
-        .meta p {
-            margin: 4px 0;
+        .meta-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0 14px;
+        }
+        .meta-table td {
+            border: 1px solid #d0d7e2;
+            padding: 7px 8px;
+        }
+        .meta-table .label {
+            width: 34%;
+            background: #f8faff;
+            font-weight: bold;
             text-align: right;
         }
-        .summary {
-            background: #eef4ff;
-            border-radius: 8px;
-            padding: 12px;
-            margin: 15px 0;
-            text-align: right;
-        }
-        .summary span {
-            display: block;
-            margin-bottom: 6px;
+        .meta-table .value {
+            text-align: left;
         }
         .paid { color: #1b8a4a; font-weight: bold; }
         .partial { color: #b26a00; font-weight: bold; }
@@ -74,9 +77,11 @@
         }
         .num { text-align: center; direction: ltr; unicode-bidi: embed; }
         .totals {
-            width: 100%;
+            width: 48%;
             border-collapse: collapse;
             margin-top: 14px;
+            margin-left: auto;
+            margin-right: 0;
         }
         .totals td {
             border: 1px solid #d0d7e2;
@@ -122,36 +127,50 @@
 
     <h2>فاتورة صيانة رسمية</h2>
 
-    <div class="meta">
-        <p><strong>رقم الفاتورة:</strong> <span class="ltr">{{ $invoice['invoice_number'] }}</span></p>
-        <p><strong>رقم الصيانة:</strong> #{{ $invoice['maintenance_id'] }}</p>
-        <p><strong>تاريخ الفاتورة:</strong> <span class="ltr">{{ $invoice['invoice_date'] ?? '—' }}</span></p>
-        <p><strong>الاسم:</strong> {{ $invoice['customer_name'] }}</p>
-        <p><strong>الهاتف:</strong> {{ $invoice['customer_phone'] ?? '—' }}</p>
-        <p><strong>الجهة:</strong> {{ $invoice['customer_type_label'] }}</p>
-        <p><strong>موعد الاستلام:</strong> <span class="ltr">{{ $invoice['receipt_date'] }} {{ $invoice['receipt_time'] }}</span></p>
+    <table class="meta-table">
+        <tr>
+            <td class="label">رقم الفاتورة</td>
+            <td class="value ltr">{{ $invoice['invoice_number'] }}</td>
+        </tr>
+        <tr>
+            <td class="label">رقم الصيانة</td>
+            <td class="value">#{{ $invoice['maintenance_id'] }}</td>
+        </tr>
+        <tr>
+            <td class="label">تاريخ الفاتورة</td>
+            <td class="value ltr">{{ $invoice['invoice_date_display'] ?? $invoice['invoice_date'] ?? '—' }}</td>
+        </tr>
+        <tr>
+            <td class="label">حالة الصيانة</td>
+            <td class="value">{{ $invoice['maintenance_status_label'] }}</td>
+        </tr>
+        <tr>
+            <td class="label">حالة الفاتورة</td>
+            <td class="value"><span class="{{ $invoice['payment_status'] }}">{{ $invoice['payment_status_label'] }}</span></td>
+        </tr>
+        <tr>
+            <td class="label">الاسم</td>
+            <td class="value">{{ $invoice['customer_name'] }}</td>
+        </tr>
+        <tr>
+            <td class="label">الهاتف</td>
+            <td class="value ltr">{{ $invoice['customer_phone'] ?? '—' }}</td>
+        </tr>
+        <tr>
+            <td class="label">الجهة</td>
+            <td class="value">{{ $invoice['customer_type_label'] }}</td>
+        </tr>
+        <tr>
+            <td class="label">موعد الاستلام</td>
+            <td class="value ltr">{{ $invoice['receipt_datetime_display'] ?? ($invoice['receipt_date'].' '.$invoice['receipt_time']) }}</td>
+        </tr>
         @if(!empty($invoice['description']))
-            <p><strong>وصف الصيانة:</strong> {{ $invoice['description'] }}</p>
+            <tr>
+                <td class="label">وصف الصيانة</td>
+                <td class="value">{{ $invoice['description'] }}</td>
+            </tr>
         @endif
-    </div>
-
-    <div class="summary">
-        <span>حالة الصيانة: <strong>{{ $invoice['maintenance_status_label'] }}</strong></span>
-        <span>حالة الفاتورة:
-            <span class="{{ $invoice['payment_status'] }}">{{ $invoice['payment_status_label'] }}</span>
-        </span>
-        <span>الإجمالي النهائي:
-            <span class="grand">{{ number_format((float) $invoice['invoice_total'], 2) }} ₪</span>
-        </span>
-        <span>المدفوع:
-            <span class="paid">{{ number_format((float) $invoice['paid_amount'], 2) }} ₪</span>
-        </span>
-        <span>المتبقي:
-            <span class="{{ (float) $invoice['remaining_amount'] > 0 ? 'unpaid' : 'paid' }}">
-                {{ number_format((float) $invoice['remaining_amount'], 2) }} ₪
-            </span>
-        </span>
-    </div>
+    </table>
 
     <table class="data">
         <thead>
