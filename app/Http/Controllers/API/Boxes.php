@@ -111,12 +111,13 @@ class Boxes extends Controller
                $logs = BoxLog::where('box_id', $box->id)
                     ->orWhere('to_box_id', $box->id)
                     ->orWhere('from_box_id', $box->id)
-                    ->with('fromBox:id,name,total')
-                    ->with('toBox:id,name,total')
-                    ->with('box:id,name,total')
+                    ->with('fromBox:id,name,total,type')
+                    ->with('toBox:id,name,total,type')
+                    ->with('box:id,name,total,type')
                     ->get();         
                 $boxDetails =[
                         'box_name'=> $box->name,
+                        'box_type'=> $box->type,
                         'box_currency'=> $box->currency,
                         'totla_balance'=> $box->total,
                         'is_shown'=> $box->is_shown,
@@ -159,6 +160,7 @@ class Boxes extends Controller
                     'total_balance' => $box->total,
                     'is_shown' => $box->is_shown,
                     'currency' => $box->currency,
+                    'type' => $box->type,
                 ];
             });
         

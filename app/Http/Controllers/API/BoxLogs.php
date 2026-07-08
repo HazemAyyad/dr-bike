@@ -59,9 +59,9 @@ class BoxLogs extends Controller
 
     public function allBoxLogs(){
         try{
-            $logs = BoxLog::with('fromBox:id,name,total')
-            ->with('toBox:id,name,total')
-            ->with('box:id,name,total')->get();
+            $logs = BoxLog::with('fromBox:id,name,total,type')
+            ->with('toBox:id,name,total,type')
+            ->with('box:id,name,total,type')->get();
             return response()->json([
                 'status' => 'success',
                 'box_logs' => $logs
@@ -105,7 +105,7 @@ class BoxLogs extends Controller
                     ->when($request->to_date, function ($q) use ($request) {
                         $q->whereDate('created_at', '<=', $request->to_date);
                     })
-                    ->with(['fromBox:id,name,total', 'toBox:id,name,total', 'box:id,name,total'])
+                    ->with(['fromBox:id,name,total,type', 'toBox:id,name,total,type', 'box:id,name,total,type'])
                     ->get();
 
 
