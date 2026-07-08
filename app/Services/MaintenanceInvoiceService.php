@@ -24,6 +24,12 @@ class MaintenanceInvoiceService
 
         $billing = $this->deliveryService->formatProductsSummary($maintenance);
         $person = $maintenance->customer_id ? $maintenance->customer : $maintenance->seller;
+        $invoiceTotal = (float) $billing['invoice_total'];
+        $paidAmount = (float) $billing['paid_amount'];
+        $remainingAmount = max(0, round($invoiceTotal - $paidAmount, 2));
+        $paymentStatus = $invoiceTotal <= 0 || $paidAmount >= $invoiceTotal
+            ? 'paid'
+            : ($paidAmount > 0 ? 'partial' : 'unpaid');
 
         return [
             'maintenance_id' => $maintenance->id,
@@ -34,6 +40,9 @@ class MaintenanceInvoiceService
             'receipt_date' => $maintenance->receipt_date,
             'receipt_time' => $maintenance->receipt_time,
             'description' => $maintenance->description,
+            'maintenance_status_label' => $this->maintenanceStatusLabel((string) $maintenance->status),
+            'payment_status' => $paymentStatus,
+            'payment_status_label' => $this->paymentStatusLabel($paymentStatus),
             'customer_type' => $maintenance->customer_id ? 'customer' : 'seller',
             'customer_type_label' => $maintenance->customer_id ? 'زبون' : 'تاجر',
             'customer_name' => $person?->name ?? '-',
@@ -45,11 +54,32 @@ class MaintenanceInvoiceService
             'discount' => $billing['discount'],
             'invoice_total' => $billing['invoice_total'],
             'paid_amount' => $billing['paid_amount'],
-            'remaining_amount' => max(0, round((float) $billing['invoice_total'] - (float) $billing['paid_amount'], 2)),
+            'remaining_amount' => $remainingAmount,
             'instant_sale_id' => $maintenance->instant_sale_id,
             'instant_sale_serial' => $maintenance->instantSale?->serial_number,
             'payment_box_name' => $maintenance->instantSale?->payment_box_name,
             'payment_box_value' => $maintenance->instantSale?->payment_box_value,
         ];
+    }
+
+    private function maintenanceStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'new' => 'صيانة جديدة',
+            'ongoing' => 'قيد العمل',
+            'ready' => 'جاهزة للتسليم',
+            'delivered' => 'تم التسليم',
+            default => $status,
+        };
+    }
+
+    private function paymentStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'paid' => 'تم الدفع',
+            'partial' => 'مدفوع جزئياً',
+            'unpaid' => 'غير مدفوعة',
+            default => $status,
+        };
     }
 }

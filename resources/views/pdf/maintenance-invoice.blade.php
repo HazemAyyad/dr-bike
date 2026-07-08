@@ -1,155 +1,184 @@
-<!doctype html>
-<html lang="ar" dir="rtl">
+<!DOCTYPE html>
+<html lang="ar">
 <head>
-    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>فاتورة صيانة</title>
     <style>
+        @page { margin: 24px 28px; }
         body {
             font-family: DejaVu Sans, sans-serif;
-            color: #1f2933;
-            font-size: 12px;
-            line-height: 1.65;
-            margin: 0;
-            padding: 24px;
-            direction: rtl;
+            font-size: 13px;
+            text-align: right;
+            color: #1a1a1a;
         }
         .header {
-            border-bottom: 3px solid #0f766e;
-            padding-bottom: 14px;
-            margin-bottom: 18px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #6B65BD;
+            padding-bottom: 12px;
         }
-        .brand {
-            font-size: 25px;
-            font-weight: 700;
-            color: #0f766e;
+        .logo-row {
+            width: 100%;
+            border: none;
         }
-        .title {
-            font-size: 18px;
-            font-weight: 700;
-            margin-top: 4px;
+        .logo-row td {
+            border: none;
+            vertical-align: middle;
+            text-align: right;
         }
-        .muted { color: #607080; }
-        .grid {
+        h1 {
+            margin: 0;
+            font-size: 20px;
+            color: #6B65BD;
+        }
+        h2 {
+            text-align: center;
+            margin: 10px 0 18px;
+            font-size: 16px;
+        }
+        .meta p {
+            margin: 4px 0;
+            text-align: right;
+        }
+        .summary {
+            background: #eef4ff;
+            border-radius: 8px;
+            padding: 12px;
+            margin: 15px 0;
+            text-align: right;
+        }
+        .summary span {
+            display: block;
+            margin-bottom: 6px;
+        }
+        .paid { color: #1b8a4a; font-weight: bold; }
+        .partial { color: #b26a00; font-weight: bold; }
+        .unpaid { color: #c62828; font-weight: bold; }
+        table.data {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 14px;
+            margin-top: 10px;
         }
-        .grid td {
-            border: 1px solid #d7dee8;
-            padding: 7px 9px;
-            vertical-align: top;
+        table.data th,
+        table.data td {
+            border: 1px solid #d0d7e2;
+            padding: 7px 6px;
+            text-align: right;
         }
-        .grid .label {
-            width: 18%;
-            background: #f3f7f7;
-            color: #47606b;
-            font-weight: 700;
-        }
-        table.items {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 12px;
-        }
-        table.items th {
-            background: #0f766e;
+        table.data th {
+            background: #6B65BD;
             color: #fff;
-            padding: 8px;
-            border: 1px solid #0f766e;
+            text-align: center;
         }
-        table.items td {
-            padding: 8px;
-            border: 1px solid #d7dee8;
+        table.data tr:nth-child(even) {
+            background: #f8faff;
         }
+        .num { text-align: center; direction: ltr; unicode-bidi: embed; }
         .totals {
-            width: 42%;
-            margin-right: auto;
-            margin-top: 16px;
+            width: 100%;
             border-collapse: collapse;
+            margin-top: 14px;
         }
         .totals td {
-            border: 1px solid #d7dee8;
-            padding: 7px 9px;
+            border: 1px solid #d0d7e2;
+            padding: 7px 6px;
         }
-        .totals .grand {
-            background: #e6f5f3;
-            color: #0f766e;
-            font-weight: 700;
-            font-size: 14px;
+        .totals .label {
+            background: #f8faff;
+            font-weight: bold;
+        }
+        .grand {
+            color: #6B65BD;
+            font-weight: bold;
         }
         .footer {
-            margin-top: 26px;
-            border-top: 1px solid #d7dee8;
-            padding-top: 10px;
-            color: #607080;
+            margin-top: 18px;
+            color: #666;
             font-size: 11px;
+            border-top: 1px solid #d0d7e2;
+            padding-top: 8px;
+        }
+        .ltr { direction: ltr; unicode-bidi: embed; }
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 10px;
+            background: #eef4ff;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <div class="brand">Doctor Bike</div>
-        <div class="title">فاتورة صيانة رسمية</div>
-        <div class="muted">صادرة من قسم الصيانة</div>
+        <table class="logo-row">
+            <tr>
+                <td style="width: 70%;">
+                    <h1>دكتور بايك - قسم الصيانة</h1>
+                </td>
+                <td style="width: 30%; text-align: left;">
+                    <img src="{{ public_path('appImages/logo.jpg') }}" alt="DoctorBike" style="height:55px;">
+                </td>
+            </tr>
+        </table>
     </div>
 
-    <table class="grid">
-        <tr>
-            <td class="label">رقم الفاتورة</td>
-            <td>{{ $invoice['invoice_number'] }}</td>
-            <td class="label">رقم الصيانة</td>
-            <td>#{{ $invoice['maintenance_id'] }}</td>
-        </tr>
-        <tr>
-            <td class="label">تاريخ الفاتورة</td>
-            <td>{{ $invoice['invoice_date'] ?? '-' }}</td>
-            <td class="label">حالة الصيانة</td>
-            <td>{{ $invoice['status'] }}</td>
-        </tr>
-        <tr>
-            <td class="label">الجهة</td>
-            <td>{{ $invoice['customer_type_label'] }}</td>
-            <td class="label">الاسم</td>
-            <td>{{ $invoice['customer_name'] }}</td>
-        </tr>
-        <tr>
-            <td class="label">الهاتف</td>
-            <td>{{ $invoice['customer_phone'] ?? '-' }}</td>
-            <td class="label">الاستلام</td>
-            <td>{{ $invoice['receipt_date'] }} {{ $invoice['receipt_time'] }}</td>
-        </tr>
-        @if(!empty($invoice['description']))
-            <tr>
-                <td class="label">الوصف</td>
-                <td colspan="3">{{ $invoice['description'] }}</td>
-            </tr>
-        @endif
-    </table>
+    <h2>فاتورة صيانة رسمية</h2>
 
-    <table class="items">
+    <div class="meta">
+        <p><strong>رقم الفاتورة:</strong> <span class="ltr">{{ $invoice['invoice_number'] }}</span></p>
+        <p><strong>رقم الصيانة:</strong> #{{ $invoice['maintenance_id'] }}</p>
+        <p><strong>تاريخ الفاتورة:</strong> <span class="ltr">{{ $invoice['invoice_date'] ?? '—' }}</span></p>
+        <p><strong>الاسم:</strong> {{ $invoice['customer_name'] }}</p>
+        <p><strong>الهاتف:</strong> {{ $invoice['customer_phone'] ?? '—' }}</p>
+        <p><strong>الجهة:</strong> {{ $invoice['customer_type_label'] }}</p>
+        <p><strong>موعد الاستلام:</strong> <span class="ltr">{{ $invoice['receipt_date'] }} {{ $invoice['receipt_time'] }}</span></p>
+        @if(!empty($invoice['description']))
+            <p><strong>وصف الصيانة:</strong> {{ $invoice['description'] }}</p>
+        @endif
+    </div>
+
+    <div class="summary">
+        <span>حالة الصيانة: <strong>{{ $invoice['maintenance_status_label'] }}</strong></span>
+        <span>حالة الفاتورة:
+            <span class="{{ $invoice['payment_status'] }}">{{ $invoice['payment_status_label'] }}</span>
+        </span>
+        <span>الإجمالي النهائي:
+            <span class="grand">{{ number_format((float) $invoice['invoice_total'], 2) }} ₪</span>
+        </span>
+        <span>المدفوع:
+            <span class="paid">{{ number_format((float) $invoice['paid_amount'], 2) }} ₪</span>
+        </span>
+        <span>المتبقي:
+            <span class="{{ (float) $invoice['remaining_amount'] > 0 ? 'unpaid' : 'paid' }}">
+                {{ number_format((float) $invoice['remaining_amount'], 2) }} ₪
+            </span>
+        </span>
+    </div>
+
+    <table class="data">
         <thead>
             <tr>
-                <th>#</th>
+                <th class="num">#</th>
                 <th>البيان</th>
-                <th>الكمية</th>
-                <th>سعر الوحدة</th>
-                <th>الإجمالي</th>
+                <th class="num">الكمية</th>
+                <th class="num">سعر الوحدة</th>
+                <th class="num">الإجمالي</th>
             </tr>
         </thead>
         <tbody>
             @forelse($invoice['items'] as $index => $item)
                 <tr>
-                    <td>{{ $index + 1 }}</td>
+                    <td class="num">{{ $index + 1 }}</td>
                     <td>{{ $item['product_name'] }}</td>
-                    <td>{{ $item['quantity'] }}</td>
-                    <td>{{ number_format((float) $item['unit_price'], 2) }}</td>
-                    <td>{{ number_format((float) $item['line_total'], 2) }}</td>
+                    <td class="num">{{ $item['quantity'] }}</td>
+                    <td class="num">{{ number_format((float) $item['unit_price'], 2) }} ₪</td>
+                    <td class="num">{{ number_format((float) $item['line_total'], 2) }} ₪</td>
                 </tr>
             @empty
                 <tr>
-                    <td>1</td>
+                    <td class="num">1</td>
                     <td>أجرة صيانة</td>
-                    <td>1</td>
-                    <td>{{ number_format((float) $invoice['labor_cost'], 2) }}</td>
-                    <td>{{ number_format((float) $invoice['labor_cost'], 2) }}</td>
+                    <td class="num">1</td>
+                    <td class="num">{{ number_format((float) $invoice['labor_cost'], 2) }} ₪</td>
+                    <td class="num">{{ number_format((float) $invoice['labor_cost'], 2) }} ₪</td>
                 </tr>
             @endforelse
         </tbody>
@@ -157,28 +186,30 @@
 
     <table class="totals">
         <tr>
-            <td>إجمالي القطع</td>
-            <td>{{ number_format((float) $invoice['parts_total'], 2) }}</td>
+            <td class="label">إجمالي القطع</td>
+            <td class="num">{{ number_format((float) $invoice['parts_total'], 2) }} ₪</td>
         </tr>
         <tr>
-            <td>أجرة الصيانة</td>
-            <td>{{ number_format((float) $invoice['labor_cost'], 2) }}</td>
+            <td class="label">أجرة الصيانة</td>
+            <td class="num">{{ number_format((float) $invoice['labor_cost'], 2) }} ₪</td>
         </tr>
         <tr>
-            <td>الخصم</td>
-            <td>{{ number_format((float) $invoice['discount'], 2) }}</td>
-        </tr>
-        <tr class="grand">
-            <td>الإجمالي النهائي</td>
-            <td>{{ number_format((float) $invoice['invoice_total'], 2) }}</td>
+            <td class="label">الخصم</td>
+            <td class="num">{{ number_format((float) $invoice['discount'], 2) }} ₪</td>
         </tr>
         <tr>
-            <td>المدفوع</td>
-            <td>{{ number_format((float) $invoice['paid_amount'], 2) }}</td>
+            <td class="label grand">الإجمالي النهائي</td>
+            <td class="num grand">{{ number_format((float) $invoice['invoice_total'], 2) }} ₪</td>
         </tr>
         <tr>
-            <td>المتبقي</td>
-            <td>{{ number_format((float) $invoice['remaining_amount'], 2) }}</td>
+            <td class="label">المدفوع</td>
+            <td class="num paid">{{ number_format((float) $invoice['paid_amount'], 2) }} ₪</td>
+        </tr>
+        <tr>
+            <td class="label">المتبقي</td>
+            <td class="num {{ (float) $invoice['remaining_amount'] > 0 ? 'unpaid' : 'paid' }}">
+                {{ number_format((float) $invoice['remaining_amount'], 2) }} ₪
+            </td>
         </tr>
     </table>
 
