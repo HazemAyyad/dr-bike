@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Schema;
 
 class SpecialTask extends Model
 {
@@ -33,7 +34,11 @@ class SpecialTask extends Model
     ];
 
     public function subTasks(){
-        return $this->hasMany(SubTask::class);
+        $relation = $this->hasMany(SubTask::class);
+        if (Schema::hasColumn('sub_tasks', 'sort_order')) {
+            return $relation->orderBy('sort_order')->orderBy('id');
+        }
+        return $relation->orderBy('id');
     }
 
 

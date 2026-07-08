@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class SpecialTasks extends Controller
@@ -571,6 +572,9 @@ if ($request->has('sub_special_tasks')) {
             'special_task_id' => $specialTask->id,
             'force_employee_to_add_img_for_sub_task' => $subTask['force_employee_to_add_img_for_sub_task'],
         ];
+        if (Schema::hasColumn('sub_tasks', 'sort_order')) {
+            $subTaskData['sort_order'] = $index;
+        }
 
         // Check if an image was uploaded for this subtask
         if ($request->hasFile("sub_special_tasks.$index.admin_subtask__img")) {
@@ -954,10 +958,27 @@ public function updateTask(Request $request)
 
                 foreach ($sentSubTasks as $index => $subTaskData) {
                     if (isset($subTaskData['id'])) {
-                        // Existing subtask 
-
+                        $subTask = SubTask::find($subTaskData['id']);
+                        if ($subTask && (int) $subTask->special_task_id === (int) $empT->id) {
+                            $updatePayload = [];
+                            if (Schema::hasColumn('sub_tasks', 'sort_order')) {
+                                $updatePayload['sort_order'] = $index;
+                            }
+                            if (isset($subTaskData['name'])) {
+                                $updatePayload['name'] = $subTaskData['name'];
+                            }
+                            if (array_key_exists('description', $subTaskData)) {
+                                $updatePayload['description'] = $subTaskData['description'];
+                            }
+                            if (isset($subTaskData['force_employee_to_add_img_for_sub_task'])) {
+                                $updatePayload['force_employee_to_add_img_for_sub_task'] = $subTaskData['force_employee_to_add_img_for_sub_task'];
+                            }
+                            if ($updatePayload !== []) {
+                                $subTask->update($updatePayload);
+                            }
                             $keepIds[] = $subTaskData['id'];
                         }
+                    }
                     else {
                         $subImagesNames = [];
                         if ($request->hasFile("sub_special_tasks.$index.admin_subtask_img")) {
@@ -968,13 +989,18 @@ public function updateTask(Request $request)
                             }
                         }
                         // New subtask → create
-                        $newSubTask = SubTask::create([
+                        $newSubPayload = [
                             'special_task_id' => $empT->id,
                             'name' => $subTaskData['name'],
                             'description' => $subTaskData['description'] ?? null,
+                            'force_employee_to_add_img_for_sub_task' => $subTaskData['force_employee_to_add_img_for_sub_task'] ?? 0,
                             'admin_img' => $subImagesNames,
 
-                        ]);
+                        ];
+                        if (Schema::hasColumn('sub_tasks', 'sort_order')) {
+                            $newSubPayload['sort_order'] = $index;
+                        }
+                        $newSubTask = SubTask::create($newSubPayload);
                         $keepIds[] = $newSubTask->id;
                     }
                 }

@@ -13,6 +13,7 @@ class SubTask extends Model
         'special_task_id',
         'name','description',
         'status','force_employee_to_add_img_for_sub_task',
+        'sort_order',
         'admin_img',
     ];
 
