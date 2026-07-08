@@ -2000,7 +2000,8 @@ public function edit(Request $request)
 
             $formatted = [
                 'id' => $sale->id,
-                'invoice_number' => (string) $sale->id,
+                'invoice_number' => (string) ($sale->serial_number ?: $sale->id),
+                'serial_number' => $sale->serial_number,
                 'invoice_date' => optional($sale->created_at)->format('Y-m-d H:i:s'),
                 'sale_type' => $isPackageSale ? 'package' : 'product',
                 'sale_composition' => $saleComposition,
@@ -2031,6 +2032,10 @@ public function edit(Request $request)
                 'notes' => $sale->notes,
                 'sales_order_id' => $linkedSalesOrder?->id,
                 'sales_order_serial' => $linkedSalesOrder?->serial_number,
+                'maintenance_id' => $sale->maintenance_id,
+                'maintenance_invoice_number' => $sale->maintenance_id
+                    ? 'MNT-'.str_pad((string) $sale->maintenance_id, 6, '0', STR_PAD_LEFT)
+                    : null,
                 'buyer' => $buyer,
                 'trader_name' => $buyer['type'] === 'trader' ? $buyer['name'] : null,
                 'customer_name' => $buyer['type'] === 'customer' ? $buyer['name'] : ($sale->project?->partnership?->customer?->name),

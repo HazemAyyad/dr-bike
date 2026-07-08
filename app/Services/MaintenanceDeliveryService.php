@@ -323,9 +323,10 @@ class MaintenanceDeliveryService
                 'additional_notes' => $additionalNotes,
             ]));
 
-            app(DocumentSerialService::class)->assignToModel(
+            app(DocumentSerialService::class)->assignPrefixedToModel(
                 $main,
                 DocumentSerialService::TYPE_INSTANT_SALE_INVOICE,
+                'MNT-',
                 'serial_number'
             );
 
@@ -390,9 +391,10 @@ class MaintenanceDeliveryService
 
         $main = InstantSale::create($mainAttributes);
 
-        app(DocumentSerialService::class)->assignToModel(
+        app(DocumentSerialService::class)->assignPrefixedToModel(
             $main,
             DocumentSerialService::TYPE_INSTANT_SALE_INVOICE,
+            'MNT-',
             'serial_number'
         );
 

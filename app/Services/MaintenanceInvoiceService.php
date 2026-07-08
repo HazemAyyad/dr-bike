@@ -35,8 +35,7 @@ class MaintenanceInvoiceService
 
         return [
             'maintenance_id' => $maintenance->id,
-            'invoice_number' => $maintenance->instantSale?->serial_number
-                ?: 'MNT-'.str_pad((string) $maintenance->id, 6, '0', STR_PAD_LEFT),
+            'invoice_number' => 'MNT-'.str_pad((string) $maintenance->id, 6, '0', STR_PAD_LEFT),
             'invoice_date' => optional($invoiceDate)->format('Y-m-d H:i:s'),
             'invoice_date_display' => $this->formatArabicDateTime($invoiceDate),
             'status' => $maintenance->status,

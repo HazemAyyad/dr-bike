@@ -115,11 +115,11 @@
     <div class="header">
         <table class="logo-row">
             <tr>
-                <td style="width: 70%;">
+                <td style="width: 62%;">
                     <h1>دكتور بايك - قسم الصيانة</h1>
                 </td>
-                <td style="width: 30%; text-align: left;">
-                    <img src="{{ public_path('appImages/logo.jpg') }}" alt="DoctorBike" style="height:55px;">
+                <td style="width: 38%; text-align: left;">
+                    <img src="{{ public_path('appImages/logo.jpg') }}" alt="DoctorBike" style="height:78px;">
                 </td>
             </tr>
         </table>
