@@ -265,6 +265,9 @@ Route::get('/test/purge-sales-orders', function () {
                 'instant_sales_linked_to_sales_orders' => 'فواتير بيع فوري مرتبطة بطلبيات',
                 'debt_transactions_sales_order' => 'قيود دفتر الديون الناتجة عن طلبيات',
                 'legacy_debts_linked_to_sales_orders' => 'ديون قديمة مرتبطة بطلبيات',
+                'sales_cancellation_requests_sales_order' => 'طلبات إلغاء الطلبيات',
+                'sales_daily_closing_requests' => 'طلبات إغلاق صندوق المبيعات اليومي',
+                'sales_daily_sessions' => 'جلسات صندوق المبيعات اليومي',
             ],
             'purgeRecords' => [
                 'كل صفوف sales_orders: فواتير الطلبيات الرئيسية والفرعية.',
@@ -273,6 +276,8 @@ Route::get('/test/purge-sales-orders', function () {
                 'كل صفوف sales_returns و sales_return_items التابعة للطلبيات.',
                 'صفوف debt_transactions التي source فيها sales_order فقط.',
                 'صفوف debts القديمة المرتبطة بعمود sales_orders.debt_id إن وجدت.',
+                'صفوف sales_cancellation_requests التي sale_type فيها sales_order فقط.',
+                'صفوف sales_daily_closing_requests و sales_daily_sessions الخاصة بصندوق المبيعات اليومي.',
                 'سيتم فصل instant_sales.sales_order_id فقط بدون حذف فواتير البيع الفوري نفسها.',
             ],
         ], $data);
@@ -303,6 +308,16 @@ Route::get('/test/purge-sales-orders', function () {
                     ->whereNotNull('debt_id');
             })
             ->count();
+    }
+    if ($hasTable('sales_cancellation_requests')) {
+        $before['sales_cancellation_requests_sales_order'] = (int) \Illuminate\Support\Facades\DB::table('sales_cancellation_requests')
+            ->where('sale_type', 'sales_order')
+            ->count();
+    }
+    foreach (['sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
+        if ($hasTable($table)) {
+            $before[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+        }
     }
 
     $debtImpacts = $collectDebtImpacts();
@@ -361,6 +376,11 @@ Route::get('/test/purge-sales-orders', function () {
                 ->where('source', 'sales_order')
                 ->delete();
         }
+        if ($hasTable('sales_cancellation_requests')) {
+            \Illuminate\Support\Facades\DB::table('sales_cancellation_requests')
+                ->where('sale_type', 'sales_order')
+                ->delete();
+        }
 
         if (
             \Illuminate\Support\Facades\Schema::hasTable('instant_sales')
@@ -385,8 +405,20 @@ Route::get('/test/purge-sales-orders', function () {
         }
     });
 
+    if ($hasTable('sales_daily_closing_requests')) {
+        \Illuminate\Support\Facades\DB::table('sales_daily_closing_requests')->delete();
+    }
+    if ($hasTable('sales_daily_sessions')) {
+        \Illuminate\Support\Facades\DB::table('sales_daily_sessions')->delete();
+    }
+
     foreach ($existingTables as $table) {
         \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+    }
+    foreach (['sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
+        if ($hasTable($table)) {
+            \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+        }
     }
 
     foreach ($affectedDebtPeople as $person) {
@@ -421,6 +453,16 @@ Route::get('/test/purge-sales-orders', function () {
                     ->whereNotNull('debt_id');
             })
             ->count();
+    }
+    if ($hasTable('sales_cancellation_requests')) {
+        $after['sales_cancellation_requests_sales_order'] = (int) \Illuminate\Support\Facades\DB::table('sales_cancellation_requests')
+            ->where('sale_type', 'sales_order')
+            ->count();
+    }
+    foreach (['sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
+        if ($hasTable($table)) {
+            $after[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+        }
     }
 
     file_put_contents($lockPath, json_encode([
@@ -535,6 +577,11 @@ Route::get('/test/purge-instant-sales', function () {
                 ->whereNotNull('instant_sale_id')
                 ->count();
         }
+        foreach (['sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
+            if ($hasTable($table)) {
+                $counts[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+            }
+        }
 
         return $counts;
     };
@@ -619,6 +666,8 @@ Route::get('/test/purge-instant-sales', function () {
                 'sales_orders_linked_to_instant_sales' => 'فواتير طلبيات ستحذف لأنها مرتبطة ببيع فوري',
                 'maintenance_linked_to_instant_sales' => 'فواتير صيانة ستحذف لأنها مرتبطة ببيع فوري',
                 'maintenance_daily_box_logs_linked_to_instant_sales' => 'سجلات صندوق الصيانة المرتبطة ببيع فوري',
+                'sales_daily_closing_requests' => 'طلبات إغلاق صندوق المبيعات اليومي',
+                'sales_daily_sessions' => 'جلسات صندوق المبيعات اليومي',
             ],
             'willPurge' => [
                 'فواتير البيع الفوري الرئيسية والفرعية',
@@ -639,6 +688,7 @@ Route::get('/test/purge-instant-sales', function () {
                 'صفوف product_stock_movements التي reference_type فيها instant_sale فقط.',
                 'صفوف sales_orders المرتبطة ببيع فوري، ومعها sales_order_items/packages/status_logs/media/deliveries/shiply_events والمرتجعات التابعة لها.',
                 'صفوف maintenance المرتبطة ببيع فوري، ومعها maintenance_products و maintenance_activity_logs وسجلات maintenance_daily_box_logs التابعة لها.',
+                'صفوف sales_daily_closing_requests و sales_daily_sessions الخاصة بصندوق المبيعات اليومي.',
             ],
             'willNotChange' => [
                 'المنتجات وكميات المخزون الحالية',
@@ -814,6 +864,12 @@ Route::get('/test/purge-instant-sales', function () {
                 ->whereNotNull('instant_sale_id')
                 ->delete();
         }
+        if ($hasTable('sales_daily_closing_requests')) {
+            \Illuminate\Support\Facades\DB::table('sales_daily_closing_requests')->delete();
+        }
+        if ($hasTable('sales_daily_sessions')) {
+            \Illuminate\Support\Facades\DB::table('sales_daily_sessions')->delete();
+        }
 
         \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=0');
         try {
@@ -830,6 +886,11 @@ Route::get('/test/purge-instant-sales', function () {
     });
 
     foreach (['suspended_instant_sales', 'instant_sales'] as $table) {
+        if ($hasTable($table)) {
+            \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+        }
+    }
+    foreach (['sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
         if ($hasTable($table)) {
             \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
         }
@@ -861,6 +922,221 @@ Route::get('/test/purge-instant-sales', function () {
         'debtImpacts' => $debtImpacts,
     ]));
 })->name('test.purge-instant-sales');
+
+/**
+ * مسح بيانات الربح النقدي عند الانتقال للتشغيل الحقيقي.
+ * GET /test/purge-profit-sales?token=TOKEN
+ * GET /test/purge-profit-sales?token=TOKEN&confirm=yes
+ */
+Route::get('/test/purge-profit-sales', function () {
+    $token = (string) request()->query('token', '');
+    $expected = (string) env('DEPLOY_ONCE_TOKEN', 'eshterelyDeploy2026SecureToken123');
+    if ($token === '' || ! hash_equals($expected, $token)) {
+        abort(403);
+    }
+
+    $hasTable = fn (string $table): bool => \Illuminate\Support\Facades\Schema::hasTable($table);
+    $hasColumn = fn (string $table, string $column): bool => $hasTable($table)
+        && \Illuminate\Support\Facades\Schema::hasColumn($table, $column);
+
+    $collectDebtImpacts = function () use ($hasTable, $hasColumn): array {
+        if (! $hasTable('debt_transactions') || ! $hasColumn('debt_transactions', 'source')) {
+            return [];
+        }
+
+        return \Illuminate\Support\Facades\DB::table('debt_transactions')
+            ->select('customer_id', 'seller_id', 'currency')
+            ->where('source', 'profit_sale')
+            ->whereNull('archived_at')
+            ->whereNull('deleted_at')
+            ->groupBy('customer_id', 'seller_id', 'currency')
+            ->get()
+            ->map(function ($person) {
+                $currency = $person->currency ?: 'شيكل';
+                $base = \Illuminate\Support\Facades\DB::table('debt_transactions')
+                    ->whereNull('archived_at')
+                    ->whereNull('deleted_at')
+                    ->where('currency', $currency);
+
+                if ($person->customer_id) {
+                    $base->where('customer_id', $person->customer_id)->whereNull('seller_id');
+                    $name = (string) \Illuminate\Support\Facades\DB::table('customers')->where('id', $person->customer_id)->value('name');
+                    $typeLabel = 'زبون';
+                } else {
+                    $base->where('seller_id', $person->seller_id)->whereNull('customer_id');
+                    $name = (string) \Illuminate\Support\Facades\DB::table('sellers')->where('id', $person->seller_id)->value('name');
+                    $typeLabel = 'تاجر';
+                }
+
+                $currentBalance = (float) (clone $base)->where('type', 'taken')->sum('amount')
+                    - (float) (clone $base)->where('type', 'given')->sum('amount');
+                $removedBalance = (float) (clone $base)->where('source', 'profit_sale')->where('type', 'taken')->sum('amount')
+                    - (float) (clone $base)->where('source', 'profit_sale')->where('type', 'given')->sum('amount');
+
+                return [
+                    'person_type_label' => $typeLabel,
+                    'person_id' => (int) ($person->customer_id ?: $person->seller_id),
+                    'person_name' => $name !== '' ? $name : ('#'.($person->customer_id ?: $person->seller_id)),
+                    'currency' => $currency,
+                    'current_balance' => $currentBalance,
+                    'removed_balance' => $removedBalance,
+                    'expected_balance' => $currentBalance - $removedBalance,
+                ];
+            })
+            ->values()
+            ->all();
+    };
+
+    $collectCounts = function () use ($hasTable, $hasColumn): array {
+        $counts = [];
+        foreach (['profit_sales', 'sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
+            if ($hasTable($table)) {
+                $counts[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+            }
+        }
+        if ($hasTable('sales_cancellation_requests')) {
+            $counts['sales_cancellation_requests_profit'] = (int) \Illuminate\Support\Facades\DB::table('sales_cancellation_requests')
+                ->where('sale_type', 'profit')
+                ->count();
+        }
+        if ($hasColumn('debt_transactions', 'source')) {
+            $counts['debt_transactions_profit_sale'] = (int) \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->where('source', 'profit_sale')
+                ->count();
+        }
+
+        return $counts;
+    };
+
+    $viewData = function (array $data) use ($token): array {
+        return array_merge([
+            'token' => $token,
+            'pageTitle' => 'تصفير الربح النقدي',
+            'pageSubtitle' => 'صفحة مخصصة لتجهيز الربح النقدي قبل بداية التشغيل الحقيقي، مع معاينة واضحة قبل التنفيذ.',
+            'badge' => 'Doctor Bike / Profit Sales',
+            'routeName' => 'test.purge-profit-sales',
+            'metricsLabel' => 'عدادات الربح النقدي',
+            'doneTitle' => 'تم تصفير الربح النقدي',
+            'doneMessage' => 'تم مسح الربح النقدي وقيود الديون وجلسات صندوق المبيعات اليومية المرتبطة بالتجربة.',
+            'confirmButtonLabel' => 'تصفير الربح النقدي الآن',
+            'metricLabels' => [
+                'profit_sales' => 'فواتير الربح النقدي',
+                'sales_cancellation_requests_profit' => 'طلبات إلغاء الربح النقدي',
+                'debt_transactions_profit_sale' => 'قيود دفتر الديون الناتجة عن الربح النقدي',
+                'sales_daily_closing_requests' => 'طلبات إغلاق صندوق المبيعات اليومي',
+                'sales_daily_sessions' => 'جلسات صندوق المبيعات اليومي',
+            ],
+            'willPurge' => [
+                'فواتير الربح النقدي',
+                'طلبات إلغاء الربح النقدي',
+                'قيود دفتر الديون التي مصدرها ربح نقدي',
+                'جلسات صندوق المبيعات اليومي وطلبات الإغلاق',
+            ],
+            'purgeRecords' => [
+                'كل صفوف profit_sales.',
+                'صفوف sales_cancellation_requests التي sale_type فيها profit فقط.',
+                'صفوف debt_transactions التي source فيها profit_sale فقط.',
+                'صفوف sales_daily_closing_requests و sales_daily_sessions الخاصة بصندوق المبيعات اليومي.',
+            ],
+            'willNotChange' => [
+                'البيع الفوري',
+                'الطلبيات',
+                'الصيانة',
+                'المنتجات والمخزون',
+                'الصناديق وأرصدة الصناديق',
+                'العملاء والتجار',
+            ],
+        ], $data);
+    };
+
+    $before = $collectCounts();
+    $debtImpacts = $collectDebtImpacts();
+
+    $confirm = strtolower(trim((string) request()->query('confirm', '')));
+    if (! in_array($confirm, ['yes', '1', 'true'], true)) {
+        return view('purge-sales-orders', $viewData([
+            'status' => 'preview',
+            'before' => $before,
+            'after' => null,
+            'lockPath' => null,
+            'debtImpacts' => $debtImpacts,
+        ]));
+    }
+
+    $lockPath = storage_path('framework/profit_sales_purge_once.lock');
+    if (is_file($lockPath) && request()->query('force') !== 'yes') {
+        $lock = json_decode((string) file_get_contents($lockPath), true) ?: [];
+
+        return view('purge-sales-orders', $viewData([
+            'status' => 'locked',
+            'before' => $lock['before'] ?? $before,
+            'after' => $lock['after'] ?? null,
+            'lockPath' => $lockPath,
+            'executedAt' => $lock['executed_at'] ?? null,
+            'debtImpacts' => $lock['debt_impacts'] ?? $debtImpacts,
+        ]));
+    }
+
+    $affectedDebtPeople = [];
+    \Illuminate\Support\Facades\DB::transaction(function () use ($hasTable, $hasColumn, &$affectedDebtPeople) {
+        if ($hasColumn('debt_transactions', 'source')) {
+            $affectedDebtPeople = \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->select('customer_id', 'seller_id')
+                ->where('source', 'profit_sale')
+                ->groupBy('customer_id', 'seller_id')
+                ->get()
+                ->map(fn ($row) => [
+                    'customer_id' => $row->customer_id ? (int) $row->customer_id : null,
+                    'seller_id' => $row->seller_id ? (int) $row->seller_id : null,
+                ])
+                ->all();
+
+            \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->where('source', 'profit_sale')
+                ->delete();
+        }
+        if ($hasTable('sales_cancellation_requests')) {
+            \Illuminate\Support\Facades\DB::table('sales_cancellation_requests')
+                ->where('sale_type', 'profit')
+                ->delete();
+        }
+        foreach (['profit_sales', 'sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
+            if ($hasTable($table)) {
+                \Illuminate\Support\Facades\DB::table($table)->delete();
+            }
+        }
+    });
+
+    foreach (['profit_sales', 'sales_daily_closing_requests', 'sales_daily_sessions'] as $table) {
+        if ($hasTable($table)) {
+            \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+        }
+    }
+    foreach ($affectedDebtPeople as $person) {
+        app(\App\Services\DebtLedgerService::class)->recalculateBalances(
+            $person['customer_id'] ?? null,
+            $person['seller_id'] ?? null
+        );
+    }
+
+    $after = $collectCounts();
+    file_put_contents($lockPath, json_encode([
+        'executed_at' => now()->toIso8601String(),
+        'before' => $before,
+        'after' => $after,
+        'debt_impacts' => $debtImpacts,
+        'via' => 'web-route',
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    return view('purge-sales-orders', $viewData([
+        'status' => 'done',
+        'before' => $before,
+        'after' => $after,
+        'lockPath' => $lockPath,
+        'executedAt' => now()->toIso8601String(),
+        'debtImpacts' => $debtImpacts,
+    ]));
+})->name('test.purge-profit-sales');
 
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
