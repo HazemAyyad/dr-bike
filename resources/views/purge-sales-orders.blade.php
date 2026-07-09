@@ -282,11 +282,15 @@
 
     <div class="grid" aria-label="{{ $metricsLabel }}">
         @foreach($before as $table => $count)
+            @php
+                $hasAfterCount = in_array($status, ['done', 'locked'], true) && array_key_exists($table, $after);
+                $displayCount = $hasAfterCount ? $after[$table] : $count;
+            @endphp
             <article class="metric">
                 <div class="label">{{ $metricLabels[$table] ?? $table }}</div>
-                <div class="value">{{ number_format((int) $count) }}</div>
-                @if($status === 'done' && array_key_exists($table, $after))
-                    <div class="fine-print">بعد التنفيذ: {{ number_format((int) $after[$table]) }}</div>
+                <div class="value">{{ number_format((int) $displayCount) }}</div>
+                @if($hasAfterCount)
+                    <div class="fine-print">قبل التنفيذ: {{ number_format((int) $count) }}</div>
                 @endif
             </article>
         @endforeach
