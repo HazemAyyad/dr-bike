@@ -180,6 +180,9 @@ class ProfitSales extends Controller
         }
 
         $data['sales_daily_session_id'] = $dailySession->id;
+        if (Schema::hasColumn('profit_sales', 'created_by')) {
+            $data['created_by'] = $request->user()->id;
+        }
 
         $profitSale = ProfitSale::create($data);
 

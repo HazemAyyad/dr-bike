@@ -15,6 +15,7 @@ use App\Models\SalesOrder;
 use App\Models\Seller;
 use App\Services\CustomerProductPriceHistoryService;
 use App\Services\DebtLedgerService;
+use App\Services\DocumentSerialService;
 use App\Services\OfferPackageService;
 use App\Services\ProductStockService;
 use App\Services\SalesDailySessionService;
@@ -1041,6 +1042,12 @@ public function store(Request $request)
             $mainInstantSale = $mainInstantSale->fresh();
         } else {
             $mainInstantSale = InstantSale::create($mainData);
+            app(DocumentSerialService::class)->assignPrefixedToModel(
+                $mainInstantSale,
+                DocumentSerialService::TYPE_INSTANT_SALE_INVOICE,
+                'SAL-',
+                'serial_number'
+            );
         }
 
         $this->linkPaymentBoxLogToInstantSale(
@@ -1286,6 +1293,12 @@ public function store(Request $request)
                 $mainInstantSale = $mainInstantSale->fresh();
             } else {
                 $mainInstantSale = InstantSale::create($mainData);
+                app(DocumentSerialService::class)->assignPrefixedToModel(
+                    $mainInstantSale,
+                    DocumentSerialService::TYPE_INSTANT_SALE_INVOICE,
+                    'SAL-',
+                    'serial_number'
+                );
             }
 
             $this->linkPaymentBoxLogToInstantSale(
@@ -1629,6 +1642,12 @@ public function store(Request $request)
 
             return [
                 'id' => $sale->id,
+                'invoice_number' => (string) ($sale->serial_number ?: 'SAL-'.str_pad((string) $sale->id, 7, '0', STR_PAD_LEFT)),
+                'serial_number' => $sale->serial_number,
+                'maintenance_id' => $sale->maintenance_id,
+                'maintenance_invoice_number' => $sale->maintenance_id
+                    ? 'MNT-'.str_pad((string) $sale->maintenance_id, 6, '0', STR_PAD_LEFT)
+                    : null,
                 'sale_type' => $isPackageSale ? 'package' : 'product',
                 'sale_composition' => $saleComposition,
                 'has_additional_products' => $hasAdditionalProducts,
@@ -2054,7 +2073,7 @@ public function edit(Request $request)
 
             $formatted = [
                 'id' => $sale->id,
-                'invoice_number' => (string) ($sale->serial_number ?: $sale->id),
+                'invoice_number' => (string) ($sale->serial_number ?: 'SAL-'.str_pad((string) $sale->id, 7, '0', STR_PAD_LEFT)),
                 'serial_number' => $sale->serial_number,
                 'invoice_date' => optional($sale->created_at)->format('Y-m-d H:i:s'),
                 'sale_type' => $isPackageSale ? 'package' : 'product',

@@ -235,12 +235,6 @@ class SalesDailySessionService
             ]);
         }
 
-        if ($session->business_date->toDateString() < $this->businessDateToday()->toDateString()) {
-            throw ValidationException::withMessages([
-                'session' => [__('messages.sales_daily_previous_day_open')],
-            ]);
-        }
-
         if ($session->isClosingRequested()) {
             throw ValidationException::withMessages([
                 'session' => [__('messages.sales_daily_closing_pending')],
@@ -578,6 +572,12 @@ class SalesDailySessionService
         $canRequestClosing = $session
             && $session->status === config('sales_daily.session_status.open')
             && ! $pendingClosing;
+        $isPreviousDayOpen = $session
+            && $session->business_date->toDateString() < $this->businessDateToday()->toDateString()
+            && in_array($session->status, [
+                config('sales_daily.session_status.open'),
+                config('sales_daily.session_status.closing_requested'),
+            ], true);
         $requiresLateCloseReason = $canRequestClosing
             && $session
             && $this->isLateCloseSession($session)
@@ -591,8 +591,15 @@ class SalesDailySessionService
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
                 'employee_name' => $session->user?->name,
-                'allows_sales' => $session->allowsSales() && ! $blocking,
-                'is_blocking_previous_day' => (bool) $blocking,
+                'allows_sales' => $session->allowsSales(),
+                'is_blocking_previous_day' => (bool) $isPreviousDayOpen,
+                'previous_day_warning' => (bool) $isPreviousDayOpen,
+                'previous_day_owner_name' => $isPreviousDayOpen
+                    ? ($session->user?->name ?? null)
+                    : null,
+                'previous_day_business_date' => $isPreviousDayOpen
+                    ? $session->business_date->toDateString()
+                    : null,
                 'has_pending_reopen' => (bool) $pendingReopen,
                 'can_request_closing' => $canRequestClosing
                     && (! $blockedByOther || $this->canReviewAllSessions($user)),
@@ -1405,7 +1412,7 @@ class SalesDailySessionService
         $sales = InstantSale::query()
             ->where('sales_daily_session_id', $session->id)
             ->whereNull('parent_id')
-            ->with(['product:id,nameAr', 'offerPackage:id,name'])
+            ->with(['product:id,nameAr', 'offerPackage:id,name', 'createdByUser:id,name'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get();
@@ -1435,6 +1442,13 @@ class SalesDailySessionService
                     'id' => $sale->id,
                     'sale_type' => 'instant',
                     'label' => $label,
+                    'invoice_number' => (string) ($sale->serial_number ?: 'SAL-'.str_pad((string) $sale->id, 7, '0', STR_PAD_LEFT)),
+                    'serial_number' => $sale->serial_number,
+                    'maintenance_id' => $sale->maintenance_id,
+                    'is_from_maintenance' => $sale->maintenance_id !== null,
+                    'maintenance_invoice_number' => $sale->maintenance_id
+                        ? 'MNT-'.str_pad((string) $sale->maintenance_id, 6, '0', STR_PAD_LEFT)
+                        : null,
                     'is_package_sale' => $isPackage,
                     'is_from_sales_order' => $linkedOrder !== null,
                     'sales_order_id' => $linkedOrder?->id,
@@ -1446,6 +1460,8 @@ class SalesDailySessionService
                     'status' => $sale->status ?? 'active',
                     'created_at' => $sale->created_at?->toDateTimeString(),
                     'buyer_name' => $sale->buyer_name,
+                    'created_by' => $sale->created_by,
+                    'created_by_name' => $sale->createdByUser?->name,
                     'payment_box_name' => $sale->payment_box_name,
                     'payment_box_value' => $sale->payment_box_value,
                     'notes' => $sale->notes,
@@ -1505,6 +1521,7 @@ class SalesDailySessionService
 
         $profitSales = ProfitSale::query()
             ->where('sales_daily_session_id', $session->id)
+            ->with('createdByUser:id,name')
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get()
@@ -1518,6 +1535,8 @@ class SalesDailySessionService
                     'status' => $sale->status ?? 'active',
                     'created_at' => $sale->created_at?->toDateTimeString(),
                     'buyer_name' => $sale->buyer_name,
+                    'created_by' => $sale->created_by,
+                    'created_by_name' => $sale->createdByUser?->name,
                     'payment_box_name' => $sale->payment_box_name,
                     'payment_box_value' => $sale->payment_box_value,
                     'notes' => $sale->notes,

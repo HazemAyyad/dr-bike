@@ -25,6 +25,7 @@ class ProfitSale extends Model
         'status',
         'cancelled_at',
         'sales_daily_session_id',
+        'created_by',
     ];
 
     protected $casts = [
@@ -54,5 +55,10 @@ class ProfitSale extends Model
     public function salesDailySession(): BelongsTo
     {
         return $this->belongsTo(SalesDailySession::class, 'sales_daily_session_id');
+    }
+
+    public function createdByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 }
