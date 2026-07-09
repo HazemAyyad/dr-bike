@@ -377,13 +377,12 @@ class SalesDailySessionService
         $actor->loadMissing('employee.user');
 
         $ownerEmployee = $this->resolveSessionEmployee($session);
-        if (! $ownerEmployee) {
-            return;
+        if ($ownerEmployee) {
+            $ownerEmployee->loadMissing('user');
         }
 
-        $ownerEmployee->loadMissing('user');
         $actorName = $actor->employee?->user?->name ?? $actor->name ?? 'موظف';
-        $ownerName = $session->user?->name ?? $ownerEmployee->user?->name ?? 'المسؤول';
+        $ownerName = $session->user?->name ?? $ownerEmployee?->user?->name ?? 'المسؤول';
         $saleLabel = match ($saleType) {
             'profit' => 'بيع ربحي',
             'sales_order' => 'طلبية مبيعات',
@@ -402,7 +401,7 @@ class SalesDailySessionService
             'actor_employee_id' => (string) ($actor->employee?->id ?? ''),
             'actor_name' => $actorName,
             'owner_user_id' => (string) $session->user_id,
-            'owner_employee_id' => (string) $ownerEmployee->id,
+            'owner_employee_id' => (string) ($ownerEmployee?->id ?? ''),
             'owner_name' => $ownerName,
         ];
 
@@ -420,15 +419,17 @@ class SalesDailySessionService
                 (int) $session->id
             );
 
-            $this->employeeNotificationService->create(
-                $ownerEmployee,
-                EmployeeNotificationService::TYPE_SALES_DAILY_EXTERNAL_SALE,
-                'حركة على صندوقك',
-                "{$actorName} أضاف {$saleLabel} #{$saleId} بقيمة {$amountLabel} على صندوقك",
-                $data,
-                'sales_daily_session',
-                (int) $session->id
-            );
+            if ($ownerEmployee) {
+                $this->employeeNotificationService->create(
+                    $ownerEmployee,
+                    EmployeeNotificationService::TYPE_SALES_DAILY_EXTERNAL_SALE,
+                    'حركة على صندوقك',
+                    "{$actorName} أضاف {$saleLabel} #{$saleId} بقيمة {$amountLabel} على صندوقك",
+                    $data,
+                    'sales_daily_session',
+                    (int) $session->id
+                );
+            }
         } finally {
             App::setLocale($previous);
         }
