@@ -188,6 +188,95 @@ Route::get('/test/purge-sales-orders', function () {
         $tables,
         fn ($table) => \Illuminate\Support\Facades\Schema::hasTable($table)
     ));
+    $hasTable = fn (string $table): bool => \Illuminate\Support\Facades\Schema::hasTable($table);
+    $hasColumn = fn (string $table, string $column): bool => $hasTable($table)
+        && \Illuminate\Support\Facades\Schema::hasColumn($table, $column);
+
+    $collectDebtImpacts = function () use ($hasTable, $hasColumn): array {
+        if (! $hasTable('debt_transactions') || ! $hasColumn('debt_transactions', 'source')) {
+            return [];
+        }
+
+        $people = \Illuminate\Support\Facades\DB::table('debt_transactions')
+            ->select('customer_id', 'seller_id', 'currency')
+            ->where('source', 'sales_order')
+            ->whereNull('archived_at')
+            ->whereNull('deleted_at')
+            ->groupBy('customer_id', 'seller_id', 'currency')
+            ->get();
+
+        $impacts = [];
+        foreach ($people as $person) {
+            $currency = $person->currency ?: 'شيكل';
+            $base = \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->whereNull('archived_at')
+                ->whereNull('deleted_at')
+                ->where('currency', $currency);
+
+            if ($person->customer_id) {
+                $base->where('customer_id', $person->customer_id)->whereNull('seller_id');
+                $name = (string) \Illuminate\Support\Facades\DB::table('customers')
+                    ->where('id', $person->customer_id)
+                    ->value('name');
+                $typeLabel = 'زبون';
+            } else {
+                $base->where('seller_id', $person->seller_id)->whereNull('customer_id');
+                $name = (string) \Illuminate\Support\Facades\DB::table('sellers')
+                    ->where('id', $person->seller_id)
+                    ->value('name');
+                $typeLabel = 'تاجر';
+            }
+
+            $currentTaken = (float) (clone $base)->where('type', 'taken')->sum('amount');
+            $currentGiven = (float) (clone $base)->where('type', 'given')->sum('amount');
+            $removedTaken = (float) (clone $base)->where('source', 'sales_order')->where('type', 'taken')->sum('amount');
+            $removedGiven = (float) (clone $base)->where('source', 'sales_order')->where('type', 'given')->sum('amount');
+
+            $currentBalance = $currentTaken - $currentGiven;
+            $removedBalance = $removedTaken - $removedGiven;
+
+            $impacts[] = [
+                'person_type_label' => $typeLabel,
+                'person_id' => (int) ($person->customer_id ?: $person->seller_id),
+                'person_name' => $name !== '' ? $name : ('#'.($person->customer_id ?: $person->seller_id)),
+                'currency' => $currency,
+                'current_balance' => $currentBalance,
+                'removed_balance' => $removedBalance,
+                'expected_balance' => $currentBalance - $removedBalance,
+            ];
+        }
+
+        return $impacts;
+    };
+
+    $viewData = function (array $data) use ($token): array {
+        return array_merge([
+            'token' => $token,
+            'metricLabels' => [
+                'sales_return_items' => 'أصناف المرتجعات',
+                'sales_returns' => 'مرتجعات الطلبيات',
+                'sales_order_shiply_events' => 'أحداث Shiply للطلبيات',
+                'sales_order_deliveries' => 'سجلات تسليم الطلبيات',
+                'sales_order_media' => 'صور ووسائط الطلبيات',
+                'sales_order_status_logs' => 'سجل حالات الطلبيات',
+                'sales_order_items' => 'أصناف الطلبيات',
+                'sales_order_packages' => 'بكجات الطلبيات',
+                'sales_orders' => 'فواتير الطلبيات',
+                'instant_sales_linked_to_sales_orders' => 'فواتير بيع فوري مرتبطة بطلبيات',
+                'debt_transactions_sales_order' => 'قيود دفتر الديون الناتجة عن طلبيات',
+                'legacy_debts_linked_to_sales_orders' => 'ديون قديمة مرتبطة بطلبيات',
+            ],
+            'purgeRecords' => [
+                'كل صفوف sales_orders: فواتير الطلبيات الرئيسية والفرعية.',
+                'كل صفوف sales_order_items و sales_order_packages.',
+                'كل صفوف sales_order_status_logs و sales_order_media و sales_order_deliveries و sales_order_shiply_events.',
+                'كل صفوف sales_returns و sales_return_items التابعة للطلبيات.',
+                'صفوف debt_transactions التي source فيها sales_order فقط.',
+                'صفوف debts القديمة المرتبطة بعمود sales_orders.debt_id إن وجدت.',
+                'سيتم فصل instant_sales.sales_order_id فقط بدون حذف فواتير البيع الفوري نفسها.',
+            ],
+        ], $data);
+    };
 
     $before = [];
     foreach ($existingTables as $table) {
@@ -201,33 +290,78 @@ Route::get('/test/purge-sales-orders', function () {
             ->whereNotNull('sales_order_id')
             ->count();
     }
+    if ($hasColumn('debt_transactions', 'source')) {
+        $before['debt_transactions_sales_order'] = (int) \Illuminate\Support\Facades\DB::table('debt_transactions')
+            ->where('source', 'sales_order')
+            ->count();
+    }
+    if ($hasColumn('sales_orders', 'debt_id') && $hasTable('debts')) {
+        $before['legacy_debts_linked_to_sales_orders'] = (int) \Illuminate\Support\Facades\DB::table('debts')
+            ->whereIn('id', function ($query) {
+                $query->select('debt_id')
+                    ->from('sales_orders')
+                    ->whereNotNull('debt_id');
+            })
+            ->count();
+    }
+
+    $debtImpacts = $collectDebtImpacts();
 
     $confirm = strtolower(trim((string) request()->query('confirm', '')));
     if (! in_array($confirm, ['yes', '1', 'true'], true)) {
-        return view('purge-sales-orders', [
+        return view('purge-sales-orders', $viewData([
             'status' => 'preview',
             'before' => $before,
             'after' => null,
-            'token' => $token,
             'lockPath' => null,
-        ]);
+            'debtImpacts' => $debtImpacts,
+        ]));
     }
 
     $lockPath = storage_path('framework/sales_orders_purge_once.lock');
     if (is_file($lockPath) && request()->query('force') !== 'yes') {
         $lock = json_decode((string) file_get_contents($lockPath), true) ?: [];
 
-        return view('purge-sales-orders', [
+        return view('purge-sales-orders', $viewData([
             'status' => 'locked',
             'before' => $lock['before'] ?? $before,
             'after' => $lock['after'] ?? null,
-            'token' => $token,
             'lockPath' => $lockPath,
             'executedAt' => $lock['executed_at'] ?? null,
-        ]);
+            'debtImpacts' => $lock['debt_impacts'] ?? $debtImpacts,
+        ]));
     }
 
-    \Illuminate\Support\Facades\DB::transaction(function () use ($existingTables) {
+    $affectedDebtPeople = [];
+
+    \Illuminate\Support\Facades\DB::transaction(function () use ($existingTables, $hasTable, $hasColumn, &$affectedDebtPeople) {
+        $legacyDebtIds = collect();
+        if ($hasColumn('sales_orders', 'debt_id') && $hasTable('debts')) {
+            $legacyDebtIds = \Illuminate\Support\Facades\DB::table('sales_orders')
+                ->whereNotNull('debt_id')
+                ->pluck('debt_id')
+                ->filter()
+                ->unique()
+                ->values();
+        }
+
+        if ($hasColumn('debt_transactions', 'source')) {
+            $affectedDebtPeople = \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->select('customer_id', 'seller_id')
+                ->where('source', 'sales_order')
+                ->groupBy('customer_id', 'seller_id')
+                ->get()
+                ->map(fn ($row) => [
+                    'customer_id' => $row->customer_id ? (int) $row->customer_id : null,
+                    'seller_id' => $row->seller_id ? (int) $row->seller_id : null,
+                ])
+                ->all();
+
+            \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->where('source', 'sales_order')
+                ->delete();
+        }
+
         if (
             \Illuminate\Support\Facades\Schema::hasTable('instant_sales')
             && \Illuminate\Support\Facades\Schema::hasColumn('instant_sales', 'sales_order_id')
@@ -243,10 +377,21 @@ Route::get('/test/purge-sales-orders', function () {
                 \Illuminate\Support\Facades\DB::table($table)->delete();
                 \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
             }
+
+            if ($legacyDebtIds->isNotEmpty() && $hasTable('debts')) {
+                \Illuminate\Support\Facades\DB::table('debts')->whereIn('id', $legacyDebtIds)->delete();
+            }
         } finally {
             \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1');
         }
     });
+
+    foreach ($affectedDebtPeople as $person) {
+        app(\App\Services\DebtLedgerService::class)->recalculateBalances(
+            $person['customer_id'] ?? null,
+            $person['seller_id'] ?? null
+        );
+    }
 
     $after = [];
     foreach ($existingTables as $table) {
@@ -260,22 +405,37 @@ Route::get('/test/purge-sales-orders', function () {
             ->whereNotNull('sales_order_id')
             ->count();
     }
+    if ($hasColumn('debt_transactions', 'source')) {
+        $after['debt_transactions_sales_order'] = (int) \Illuminate\Support\Facades\DB::table('debt_transactions')
+            ->where('source', 'sales_order')
+            ->count();
+    }
+    if ($hasColumn('sales_orders', 'debt_id') && $hasTable('debts')) {
+        $after['legacy_debts_linked_to_sales_orders'] = (int) \Illuminate\Support\Facades\DB::table('debts')
+            ->whereIn('id', function ($query) {
+                $query->select('debt_id')
+                    ->from('sales_orders')
+                    ->whereNotNull('debt_id');
+            })
+            ->count();
+    }
 
     file_put_contents($lockPath, json_encode([
         'executed_at' => now()->toIso8601String(),
         'before' => $before,
         'after' => $after,
+        'debt_impacts' => $debtImpacts,
         'via' => 'web-route',
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
-    return view('purge-sales-orders', [
+    return view('purge-sales-orders', $viewData([
         'status' => 'done',
         'before' => $before,
         'after' => $after,
-        'token' => $token,
         'lockPath' => $lockPath,
         'executedAt' => now()->toIso8601String(),
-    ]);
+        'debtImpacts' => $debtImpacts,
+    ]));
 })->name('test.purge-sales-orders');
 
 /**
