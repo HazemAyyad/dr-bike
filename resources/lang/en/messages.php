@@ -555,6 +555,7 @@ return [
     'sales_daily_cancel_not_closed_day' => 'Cancellation requests apply only to closed days.',
     'sales_daily_cancel_request_exists' => 'A cancellation request is already pending for this sale.',
     'sales_daily_cancel_request_required' => 'Day is closed — send a cancellation request to admin.',
+    'sales_daily_cancel_not_allowed' => 'Only the sale creator, drawer owner, or admin can cancel this movement.',
     'sales_daily_cancel_requested' => 'Cancellation request sent to admin.',
     'sales_daily_cancel_approved' => 'Sale cancellation approved.',
     'sales_daily_cancel_rejected' => 'Cancellation request rejected.',

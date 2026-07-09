@@ -544,17 +544,19 @@ class SalesDailySessionController extends Controller
     public function pendingCancellations(Request $request)
     {
         try {
-            if (! $this->canReviewCancellation($request->user())) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.unauthorized'),
-                ], 200);
+            $canReviewAll = $this->canReviewCancellation($request->user());
+
+            $query = SalesCancellationRequest::query()
+                ->with(['session.user', 'requestedBy'])
+                ->where('status', 'pending');
+
+            if (! $canReviewAll) {
+                $query->whereHas('session', function ($q) use ($request) {
+                    $q->where('user_id', $request->user()->id);
+                });
             }
 
-            $items = SalesCancellationRequest::query()
-                ->with(['session.user', 'requestedBy'])
-                ->where('status', 'pending')
-                ->orderByDesc('id')
+            $items = $query->orderByDesc('id')
                 ->get()
                 ->map(fn ($item) => $this->formatCancellationRequest($item));
 
@@ -573,19 +575,22 @@ class SalesDailySessionController extends Controller
     public function approveCancellation(Request $request)
     {
         try {
-            if (! $this->canReviewCancellation($request->user())) {
+            $data = $request->validate([
+                'cancellation_request_id' => 'required|integer|exists:sales_cancellation_requests,id',
+                'review_notes' => 'nullable|string|max:2000',
+            ]);
+
+            $cancelRequest = SalesCancellationRequest::query()
+                ->with('session')
+                ->findOrFail($data['cancellation_request_id']);
+
+            if (! $this->canReviewCancellation($request->user()) && ! $this->isSessionOwner($request->user(), $cancelRequest)) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),
                 ], 200);
             }
 
-            $data = $request->validate([
-                'cancellation_request_id' => 'required|integer|exists:sales_cancellation_requests,id',
-                'review_notes' => 'nullable|string|max:2000',
-            ]);
-
-            $cancelRequest = SalesCancellationRequest::query()->findOrFail($data['cancellation_request_id']);
             $cancelRequest = $this->cancellationExecutor->approve(
                 $cancelRequest,
                 (int) $request->user()->id,
@@ -614,19 +619,22 @@ class SalesDailySessionController extends Controller
     public function rejectCancellation(Request $request)
     {
         try {
-            if (! $this->canReviewCancellation($request->user())) {
+            $data = $request->validate([
+                'cancellation_request_id' => 'required|integer|exists:sales_cancellation_requests,id',
+                'review_notes' => 'nullable|string|max:2000',
+            ]);
+
+            $cancelRequest = SalesCancellationRequest::query()
+                ->with('session')
+                ->findOrFail($data['cancellation_request_id']);
+
+            if (! $this->canReviewCancellation($request->user()) && ! $this->isSessionOwner($request->user(), $cancelRequest)) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),
                 ], 200);
             }
 
-            $data = $request->validate([
-                'cancellation_request_id' => 'required|integer|exists:sales_cancellation_requests,id',
-                'review_notes' => 'nullable|string|max:2000',
-            ]);
-
-            $cancelRequest = SalesCancellationRequest::query()->findOrFail($data['cancellation_request_id']);
             if (! $cancelRequest->isPending()) {
                 throw ValidationException::withMessages([
                     'request' => [__('messages.sales_daily_request_not_pending')],
@@ -675,6 +683,13 @@ class SalesDailySessionController extends Controller
         }
 
         return $this->userHasPermission($user, config('sales_daily.permissions.cancel_closed_review'));
+    }
+
+    private function isSessionOwner($user, SalesCancellationRequest $request): bool
+    {
+        return $user
+            && $request->session
+            && (int) $request->session->user_id === (int) $user->id;
     }
 
     private function userHasPermission($user, string $permission): bool

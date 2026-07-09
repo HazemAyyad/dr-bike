@@ -3,6 +3,8 @@
 return [
     'currencies' => ['شيكل', 'دولار', 'دينار'],
 
+    'default_currencies' => ['شيكل'],
+
     'box_type' => 'daily_sales',
 
     'variance_note_required' => true,

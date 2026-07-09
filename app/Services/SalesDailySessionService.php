@@ -52,9 +52,7 @@ class SalesDailySessionService
         $user->loadMissing('employee.user');
         $displayName = $user->name ?? 'مستخدم';
 
-        $boxes = collect();
-
-        foreach (config('sales_daily.currencies', []) as $currency) {
+        foreach (config('sales_daily.default_currencies', ['شيكل']) as $currency) {
             $query = Box::query()
                 ->where('type', config('sales_daily.box_type'))
                 ->where('currency', $currency);
@@ -79,10 +77,31 @@ class SalesDailySessionService
                 ]);
             }
 
-            $boxes->push($box);
         }
 
-        return $boxes;
+        return $this->dailyBoxesForOwner($user);
+    }
+
+    /**
+     * @return Collection<int, Box>
+     */
+    private function dailyBoxesForOwner(User $user): Collection
+    {
+        $owner = $this->resolveOwner($user);
+
+        $query = Box::query()
+            ->where('type', config('sales_daily.box_type'));
+
+        if ($owner['employee_id']) {
+            $query->where('employee_id', $owner['employee_id']);
+        } else {
+            $query->where('user_id', $owner['user_id'])->whereNull('employee_id');
+        }
+
+        return $query
+            ->orderByRaw("CASE WHEN currency = 'شيكل' THEN 0 ELSE 1 END")
+            ->orderBy('currency')
+            ->get();
     }
 
     public function findBlockingSession(User $user): ?SalesDailySession
@@ -420,7 +439,7 @@ class SalesDailySessionService
      */
     public function salesCollectedByCurrency(SalesDailySession $session): array
     {
-        $totals = array_fill_keys(config('sales_daily.currencies', []), 0.0);
+        $totals = [];
 
         $instantRows = InstantSale::query()
             ->where('sales_daily_session_id', $session->id)
@@ -437,7 +456,8 @@ class SalesDailySessionService
                 continue;
             }
             $currency = $sale->paymentBox?->currency ?? $this->currencyFromBoxId($sale->payment_box_id);
-            if ($currency && isset($totals[$currency])) {
+            if ($currency) {
+                $totals[$currency] = $totals[$currency] ?? 0.0;
                 $totals[$currency] += $amount;
             }
         }
@@ -456,7 +476,8 @@ class SalesDailySessionService
                 continue;
             }
             $currency = $sale->paymentBox?->currency ?? $this->currencyFromBoxId($sale->payment_box_id);
-            if ($currency && isset($totals[$currency])) {
+            if ($currency) {
+                $totals[$currency] = $totals[$currency] ?? 0.0;
                 $totals[$currency] += $amount;
             }
         }
@@ -499,7 +520,7 @@ class SalesDailySessionService
             && ! $todaySessionExists;
         $session?->loadMissing('user');
         $boxOwner = $session?->user ?? $user;
-        $dailyBoxes = $this->ensureDailyBoxes($boxOwner);
+        $dailyBoxes = $session ? $this->ensureDailyBoxes($boxOwner) : collect();
         $salesCollected = $session ? $this->salesCollectedByCurrency($session) : [];
         $openingBalances = $session?->opening_balances ?? [];
 
@@ -800,7 +821,7 @@ class SalesDailySessionService
         $byCurrency = collect($this->buildCurrenciesForSession($session, $owner))->keyBy('currency');
         $normalized = [];
 
-        foreach (config('sales_daily.currencies', []) as $currency) {
+        foreach ($byCurrency->keys() as $currency) {
             $input = collect($cashCounts)->firstWhere('currency', $currency) ?? [];
             $meta = $byCurrency->get($currency, []);
             $opening = (float) ($meta['opening_float'] ?? 0);
@@ -1161,7 +1182,9 @@ class SalesDailySessionService
 
     public function assertCanDirectCancelSale(User $user, InstantSale|ProfitSale $sale): void
     {
-        if (! $this->saleBelongsToClosedSession($sale)) {
+        $session = $sale->salesDailySession;
+
+        if (! $session instanceof SalesDailySession) {
             return;
         }
 
@@ -1169,8 +1192,26 @@ class SalesDailySessionService
             return;
         }
 
+        if ($this->saleBelongsToClosedSession($sale)) {
+            throw ValidationException::withMessages([
+                'sale' => [__('messages.sales_daily_cancel_request_required')],
+            ]);
+        }
+
+        if ((int) $session->user_id === (int) $user->id) {
+            return;
+        }
+
+        if ($this->canReviewAllSessions($user)) {
+            return;
+        }
+
+        if ($sale instanceof InstantSale && (int) ($sale->created_by ?? 0) === (int) $user->id) {
+            return;
+        }
+
         throw ValidationException::withMessages([
-            'sale' => [__('messages.sales_daily_cancel_request_required')],
+            'sale' => [__('messages.sales_daily_cancel_not_allowed')],
         ]);
     }
 

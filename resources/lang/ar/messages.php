@@ -567,6 +567,7 @@ return [
     'sales_daily_cancel_not_closed_day' => 'لا يمكن طلب الإلغاء إلا لفواتير أيام مغلقة.',
     'sales_daily_cancel_request_exists' => 'يوجد طلب إلغاء قيد المراجعة لهذه الفاتورة.',
     'sales_daily_cancel_request_required' => 'اليوم مغلق — أرسل طلب إلغاء للإدارة.',
+    'sales_daily_cancel_not_allowed' => 'يمكن إلغاء هذه الحركة فقط بواسطة منفذها أو مسؤول الصندوق أو الإدارة.',
     'sales_daily_cancel_requested' => 'تم إرسال طلب الإلغاء للإدارة.',
     'sales_daily_cancel_approved' => 'تمت الموافقة على إلغاء الفاتورة.',
     'sales_daily_cancel_rejected' => 'تم رفض طلب الإلغاء.',
