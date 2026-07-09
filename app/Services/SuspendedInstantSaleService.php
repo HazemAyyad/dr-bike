@@ -176,7 +176,7 @@ class SuspendedInstantSaleService
                 'suspended_at' => now(),
             ]);
 
-            return $existing->fresh(['createdByUser:id,name', 'employee:id,name']);
+            return $existing->fresh(['createdByUser:id,name', 'employee.user']);
         }
 
         $record = SuspendedInstantSale::create([
@@ -236,7 +236,7 @@ class SuspendedInstantSaleService
     public function show(User $user, int $id): SuspendedInstantSale
     {
         $record = SuspendedInstantSale::query()
-            ->with(['createdByUser:id,name', 'employee:id,name'])
+            ->with(['createdByUser:id,name', 'employee.user'])
             ->findOrFail($id);
 
         if (! $this->canView($user, $record)) {
@@ -270,7 +270,7 @@ class SuspendedInstantSaleService
             'cancelled_at' => now(),
         ]);
 
-        return $record->fresh(['createdByUser:id,name', 'employee:id,name']);
+        return $record->fresh(['createdByUser:id,name', 'employee.user']);
     }
 
     /**
