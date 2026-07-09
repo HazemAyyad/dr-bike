@@ -1262,6 +1262,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'employee_id' => 'required|integer|exists:employee_details,id',
                 'from_date' => 'nullable|date',
                 'to_date' => 'nullable|date|after_or_equal:from_date',
+                'include_empty_days' => 'nullable|boolean',
             ]);
 
             $employee = EmployeeDetail::with('user:id,name')->findOrFail($request->employee_id);
@@ -1273,7 +1274,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 ? Carbon::parse($request->to_date)->endOfDay()
                 : now()->endOfDay();
 
-            $payload = $this->buildAttendanceHistoryPayload($employee, $from, $to, true);
+            $payload = $this->buildAttendanceHistoryPayload(
+                $employee,
+                $from,
+                $to,
+                true,
+                $request->boolean('include_empty_days')
+            );
 
             return response()->json(array_merge(['status' => 'success'], $payload), 200);
         } catch (ValidationException $e) {
@@ -1350,7 +1357,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         EmployeeDetail $employee,
         Carbon $from,
         Carbon $to,
-        bool $forAdmin = false
+        bool $forAdmin = false,
+        bool $includeEmptyDays = false
     ): array {
         $fromStr = $from->toDateString();
         $toStr = $to->toDateString();
@@ -1368,7 +1376,15 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             ->pluck('date')
             ->map(fn ($d) => $d instanceof Carbon ? $d->format('Y-m-d') : (string) $d);
 
-        $allDates = $scanDates->merge($attDates)->unique()->sort()->values();
+        if ($includeEmptyDays) {
+            $periodDates = [];
+            foreach (\Carbon\CarbonPeriod::create($fromStr, $toStr) as $date) {
+                $periodDates[] = $date->format('Y-m-d');
+            }
+            $allDates = collect($periodDates);
+        } else {
+            $allDates = $scanDates->merge($attDates)->unique()->sort()->values();
+        }
 
         $overtimeByAttendanceId = collect();
         if ($forAdmin) {
@@ -1389,6 +1405,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         /** @var AttendanceSalaryService $salaryService */
         $salaryService = app(AttendanceSalaryService::class);
         $expectedMinutes = (int) (($salaryService->calculateDailyOvertime($employee, 0))['required_minutes']);
+        $weeklyDaysOff = $salaryService->effectiveWeeklyDaysOff($employee);
 
         $days = [];
         $todayStr = EmployeeAttendanceToday::todayDateString();
@@ -1406,7 +1423,49 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 ->whereDate('date', $dateStr)
                 ->first();
 
+            $isWeeklyDayOff = in_array(strtolower(Carbon::parse($dateStr)->format('l')), $weeklyDaysOff, true);
+
             if ($dayScans->isEmpty() && ! $legacy) {
+                if (! $includeEmptyDays) {
+                    continue;
+                }
+
+                $emptyExpectedMinutes = $isWeeklyDayOff ? 0 : $expectedMinutes;
+                $days[] = [
+                    'date' => $dateStr,
+                    'source' => null,
+                    'first_check_in' => null,
+                    'first_check_in_server' => null,
+                    'first_check_in_source' => null,
+                    'last_check_out' => null,
+                    'last_check_out_server' => null,
+                    'last_check_out_source' => null,
+                    'missing_checkout' => false,
+                    'currently_in' => false,
+                    'worked_minutes' => 0,
+                    'worked_minutes_live' => false,
+                    'away_minutes' => 0,
+                    'expected_work_minutes' => $emptyExpectedMinutes,
+                    'on_time' => null,
+                    'overtime_minutes' => 0,
+                    'contract_overtime_minutes' => 0,
+                    'segments' => [],
+                    'scans' => [],
+                    'overtime_request_id' => null,
+                    'overtime_request_status' => null,
+                    'overtime_requested_minutes' => 0,
+                    'overtime_approved_minutes' => null,
+                    'can_edit_day' => false,
+                    'attendance_status' => $isWeeklyDayOff ? 'weekly_day_off' : 'absent',
+                    'attendance_status_label' => $isWeeklyDayOff ? 'عطلة رسمية' : 'عدم حضور',
+                    'worked_hours' => $salaryService->formatHours(0),
+                    'required_hours' => $salaryService->formatHours($emptyExpectedMinutes),
+                    'normal_hours' => $salaryService->formatHours(0),
+                    'overtime_hours' => $salaryService->formatHours(0),
+                    'normal_salary' => number_format(0, 2, '.', ''),
+                    'overtime_salary' => number_format(0, 2, '.', ''),
+                    'total_salary' => number_format(0, 2, '.', ''),
+                ];
                 continue;
             }
 
@@ -1560,6 +1619,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     ? (int) $overtimeRequest->approved_minutes
                     : null,
                 'can_edit_day' => $forAdmin && ! $currentlyIn,
+                'attendance_status' => 'present',
+                'attendance_status_label' => 'حضور',
             ], $financial);
         }
 
@@ -1584,7 +1645,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             fn (array $dayRow) => (int) ($dayRow['worked_minutes'] ?? 0),
             $days
         ));
-        $monthlyRequiredProrated = (int) round($periodMonthly['monthly_required_minutes'] * $proration);
+        $monthlyRequiredProrated = $includeEmptyDays
+            ? ((int) $salaryService->countEmployeeWorkingDaysBetween($employee, $from, $to) * $expectedMinutes)
+            : (int) round($periodMonthly['monthly_required_minutes'] * $proration);
         $monthlyOvertimeProrated = max(0, $monthlyWorkedInRange - $monthlyRequiredProrated);
 
         $monthlySalary = $salaryService->calculateSalary(
