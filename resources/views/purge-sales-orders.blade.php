@@ -234,6 +234,7 @@
     $refreshButtonLabel = $refreshButtonLabel ?? 'تحديث المعاينة';
     $metricLabels = $metricLabels ?? [];
     $purgeRecords = $purgeRecords ?? [];
+    $debtImpacts = $debtImpacts ?? [];
     $willPurge = $willPurge ?? [
         'الطلبيات الرئيسية',
         'أصناف الطلبيات والبكجات',
@@ -308,6 +309,24 @@
                     <li>{{ $item }}</li>
                 @endforeach
             </ul>
+        </section>
+    @endif
+
+    @if(!empty($debtImpacts))
+        <section class="section">
+            <h2>أثر قيود الديون</h2>
+            <ul class="list">
+                @foreach($debtImpacts as $impact)
+                    <li>
+                        {{ $impact['person_type_label'] }}: {{ $impact['person_name'] }}
+                        / {{ $impact['currency'] }}
+                        - الرصيد الحالي: {{ number_format((float) $impact['current_balance'], 2) }}
+                        - القيود المحذوفة: {{ number_format((float) $impact['removed_balance'], 2) }}
+                        - المتوقع بعد الحذف: {{ number_format((float) $impact['expected_balance'], 2) }}
+                    </li>
+                @endforeach
+            </ul>
+            <p class="fine-print">الرصيد الموجب يعني لصالحنا، والسالب يعني علينا. يتم أيضاً إعادة حساب الرصيد التراكمي للقيود المتبقية بعد التنفيذ.</p>
         </section>
     @endif
 

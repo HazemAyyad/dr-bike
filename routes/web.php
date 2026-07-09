@@ -337,19 +337,100 @@ Route::get('/test/purge-instant-sales', function () {
                 ->count();
         }
 
-        foreach ([
-            'sales_orders' => 'instant_sale_id',
-            'maintenance' => 'instant_sale_id',
-            'maintenance_daily_box_logs' => 'instant_sale_id',
-        ] as $table => $column) {
-            if ($hasColumn($table, $column)) {
-                $counts[$table.'_linked_to_instant_sales'] = (int) \Illuminate\Support\Facades\DB::table($table)
-                    ->whereNotNull($column)
-                    ->count();
-            }
+        $salesOrderIds = collect();
+        if ($hasColumn('sales_orders', 'instant_sale_id')) {
+            $salesOrderIds = $salesOrderIds->merge(
+                \Illuminate\Support\Facades\DB::table('sales_orders')->whereNotNull('instant_sale_id')->pluck('id')
+            );
+        }
+        if ($hasColumn('instant_sales', 'sales_order_id')) {
+            $salesOrderIds = $salesOrderIds->merge(
+                \Illuminate\Support\Facades\DB::table('instant_sales')->whereNotNull('sales_order_id')->pluck('sales_order_id')
+            );
+        }
+        if ($hasTable('sales_orders')) {
+            $counts['sales_orders_linked_to_instant_sales'] = $salesOrderIds->filter()->unique()->count();
+        }
+
+        $maintenanceIds = collect();
+        if ($hasColumn('maintenance', 'instant_sale_id')) {
+            $maintenanceIds = $maintenanceIds->merge(
+                \Illuminate\Support\Facades\DB::table('maintenance')->whereNotNull('instant_sale_id')->pluck('id')
+            );
+        }
+        if ($hasColumn('instant_sales', 'maintenance_id')) {
+            $maintenanceIds = $maintenanceIds->merge(
+                \Illuminate\Support\Facades\DB::table('instant_sales')->whereNotNull('maintenance_id')->pluck('maintenance_id')
+            );
+        }
+        if ($hasTable('maintenance')) {
+            $counts['maintenance_linked_to_instant_sales'] = $maintenanceIds->filter()->unique()->count();
+        }
+
+        if ($hasColumn('maintenance_daily_box_logs', 'instant_sale_id')) {
+            $counts['maintenance_daily_box_logs_linked_to_instant_sales'] = (int) \Illuminate\Support\Facades\DB::table('maintenance_daily_box_logs')
+                ->whereNotNull('instant_sale_id')
+                ->count();
         }
 
         return $counts;
+    };
+
+    $collectDebtImpacts = function () use ($hasTable, $hasColumn): array {
+        if (! $hasTable('debt_transactions') || ! $hasColumn('debt_transactions', 'source')) {
+            return [];
+        }
+
+        $people = \Illuminate\Support\Facades\DB::table('debt_transactions')
+            ->select('customer_id', 'seller_id', 'currency')
+            ->where('source', 'instant_sale')
+            ->whereNull('archived_at')
+            ->whereNull('deleted_at')
+            ->groupBy('customer_id', 'seller_id', 'currency')
+            ->get();
+
+        $impacts = [];
+        foreach ($people as $person) {
+            $currency = $person->currency ?: 'شيكل';
+            $base = \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->whereNull('archived_at')
+                ->whereNull('deleted_at')
+                ->where('currency', $currency);
+
+            if ($person->customer_id) {
+                $base->where('customer_id', $person->customer_id)->whereNull('seller_id');
+                $name = (string) \Illuminate\Support\Facades\DB::table('customers')
+                    ->where('id', $person->customer_id)
+                    ->value('name');
+                $typeLabel = 'زبون';
+            } else {
+                $base->where('seller_id', $person->seller_id)->whereNull('customer_id');
+                $name = (string) \Illuminate\Support\Facades\DB::table('sellers')
+                    ->where('id', $person->seller_id)
+                    ->value('name');
+                $typeLabel = 'تاجر';
+            }
+
+            $currentTaken = (float) (clone $base)->where('type', 'taken')->sum('amount');
+            $currentGiven = (float) (clone $base)->where('type', 'given')->sum('amount');
+            $removedTaken = (float) (clone $base)->where('source', 'instant_sale')->where('type', 'taken')->sum('amount');
+            $removedGiven = (float) (clone $base)->where('source', 'instant_sale')->where('type', 'given')->sum('amount');
+
+            $currentBalance = $currentTaken - $currentGiven;
+            $removedBalance = $removedTaken - $removedGiven;
+
+            $impacts[] = [
+                'person_type_label' => $typeLabel,
+                'person_id' => (int) ($person->customer_id ?: $person->seller_id),
+                'person_name' => $name !== '' ? $name : ('#'.($person->customer_id ?: $person->seller_id)),
+                'currency' => $currency,
+                'current_balance' => $currentBalance,
+                'removed_balance' => $removedBalance,
+                'expected_balance' => $currentBalance - $removedBalance,
+            ];
+        }
+
+        return $impacts;
     };
 
     $viewData = function (array $data) use ($token): array {
@@ -372,12 +453,14 @@ Route::get('/test/purge-instant-sales', function () {
                 'sales_return_items_for_instant_sales' => 'أصناف مرتجعات مرتبطة ببيع فوري',
                 'debt_transactions_instant_sale' => 'قيود دفتر الديون الناتجة عن بيع فوري',
                 'product_stock_movements_instant_sale' => 'حركات المخزون المرجعية للبيع الفوري',
-                'sales_orders_linked_to_instant_sales' => 'طلبيات مرتبطة بفاتورة بيع فوري',
-                'maintenance_linked_to_instant_sales' => 'صيانة مرتبطة بفاتورة بيع فوري',
+                'sales_orders_linked_to_instant_sales' => 'فواتير طلبيات ستحذف لأنها مرتبطة ببيع فوري',
+                'maintenance_linked_to_instant_sales' => 'فواتير صيانة ستحذف لأنها مرتبطة ببيع فوري',
                 'maintenance_daily_box_logs_linked_to_instant_sales' => 'سجلات صندوق الصيانة المرتبطة ببيع فوري',
             ],
             'willPurge' => [
                 'فواتير البيع الفوري الرئيسية والفرعية',
+                'فواتير الصيانة المرتبطة ببيع فوري مع منتجاتها وسجل حركاتها',
+                'فواتير الطلبيات المرتبطة ببيع فوري مع أصنافها وحالتها وتسليمها و Shiply',
                 'الفواتير الفورية المعلقة',
                 'طلبات إلغاء البيع الفوري',
                 'مرتجعات البيع المرتبطة بفواتير فورية',
@@ -391,13 +474,14 @@ Route::get('/test/purge-instant-sales', function () {
                 'صفوف sales_returns التي تحتوي instant_sale_id، ومعها أصنافها من sales_return_items.',
                 'صفوف debt_transactions التي source فيها instant_sale فقط.',
                 'صفوف product_stock_movements التي reference_type فيها instant_sale فقط.',
-                'لن يتم حذف الطلبيات أو الصيانة أو سجلات صندوق الصيانة، فقط سيتم تفريغ instant_sale_id منها.',
+                'صفوف sales_orders المرتبطة ببيع فوري، ومعها sales_order_items/packages/status_logs/media/deliveries/shiply_events والمرتجعات التابعة لها.',
+                'صفوف maintenance المرتبطة ببيع فوري، ومعها maintenance_products و maintenance_activity_logs وسجلات maintenance_daily_box_logs التابعة لها.',
             ],
             'willNotChange' => [
                 'المنتجات وكميات المخزون الحالية',
                 'الصناديق وأرصدة الصناديق',
-                'الطلبيات نفسها، مع فصل رابط الفاتورة الفورية فقط',
-                'الصيانة نفسها، مع فصل رابط الفاتورة الفورية فقط',
+                'الطلبيات غير المرتبطة ببيع فوري',
+                'الصيانة غير المرتبطة ببيع فوري',
                 'العملاء والتجار',
                 'فواتير الربح وأقسام النظام الأخرى',
             ],
@@ -405,6 +489,7 @@ Route::get('/test/purge-instant-sales', function () {
     };
 
     $before = $collectCounts();
+    $debtImpacts = $collectDebtImpacts();
 
     $confirm = strtolower(trim((string) request()->query('confirm', '')));
     if (! in_array($confirm, ['yes', '1', 'true'], true)) {
@@ -413,6 +498,7 @@ Route::get('/test/purge-instant-sales', function () {
             'before' => $before,
             'after' => null,
             'lockPath' => null,
+            'debtImpacts' => $debtImpacts,
         ]));
     }
 
@@ -426,26 +512,58 @@ Route::get('/test/purge-instant-sales', function () {
             'after' => $lock['after'] ?? null,
             'lockPath' => $lockPath,
             'executedAt' => $lock['executed_at'] ?? null,
+            'debtImpacts' => $lock['debt_impacts'] ?? $debtImpacts,
         ]));
     }
 
-    \Illuminate\Support\Facades\DB::transaction(function () use ($hasTable, $hasColumn) {
+    $affectedDebtPeople = [];
+
+    \Illuminate\Support\Facades\DB::transaction(function () use ($hasTable, $hasColumn, &$affectedDebtPeople) {
+        $salesOrderIds = collect();
         if ($hasColumn('sales_orders', 'instant_sale_id')) {
-            \Illuminate\Support\Facades\DB::table('sales_orders')->whereNotNull('instant_sale_id')->update([
-                'instant_sale_id' => null,
-            ]);
+            $salesOrderIds = $salesOrderIds->merge(
+                \Illuminate\Support\Facades\DB::table('sales_orders')
+                    ->whereNotNull('instant_sale_id')
+                    ->pluck('id')
+            );
         }
+        if ($hasColumn('instant_sales', 'sales_order_id')) {
+            $salesOrderIds = $salesOrderIds->merge(
+                \Illuminate\Support\Facades\DB::table('instant_sales')
+                    ->whereNotNull('sales_order_id')
+                    ->pluck('sales_order_id')
+            );
+        }
+        $salesOrderIds = $salesOrderIds->filter()->unique()->values();
 
+        $maintenanceIds = collect();
         if ($hasColumn('maintenance', 'instant_sale_id')) {
-            \Illuminate\Support\Facades\DB::table('maintenance')->whereNotNull('instant_sale_id')->update([
-                'instant_sale_id' => null,
-            ]);
+            $maintenanceIds = $maintenanceIds->merge(
+                \Illuminate\Support\Facades\DB::table('maintenance')
+                    ->whereNotNull('instant_sale_id')
+                    ->pluck('id')
+            );
         }
+        if ($hasColumn('instant_sales', 'maintenance_id')) {
+            $maintenanceIds = $maintenanceIds->merge(
+                \Illuminate\Support\Facades\DB::table('instant_sales')
+                    ->whereNotNull('maintenance_id')
+                    ->pluck('maintenance_id')
+            );
+        }
+        $maintenanceIds = $maintenanceIds->filter()->unique()->values();
 
-        if ($hasColumn('maintenance_daily_box_logs', 'instant_sale_id')) {
-            \Illuminate\Support\Facades\DB::table('maintenance_daily_box_logs')->whereNotNull('instant_sale_id')->update([
-                'instant_sale_id' => null,
-            ]);
+        if ($hasColumn('debt_transactions', 'source')) {
+            $affectedDebtPeople = \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->select('customer_id', 'seller_id')
+                ->where('source', 'instant_sale')
+                ->groupBy('customer_id', 'seller_id')
+                ->get()
+                ->map(fn ($row) => [
+                    'customer_id' => $row->customer_id ? (int) $row->customer_id : null,
+                    'seller_id' => $row->seller_id ? (int) $row->seller_id : null,
+                ])
+                ->all();
         }
 
         if ($hasTable('sales_return_items') && $hasColumn('sales_returns', 'instant_sale_id')) {
@@ -482,6 +600,58 @@ Route::get('/test/purge-instant-sales', function () {
                 ->delete();
         }
 
+        if ($salesOrderIds->isNotEmpty()) {
+            if ($hasTable('sales_return_items') && $hasTable('sales_returns')) {
+                \Illuminate\Support\Facades\DB::table('sales_return_items')
+                    ->whereIn('sales_return_id', function ($query) use ($salesOrderIds) {
+                        $query->select('id')
+                            ->from('sales_returns')
+                            ->whereIn('sales_order_id', $salesOrderIds);
+                    })
+                    ->delete();
+            }
+            if ($hasTable('sales_returns')) {
+                \Illuminate\Support\Facades\DB::table('sales_returns')
+                    ->whereIn('sales_order_id', $salesOrderIds)
+                    ->delete();
+            }
+            foreach ([
+                'sales_order_shiply_events',
+                'sales_order_deliveries',
+                'sales_order_media',
+                'sales_order_status_logs',
+                'sales_order_items',
+                'sales_order_packages',
+                'sales_orders',
+            ] as $table) {
+                if ($hasColumn($table, 'sales_order_id')) {
+                    \Illuminate\Support\Facades\DB::table($table)->whereIn('sales_order_id', $salesOrderIds)->delete();
+                } elseif ($table === 'sales_orders' && $hasTable('sales_orders')) {
+                    \Illuminate\Support\Facades\DB::table('sales_orders')->whereIn('id', $salesOrderIds)->delete();
+                }
+            }
+        }
+
+        if ($maintenanceIds->isNotEmpty()) {
+            foreach ([
+                'maintenance_daily_box_logs',
+                'maintenance_activity_logs',
+                'maintenance_products',
+                'maintenance',
+            ] as $table) {
+                if ($hasColumn($table, 'maintenance_id')) {
+                    \Illuminate\Support\Facades\DB::table($table)->whereIn('maintenance_id', $maintenanceIds)->delete();
+                } elseif ($table === 'maintenance' && $hasTable('maintenance')) {
+                    \Illuminate\Support\Facades\DB::table('maintenance')->whereIn('id', $maintenanceIds)->delete();
+                }
+            }
+        }
+        if ($hasColumn('maintenance_daily_box_logs', 'instant_sale_id')) {
+            \Illuminate\Support\Facades\DB::table('maintenance_daily_box_logs')
+                ->whereNotNull('instant_sale_id')
+                ->delete();
+        }
+
         \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=0');
         try {
             foreach (['suspended_instant_sales', 'instant_sales'] as $table) {
@@ -497,12 +667,20 @@ Route::get('/test/purge-instant-sales', function () {
         }
     });
 
+    foreach ($affectedDebtPeople as $person) {
+        app(\App\Services\DebtLedgerService::class)->recalculateBalances(
+            $person['customer_id'] ?? null,
+            $person['seller_id'] ?? null
+        );
+    }
+
     $after = $collectCounts();
 
     file_put_contents($lockPath, json_encode([
         'executed_at' => now()->toIso8601String(),
         'before' => $before,
         'after' => $after,
+        'debt_impacts' => $debtImpacts,
         'via' => 'web-route',
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
@@ -512,6 +690,7 @@ Route::get('/test/purge-instant-sales', function () {
         'after' => $after,
         'lockPath' => $lockPath,
         'executedAt' => now()->toIso8601String(),
+        'debtImpacts' => $debtImpacts,
     ]));
 })->name('test.purge-instant-sales');
 
