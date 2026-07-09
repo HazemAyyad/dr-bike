@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\SuspendedInstantSaleService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class SuspendedInstantSaleController extends Controller
@@ -161,9 +162,18 @@ class SuspendedInstantSaleController extends Controller
                 'message' => __('messages.retrieve_data_error'),
             ], 200);
         } catch (\Exception $e) {
+            Log::error('SuspendedInstantSaleController::complete error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_id' => optional($request->user())->id,
+                'payload' => $request->all(),
+            ]);
+
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
+                'debug' => config('app.debug') ? $e->getMessage() : null,
             ], 200);
         }
     }

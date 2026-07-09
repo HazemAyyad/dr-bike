@@ -7,6 +7,7 @@ use App\Models\SuspendedInstantSale;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class SuspendedInstantSaleService
@@ -303,11 +304,25 @@ class SuspendedInstantSaleService
                 'total_cost' => $this->resolveTotalCost($payload),
             ]);
 
-            $storeRequest = Request::create('/api/create/instant/sale', 'POST', $this->normalizePayloadForStore($payload));
+            $storePayload = $this->normalizePayloadForStore($payload);
+            Log::info('SuspendedInstantSaleService::complete store request', [
+                'suspended_instant_sale_id' => $record->id,
+                'user_id' => $user->id,
+                'payload' => $payload,
+                'store_payload' => $storePayload,
+            ]);
+
+            $storeRequest = Request::create('/api/create/instant/sale', 'POST', $storePayload);
             $storeRequest->setUserResolver(fn () => $user);
 
             $response = app(InstantSales::class)->store($storeRequest);
             $body = json_decode($response->getContent(), true) ?? [];
+            Log::info('SuspendedInstantSaleService::complete store response', [
+                'suspended_instant_sale_id' => $record->id,
+                'user_id' => $user->id,
+                'status_code' => $response->getStatusCode(),
+                'body' => $body,
+            ]);
 
             if (($body['status'] ?? '') !== 'success') {
                 return [
