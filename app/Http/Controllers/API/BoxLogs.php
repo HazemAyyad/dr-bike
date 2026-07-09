@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Box;
 use App\Models\BoxLog;
+use App\Models\MaintenanceDailyBoxLog;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Doctrine\DBAL\Query\QueryException;
@@ -59,9 +60,36 @@ class BoxLogs extends Controller
 
     public function allBoxLogs(){
         try{
-            $logs = BoxLog::with('fromBox:id,name,total,type')
+            $boxLogs = BoxLog::with('fromBox:id,name,total,type')
             ->with('toBox:id,name,total,type')
-            ->with('box:id,name,total,type')->get();
+            ->with('box:id,name,total,type')
+            ->get()
+            ->map(fn (BoxLog $log) => $log->toArray());
+
+            $maintenanceLogs = MaintenanceDailyBoxLog::query()
+                ->with('box:id,name,total,type')
+                ->get()
+                ->map(fn (MaintenanceDailyBoxLog $log) => [
+                    'id' => $log->id,
+                    'from_box_id' => null,
+                    'to_box_id' => null,
+                    'box_id' => $log->box_id,
+                    'description' => $log->description,
+                    'note' => $log->note,
+                    'value' => round((float) $log->amount, 2),
+                    'type' => $log->type,
+                    'created_at' => optional($log->created_at)->toJSON(),
+                    'updated_at' => optional($log->updated_at)->toJSON(),
+                    'from_box' => null,
+                    'to_box' => null,
+                    'box' => $log->box?->toArray(),
+                ]);
+
+            $logs = $boxLogs
+                ->concat($maintenanceLogs)
+                ->sortByDesc('created_at')
+                ->values();
+
             return response()->json([
                 'status' => 'success',
                 'box_logs' => $logs
