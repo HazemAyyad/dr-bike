@@ -232,6 +232,8 @@
     $confirmDescription = $confirmDescription ?? 'بعد الضغط على الزر سيتم تشغيل الرابط مع <code>confirm=yes</code> وإنشاء قفل يمنع التنفيذ مرة ثانية بالغلط.';
     $confirmButtonLabel = $confirmButtonLabel ?? 'تصفير قسم الطلبيات الآن';
     $refreshButtonLabel = $refreshButtonLabel ?? 'تحديث المعاينة';
+    $metricLabels = $metricLabels ?? [];
+    $purgeRecords = $purgeRecords ?? [];
     $willPurge = $willPurge ?? [
         'الطلبيات الرئيسية',
         'أصناف الطلبيات والبكجات',
@@ -280,7 +282,7 @@
     <div class="grid" aria-label="{{ $metricsLabel }}">
         @foreach($before as $table => $count)
             <article class="metric">
-                <div class="label">{{ $table }}</div>
+                <div class="label">{{ $metricLabels[$table] ?? $table }}</div>
                 <div class="value">{{ number_format((int) $count) }}</div>
                 @if($status === 'done' && array_key_exists($table, $after))
                     <div class="fine-print">بعد التنفيذ: {{ number_format((int) $after[$table]) }}</div>
@@ -297,6 +299,17 @@
             @endforeach
         </ul>
     </section>
+
+    @if(!empty($purgeRecords))
+        <section class="section">
+            <h2>السجلات التي سيتم مسحها فعلياً</h2>
+            <ul class="list">
+                @foreach($purgeRecords as $item)
+                    <li>{{ $item }}</li>
+                @endforeach
+            </ul>
+        </section>
+    @endif
 
     <section class="section">
         <h2>ما الذي لن يتغير؟</h2>
