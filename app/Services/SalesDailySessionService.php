@@ -1065,11 +1065,13 @@ class SalesDailySessionService
 
     private function resolveSessionEmployee(SalesDailySession $session): ?EmployeeDetail
     {
-        if (! $session->employee_id) {
-            return null;
+        if ($session->employee_id) {
+            return EmployeeDetail::query()->find($session->employee_id);
         }
 
-        return EmployeeDetail::query()->find($session->employee_id);
+        return EmployeeDetail::query()
+            ->where('user_id', $session->user_id)
+            ->first();
     }
 
     public function requestCancellation(User $user, string $saleType, int $saleId, string $reason): SalesCancellationRequest
