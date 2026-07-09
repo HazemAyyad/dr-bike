@@ -136,7 +136,7 @@ class ProfitSales extends Controller
     $buyerName = trim((string) $request->input('buyer_name', ''));
     $buyerPhone = trim((string) $request->input('buyer_phone', ''));
 
-    $profitSale = DB::transaction(function () use ($data, $request, $buyerType, $buyerName, $buyerPhone) {
+    $profitSale = DB::transaction(function () use ($data, $request, $buyerType, $buyerName, $buyerPhone, $dailySession) {
         unset($data['buyer_id'], $data['buyer_phone']);
 
         if ($buyerType === 'customer') {
@@ -188,13 +188,21 @@ class ProfitSales extends Controller
             if ($box) {
                 $box->total = (float) ($box->total ?? 0) + (float) $profitSale->payment_box_value;
                 $box->save();
+                $boxLogNote = 'قبض بيع ربحي #'.$profitSale->id.' بقيمة '.number_format((float) $profitSale->payment_box_value, 2, '.', '');
+                if ((int) $dailySession->user_id !== (int) $request->user()->id) {
+                    $dailySession->loadMissing('user');
+                    $request->user()->loadMissing('employee.user');
+                    $actorName = $request->user()->employee?->user?->name ?? $request->user()->name ?? 'موظف';
+                    $ownerName = $dailySession->user?->name ?? 'غير محدد';
+                    $boxLogNote .= ' | المنفذ: '.$actorName.' | صاحب الصندوق: '.$ownerName;
+                }
 
                 BoxLogs::createBoxLog(
                     $box,
                     'قبض — بيع ربحي',
                     'add',
                     $profitSale->payment_box_value,
-                    'قبض بيع ربحي #'.$profitSale->id.' بقيمة '.number_format((float) $profitSale->payment_box_value, 2, '.', '')
+                    $boxLogNote
                 );
             }
         }
@@ -209,6 +217,16 @@ class ProfitSales extends Controller
             'اضافة ربح نقدي جديد',
             'اضافة ربح نقدي جديد رقم الفاتورة #'.$freshProfitSale->id.' '.$this->profitSalePersonLabel($freshProfitSale).' بقيمة '.$freshProfitSale->total_cost,
             'profit_sales'
+        );
+        app(SalesDailySessionService::class)->notifyExternalSaleMovement(
+            $request->user(),
+            $dailySession,
+            'profit',
+            (int) $freshProfitSale->id,
+            (float) (($freshProfitSale->payment_box_value ?? 0) > 0
+                ? $freshProfitSale->payment_box_value
+                : $freshProfitSale->total_cost),
+            $freshProfitSale->payment_box_id ? (int) $freshProfitSale->payment_box_id : null
         );
         return response()->json([
                     'status' => 'success',

@@ -207,24 +207,12 @@ class SalesDailySessionService
         $session = $this->getActiveSession($user, autoOpen: false);
 
         if (! $session) {
-            if ($globalOpen = $this->findGlobalOpenSession()) {
-                $employeeName = $globalOpen->user?->name ?? __('messages.employee_default_name');
-
-                throw ValidationException::withMessages([
-                    'session' => [__('messages.sales_daily_drawer_open_by_other', ['employee' => $employeeName])],
-                ]);
-            }
-
-            throw ValidationException::withMessages([
-                'session' => [__('messages.sales_daily_no_session')],
-            ]);
+            $session = $this->findGlobalOpenSession();
         }
 
-        if ((int) $session->user_id !== (int) $user->id) {
+        if (! $session) {
             throw ValidationException::withMessages([
-                'session' => [__('messages.sales_daily_drawer_open_by_other', [
-                    'employee' => $session->user?->name ?? __('messages.employee_default_name'),
-                ])],
+                'session' => [__('messages.sales_daily_no_session')],
             ]);
         }
 
@@ -247,6 +235,19 @@ class SalesDailySessionService
         }
 
         return $session;
+    }
+
+    private function dailyBoxBelongsToSession(Box $box, SalesDailySession $session): bool
+    {
+        if (! $box->isDailySalesBox()) {
+            return true;
+        }
+
+        if ($session->employee_id) {
+            return (int) $box->employee_id === (int) $session->employee_id;
+        }
+
+        return ! $box->employee_id && (int) $box->user_id === (int) $session->user_id;
     }
 
     public function assertCanCloseSession(User $user, ?SalesDailySession $session = null): SalesDailySession
@@ -326,29 +327,92 @@ class SalesDailySessionService
             return;
         }
 
-        $owner = $this->resolveOwner($user);
-
-        if ($owner['employee_id'] && (int) $box->employee_id === $owner['employee_id']) {
-            return;
-        }
-
-        if (! $owner['employee_id'] && (int) $box->user_id === $owner['user_id']) {
-            return;
-        }
-
-        if ($user->type === 'admin') {
+        $session = $this->assertCanCreateSale($user);
+        if ($this->dailyBoxBelongsToSession($box, $session)) {
             return;
         }
 
         throw ValidationException::withMessages([
-            'box_id' => [__('messages.unauthorized')],
+            'box_id' => ['الصندوق المختار ليس صندوق جلسة المبيعات اليومية المفتوحة.'],
         ]);
     }
 
     public function assertSessionAllowsPayment(User $user, Box $box): void
     {
         $this->assertDailyBoxOwnedByUser($user, $box);
-        $this->assertCanCreateSale($user);
+    }
+
+    public function notifyExternalSaleMovement(
+        User $actor,
+        SalesDailySession $session,
+        string $saleType,
+        int $saleId,
+        float $amount,
+        ?int $boxId = null
+    ): void {
+        if ((int) $session->user_id === (int) $actor->id) {
+            return;
+        }
+
+        $session->loadMissing(['user', 'employee.user']);
+        $actor->loadMissing('employee.user');
+
+        $ownerEmployee = $this->resolveSessionEmployee($session);
+        if (! $ownerEmployee) {
+            return;
+        }
+
+        $ownerEmployee->loadMissing('user');
+        $actorName = $actor->employee?->user?->name ?? $actor->name ?? 'موظف';
+        $ownerName = $session->user?->name ?? $ownerEmployee->user?->name ?? 'المسؤول';
+        $saleLabel = match ($saleType) {
+            'profit' => 'بيع ربحي',
+            'sales_order' => 'طلبية مبيعات',
+            default => 'بيع فوري',
+        };
+        $amountLabel = number_format($amount, 2, '.', '');
+
+        $data = [
+            'session_id' => (string) $session->id,
+            'business_date' => $session->business_date?->toDateString() ?? '',
+            'sale_type' => $saleType,
+            'sale_id' => (string) $saleId,
+            'amount' => $amountLabel,
+            'box_id' => $boxId !== null ? (string) $boxId : '',
+            'actor_user_id' => (string) $actor->id,
+            'actor_employee_id' => (string) ($actor->employee?->id ?? ''),
+            'actor_name' => $actorName,
+            'owner_user_id' => (string) $session->user_id,
+            'owner_employee_id' => (string) $ownerEmployee->id,
+            'owner_name' => $ownerName,
+        ];
+
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            $this->adminNotificationService->create(
+                AdminNotificationService::TYPE_SALES_DAILY_EXTERNAL_SALE,
+                'حركة على صندوق مبيعات يومي',
+                "{$actorName} أضاف {$saleLabel} #{$saleId} بقيمة {$amountLabel} على صندوق {$ownerName}",
+                $data,
+                $actor->employee?->id,
+                'sales_daily_session',
+                (int) $session->id
+            );
+
+            $this->employeeNotificationService->create(
+                $ownerEmployee,
+                EmployeeNotificationService::TYPE_SALES_DAILY_EXTERNAL_SALE,
+                'حركة على صندوقك',
+                "{$actorName} أضاف {$saleLabel} #{$saleId} بقيمة {$amountLabel} على صندوقك",
+                $data,
+                'sales_daily_session',
+                (int) $session->id
+            );
+        } finally {
+            App::setLocale($previous);
+        }
     }
 
     /**
@@ -421,7 +485,9 @@ class SalesDailySessionService
         $owner = $this->resolveOwner($user);
         $blocking = $this->findBlockingSession($user);
         $globalOpen = $this->findGlobalOpenSession();
-        $session = $blocking ?? $this->getActiveSession($user, autoOpen: false);
+        $session = $blocking
+            ?? $this->getActiveSession($user, autoOpen: false)
+            ?? $globalOpen;
         $blockedByOther = $globalOpen !== null
             && (int) $globalOpen->user_id !== $owner['user_id'];
         $todaySessionExists = SalesDailySession::query()
@@ -431,7 +497,9 @@ class SalesDailySessionService
         $canRequestOpen = ! $blocking
             && ! $blockedByOther
             && ! $todaySessionExists;
-        $dailyBoxes = $this->ensureDailyBoxes($user);
+        $session?->loadMissing('user');
+        $boxOwner = $session?->user ?? $user;
+        $dailyBoxes = $this->ensureDailyBoxes($boxOwner);
         $salesCollected = $session ? $this->salesCollectedByCurrency($session) : [];
         $openingBalances = $session?->opening_balances ?? [];
 
@@ -494,7 +562,6 @@ class SalesDailySessionService
             && ! $this->canReviewAllSessions($user);
 
         $canManageOther = $blockedByOther && $this->canReviewAllSessions($user);
-        $session?->loadMissing('user');
 
         return [
             'session' => $session ? [
@@ -502,7 +569,7 @@ class SalesDailySessionService
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
                 'employee_name' => $session->user?->name,
-                'allows_sales' => $session->allowsSales() && ! $blocking && ! $blockedByOther,
+                'allows_sales' => $session->allowsSales() && ! $blocking,
                 'is_blocking_previous_day' => (bool) $blocking,
                 'has_pending_reopen' => (bool) $pendingReopen,
                 'can_request_closing' => $canRequestClosing

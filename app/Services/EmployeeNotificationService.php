@@ -30,6 +30,8 @@ class EmployeeNotificationService
 
     public const TYPE_SALES_DAILY_REOPEN_REJECTED = 'sales_daily_reopen_rejected';
 
+    public const TYPE_SALES_DAILY_EXTERNAL_SALE = 'sales_daily_external_sale';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}

@@ -489,6 +489,7 @@ class InstantSales extends Controller
         $root = $sale->parent_id
             ? (InstantSale::with(['product', 'subProducts.product'])->find($sale->parent_id) ?? $sale)
             : $sale;
+        $root->loadMissing(['createdByUser', 'salesDailySession.user']);
 
         $linesSummary = $this->instantSaleInvoiceLinesSummary($root);
         $amount = (float) ($root->payment_box_value ?? 0);
@@ -513,6 +514,16 @@ class InstantSales extends Controller
             'edit_minus' => sprintf('تعديل بيع فوري #%d — تخفيض مبلغ من الصندوق', $root->id),
             default => sprintf('بيع فوري #%d | %s', $root->id, $linesSummary),
         };
+
+        if ($root->salesDailySession
+            && $root->createdByUser
+            && (int) $root->salesDailySession->user_id !== (int) $root->created_by) {
+            $note .= sprintf(
+                ' | المنفذ: %s | صاحب الصندوق: %s',
+                $root->createdByUser->name ?? 'موظف',
+                $root->salesDailySession->user?->name ?? 'غير محدد'
+            );
+        }
 
         return $this->clampBoxLogNote($note);
     }
@@ -1101,6 +1112,19 @@ public function store(Request $request)
         $logDescription,
         'instant_sales');
 
+        if ($replaceId <= 0) {
+            app(SalesDailySessionService::class)->notifyExternalSaleMovement(
+                $request->user(),
+                $dailySession,
+                'instant',
+                (int) $mainInstantSale->id,
+                (float) (($mainInstantSale->payment_box_value ?? 0) > 0
+                    ? $mainInstantSale->payment_box_value
+                    : $mainInstantSale->total_cost),
+                $mainInstantSale->payment_box_id ? (int) $mainInstantSale->payment_box_id : null
+            );
+        }
+
         if ($replaceId > 0) {
             DB::commit();
         }
@@ -1351,6 +1375,19 @@ public function store(Request $request)
                 $logDescription,
                 'instant_sales'
             );
+
+            if ($replaceId <= 0) {
+                app(SalesDailySessionService::class)->notifyExternalSaleMovement(
+                    $request->user(),
+                    $dailySession,
+                    'instant',
+                    (int) $mainInstantSale->id,
+                    (float) (($mainInstantSale->payment_box_value ?? 0) > 0
+                        ? $mainInstantSale->payment_box_value
+                        : $mainInstantSale->total_cost),
+                    $mainInstantSale->payment_box_id ? (int) $mainInstantSale->payment_box_id : null
+                );
+            }
 
             return response()->json([
                 'status' => 'success',
