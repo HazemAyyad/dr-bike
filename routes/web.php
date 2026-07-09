@@ -375,7 +375,6 @@ Route::get('/test/purge-sales-orders', function () {
         try {
             foreach ($existingTables as $table) {
                 \Illuminate\Support\Facades\DB::table($table)->delete();
-                \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
             }
 
             if ($legacyDebtIds->isNotEmpty() && $hasTable('debts')) {
@@ -385,6 +384,10 @@ Route::get('/test/purge-sales-orders', function () {
             \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1');
         }
     });
+
+    foreach ($existingTables as $table) {
+        \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+    }
 
     foreach ($affectedDebtPeople as $person) {
         app(\App\Services\DebtLedgerService::class)->recalculateBalances(
@@ -820,12 +823,17 @@ Route::get('/test/purge-instant-sales', function () {
                 }
 
                 \Illuminate\Support\Facades\DB::table($table)->delete();
-                \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
             }
         } finally {
             \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1');
         }
     });
+
+    foreach (['suspended_instant_sales', 'instant_sales'] as $table) {
+        if ($hasTable($table)) {
+            \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+        }
+    }
 
     foreach ($affectedDebtPeople as $person) {
         app(\App\Services\DebtLedgerService::class)->recalculateBalances(

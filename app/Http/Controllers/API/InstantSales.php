@@ -567,7 +567,24 @@ class InstantSales extends Controller
                 'description' => $description,
                 'note' => $note,
             ]);
+            return;
         }
+
+        $box = Box::lockForUpdate()->find($sale->payment_box_id);
+        if (! $box) {
+            return;
+        }
+
+        $box->total = round((float) ($box->total ?? 0) + $amount, 2);
+        $box->save();
+
+        BoxLogs::createBoxLog(
+            $box,
+            $description,
+            'add',
+            $amount,
+            $note
+        );
     }
 
     /**
