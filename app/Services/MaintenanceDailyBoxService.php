@@ -191,12 +191,15 @@ class MaintenanceDailyBoxService
             ? MaintenanceDailyBoxLog::query()
                 ->where('session_id', $session->id)
                 ->with(['maintenance:id,customer_id,seller_id', 'user:id,name'])
+                ->with(['instantSale:id,serial_number'])
                 ->orderByDesc('created_at')
                 ->get()
                 ->map(fn (MaintenanceDailyBoxLog $log) => [
                     'id' => $log->id,
                     'maintenance_id' => $log->maintenance_id,
                     'instant_sale_id' => $log->instant_sale_id,
+                    'invoice_number' => $log->instantSale?->serial_number,
+                    'instant_sale_serial' => $log->instantSale?->serial_number,
                     'user_id' => $log->user_id,
                     'actor_name' => $log->actor_name ?? $log->user?->name,
                     'type' => $log->type,

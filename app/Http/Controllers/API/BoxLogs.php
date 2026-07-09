@@ -67,13 +67,17 @@ class BoxLogs extends Controller
             ->map(fn (BoxLog $log) => $log->toArray());
 
             $maintenanceLogs = MaintenanceDailyBoxLog::query()
-                ->with('box:id,name,total,type')
+                ->with(['box:id,name,total,type', 'instantSale:id,serial_number'])
                 ->get()
                 ->map(fn (MaintenanceDailyBoxLog $log) => [
                     'id' => $log->id,
                     'from_box_id' => null,
                     'to_box_id' => null,
                     'box_id' => $log->box_id,
+                    'maintenance_id' => $log->maintenance_id,
+                    'instant_sale_id' => $log->instant_sale_id,
+                    'invoice_number' => $log->instantSale?->serial_number,
+                    'instant_sale_serial' => $log->instantSale?->serial_number,
                     'description' => $log->description,
                     'note' => $log->note,
                     'value' => round((float) $log->amount, 2),
