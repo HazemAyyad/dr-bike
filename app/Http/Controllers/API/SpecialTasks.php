@@ -76,7 +76,8 @@ class SpecialTasks extends Controller
 
     private function specialTasksWithSubtaskCounts()
     {
-        return SpecialTask::withCount([
+        return SpecialTask::with(['subTasks:id,special_task_id,name'])
+            ->withCount([
             'subTasks',
             'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
         ]);
@@ -105,6 +106,12 @@ class SpecialTasks extends Controller
             'task_recurrence' => $task->task_recurrence,
             'task_recurrence_time' => is_array($task->task_recurrence_time)
                 ? $task->task_recurrence_time
+                : [],
+            'subtask_names' => $task->relationLoaded('subTasks')
+                ? $task->subTasks
+                    ->pluck('name')
+                    ->filter(fn ($name) => filled($name))
+                    ->values()
                 : [],
             'progress' => $progress,
         ];
