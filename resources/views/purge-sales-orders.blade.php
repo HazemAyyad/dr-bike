@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>تصفير قسم الطلبيات</title>
+    <title>{{ $pageTitle ?? 'تصفير قسم الطلبيات' }}</title>
     <style>
         :root {
             --bg: #f4f7fb;
@@ -223,14 +223,39 @@
 </head>
 <body>
 @php
+    $pageTitle = $pageTitle ?? 'تصفير قسم الطلبيات';
+    $pageSubtitle = $pageSubtitle ?? 'صفحة مخصصة لتجهيز قسم الطلبيات قبل بداية التشغيل الحقيقي، مع معاينة واضحة قبل التنفيذ.';
+    $badge = $badge ?? 'Doctor Bike / Sales Orders';
+    $routeName = $routeName ?? 'test.purge-sales-orders';
+    $metricsLabel = $metricsLabel ?? 'عدادات قسم الطلبيات';
+    $confirmTitle = $confirmTitle ?? 'تأكيد التنفيذ';
+    $confirmDescription = $confirmDescription ?? 'بعد الضغط على الزر سيتم تشغيل الرابط مع <code>confirm=yes</code> وإنشاء قفل يمنع التنفيذ مرة ثانية بالغلط.';
+    $confirmButtonLabel = $confirmButtonLabel ?? 'تصفير قسم الطلبيات الآن';
+    $refreshButtonLabel = $refreshButtonLabel ?? 'تحديث المعاينة';
+    $willPurge = $willPurge ?? [
+        'الطلبيات الرئيسية',
+        'أصناف الطلبيات والبكجات',
+        'حركات الحالة والوسائط',
+        'سجلات التسليم و Shiply المرتبطة بالطلبيات',
+        'المرتجعات التابعة للطلبيات',
+        'فصل ربط فواتير المبيعات الفورية عن الطلبيات فقط',
+    ];
+    $willNotChange = $willNotChange ?? [
+        'المنتجات والمخزون',
+        'الصناديق وأرصدة الصناديق',
+        'سجلات الصناديق',
+        'دفتر الديون والعملاء والتجار',
+        'فواتير المبيعات الفورية نفسها',
+        'باقي أقسام النظام',
+    ];
     $titles = [
         'preview' => 'معاينة قبل التصفير',
-        'done' => 'تم تصفير قسم الطلبيات',
+        'done' => $doneTitle ?? 'تم تصفير قسم الطلبيات',
         'locked' => 'تم تنفيذ التصفير مسبقاً',
     ];
     $messages = [
-        'preview' => 'هذه الصفحة تعرض البيانات التي سيتم حذفها فقط. لم يتم تنفيذ أي تغيير بعد.',
-        'done' => 'تم مسح بيانات قسم الطلبيات وفصل ربط فواتير المبيعات الفورية المرتبطة بها.',
+        'preview' => $previewMessage ?? 'هذه الصفحة تعرض البيانات التي سيتم حذفها فقط. لم يتم تنفيذ أي تغيير بعد.',
+        'done' => $doneMessage ?? 'تم مسح بيانات قسم الطلبيات وفصل ربط فواتير المبيعات الفورية المرتبطة بها.',
         'locked' => 'يوجد قفل تنفيذ سابق، لذلك لم يتم تشغيل التصفير مرة ثانية.',
     ];
     $after = $after ?? [];
@@ -238,10 +263,10 @@
 <main>
     <div class="topbar">
         <div>
-            <h1>تصفير قسم الطلبيات</h1>
-            <p class="subtitle">صفحة مخصصة لتجهيز قسم الطلبيات قبل بداية التشغيل الحقيقي، مع معاينة واضحة قبل التنفيذ.</p>
+            <h1>{{ $pageTitle }}</h1>
+            <p class="subtitle">{{ $pageSubtitle }}</p>
         </div>
-        <div class="badge">Doctor Bike / Sales Orders</div>
+        <div class="badge">{{ $badge }}</div>
     </div>
 
     <section class="notice {{ $status }}" aria-live="polite">
@@ -252,7 +277,7 @@
         @endif
     </section>
 
-    <div class="grid" aria-label="عدادات قسم الطلبيات">
+    <div class="grid" aria-label="{{ $metricsLabel }}">
         @foreach($before as $table => $count)
             <article class="metric">
                 <div class="label">{{ $table }}</div>
@@ -267,36 +292,30 @@
     <section class="section">
         <h2>ما الذي سيتم تصفيره؟</h2>
         <ul class="list">
-            <li>الطلبيات الرئيسية</li>
-            <li>أصناف الطلبيات والبكجات</li>
-            <li>حركات الحالة والوسائط</li>
-            <li>سجلات التسليم و Shiply المرتبطة بالطلبيات</li>
-            <li>المرتجعات التابعة للطلبيات</li>
-            <li>فصل ربط فواتير المبيعات الفورية عن الطلبيات فقط</li>
+            @foreach($willPurge as $item)
+                <li>{{ $item }}</li>
+            @endforeach
         </ul>
     </section>
 
     <section class="section">
         <h2>ما الذي لن يتغير؟</h2>
         <ul class="list">
-            <li>المنتجات والمخزون</li>
-            <li>الصناديق وأرصدة الصناديق</li>
-            <li>سجلات الصناديق</li>
-            <li>دفتر الديون والعملاء والتجار</li>
-            <li>فواتير المبيعات الفورية نفسها</li>
-            <li>باقي أقسام النظام</li>
+            @foreach($willNotChange as $item)
+                <li>{{ $item }}</li>
+            @endforeach
         </ul>
     </section>
 
     @if($status === 'preview')
         <section class="section">
-            <h2>تأكيد التنفيذ</h2>
-            <p class="subtitle">بعد الضغط على الزر سيتم تشغيل الرابط مع <code>confirm=yes</code> وإنشاء قفل يمنع التنفيذ مرة ثانية بالغلط.</p>
-            <form class="actions" method="GET" action="{{ route('test.purge-sales-orders') }}">
+            <h2>{{ $confirmTitle }}</h2>
+            <p class="subtitle">{!! $confirmDescription !!}</p>
+            <form class="actions" method="GET" action="{{ route($routeName) }}">
                 <input type="hidden" name="token" value="{{ $token }}">
                 <input type="hidden" name="confirm" value="yes">
-                <button class="danger-button" type="submit" aria-label="تأكيد تصفير قسم الطلبيات">تصفير قسم الطلبيات الآن</button>
-                <a class="button neutral-button" href="{{ route('test.purge-sales-orders', ['token' => $token]) }}">تحديث المعاينة</a>
+                <button class="danger-button" type="submit" aria-label="{{ $confirmButtonLabel }}">{{ $confirmButtonLabel }}</button>
+                <a class="button neutral-button" href="{{ route($routeName, ['token' => $token]) }}">{{ $refreshButtonLabel }}</a>
             </form>
         </section>
     @endif

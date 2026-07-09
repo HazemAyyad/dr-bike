@@ -278,6 +278,222 @@ Route::get('/test/purge-sales-orders', function () {
     ]);
 })->name('test.purge-sales-orders');
 
+/**
+ * مسح بيانات عمليات البيع الفوري عند الانتقال للتشغيل الحقيقي.
+ * GET /test/purge-instant-sales?token=TOKEN
+ * GET /test/purge-instant-sales?token=TOKEN&confirm=yes
+ */
+Route::get('/test/purge-instant-sales', function () {
+    $token = (string) request()->query('token', '');
+    $expected = (string) env('DEPLOY_ONCE_TOKEN', 'eshterelyDeploy2026SecureToken123');
+    if ($token === '' || ! hash_equals($expected, $token)) {
+        abort(403);
+    }
+
+    $hasTable = fn (string $table): bool => \Illuminate\Support\Facades\Schema::hasTable($table);
+    $hasColumn = fn (string $table, string $column): bool => $hasTable($table)
+        && \Illuminate\Support\Facades\Schema::hasColumn($table, $column);
+
+    $collectCounts = function () use ($hasTable, $hasColumn): array {
+        $counts = [];
+
+        foreach (['instant_sales', 'suspended_instant_sales'] as $table) {
+            if ($hasTable($table)) {
+                $counts[$table] = (int) \Illuminate\Support\Facades\DB::table($table)->count();
+            }
+        }
+
+        if ($hasTable('sales_cancellation_requests')) {
+            $counts['sales_cancellation_requests_instant'] = (int) \Illuminate\Support\Facades\DB::table('sales_cancellation_requests')
+                ->where('sale_type', 'instant')
+                ->count();
+        }
+
+        if ($hasColumn('sales_returns', 'instant_sale_id')) {
+            $counts['sales_returns_linked_to_instant_sales'] = (int) \Illuminate\Support\Facades\DB::table('sales_returns')
+                ->whereNotNull('instant_sale_id')
+                ->count();
+
+            if ($hasTable('sales_return_items')) {
+                $counts['sales_return_items_for_instant_sales'] = (int) \Illuminate\Support\Facades\DB::table('sales_return_items')
+                    ->whereIn('sales_return_id', function ($query) {
+                        $query->select('id')
+                            ->from('sales_returns')
+                            ->whereNotNull('instant_sale_id');
+                    })
+                    ->count();
+            }
+        }
+
+        if ($hasColumn('debt_transactions', 'source')) {
+            $counts['debt_transactions_instant_sale'] = (int) \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->where('source', 'instant_sale')
+                ->count();
+        }
+
+        if ($hasColumn('product_stock_movements', 'reference_type')) {
+            $counts['product_stock_movements_instant_sale'] = (int) \Illuminate\Support\Facades\DB::table('product_stock_movements')
+                ->where('reference_type', 'instant_sale')
+                ->count();
+        }
+
+        foreach ([
+            'sales_orders' => 'instant_sale_id',
+            'maintenance' => 'instant_sale_id',
+            'maintenance_daily_box_logs' => 'instant_sale_id',
+        ] as $table => $column) {
+            if ($hasColumn($table, $column)) {
+                $counts[$table.'_linked_to_instant_sales'] = (int) \Illuminate\Support\Facades\DB::table($table)
+                    ->whereNotNull($column)
+                    ->count();
+            }
+        }
+
+        return $counts;
+    };
+
+    $viewData = function (array $data) use ($token): array {
+        return array_merge([
+            'token' => $token,
+            'pageTitle' => 'تصفير عمليات البيع الفوري',
+            'pageSubtitle' => 'صفحة مخصصة لتجهيز البيع الفوري قبل بداية التشغيل الحقيقي، مع معاينة واضحة قبل التنفيذ.',
+            'badge' => 'Doctor Bike / Instant Sales',
+            'routeName' => 'test.purge-instant-sales',
+            'metricsLabel' => 'عدادات عمليات البيع الفوري',
+            'doneTitle' => 'تم تصفير عمليات البيع الفوري',
+            'doneMessage' => 'تم مسح عمليات البيع الفوري وفصل روابطها من الطلبيات والصيانة وسجلات الصندوق المرتبطة.',
+            'confirmDescription' => 'بعد الضغط على الزر سيتم تشغيل الرابط مع <code>confirm=yes</code> وإنشاء قفل يمنع التنفيذ مرة ثانية بالغلط.',
+            'confirmButtonLabel' => 'تصفير البيع الفوري الآن',
+            'willPurge' => [
+                'فواتير البيع الفوري الرئيسية والفرعية',
+                'الفواتير الفورية المعلقة',
+                'طلبات إلغاء البيع الفوري',
+                'مرتجعات البيع المرتبطة بفواتير فورية',
+                'معاملات دفتر الديون التي مصدرها بيع فوري',
+                'حركات المخزون المرجعية للبيع الفوري فقط',
+            ],
+            'willNotChange' => [
+                'المنتجات وكميات المخزون الحالية',
+                'الصناديق وأرصدة الصناديق',
+                'الطلبيات نفسها، مع فصل رابط الفاتورة الفورية فقط',
+                'الصيانة نفسها، مع فصل رابط الفاتورة الفورية فقط',
+                'العملاء والتجار',
+                'فواتير الربح وأقسام النظام الأخرى',
+            ],
+        ], $data);
+    };
+
+    $before = $collectCounts();
+
+    $confirm = strtolower(trim((string) request()->query('confirm', '')));
+    if (! in_array($confirm, ['yes', '1', 'true'], true)) {
+        return view('purge-sales-orders', $viewData([
+            'status' => 'preview',
+            'before' => $before,
+            'after' => null,
+            'lockPath' => null,
+        ]));
+    }
+
+    $lockPath = storage_path('framework/instant_sales_purge_once.lock');
+    if (is_file($lockPath) && request()->query('force') !== 'yes') {
+        $lock = json_decode((string) file_get_contents($lockPath), true) ?: [];
+
+        return view('purge-sales-orders', $viewData([
+            'status' => 'locked',
+            'before' => $lock['before'] ?? $before,
+            'after' => $lock['after'] ?? null,
+            'lockPath' => $lockPath,
+            'executedAt' => $lock['executed_at'] ?? null,
+        ]));
+    }
+
+    \Illuminate\Support\Facades\DB::transaction(function () use ($hasTable, $hasColumn) {
+        if ($hasColumn('sales_orders', 'instant_sale_id')) {
+            \Illuminate\Support\Facades\DB::table('sales_orders')->whereNotNull('instant_sale_id')->update([
+                'instant_sale_id' => null,
+            ]);
+        }
+
+        if ($hasColumn('maintenance', 'instant_sale_id')) {
+            \Illuminate\Support\Facades\DB::table('maintenance')->whereNotNull('instant_sale_id')->update([
+                'instant_sale_id' => null,
+            ]);
+        }
+
+        if ($hasColumn('maintenance_daily_box_logs', 'instant_sale_id')) {
+            \Illuminate\Support\Facades\DB::table('maintenance_daily_box_logs')->whereNotNull('instant_sale_id')->update([
+                'instant_sale_id' => null,
+            ]);
+        }
+
+        if ($hasTable('sales_return_items') && $hasColumn('sales_returns', 'instant_sale_id')) {
+            \Illuminate\Support\Facades\DB::table('sales_return_items')
+                ->whereIn('sales_return_id', function ($query) {
+                    $query->select('id')
+                        ->from('sales_returns')
+                        ->whereNotNull('instant_sale_id');
+                })
+                ->delete();
+        }
+
+        if ($hasColumn('sales_returns', 'instant_sale_id')) {
+            \Illuminate\Support\Facades\DB::table('sales_returns')
+                ->whereNotNull('instant_sale_id')
+                ->delete();
+        }
+
+        if ($hasTable('sales_cancellation_requests')) {
+            \Illuminate\Support\Facades\DB::table('sales_cancellation_requests')
+                ->where('sale_type', 'instant')
+                ->delete();
+        }
+
+        if ($hasColumn('debt_transactions', 'source')) {
+            \Illuminate\Support\Facades\DB::table('debt_transactions')
+                ->where('source', 'instant_sale')
+                ->delete();
+        }
+
+        if ($hasColumn('product_stock_movements', 'reference_type')) {
+            \Illuminate\Support\Facades\DB::table('product_stock_movements')
+                ->where('reference_type', 'instant_sale')
+                ->delete();
+        }
+
+        \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        try {
+            foreach (['suspended_instant_sales', 'instant_sales'] as $table) {
+                if (! $hasTable($table)) {
+                    continue;
+                }
+
+                \Illuminate\Support\Facades\DB::table($table)->delete();
+                \Illuminate\Support\Facades\DB::statement("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+            }
+        } finally {
+            \Illuminate\Support\Facades\DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        }
+    });
+
+    $after = $collectCounts();
+
+    file_put_contents($lockPath, json_encode([
+        'executed_at' => now()->toIso8601String(),
+        'before' => $before,
+        'after' => $after,
+        'via' => 'web-route',
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+
+    return view('purge-sales-orders', $viewData([
+        'status' => 'done',
+        'before' => $before,
+        'after' => $after,
+        'lockPath' => $lockPath,
+        'executedAt' => now()->toIso8601String(),
+    ]));
+})->name('test.purge-instant-sales');
+
 /** اختبار تعديل منتج محلياً ثم مزامنة المتجر (syncProductEditToStore) */
 Route::get('/test/product-edit', [ProductEditTestController::class, 'show'])->name('test.product-edit');
 Route::post('/test/product-edit', [ProductEditTestController::class, 'run'])->name('test.product-edit.run');
