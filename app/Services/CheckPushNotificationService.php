@@ -18,7 +18,7 @@ class CheckPushNotificationService
     {
         $direction = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
         $check->loadMissing($check instanceof IncomingCheck
-            ? ['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller']
+            ? ['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller', 'boxes.box']
             : ['customer', 'seller']);
 
         $rules = CheckNotificationRule::query()
@@ -42,10 +42,13 @@ class CheckPushNotificationService
     ): CheckNotificationLog {
         $direction = $check instanceof IncomingCheck ? 'incoming' : 'outgoing';
         $check->loadMissing($check instanceof IncomingCheck
-            ? ['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller']
+            ? ['fromCustomer', 'fromSeller', 'toCustomer', 'toSeller', 'boxes.box']
             : ['customer', 'seller']);
 
         $message = $this->messageService->renderMessageForCheck($rule->message, $check);
+        $notificationType = $this->notificationTypeForEvent($eventType);
+        $title = $this->titleForEvent($eventType, $direction, $check);
+        $message = $this->messageForEvent($eventType, $check, $message);
 
         $log = CheckNotificationLog::firstOrCreate(
             [
@@ -69,9 +72,6 @@ class CheckPushNotificationService
             'message' => $message,
         ]);
 
-        $notificationType = $this->notificationTypeForEvent($eventType);
-        $title = $this->titleForEvent($eventType, $direction);
-
         $checkNumber = (string) ($check->check_id ?? $check->id);
         $dueDate = $check->due_date ? (string) $check->due_date : '';
 
@@ -80,9 +80,13 @@ class CheckPushNotificationService
             'check_number' => $checkNumber,
             'check_type' => $direction,
             'amount' => (string) ($check->total ?? ''),
+            'currency' => (string) ($check->currency ?? ''),
             'due_date' => $dueDate,
             'event_type' => $eventType,
             'rule_id' => (string) $rule->id,
+            'action_label' => $title,
+            'target_name' => $this->targetNameForCheck($check),
+            'source_name' => $this->sourceNameForCheck($check),
         ];
 
         try {
@@ -126,14 +130,125 @@ class CheckPushNotificationService
         };
     }
 
-    private function titleForEvent(string $eventType, string $direction): string
+    private function titleForEvent(string $eventType, string $direction, IncomingCheck|OutgoingCheck $check): string
     {
-        $label = $direction === 'incoming' ? 'Incoming' : 'Outgoing';
+        if ($check instanceof IncomingCheck && $eventType === 'cashed') {
+            return $check->status === 'cashed_to_box'
+                ? 'صرف شيك وارد للصندوق'
+                : 'التصرف في شيك وارد';
+        }
+
+        if ($check instanceof OutgoingCheck && $eventType === 'cashed') {
+            return $check->status === 'cashed_from_box'
+                ? 'صرف شيك صادر من الصندوق'
+                : 'صرف شيك صادر لشخص';
+        }
+
+        $label = $direction === 'incoming' ? 'وارد' : 'صادر';
 
         return match ($eventType) {
-            'cashed' => "{$label} Check Cashed",
-            'returned' => "{$label} Check Returned",
-            default => "{$label} Check Reminder",
+            'cashed' => "صرف شيك {$label}",
+            'returned' => "إرجاع شيك {$label}",
+            default => "تذكير شيك {$label}",
         };
+    }
+
+    private function messageForEvent(
+        string $eventType,
+        IncomingCheck|OutgoingCheck $check,
+        string $fallback
+    ): string {
+        if (! in_array($eventType, ['cashed', 'returned'], true)) {
+            return $fallback;
+        }
+
+        $direction = $check instanceof IncomingCheck ? 'وارد' : 'صادر';
+        $checkNumber = $this->checkNumber($check);
+        $amount = $this->amountLabel($check);
+        $bank = trim((string) ($check->bank_name ?? ''));
+        $bankPart = $bank !== '' ? " - البنك: {$bank}" : '';
+
+        if ($eventType === 'returned') {
+            $sourceName = $this->sourceNameForCheck($check);
+            $sourcePart = $sourceName !== '' ? " من {$sourceName}" : '';
+
+            return "تم إرجاع شيك {$direction} رقم {$checkNumber} بقيمة {$amount}{$sourcePart}{$bankPart}";
+        }
+
+        if ($check instanceof IncomingCheck) {
+            $sourceName = $this->sourceNameForCheck($check);
+            $targetName = $this->targetNameForCheck($check);
+            $sourcePart = $sourceName !== '' ? " من {$sourceName}" : '';
+            $targetPart = $targetName !== '' ? " إلى {$targetName}" : '';
+            $action = $check->status === 'cashed_to_box'
+                ? 'تم صرف'
+                : 'تم التصرف في';
+
+            return "{$action} شيك وارد رقم {$checkNumber} بقيمة {$amount}{$sourcePart}{$targetPart}{$bankPart}";
+        }
+
+        $targetName = $this->targetNameForCheck($check);
+        $targetPart = $targetName !== '' ? " إلى {$targetName}" : '';
+
+        return "تم صرف شيك صادر رقم {$checkNumber} بقيمة {$amount}{$targetPart}{$bankPart}";
+    }
+
+    private function checkNumber(IncomingCheck|OutgoingCheck $check): string
+    {
+        $number = trim((string) ($check->check_id ?? ''));
+
+        return $number !== '' ? $number : (string) $check->id;
+    }
+
+    private function amountLabel(IncomingCheck|OutgoingCheck $check): string
+    {
+        $amount = (string) ($check->total ?? '');
+        $currency = trim((string) ($check->currency ?? ''));
+
+        return trim($amount.' '.$currency);
+    }
+
+    private function sourceNameForCheck(IncomingCheck|OutgoingCheck $check): string
+    {
+        if ($check instanceof IncomingCheck) {
+            return (string) (
+                $check->fromCustomer?->name
+                ?? $check->fromSeller?->name
+                ?? ''
+            );
+        }
+
+        return '';
+    }
+
+    private function targetNameForCheck(IncomingCheck|OutgoingCheck $check): string
+    {
+        if ($check instanceof IncomingCheck) {
+            if ($check->status === 'cashed_to_box') {
+                $box = $check->boxes->last()?->box;
+
+                return $box ? 'الصندوق '.$box->name : 'الصندوق';
+            }
+
+            if ($check->toCustomer) {
+                return 'الزبون '.$check->toCustomer->name;
+            }
+
+            if ($check->toSeller) {
+                return 'المورد '.$check->toSeller->name;
+            }
+
+            return '';
+        }
+
+        if ($check->customer) {
+            return 'الزبون '.$check->customer->name;
+        }
+
+        if ($check->seller) {
+            return 'المورد '.$check->seller->name;
+        }
+
+        return '';
     }
 }
