@@ -45,6 +45,7 @@ class DebtLedgerService
             'profit_sale' => 'بيع ربحي',
             'sales_order' => 'طلبية',
             'incoming_check' => 'شيك وارد',
+            'incoming_check_disposal' => 'تصرف في شيك وارد',
             'outgoing_check' => 'شيك صادر',
             'manual', '' => 'إدخال يدوي',
             default => 'مصدر آخر',
@@ -851,6 +852,7 @@ class DebtLedgerService
     {
         if (in_array($check->status, ['cancelled', 'returned'], true)) {
             $this->deleteSourceLedger('incoming_check', (int) $check->id);
+            $this->deleteSourceLedger('incoming_check_disposal', (int) $check->id);
 
             return null;
         }
@@ -864,6 +866,8 @@ class DebtLedgerService
         }
 
         if ($check->status === 'cashed_to_person') {
+            $this->syncIncomingCheckReceiveToLedger($check);
+
             $customerId = $check->to_customer ? (int) $check->to_customer : null;
             $sellerId = $check->to_seller ? (int) $check->to_seller : null;
 
@@ -876,7 +880,7 @@ class DebtLedgerService
             $note = $this->incomingCheckLedgerNote($check, 'بعد التصرف في الشيك');
 
             return $this->upsertSourceLedgerEntry(
-                'incoming_check',
+                'incoming_check_disposal',
                 $check->id,
                 $customerId,
                 $sellerId,

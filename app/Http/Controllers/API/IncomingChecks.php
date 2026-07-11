@@ -646,6 +646,7 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
                 ], 200);
             }
             app(DebtLedgerService::class)->deleteSourceLedger('incoming_check', (int) $incomingCheck->id);
+            app(DebtLedgerService::class)->deleteSourceLedger('incoming_check_disposal', (int) $incomingCheck->id);
 
             if ($incomingCheck->status === 'cashed_to_box') {
                     $boxCheck = IncomingCheckBox::where('incoming_check_id',$incomingCheck->id)->first();
