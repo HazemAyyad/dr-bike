@@ -139,6 +139,44 @@ class SuspendedInstantSaleController extends Controller
         }
     }
 
+    public function addNote(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'suspended_instant_sale_id' => 'required|integer|exists:suspended_instant_sales,id',
+                'note' => 'required|string|max:2000',
+            ]);
+
+            $record = $this->service->addNote(
+                $request->user(),
+                (int) $data['suspended_instant_sale_id'],
+                (string) $data['note']
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.suspended_instant_sale_note_saved'),
+                'suspended_instant_sale' => $this->service->formatDetail($record),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function complete(Request $request)
     {
         try {

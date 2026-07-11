@@ -24,6 +24,7 @@ class SuspendedInstantSale extends Model
         'reference_code',
         'current_step',
         'payload',
+        'note_log',
         'summary_label',
         'total_cost',
         'status',
@@ -37,6 +38,7 @@ class SuspendedInstantSale extends Model
 
     protected $casts = [
         'payload' => 'array',
+        'note_log' => 'array',
         'total_cost' => 'float',
         'suspended_at' => 'datetime',
         'completed_at' => 'datetime',

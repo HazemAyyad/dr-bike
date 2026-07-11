@@ -145,15 +145,18 @@ class SuspendedInstantSaleService
 
     public function store(User $user, Request $request): SuspendedInstantSale
     {
-        $session = $this->sessionService->assertCanCreateSale($user);
+        $session = $this->sessionService->getActiveSession($user, autoOpen: false)
+            ?? $this->sessionService->findGlobalOpenSession();
         $data = $request->validate([
             'current_step' => 'required|string|in:product_picker,checkout',
             'payload' => 'required|array',
             'suspended_instant_sale_id' => 'nullable|integer|exists:suspended_instant_sales,id',
+            'note' => 'nullable|string|max:2000',
         ]);
 
         $payload = $this->validatePayload($data['payload']);
         $owner = $this->sessionService->resolveOwner($user);
+        $noteText = trim((string) ($data['note'] ?? ''));
 
         if (! empty($data['suspended_instant_sale_id'])) {
             $existing = SuspendedInstantSale::query()->findOrFail($data['suspended_instant_sale_id']);
@@ -175,16 +178,21 @@ class SuspendedInstantSaleService
                 'total_cost' => $this->resolveTotalCost($payload),
                 'suspended_at' => now(),
             ]);
+            if ($noteText !== '') {
+                $this->appendNote($existing, $user, $noteText);
+            }
 
             return $existing->fresh(['createdByUser:id,name', 'employee.user']);
         }
 
+        $noteLog = $noteText !== '' ? [$this->makeNoteEntry($user, $noteText)] : [];
         $record = SuspendedInstantSale::create([
-            'sales_daily_session_id' => $session->id,
+            'sales_daily_session_id' => $session?->id,
             'created_by_user_id' => $user->id,
             'employee_id' => $owner['employee_id'],
             'current_step' => $data['current_step'],
             'payload' => $payload,
+            'note_log' => $noteLog,
             'summary_label' => $this->buildSummaryLabel($payload),
             'total_cost' => $this->resolveTotalCost($payload),
             'status' => SuspendedInstantSale::STATUS_SUSPENDED,
@@ -269,6 +277,27 @@ class SuspendedInstantSaleService
             'cancelled_by_user_id' => $user->id,
             'cancelled_at' => now(),
         ]);
+
+        return $record->fresh(['createdByUser:id,name', 'employee.user']);
+    }
+
+    public function addNote(User $user, int $id, string $note): SuspendedInstantSale
+    {
+        $record = $this->show($user, $id);
+
+        if (! $this->canMutate($user, $record)) {
+            throw ValidationException::withMessages([
+                'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_forbidden')],
+            ]);
+        }
+
+        if (! $record->isSuspended()) {
+            throw ValidationException::withMessages([
+                'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_not_active')],
+            ]);
+        }
+
+        $this->appendNote($record, $user, $note);
 
         return $record->fresh(['createdByUser:id,name', 'employee.user']);
     }
@@ -386,6 +415,8 @@ class SuspendedInstantSaleService
      */
     public function formatListItem(SuspendedInstantSale $item): array
     {
+        $noteLog = $this->formatNoteLog($item);
+
         return [
             'id' => $item->id,
             'reference_code' => $item->reference_code ?? ('ع-'.$item->id),
@@ -398,6 +429,9 @@ class SuspendedInstantSaleService
             'created_by_name' => $item->createdByUser?->name,
             'employee_id' => $item->employee_id,
             'employee_name' => $item->employee?->user?->name ?? $item->createdByUser?->name,
+            'note_log' => $noteLog,
+            'note_count' => count($noteLog),
+            'latest_note' => $this->latestNote($noteLog),
             'payload' => $item->payload,
         ];
     }
@@ -451,6 +485,60 @@ class SuspendedInstantSaleService
             'suspended_instant_sale',
             $record->id
         );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function makeNoteEntry(User $user, string $note): array
+    {
+        return [
+            'id' => (string) now()->timestamp.'-'.$user->id.'-'.substr(md5($note.microtime(true)), 0, 8),
+            'note' => trim($note),
+            'user_id' => $user->id,
+            'user_name' => $user->name,
+            'created_at' => now()->format('Y-m-d H:i:s'),
+        ];
+    }
+
+    private function appendNote(SuspendedInstantSale $record, User $user, string $note): void
+    {
+        $text = trim($note);
+        if ($text === '') {
+            return;
+        }
+
+        $log = is_array($record->note_log) ? $record->note_log : [];
+        $log[] = $this->makeNoteEntry($user, $text);
+        $record->forceFill(['note_log' => array_values($log)])->save();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function formatNoteLog(SuspendedInstantSale $item): array
+    {
+        $log = is_array($item->note_log) ? $item->note_log : [];
+
+        return collect($log)
+            ->filter(fn ($row) => is_array($row) && trim((string) ($row['note'] ?? '')) !== '')
+            ->map(fn ($row) => [
+                'id' => (string) ($row['id'] ?? ''),
+                'note' => (string) ($row['note'] ?? ''),
+                'user_id' => isset($row['user_id']) ? (int) $row['user_id'] : null,
+                'user_name' => (string) ($row['user_name'] ?? __('messages.employee_default_name')),
+                'created_at' => (string) ($row['created_at'] ?? ''),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function latestNote(array $log): ?array
+    {
+        return $log === [] ? null : $log[array_key_last($log)];
     }
 
     private function notifyAdminSuspendedCompleted(
