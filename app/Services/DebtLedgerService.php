@@ -849,35 +849,18 @@ class DebtLedgerService
      */
     public function syncIncomingCheckToLedger(IncomingCheck $check): ?DebtTransaction
     {
-        if (in_array($check->status, ['cancelled', 'returned', 'cashed_to_box'], true)) {
+        if (in_array($check->status, ['cancelled', 'returned'], true)) {
             $this->deleteSourceLedger('incoming_check', (int) $check->id);
 
             return null;
         }
 
-        if ($check->status === 'cashed_to_person') {
-            $customerId = $check->to_customer ? (int) $check->to_customer : null;
-            $sellerId = $check->to_seller ? (int) $check->to_seller : null;
-
-            if (! $customerId && ! $sellerId) {
-                return null;
-            }
-
-            $currency = $this->normalizeCurrency($check->currency);
-            $amount = (float) $check->total;
-            $note = $this->incomingCheckLedgerNote($check, 'بعد التصرف في الشيك');
-
-            return $this->upsertSourceLedgerEntry(
-                'incoming_check',
-                $check->id,
-                $customerId,
-                $sellerId,
-                'given',
-                $amount,
-                $note,
-                now()->format('Y-m-d'),
-                $currency
-            );
+        if (in_array($check->status, ['cashed_to_person', 'cashed_to_box'], true)) {
+            return DebtTransaction::query()
+                ->active()
+                ->where('source', 'incoming_check')
+                ->where('source_id', (int) $check->id)
+                ->first();
         }
 
         return $this->syncIncomingCheckReceiveToLedger($check);
