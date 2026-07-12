@@ -409,6 +409,7 @@ return [
     //stocks
     'product_updated'=>'تم تعديل المنتج بنجاح',
     'product_created'=>'تم إنشاء المنتج بنجاح',
+    'products_deleted'=>'تم حذف المنتجات المحددة بنجاح',
 
         // closeouts
     'closeout_added'=>'تم اضافة المنتج الى التصفيات بنجاح',
@@ -551,6 +552,7 @@ return [
 
     'sales_daily_no_session' => 'لا توجد جلسة مبيعات يومية مفتوحة. افتح الصندوق يدوياً أولاً.',
     'sales_daily_opened' => 'تم فتح صندوق المبيعات بنجاح.',
+    'sales_daily_opening_variance' => 'يوجد فرق بين الكاش المستلم والمتوقع من الصندوق السابق. أكد المتابعة إذا أردت فتح الصندوق بهذا الفرق.',
     'sales_daily_drawer_open_by_other' => 'صندوق المبيعات مفتوح لدى :employee. يجب إغلاقه قبل فتح صندوق آخر.',
     'sales_daily_previous_day_open' => 'يجب إغلاق يوم المبيعات السابق قبل المتابعة.',
     'sales_daily_closing_pending' => 'طلب إغلاق اليوم بانتظار موافقة الإدارة.',

@@ -1128,6 +1128,43 @@ class Stocks extends Controller
         }
     }
 
+    public function deleteProducts(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'product_ids' => ['required', 'array', 'min:1'],
+                'product_ids.*' => ['integer', 'distinct', 'exists:products,id'],
+            ]);
+
+            $ids = array_values(array_unique(array_map('intval', $validated['product_ids'])));
+
+            $deleted = DB::transaction(function () use ($ids) {
+                Closeout::whereIn('product_id', $ids)
+                    ->where('status', 'unarchived')
+                    ->update(['status' => 'archived']);
+
+                return Product::whereIn('id', $ids)->delete();
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.products_deleted'),
+                'deleted' => $deleted,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.delete_data_error'),
+            ], 500);
+        }
+    }
+
     // *********************** CLOSEOUTS SECTION *********************
     // add product among closeouts
     public function addProductToCloseout(Request $request)

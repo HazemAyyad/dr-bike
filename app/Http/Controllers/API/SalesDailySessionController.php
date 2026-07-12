@@ -39,7 +39,19 @@ class SalesDailySessionController extends Controller
     public function open(Request $request)
     {
         try {
-            $session = $this->sessionService->openSession($request->user());
+            $data = $request->validate([
+                'opening_counts' => 'nullable|array',
+                'opening_counts.*.currency' => 'required|string',
+                'opening_counts.*.physical_count' => 'required|numeric|min:0',
+                'confirm_opening_variance' => 'nullable|boolean',
+            ]);
+
+            $session = $this->sessionService->openSession(
+                $request->user(),
+                null,
+                $data['opening_counts'] ?? [],
+                (bool) ($data['confirm_opening_variance'] ?? false)
+            );
             $payload = $this->sessionService->buildSessionPayload($request->user());
 
             return response()->json([

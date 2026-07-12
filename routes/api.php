@@ -794,6 +794,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */
     Route::post('/create/product' , [Stocks::class,'createProduct']);
     Route::post('/update/product/full' , [Stocks::class,'updateProductFull']);
+    Route::post('/delete/products' , [Stocks::class,'deleteProducts']);
     Route::post('/product/stock/adjust' , [ProductStockController::class,'adjust']);
     Route::post('/product/stock/movements' , [ProductStockController::class,'movements']);
     Route::post('/add/product/to/closeouts' , [Stocks::class,'addProductToCloseout']);

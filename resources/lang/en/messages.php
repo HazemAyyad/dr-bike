@@ -397,6 +397,7 @@ return [
         //stocks
     'product_updated'=>'Product was updated successfully',
     'product_created'=>'Product was created successfully',
+    'products_deleted'=>'Selected products were deleted successfully',
 
     // closeouts
     'closeout_added'=>'Product was added to close outs successfully',
@@ -539,6 +540,7 @@ return [
 
     'sales_daily_no_session' => 'No open daily sales session. Open the drawer manually first.',
     'sales_daily_opened' => 'Sales drawer opened successfully.',
+    'sales_daily_opening_variance' => 'Opening cash differs from the expected float from the previous drawer. Confirm to continue opening with this variance.',
     'sales_daily_drawer_open_by_other' => 'Sales drawer is already open by :employee. Close it before opening another.',
     'sales_daily_previous_day_open' => 'Close the previous sales day before continuing.',
     'sales_daily_closing_pending' => 'Day closing request is pending admin approval.',

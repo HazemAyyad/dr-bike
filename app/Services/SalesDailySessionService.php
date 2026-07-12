@@ -158,6 +158,10 @@ class SalesDailySessionService
         $session = SalesDailySession::query()
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $today)
+            ->whereIn('status', [
+                config('sales_daily.session_status.open'),
+                config('sales_daily.session_status.closing_requested'),
+            ])
             ->orderByDesc('id')
             ->first();
 
@@ -172,7 +176,12 @@ class SalesDailySessionService
         return $this->openSession($user, $today);
     }
 
-    public function openSession(User $user, ?Carbon $date = null): SalesDailySession
+    public function openSession(
+        User $user,
+        ?Carbon $date = null,
+        array $openingCounts = [],
+        bool $confirmOpeningVariance = false
+    ): SalesDailySession
     {
         $owner = $this->resolveOwner($user);
         $date = ($date ?? $this->businessDateToday())->copy()->startOfDay();
@@ -186,15 +195,13 @@ class SalesDailySessionService
         $existing = SalesDailySession::query()
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $date)
+            ->whereIn('status', [
+                config('sales_daily.session_status.open'),
+                config('sales_daily.session_status.closing_requested'),
+            ])
             ->first();
 
         if ($existing) {
-            if ($existing->isClosed()) {
-                throw ValidationException::withMessages([
-                    'session' => [__('messages.sales_daily_day_closed')],
-                ]);
-            }
-
             return $existing;
         }
 
@@ -206,21 +213,205 @@ class SalesDailySessionService
             ]);
         }
 
-        $dailyBoxes = $this->ensureDailyBoxes($user);
-        $openingBalances = [];
-        foreach ($dailyBoxes as $box) {
-            $openingBalances[$box->currency] = round((float) $box->total, 2);
+        $this->ensureDailyBoxes($user);
+        $expectedOpeningCounts = $this->expectedOpeningCountsForNextSession();
+        $openingBalances = $this->normalizeOpeningCounts($openingCounts, $expectedOpeningCounts);
+        $openingVariances = $this->openingVarianceRows($openingBalances, $expectedOpeningCounts);
+
+        if ($openingVariances !== [] && ! $confirmOpeningVariance) {
+            throw ValidationException::withMessages([
+                'opening_counts' => [__('messages.sales_daily_opening_variance')],
+            ]);
         }
 
-        return SalesDailySession::create([
-            'user_id' => $owner['user_id'],
-            'employee_id' => $owner['employee_id'],
-            'business_date' => $date->toDateString(),
-            'status' => config('sales_daily.session_status.open'),
-            'opening_balances' => $openingBalances,
-            'opened_at' => now(),
-            'opened_by_user_id' => $owner['user_id'],
-        ]);
+        return DB::transaction(function () use ($user, $owner, $date, $openingBalances, $expectedOpeningCounts) {
+            $this->syncOpeningDailyBoxBalances($user, $openingBalances, $expectedOpeningCounts);
+
+            return SalesDailySession::create([
+                'user_id' => $owner['user_id'],
+                'employee_id' => $owner['employee_id'],
+                'business_date' => $date->toDateString(),
+                'status' => config('sales_daily.session_status.open'),
+                'opening_balances' => $openingBalances,
+                'opened_at' => now(),
+                'opened_by_user_id' => $owner['user_id'],
+            ]);
+        });
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function expectedOpeningCountsForNextSession(): array
+    {
+        $previous = SalesDailySession::query()
+            ->with([
+                'user',
+                'closingRequests' => fn ($query) => $query
+                    ->where('status', 'approved')
+                    ->latest('id')
+                    ->limit(1),
+            ])
+            ->where('status', config('sales_daily.session_status.closed'))
+            ->orderByDesc('closed_at')
+            ->orderByDesc('id')
+            ->first();
+
+        $previousRequest = $previous?->closingRequests->first();
+        $rows = [];
+
+        foreach (($previousRequest?->cash_counts ?? []) as $row) {
+            $currency = trim((string) ($row['currency'] ?? ''));
+            if ($currency === '') {
+                continue;
+            }
+
+            $rows[$currency] = [
+                'currency' => $currency,
+                'expected_amount' => round((float) ($row['float_to_keep'] ?? 0), 2),
+                'previous_daily_box_id' => (int) ($row['daily_box_id'] ?? 0),
+                'previous_employee_name' => $previous?->user?->name,
+                'previous_session_id' => $previous?->id,
+                'previous_business_date' => $previous?->business_date?->toDateString(),
+            ];
+        }
+
+        foreach (config('sales_daily.default_currencies', ['شيكل']) as $currency) {
+            $rows[$currency] ??= [
+                'currency' => $currency,
+                'expected_amount' => 0,
+                'previous_daily_box_id' => null,
+                'previous_employee_name' => $previous?->user?->name,
+                'previous_session_id' => $previous?->id,
+                'previous_business_date' => $previous?->business_date?->toDateString(),
+            ];
+        }
+
+        return array_values($rows);
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $openingCounts
+     * @param  array<int, array<string, mixed>>  $expectedOpeningCounts
+     * @return array<string, float>
+     */
+    private function normalizeOpeningCounts(array $openingCounts, array $expectedOpeningCounts): array
+    {
+        $balances = [];
+
+        foreach ($expectedOpeningCounts as $row) {
+            $currency = trim((string) ($row['currency'] ?? ''));
+            if ($currency !== '') {
+                $balances[$currency] = round((float) ($row['expected_amount'] ?? 0), 2);
+            }
+        }
+
+        foreach ($openingCounts as $row) {
+            $currency = trim((string) ($row['currency'] ?? ''));
+            if ($currency === '') {
+                continue;
+            }
+
+            $balances[$currency] = round((float) ($row['physical_count'] ?? 0), 2);
+        }
+
+        return $balances;
+    }
+
+    /**
+     * @param  array<string, float>  $openingBalances
+     * @param  array<int, array<string, mixed>>  $expectedOpeningCounts
+     * @return array<int, array<string, mixed>>
+     */
+    private function openingVarianceRows(array $openingBalances, array $expectedOpeningCounts): array
+    {
+        $rows = [];
+
+        foreach ($expectedOpeningCounts as $row) {
+            $currency = trim((string) ($row['currency'] ?? ''));
+            if ($currency === '') {
+                continue;
+            }
+
+            $expected = round((float) ($row['expected_amount'] ?? 0), 2);
+            $counted = round((float) ($openingBalances[$currency] ?? 0), 2);
+            $variance = round($counted - $expected, 2);
+
+            if (abs($variance) > 0.0001) {
+                $rows[] = [
+                    'currency' => $currency,
+                    'expected_amount' => $expected,
+                    'physical_count' => $counted,
+                    'variance' => $variance,
+                    'previous_daily_box_id' => $row['previous_daily_box_id'] ?? null,
+                    'previous_employee_name' => $row['previous_employee_name'] ?? null,
+                    'previous_session_id' => $row['previous_session_id'] ?? null,
+                    'previous_business_date' => $row['previous_business_date'] ?? null,
+                ];
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param  array<string, float>  $openingBalances
+     * @param  array<int, array<string, mixed>>  $expectedOpeningCounts
+     */
+    private function syncOpeningDailyBoxBalances(
+        User $user,
+        array $openingBalances,
+        array $expectedOpeningCounts
+    ): void {
+        $owner = $this->resolveOwner($user);
+        $user->loadMissing('employee.user');
+        $displayName = $user->name ?? 'مستخدم';
+        $expectedByCurrency = collect($expectedOpeningCounts)->keyBy('currency');
+
+        foreach ($openingBalances as $currency => $amount) {
+            $currency = trim((string) $currency);
+            if ($currency === '') {
+                continue;
+            }
+
+            $targetQuery = Box::query()
+                ->where('type', config('sales_daily.box_type'))
+                ->where('currency', $currency);
+
+            if ($owner['employee_id']) {
+                $targetQuery->where('employee_id', $owner['employee_id']);
+            } else {
+                $targetQuery->where('user_id', $owner['user_id'])->whereNull('employee_id');
+            }
+
+            $targetBox = $targetQuery->first();
+            if (! $targetBox) {
+                $targetBox = Box::create([
+                    'name' => 'صندوق مبيعات يومي - '.$displayName.' - '.$currency,
+                    'type' => config('sales_daily.box_type'),
+                    'employee_id' => $owner['employee_id'],
+                    'user_id' => $owner['employee_id'] ? null : $owner['user_id'],
+                    'total' => 0,
+                    'is_shown' => 0,
+                    'currency' => $currency,
+                ]);
+            }
+
+            $counted = round((float) $amount, 2);
+            $expected = $expectedByCurrency->get($currency, []);
+            $previousBoxId = (int) ($expected['previous_daily_box_id'] ?? 0);
+
+            if ($previousBoxId > 0 && $previousBoxId !== (int) $targetBox->id) {
+                $previousBox = Box::query()->find($previousBoxId);
+                if ($previousBox) {
+                    $previousBox->update([
+                        'total' => round(max(0, (float) $previousBox->total - $counted), 2),
+                    ]);
+                }
+            }
+
+            $targetBox->update(['total' => $counted]);
+        }
     }
 
     public function assertCanCreateSale(User $user): SalesDailySession
@@ -660,6 +851,10 @@ class SalesDailySessionService
         $todaySessionExists = SalesDailySession::query()
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $this->businessDateToday())
+            ->whereIn('status', [
+                config('sales_daily.session_status.open'),
+                config('sales_daily.session_status.closing_requested'),
+            ])
             ->exists();
         $canRequestOpen = ! $blocking
             && ! $blockedByOther
@@ -769,6 +964,9 @@ class SalesDailySessionService
             'profit_sales_count' => $profitCount,
             'pending_closing_request_id' => $pendingClosing?->id,
             'pending_reopen_request_id' => $pendingReopen?->id,
+            'expected_opening_counts' => $canRequestOpen
+                ? $this->expectedOpeningCountsForNextSession()
+                : [],
             'config' => [
                 'variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
                 'max_float' => SalesDailySettings::maxFloatMap(),
