@@ -867,6 +867,33 @@ class EmployeeTaskOperationsController extends Controller
         }
     }
 
+    public function undoOccurrenceSubtaskCompletion(Request $request)
+    {
+        try {
+            $request->validate(['sub_task_id' => 'required|exists:employee_task_occurrence_subtasks,id']);
+            $sub = EmployeeTaskOccurrenceSubtask::findOrFail($request->sub_task_id);
+
+            $actorId = (int) (auth()->user()?->employee?->id ?? 0);
+            if ($actorId <= 0 || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) {
+                return response()->json(['status' => 'error', 'message' => __('messages.unauthorized')], 200);
+            }
+
+            $this->workflow->undoOccurrenceSubtaskCompletion($sub);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.subtask_completion_undone'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
+        }
+    }
+
     public function rejectOccurrenceSubtask(Request $request)
     {
         try {

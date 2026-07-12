@@ -112,6 +112,9 @@ return [
     'employee_image_required'=>'يجب تحميل صورة من الموظف قبل انهاء المهمة',
     'subtask_completed_upload_proof' => 'تم إنجاز كل المهام الفرعية. أضف إثبات المهمة الرئيسية ثم أرسل للمراجعة.',
     'subtask_rejected' => 'تم تسجيل رفض تنفيذ المهمة الفرعية',
+    'subtask_not_completed' => 'المهمة الفرعية ليست منجزة',
+    'subtask_completion_undone' => 'تم التراجع عن إنجاز المهمة الفرعية',
+    'task_completed_can_not_change_subtasks' => 'لا يمكن تعديل المهام الفرعية بعد اعتماد المهمة',
     'employee_sub_task_images_updated'=>'تم تعديل صور الموظف لمهمة فرعية بنجاح',
 
 

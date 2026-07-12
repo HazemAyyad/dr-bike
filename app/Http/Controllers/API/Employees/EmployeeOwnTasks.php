@@ -110,7 +110,7 @@ class EmployeeOwnTasks extends Controller
         $subTask->employee_img = self::storeEmployeeProofImages(
             $request,
             'EmployeeSubTasks/EmployeeImages',
-            $subTask->employee_img ?? []
+            $request->boolean('replace_employee_img') ? [] : ($subTask->employee_img ?? [])
         );
         $subTask->save();
 
@@ -267,7 +267,7 @@ class EmployeeOwnTasks extends Controller
             $subTask->employee_img = self::storeEmployeeProofImages(
                 $request,
                 'EmployeeSubTasks/EmployeeImages',
-                $subTask->employee_img ?? []
+                $request->boolean('replace_employee_img') ? [] : ($subTask->employee_img ?? [])
             );
             $subTask->save();
 

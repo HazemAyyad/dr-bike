@@ -538,6 +538,72 @@ class EmployeeTaskWorkflowService
         return $fresh;
     }
 
+    public function undoSubtaskCompletion(EmployeeSubTask $subTask): EmployeeSubTask
+    {
+        if ($subTask->status !== EmployeeTaskStatus::Completed->value) {
+            throw new \RuntimeException(__('messages.subtask_not_completed'));
+        }
+
+        $task = $subTask->employeeTask;
+        if ($task && EmployeeTaskStatus::normalize($task->status) === EmployeeTaskStatus::Completed) {
+            throw new \RuntimeException(__('messages.task_completed_can_not_change_subtasks'));
+        }
+
+        $payload = ['status' => EmployeeTaskStatus::Pending->value];
+        if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = null;
+        }
+
+        $subTask->update($payload);
+
+        if ($task && EmployeeTaskStatus::normalize($task->status) === EmployeeTaskStatus::WaitingReview) {
+            $task->update([
+                'status' => EmployeeTaskStatus::InProgress->value,
+                'submitted_at' => null,
+                'reviewed_at' => null,
+            ]);
+            $this->timeline->recordForTask($task, EmployeeTaskTimeline::EVENT_REOPENED, $subTask->name);
+        }
+
+        return $subTask->fresh();
+    }
+
+    public function undoOccurrenceSubtaskCompletion(
+        EmployeeTaskOccurrenceSubtask $subTask
+    ): EmployeeTaskOccurrenceSubtask {
+        if ($subTask->status !== EmployeeTaskStatus::Completed->value) {
+            throw new \RuntimeException(__('messages.subtask_not_completed'));
+        }
+
+        $occurrence = $subTask->occurrence;
+        if ($occurrence && EmployeeTaskStatus::normalize($occurrence->status) === EmployeeTaskStatus::Completed) {
+            throw new \RuntimeException(__('messages.task_completed_can_not_change_subtasks'));
+        }
+
+        $payload = ['status' => EmployeeTaskStatus::Pending->value];
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')) {
+            $payload['completed_by_employee_id'] = null;
+        }
+
+        $subTask->update($payload);
+
+        if ($occurrence && EmployeeTaskStatus::normalize($occurrence->status) === EmployeeTaskStatus::WaitingReview) {
+            $occurrence->update([
+                'status' => EmployeeTaskStatus::InProgress->value,
+                'submitted_at' => null,
+                'reviewed_at' => null,
+                'completed_at' => null,
+            ]);
+            $this->timeline->recordForOccurrence(
+                $occurrence,
+                EmployeeTaskTimeline::EVENT_REOPENED,
+                $subTask->name
+            );
+        }
+
+        return $subTask->fresh();
+    }
+
     /**
      * Employee declines to execute a subtask (with a reason). A rejected subtask
      * does NOT block submitting the parent task and earns no bonus points.

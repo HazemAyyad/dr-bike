@@ -1703,6 +1703,48 @@ public function updateEmployeeTask(Request $request)
     }
     }
 
+    public function undoSubTaskCompletion(Request $request)
+    {
+        try {
+            $request->validate([
+                'sub_task_id' => 'required|exists:sub_employee_tasks,id',
+            ]);
+
+            $subTask = EmployeeSubTask::with('employeeTask')->findOrFail($request->sub_task_id);
+            $actorId = (int) (auth()->user()->employee->id ?? 0);
+            $parent = $subTask->employeeTask;
+            if (! $parent || ! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, $actorId)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $this->workflow->undoSubtaskCompletion($subTask);
+
+            Logs::createLog(
+                'تراجع عن إنجاز مهمة فرعية',
+                'تراجع عن إنجاز مهمة فرعية باسم '.$subTask->name.' التابعة للمهمة '.$parent->name,
+                'employee_tasks'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.subtask_completion_undone'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage() ?: __('messages.unexpected_error'),
+            ], 200);
+        }
+    }
+
     public function rejectSubTask(Request $request){
         try{
         $request->validate([
