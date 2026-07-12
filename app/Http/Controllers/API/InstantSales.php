@@ -2082,6 +2082,7 @@ public function edit(Request $request)
                 'is_package_sale' => $isPackageSale,
                 'package_name' => $sale->offerPackage?->name,
                 'product_id' => $sale->product_id,
+                'product_code' => $sale->product?->product_code,
                 'offer_package_id' => $sale->offer_package_id,
                 'project_id' => $sale->project_id,
                 'type' => $sale->type ?? 'normal',
@@ -2128,6 +2129,7 @@ public function edit(Request $request)
                     return [
                         'id' => $sub->id,
                         'product_id' => $sub->product_id,
+                        'product_code' => $sub->product?->product_code,
                         'size_color_id' => $sub->size_color_id,
                         'size_id' => $sub->size_id,
                         'type' => $sub->type ?? 'normal',
