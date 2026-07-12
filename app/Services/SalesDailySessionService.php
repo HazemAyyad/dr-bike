@@ -3,8 +3,10 @@
 namespace App\Services;
 
 use App\Http\Controllers\API\BoxLogs;
+use App\Models\AdminNotification;
 use App\Models\Box;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeNotification;
 use App\Models\InstantSale;
 use App\Models\ProfitSale;
 use App\Models\SalesOrder;
@@ -491,6 +493,155 @@ class SalesDailySessionService
         }
 
         return Box::query()->whereKey($boxId)->value('currency');
+    }
+
+    /**
+     * @return array{
+     *     checked:int,
+     *     admin_notified:int,
+     *     employee_notified:int,
+     *     skipped_admin_duplicate:int,
+     *     skipped_employee_duplicate:int,
+     *     missing_employee:int,
+     *     details:list<array<string, mixed>>
+     * }
+     */
+    public function sendPreviousDayOpenReminders(bool $force = false): array
+    {
+        $tz = 'Asia/Hebron';
+        $now = Carbon::now($tz);
+        $today = $now->toDateString();
+        $reminderDate = $today;
+        $slotMinute = ((int) $now->format('i')) < 30 ? 0 : 30;
+        $reminderSlot = $now->copy()
+            ->setTime((int) $now->format('H'), $slotMinute, 0)
+            ->format('Y-m-d H:i');
+
+        $stats = [
+            'checked' => 0,
+            'admin_notified' => 0,
+            'employee_notified' => 0,
+            'skipped_admin_duplicate' => 0,
+            'skipped_employee_duplicate' => 0,
+            'missing_employee' => 0,
+            'details' => [],
+        ];
+
+        $sessions = SalesDailySession::query()
+            ->with(['user', 'employee.user'])
+            ->whereIn('status', [
+                config('sales_daily.session_status.open'),
+                config('sales_daily.session_status.closing_requested'),
+            ])
+            ->whereDate('business_date', '<', $today)
+            ->orderBy('business_date')
+            ->orderBy('id')
+            ->get();
+
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            foreach ($sessions as $session) {
+                $stats['checked']++;
+
+                $employee = $this->resolveSessionEmployee($session);
+                $employee?->loadMissing('user');
+                $session->loadMissing('user');
+
+                $employeeName = $session->user?->name
+                    ?? $employee?->user?->name
+                    ?? __('messages.employee_default_name');
+                $businessDate = $session->business_date?->toDateString() ?? '';
+
+                $data = [
+                    'session_id' => (string) $session->id,
+                    'business_date' => $businessDate,
+                    'session_status' => (string) $session->status,
+                    'employee_id' => (string) ($session->employee_id ?? $employee?->id ?? ''),
+                    'employee_name' => $employeeName,
+                    'owner_user_id' => (string) $session->user_id,
+                    'reminder_date' => $reminderDate,
+                    'reminder_slot' => $reminderSlot,
+                    'checked_at' => $now->toIso8601String(),
+                ];
+
+                $adminSent = false;
+                if (! $force && $this->previousDayAdminReminderExists($session, $reminderSlot)) {
+                    $stats['skipped_admin_duplicate']++;
+                } else {
+                    $this->adminNotificationService->create(
+                        AdminNotificationService::TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN,
+                        'صندوق مبيعات غير مغلق',
+                        "{$employeeName} لم يغلق صندوق مبيعات يوم {$businessDate}. يرجى إغلاق الصندوق.",
+                        $data,
+                        $session->employee_id ?: $employee?->id,
+                        'sales_daily_session',
+                        (int) $session->id
+                    );
+                    $adminSent = true;
+                    $stats['admin_notified']++;
+                }
+
+                $employeeSent = false;
+                if (! $employee) {
+                    $stats['missing_employee']++;
+                } elseif (! $force && $this->previousDayEmployeeReminderExists($employee, $session, $reminderSlot)) {
+                    $stats['skipped_employee_duplicate']++;
+                } else {
+                    $this->employeeNotificationService->create(
+                        $employee,
+                        EmployeeNotificationService::TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN,
+                        'تذكير إغلاق صندوق المبيعات',
+                        "صندوق مبيعات يوم {$businessDate} ما زال غير مغلق. يرجى إغلاق الصندوق.",
+                        $data,
+                        'sales_daily_session',
+                        (int) $session->id
+                    );
+                    $employeeSent = true;
+                    $stats['employee_notified']++;
+                }
+
+                $stats['details'][] = [
+                    'session_id' => (int) $session->id,
+                    'business_date' => $businessDate,
+                    'status' => (string) $session->status,
+                    'employee_id' => $employee?->id,
+                    'employee_name' => $employeeName,
+                    'reminder_slot' => $reminderSlot,
+                    'admin_sent' => $adminSent,
+                    'employee_sent' => $employeeSent,
+                ];
+            }
+        } finally {
+            App::setLocale($previous);
+        }
+
+        return $stats;
+    }
+
+    private function previousDayAdminReminderExists(SalesDailySession $session, string $reminderSlot): bool
+    {
+        return AdminNotification::query()
+            ->where('type', AdminNotificationService::TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN)
+            ->where('related_type', 'sales_daily_session')
+            ->where('related_id', $session->id)
+            ->where('data->reminder_slot', $reminderSlot)
+            ->exists();
+    }
+
+    private function previousDayEmployeeReminderExists(
+        EmployeeDetail $employee,
+        SalesDailySession $session,
+        string $reminderSlot
+    ): bool {
+        return EmployeeNotification::query()
+            ->where('employee_id', $employee->id)
+            ->where('type', EmployeeNotificationService::TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN)
+            ->where('related_type', 'sales_daily_session')
+            ->where('related_id', $session->id)
+            ->where('data->reminder_slot', $reminderSlot)
+            ->exists();
     }
 
     /**

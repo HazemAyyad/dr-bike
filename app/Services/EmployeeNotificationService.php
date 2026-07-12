@@ -32,6 +32,8 @@ class EmployeeNotificationService
 
     public const TYPE_SALES_DAILY_EXTERNAL_SALE = 'sales_daily_external_sale';
 
+    public const TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN = 'sales_daily_previous_day_open';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}
