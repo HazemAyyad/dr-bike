@@ -264,6 +264,7 @@ private function getTasks($status)
 
             switch ($recurrence) {
                 case 'noRepeat':
+                case 'oneTimePersistent':
                     return true; // no restriction
 
                 case 'daily':
@@ -793,7 +794,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
             'points' => ['required', 'integer', 'min:0'],
             'start_time' => ['required', 'date', 'before_or_equal:end_time'],
             'end_time' => ['required', 'date', 'after_or_equal:start_time'],
-            'task_recurrence' => ['required', 'string','in:noRepeat,daily,weekly,monthly'],
+            'task_recurrence' => ['required', 'string','in:noRepeat,oneTimePersistent,daily,weekly,monthly'],
             'proof_media_type' => ['nullable', 'string', 'in:none,image,video,both'],
           
             'task_recurrence_time' => [
@@ -943,7 +944,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
                     }
         }
 
-        if ($request->task_recurrence !== 'noRepeat' && count($assigneeIds) <= 1) {
+        if (in_array($request->task_recurrence, ['daily', 'weekly', 'monthly'], true) && count($assigneeIds) <= 1) {
             self::createHelper($employeeTask, $request->task_recurrence);
         }
 
@@ -1120,7 +1121,7 @@ public function updateEmployeeTask(Request $request)
             'points' => ['required', 'integer', 'min:0'],
             'start_time' => ['required', 'date', 'before_or_equal:end_time'],
             'end_time' => ['required', 'date', 'after_or_equal:start_time'],
-            'task_recurrence' => ['required', 'string','in:noRepeat,daily,weekly,monthly'],
+            'task_recurrence' => ['required', 'string','in:noRepeat,oneTimePersistent,daily,weekly,monthly'],
             'proof_media_type' => ['nullable', 'string', 'in:none,image,video,both'],
 
             'task_recurrence_time' => [

@@ -337,6 +337,63 @@ class SalesDailySessionController extends Controller
         }
     }
 
+    public function directClose(Request $request)
+    {
+        try {
+            if (! $this->canReviewClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'cash_counts' => 'required|array|min:1',
+                'cash_counts.*.currency' => 'required|string',
+                'cash_counts.*.physical_count' => 'required|numeric|min:0',
+                'cash_counts.*.float_to_keep' => 'required|numeric|min:0',
+                'cash_counts.*.employee_note' => 'nullable|string|max:1000',
+                'session_id' => 'required|integer|exists:sales_daily_sessions,id',
+                'transfers' => 'nullable|array',
+                'transfers.*.currency' => 'required|string',
+                'transfers.*.to_box_id' => 'nullable|integer|exists:boxes,id',
+                'review_notes' => 'nullable|string|max:2000',
+            ]);
+
+            $closingRequest = $this->sessionService->directClose(
+                $request->user(),
+                $data['cash_counts'],
+                (int) $data['session_id'],
+                $data['transfers'] ?? [],
+                $data['review_notes'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_daily_direct_closed'),
+                'closing_request' => $this->formatClosingRequest($closingRequest),
+            ], 200);
+        } catch (ValidationException $e) {
+            $firstError = collect($e->errors())->flatten()->first();
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $firstError ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage() ?: __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function rejectClosing(Request $request)
     {
         try {

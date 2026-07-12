@@ -568,6 +568,7 @@ return [
     'sales_daily_request_not_pending' => 'الطلب ليس قيد الانتظار.',
     'sales_daily_closing_requested' => 'تم إرسال طلب إغلاق اليوم للإدارة.',
     'sales_daily_closing_approved' => 'تمت الموافقة على إغلاق اليوم وترحيل الرصيد.',
+    'sales_daily_direct_closed' => 'تم إغلاق صندوق المبيعات وترحيل الرصيد مباشرة.',
     'sales_daily_closing_rejected' => 'تم رفض طلب إغلاق اليوم.',
     'sales_daily_cancel_reason_required' => 'سبب الإلغاء مطلوب.',
     'sales_daily_cancel_not_closed_day' => 'لا يمكن طلب الإلغاء إلا لفواتير أيام مغلقة.',

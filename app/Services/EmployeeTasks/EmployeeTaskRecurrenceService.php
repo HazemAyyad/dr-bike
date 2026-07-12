@@ -12,6 +12,8 @@ use Illuminate\Support\Collection;
 
 class EmployeeTaskRecurrenceService
 {
+    public const ONE_TIME_PERSISTENT = 'oneTimePersistent';
+
     private const HORIZON_DAYS = 14;
 
     public function __construct(
@@ -23,7 +25,7 @@ class EmployeeTaskRecurrenceService
      */
     public function ensureOccurrences(EmployeeTaskTemplate $template, ?Carbon $from = null, ?Carbon $to = null): Collection
     {
-        if ($template->recurrence_type === 'noRepeat') {
+        if (in_array($template->recurrence_type, ['noRepeat', self::ONE_TIME_PERSISTENT], true)) {
             return $this->ensureSingleOccurrence($template);
         }
 
@@ -290,6 +292,10 @@ class EmployeeTaskRecurrenceService
 
         if ($type === 'noRepeat') {
             return __('messages.recurrence_no_repeat');
+        }
+
+        if ($type === self::ONE_TIME_PERSISTENT) {
+            return 'مرة واحدة مستمرة';
         }
 
         $parts = [__('messages.recurrence_'.$type)];

@@ -556,6 +556,7 @@ return [
     'sales_daily_request_not_pending' => 'Request is not pending.',
     'sales_daily_closing_requested' => 'Day closing request sent to admin.',
     'sales_daily_closing_approved' => 'Day closing approved and balance transferred.',
+    'sales_daily_direct_closed' => 'Sales drawer closed and balance transferred directly.',
     'sales_daily_closing_rejected' => 'Day closing request rejected.',
     'sales_daily_cancel_reason_required' => 'Cancellation reason is required.',
     'sales_daily_cancel_not_closed_day' => 'Cancellation requests apply only to closed days.',

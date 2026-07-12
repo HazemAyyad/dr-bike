@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\Schema;
 class EmployeeVisibleTasks
 {
     public const TIMEZONE = 'Asia/Hebron';
+    public const ONE_TIME_PERSISTENT = 'oneTimePersistent';
 
     /** Match lazy occurrence generation in EmployeeTaskRecurrenceService. */
     public const OCCURRENCE_VISIBILITY_DAYS_FORWARD = 14;
@@ -194,6 +195,10 @@ class EmployeeVisibleTasks
 
     public static function passesOccurrenceDayFilter(EmployeeTaskOccurrence $task): bool
     {
+        if (($task->template?->recurrence_type ?? null) === self::ONE_TIME_PERSISTENT) {
+            return true;
+        }
+
         $today = Carbon::now()->timezone(self::TIMEZONE)->startOfDay();
         $scheduled = Carbon::parse($task->scheduled_date ?? $task->start_time)
             ->timezone(self::TIMEZONE)
@@ -367,6 +372,16 @@ class EmployeeVisibleTasks
         $check = $date->copy()->timezone(self::TIMEZONE)->startOfDay();
 
         $recurrence = $row['task_recurrence'] ?? 'noRepeat';
+
+        if ($recurrence === self::ONE_TIME_PERSISTENT) {
+            return in_array($row['status'] ?? null, [
+                'ongoing',
+                'pending',
+                'in_progress',
+                'waiting_review',
+                'overdue',
+            ], true);
+        }
 
         if ($recurrence === 'daily' && ! EmployeeWorkingDays::isWorkingDay($employee, $check)) {
             return false;

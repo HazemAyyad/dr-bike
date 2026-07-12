@@ -1251,85 +1251,146 @@ class SalesDailySessionService
                 ]);
             }
 
-            $session = $closingRequest->session;
-            $cashCounts = $closingRequest->cash_counts ?? [];
-            $executedTransfers = [];
+            return $this->applyApprovedClosing($reviewer, $closingRequest, $transfers, $reviewNotes);
+        });
+    }
 
-            foreach ($cashCounts as $row) {
-                $currency = $row['currency'] ?? '';
-                $fromBoxId = (int) ($row['daily_box_id'] ?? 0);
-                if ($fromBoxId <= 0) {
-                    $fromBoxId = $this->resolveDailyBoxIdForSession($session, $currency);
-                }
-                $amountToTransfer = round((float) ($row['amount_to_transfer'] ?? 0), 2);
-                $floatToKeep = round((float) ($row['float_to_keep'] ?? 0), 2);
+    /**
+     * @param  array<int, array<string, mixed>>  $cashCounts
+     * @param  array<int, array<string, mixed>>  $transfers
+     */
+    public function directClose(
+        User $reviewer,
+        array $cashCounts,
+        int $sessionId,
+        array $transfers,
+        ?string $reviewNotes = null
+    ): SalesDailyClosingRequest {
+        if (! $this->canReviewAllSessions($reviewer)) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.unauthorized')],
+            ]);
+        }
 
-                if ($fromBoxId <= 0) {
-                    throw ValidationException::withMessages([
-                        'transfers' => [__('messages.sales_daily_box_not_found')],
-                    ]);
-                }
+        $session = SalesDailySession::query()->findOrFail($sessionId);
+        $this->assertCanViewSession($reviewer, $session);
+        $this->assertCanCloseSession($reviewer, $session);
 
-                if ($amountToTransfer <= 0) {
-                    $fromBox = Box::lockForUpdate()->find($fromBoxId);
-                    if ($fromBox) {
-                        $fromBox->update(['total' => $floatToKeep]);
-                    }
+        if ($session->closingRequests()->where('status', 'pending')->exists()) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.sales_daily_closing_already_pending')],
+            ]);
+        }
 
-                    continue;
-                }
+        $owner = User::query()->findOrFail($session->user_id);
+        $normalized = $this->normalizeCashCounts($owner, $session, $cashCounts);
+        $counts = $this->salesCountsForSession($session);
 
-                $transferInput = collect($transfers)->firstWhere('currency', $currency);
-                $toBoxId = (int) ($transferInput['to_box_id'] ?? 0);
-
-                if ($toBoxId <= 0) {
-                    throw ValidationException::withMessages([
-                        'transfers' => [__('messages.sales_daily_transfer_target_required', ['currency' => $currency])],
-                    ]);
-                }
-
-                $fromBox = Box::lockForUpdate()->findOrFail($fromBoxId);
-                $toBox = Box::lockForUpdate()->findOrFail($toBoxId);
-
-                if ($fromBox->currency !== $toBox->currency) {
-                    throw ValidationException::withMessages([
-                        'transfers' => [__('messages.must_be_same_currency')],
-                    ]);
-                }
-
-                $toBox->update(['total' => (float) $toBox->total + $amountToTransfer]);
-                $fromBox->update(['total' => $floatToKeep]);
-
-                $note = 'ترحيل نهاية يوم مبيعات #'.$session->id.' — '.$currency;
-                BoxLogs::createTransferLog($fromBox, $toBox, 'ترحيل صندوق مبيعات يومي', $amountToTransfer, $note);
-
-                $executedTransfers[] = [
-                    'currency' => $currency,
-                    'from_box_id' => $fromBox->id,
-                    'to_box_id' => $toBox->id,
-                    'amount' => $amountToTransfer,
-                    'float_kept' => $floatToKeep,
-                ];
-            }
-
-            $closingRequest->update([
+        return DB::transaction(function () use ($reviewer, $session, $normalized, $counts, $transfers, $reviewNotes) {
+            $closingRequest = SalesDailyClosingRequest::create([
+                'session_id' => $session->id,
+                'requested_by_user_id' => $reviewer->id,
+                'requested_at' => now(),
                 'status' => 'approved',
                 'reviewed_by_user_id' => $reviewer->id,
                 'reviewed_at' => now(),
                 'review_notes' => $reviewNotes,
-                'transfers' => $executedTransfers,
+                'instant_sales_count' => $counts['instant'],
+                'profit_sales_count' => $counts['profit'],
+                'cash_counts' => $normalized,
             ]);
 
-            $session->update([
-                'status' => config('sales_daily.session_status.closed'),
-                'closed_at' => now(),
-                'closed_by_user_id' => $reviewer->id,
-            ]);
-
-            $this->notifyEmployeeClosingApproved($session);
-
-            return $closingRequest->fresh(['session.user', 'session.employee.user']);
+            return $this->applyApprovedClosing($reviewer, $closingRequest, $transfers, $reviewNotes);
         });
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $transfers
+     */
+    private function applyApprovedClosing(
+        User $reviewer,
+        SalesDailyClosingRequest $closingRequest,
+        array $transfers,
+        ?string $reviewNotes = null
+    ): SalesDailyClosingRequest {
+        $session = $closingRequest->session;
+        $cashCounts = $closingRequest->cash_counts ?? [];
+        $executedTransfers = [];
+
+        foreach ($cashCounts as $row) {
+            $currency = $row['currency'] ?? '';
+            $fromBoxId = (int) ($row['daily_box_id'] ?? 0);
+            if ($fromBoxId <= 0) {
+                $fromBoxId = $this->resolveDailyBoxIdForSession($session, $currency);
+            }
+            $amountToTransfer = round((float) ($row['amount_to_transfer'] ?? 0), 2);
+            $floatToKeep = round((float) ($row['float_to_keep'] ?? 0), 2);
+
+            if ($fromBoxId <= 0) {
+                throw ValidationException::withMessages([
+                    'transfers' => [__('messages.sales_daily_box_not_found')],
+                ]);
+            }
+
+            if ($amountToTransfer <= 0) {
+                $fromBox = Box::lockForUpdate()->find($fromBoxId);
+                if ($fromBox) {
+                    $fromBox->update(['total' => $floatToKeep]);
+                }
+
+                continue;
+            }
+
+            $transferInput = collect($transfers)->firstWhere('currency', $currency);
+            $toBoxId = (int) ($transferInput['to_box_id'] ?? 0);
+
+            if ($toBoxId <= 0) {
+                throw ValidationException::withMessages([
+                    'transfers' => [__('messages.sales_daily_transfer_target_required', ['currency' => $currency])],
+                ]);
+            }
+
+            $fromBox = Box::lockForUpdate()->findOrFail($fromBoxId);
+            $toBox = Box::lockForUpdate()->findOrFail($toBoxId);
+
+            if ($fromBox->currency !== $toBox->currency) {
+                throw ValidationException::withMessages([
+                    'transfers' => [__('messages.must_be_same_currency')],
+                ]);
+            }
+
+            $toBox->update(['total' => (float) $toBox->total + $amountToTransfer]);
+            $fromBox->update(['total' => $floatToKeep]);
+
+            $note = 'ترحيل نهاية يوم مبيعات #'.$session->id.' — '.$currency;
+            BoxLogs::createTransferLog($fromBox, $toBox, 'ترحيل صندوق مبيعات يومي', $amountToTransfer, $note);
+
+            $executedTransfers[] = [
+                'currency' => $currency,
+                'from_box_id' => $fromBox->id,
+                'to_box_id' => $toBox->id,
+                'amount' => $amountToTransfer,
+                'float_kept' => $floatToKeep,
+            ];
+        }
+
+        $closingRequest->update([
+            'status' => 'approved',
+            'reviewed_by_user_id' => $reviewer->id,
+            'reviewed_at' => now(),
+            'review_notes' => $reviewNotes,
+            'transfers' => $executedTransfers,
+        ]);
+
+        $session->update([
+            'status' => config('sales_daily.session_status.closed'),
+            'closed_at' => now(),
+            'closed_by_user_id' => $reviewer->id,
+        ]);
+
+        $this->notifyEmployeeClosingApproved($session);
+
+        return $closingRequest->fresh(['session.user', 'session.employee.user']);
     }
 
     public function rejectClosing(User $reviewer, int $requestId, ?string $reviewNotes = null): SalesDailyClosingRequest
