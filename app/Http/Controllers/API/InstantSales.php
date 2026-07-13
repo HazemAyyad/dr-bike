@@ -256,9 +256,9 @@ class InstantSales extends Controller
   /**
      * Restore stock for one invoice line only once (exact line quantity).
      */
-    private function restoreStockForSaleLine(InstantSale $line): void
+    private function restoreStockForSaleLine(InstantSale $line, bool $force = false): void
     {
-        if ($this->saleLineStockAlreadyRestored($line)) {
+        if (! $force && $this->saleLineStockAlreadyRestored($line)) {
             return;
         }
 
@@ -608,7 +608,7 @@ class InstantSales extends Controller
         $this->reverseBoxForCancelledSale($existing);
 
         foreach ($this->stockLinesForSale($existing) as $line) {
-            $this->restoreStockForSaleLine($line);
+            $this->restoreStockForSaleLine($line, force: true);
         }
 
         if ($existing->offer_package_id) {
@@ -1049,6 +1049,9 @@ public function store(Request $request)
         if ($replaceId > 0) {
             $mainInstantSale = InstantSale::lockForUpdate()->findOrFail($replaceId);
             $mainInstantSale->update(array_merge($mainData, $this->auditFieldsForUpdate()));
+            if (Schema::hasColumn('instant_sales', 'stock_restored')) {
+                $mainInstantSale->forceFill(['stock_restored' => false])->save();
+            }
             $mainInstantSale = $mainInstantSale->fresh();
         } else {
             $mainInstantSale = InstantSale::create($mainData);
