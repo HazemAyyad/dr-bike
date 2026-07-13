@@ -75,6 +75,7 @@ use App\Http\Controllers\API\Projects;
 use App\Http\Controllers\API\PunishmentsApi;
 use App\Http\Controllers\API\RewardsApi;
 use App\Http\Controllers\API\SpecialTasks;
+use App\Http\Controllers\API\TaskConversionController;
 use App\Models\EmployeeOrder;
 use App\Http\Controllers\API\ProjectExpensesAPI;
 use App\Http\Controllers\API\Reports;
@@ -188,6 +189,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Special Tasks','re
     ;
     Route::post('/transfer/special/task' , [SpecialTasks::class,'transerTask']);
     Route::post('/update/special/task' , [SpecialTasks::class,'updateTask']);
+    Route::post('/convert/special/task/to/employee' , [TaskConversionController::class,'specialToEmployee']);
 
 });
 
@@ -309,6 +311,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
     Route::post('/employee/task/reopen', [EmployeeTaskOperationsController::class, 'reopenTask']);
     Route::post('/employee/task/timeline', [EmployeeTaskOperationsController::class, 'getTimeline']);
     Route::get('/employee/task/performance', [EmployeeTaskOperationsController::class, 'getPerformance']);
+    Route::post('/convert/employee/task/to/special', [TaskConversionController::class, 'employeeToSpecial']);
 
 });
 
@@ -505,14 +508,20 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Boxes Section','re
    Route::post('/add/box' , [Boxes::class,'addBox']);
    Route::post('/edit/box' , [Boxes::class,'editBox']);
    Route::post('/show/box' , [Boxes::class,'showBox']);
-   Route::get('/get/hidden/boxes' , [Boxes::class,'getHiddentBoxes']);
    Route::post('/add/box/balance' , [Boxes::class,'addBalance']);
    Route::post('/transfer/box/balance' , [Boxes::class,'transferBalance']);
    Route::post('/delete/box' , [Boxes::class,'deleteBox']);
 
+  Route::post('/box/logs/report' , [BoxLogs::class,'boxLogsReport']);
+
+});
+
+Route::group(['middleware'=>['auth:sanctum','check.permission:Boxes Section,Daily Boxes','refresh.token.expiry']] , function() {
+
+   Route::get('/get/hidden/boxes' , [Boxes::class,'getHiddentBoxes']);
+
   //box logs
   Route::get('/all/box/logs' , [BoxLogs::class,'allBoxLogs']);
-  Route::post('/box/logs/report' , [BoxLogs::class,'boxLogsReport']);
 
 });
 
@@ -710,7 +719,7 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Sal
     Route::post('/person-product-settings/delete', [PersonProductSettingsController::class, 'destroy']);
 });
 
-Route::group(['middleware' => ['auth:sanctum','check.permission:Boxes Section,Checks,Sales,Goal Creation','refresh.token.expiry']], function () {
+Route::group(['middleware' => ['auth:sanctum','check.permission:Boxes Section,Daily Boxes,Checks,Sales,Goal Creation','refresh.token.expiry']], function () {
 
    Route::get('/get/shown/boxes' , [Boxes::class,'getShownBoxes']);
 

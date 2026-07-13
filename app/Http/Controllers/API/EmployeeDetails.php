@@ -82,6 +82,83 @@ class EmployeeDetails extends Controller
         return array_values(array_unique($out));
     }
 
+    private function applyEmptyWeeklyDaysOffMarker(Request $request): void
+    {
+        if ($request->boolean('weekly_days_off_empty')) {
+            $request->merge(['weekly_days_off' => []]);
+        }
+    }
+
+    /**
+     * Permissions that only admins may grant/revoke. Employees who can manage
+     * the employee section should not be able to expose these sensitive areas.
+     *
+     * @return string[]
+     */
+    private function adminOnlyGrantablePermissionNames(): array
+    {
+        return [
+            'Debts',
+            'Boxes Section',
+            'Special Tasks',
+            'Checks',
+        ];
+    }
+
+    /**
+     * @return int[]
+     */
+    private function adminOnlyGrantablePermissionIds(): array
+    {
+        return Permission::query()
+            ->whereIn('name_en', $this->adminOnlyGrantablePermissionNames())
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /**
+     * @param array<int|string> $permissionIds
+     * @return int[]
+     */
+    private function normalizePermissionIds(array $permissionIds): array
+    {
+        return collect($permissionIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param int[] $requestedPermissionIds
+     * @param int[] $existingPermissionIds
+     * @return int[]
+     */
+    private function allowedPermissionIdsForActor(Request $request, EmployeeDetail $employee, array $requestedPermissionIds, array $existingPermissionIds): array
+    {
+        $actor = $request->user();
+        if (! $actor || $actor->type === 'admin') {
+            return $requestedPermissionIds;
+        }
+
+        $actorEmployeeId = (int) optional($actor->employee)->id;
+        if ($actor->type === 'employee' && $actorEmployeeId === (int) $employee->id) {
+            return $existingPermissionIds;
+        }
+
+        $adminOnlyIds = $this->adminOnlyGrantablePermissionIds();
+        if (empty($adminOnlyIds)) {
+            return $requestedPermissionIds;
+        }
+
+        $preservedAdminOnlyIds = array_values(array_intersect($existingPermissionIds, $adminOnlyIds));
+        $editableRequestedIds = array_values(array_diff($requestedPermissionIds, $adminOnlyIds));
+
+        return array_values(array_unique(array_merge($editableRequestedIds, $preservedAdminOnlyIds)));
+    }
+
     private function normalizeDeviceUserId(mixed $value): ?string
     {
         if ($value === null) {
@@ -715,6 +792,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 }
     public function addEmployee(Request $request){
         try {
+        $this->applyEmptyWeeklyDaysOffMarker($request);
         $request->merge([
             'phone' => $this->normalizeEmployeePhone($request->input('phone')),
             'sub_phone' => $this->normalizeEmployeePhone($request->input('sub_phone')),
@@ -747,6 +825,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             'weekly_days_off' => ['nullable', 'array'],
             'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
+            'weekly_days_off_empty' => ['nullable', 'boolean'],
 
             // Fingerprint (optional)
             'fingerprint_enabled' => ['nullable', 'boolean'],
@@ -797,8 +876,16 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         ]);
 
 
-        if (!empty($data['permissions'])) {
-            foreach ($data['permissions'] as $permissionId) {
+        $newPermissionIds = $this->normalizePermissionIds($data['permissions'] ?? []);
+        if (($request->user()?->type ?? null) === 'employee') {
+            $newPermissionIds = array_values(array_diff(
+                $newPermissionIds,
+                $this->adminOnlyGrantablePermissionIds()
+            ));
+        }
+
+        if (!empty($newPermissionIds)) {
+            foreach ($newPermissionIds as $permissionId) {
                 EmployeePermission::create([
                     'employee_id' => $employee->id,
                     'permission_id' => $permissionId,
@@ -845,6 +932,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
     public function editEmployee(Request $request)
     {
         try{
+            $this->applyEmptyWeeklyDaysOffMarker($request);
             $request->merge([
                 'phone' => $this->normalizeEmployeePhone($request->input('phone')),
                 'sub_phone' => $this->normalizeEmployeePhone($request->input('sub_phone')),
@@ -887,6 +975,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             'weekly_days_off' => ['nullable', 'array'],
             'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
+            'weekly_days_off_empty' => ['nullable', 'boolean'],
 
             // Fingerprint (optional)
             'fingerprint_enabled' => ['nullable', 'boolean'],
@@ -902,7 +991,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         $user = $employee->user;
     
         // Exclude 'name' and 'employee_id' from the update data
-        $updateData = Arr::except($data, ['name','phone','sub_phone']);
+        $updateData = Arr::except($data, ['name','phone','sub_phone','weekly_days_off_empty']);
 
         $start = Carbon::createFromFormat('H:i', $updateData['start_work_time']);
         $end = $start->copy()->addHours($updateData['number_of_work_hours']);
@@ -949,9 +1038,16 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
         $existingPermissionIds = EmployeePermission::where('employee_id', $employee->id)
             ->pluck('permission_id')
+            ->map(fn ($id) => (int) $id)
             ->toArray();
 
-        $newPermissionIds = $request->input('permissions', []); // array or empty array if nothing selected
+        $newPermissionIds = $this->normalizePermissionIds($request->input('permissions', [])); // array or empty array if nothing selected
+        $newPermissionIds = $this->allowedPermissionIdsForActor(
+            $request,
+            $employee,
+            $newPermissionIds,
+            $existingPermissionIds
+        );
 
         $toAdd = array_diff($newPermissionIds, $existingPermissionIds);
         $toDelete = array_diff($existingPermissionIds, $newPermissionIds);
@@ -1603,7 +1699,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'worked_minutes' => $workedMinutes,
                 'worked_minutes_live' => ($dateStr === $todayStr && $currentlyIn),
                 'away_minutes' => $awayMinutes,
-                'expected_work_minutes' => $expectedMinutes,
+                'expected_work_minutes' => $isWeeklyDayOff ? 0 : $expectedMinutes,
                 'on_time' => $onTime,
                 // Back-compat: old meaning (after scheduled end). New contract-based overtime is in *_hours fields.
                 'overtime_minutes' => $scheduleOvertimeMinutes,
@@ -1619,8 +1715,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     ? (int) $overtimeRequest->approved_minutes
                     : null,
                 'can_edit_day' => $forAdmin && ! $currentlyIn,
-                'attendance_status' => 'present',
-                'attendance_status_label' => 'حضور',
+                'attendance_status' => $isWeeklyDayOff ? 'present_on_weekly_day_off' : 'present',
+                'attendance_status_label' => $isWeeklyDayOff ? 'حضور في يوم عطلة رسمية' : 'حضور',
             ], $financial);
         }
 
