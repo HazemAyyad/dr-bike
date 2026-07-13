@@ -987,10 +987,19 @@ public function store(Request $request)
         $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
         $stockService = app(ProductStockService::class);
 
+        if ($replaceId > 0) {
+            DB::beginTransaction();
+            $this->prepareInstantSaleReplacement($replaceId);
+            $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
+        }
+
         $mainSaleQuantity = (int) round((float) $request->quantity);
         $mainSizeColorId = isset($data['size_color_id']) ? (int) $data['size_color_id'] : null;
         $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId);
         if (! ($mainStockCheck['ok'] ?? false)) {
+            if ($replaceId > 0) {
+                DB::rollBack();
+            }
             return response()->json([
                 'status' => 'error',
                 'message' => $mainStockCheck['message'] ?? __('messages.cant_sale'),
@@ -1014,6 +1023,9 @@ public function store(Request $request)
             $lineSizeColorId = isset($item['size_color_id']) ? (int) $item['size_color_id'] : null;
             $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId);
             if (! ($lineCheck['ok'] ?? false)) {
+                    if ($replaceId > 0) {
+                        DB::rollBack();
+                    }
                     return response()->json([
                         'status'=>'error',
                         'message'=> $lineCheck['message'] ?? __('messages.cant_sale'),
@@ -1025,6 +1037,9 @@ public function store(Request $request)
 
 
         if($mainData['type']==='project' && $productProjects->isEmpty()){
+            if ($replaceId > 0) {
+                DB::rollBack();
+            }
             return response()->json([
                 'status'=>'error',
                 'message'=>__('messages.cant_be_project_type'),
@@ -1032,11 +1047,6 @@ public function store(Request $request)
         }
 
         if ($replaceId > 0) {
-            DB::beginTransaction();
-        }
-
-        if ($replaceId > 0) {
-            $this->prepareInstantSaleReplacement($replaceId);
             $mainInstantSale = InstantSale::lockForUpdate()->findOrFail($replaceId);
             $mainInstantSale->update(array_merge($mainData, $this->auditFieldsForUpdate()));
             $mainInstantSale = $mainInstantSale->fresh();
