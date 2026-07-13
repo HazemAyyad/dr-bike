@@ -1434,10 +1434,14 @@ public function updateEmployeeTask(Request $request)
             $this->createHelper($employeeTask->fresh(), $newRecurrence);
         }
 
+        $employeeTask->refresh();
+        $employeeTask->load('employee.user');
+        $employeeName = $employeeTask->employee?->user?->name ?? '';
+
         Logs::createLog(
             'تعديل مهمة موظف',
             'تم تعديل مهمة الموظف باسم ' . $employeeTask->name
-            .' '.'التابعة للموظف'.' '.$employeeTask->employee->user->name
+            .' '.'التابعة للموظف'.' '.$employeeName
              
             ,
             'employee_tasks'
