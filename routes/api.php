@@ -212,6 +212,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section'
 
     Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs']);
     Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory']);
+    Route::get('/employee/attendance/weekly-off-import-candidates', [EmployeeDetails::class, 'weeklyOffAttendanceImportCandidates']);
+    Route::post('/employee/attendance/import-weekly-off-day', [EmployeeDetails::class, 'importWeeklyOffAttendanceDay']);
     Route::post('/admin/employees/{employeeId}/attendance/manual-checkout', [AdminEmployeeAttendanceController::class, 'manualCheckout'])
         ->whereNumber('employeeId');
     Route::put('/admin/employees/{employeeId}/attendance/day', [AdminEmployeeAttendanceController::class, 'updateDay'])

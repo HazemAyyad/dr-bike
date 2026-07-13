@@ -65,12 +65,6 @@ class FingerprintAttendanceProcessor
             $scanAt = Carbon::parse($rawLog->scan_time);
             $workDate = $scanAt->toDateString();
 
-            if ($this->isWeeklyOff($employee, $scanAt)) {
-                $this->mark($rawLog, 'ignored', 'weekly_off');
-
-                return;
-            }
-
             if ($this->isDuplicateScan($employee, $scanAt)) {
                 $this->mark($rawLog, 'ignored', 'deduplicated');
 
@@ -137,6 +131,18 @@ class FingerprintAttendanceProcessor
         return EmployeeDetail::query()
             ->where('device_user_id', $deviceUserId)
             ->first();
+    }
+
+    public function employeeForRawLog(FingerprintRawLog $rawLog): ?EmployeeDetail
+    {
+        $device = $rawLog->attendanceDevice
+            ?? AttendanceDevice::query()->find($rawLog->attendance_device_id);
+
+        if (! $device) {
+            return null;
+        }
+
+        return $this->resolveEmployee($device, (string) $rawLog->device_user_id);
     }
 
     protected function isWeeklyOff(EmployeeDetail $employee, Carbon $scanAt): bool

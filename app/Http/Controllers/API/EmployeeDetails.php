@@ -12,11 +12,13 @@ use App\Support\EmployeeAttendanceToday;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
 use App\Models\EmployeePermission;
+use App\Models\FingerprintRawLog;
 use App\Models\Permission;
 use App\Models\Reward;
 use App\Models\User;
 use App\Services\AttendanceSalaryService;
 use App\Services\EmployeePointsService;
+use App\Services\FingerprintAttendanceProcessor;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -1390,6 +1392,144 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         } catch (QueryException $e) {
             return response(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
         } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function weeklyOffAttendanceImportCandidates(Request $request, FingerprintAttendanceProcessor $processor)
+    {
+        try {
+            $request->validate([
+                'employee_id' => 'required|integer|exists:employee_details,id',
+                'from_date' => 'nullable|date',
+                'to_date' => 'nullable|date|after_or_equal:from_date',
+            ]);
+
+            $employee = EmployeeDetail::findOrFail($request->employee_id);
+            $from = $request->filled('from_date')
+                ? Carbon::parse($request->from_date)->startOfDay()
+                : now()->subDays(30)->startOfDay();
+            $to = $request->filled('to_date')
+                ? Carbon::parse($request->to_date)->endOfDay()
+                : now()->endOfDay();
+
+            $logs = FingerprintRawLog::query()
+                ->where('processing_status', 'ignored')
+                ->where('processing_error', 'weekly_off')
+                ->whereBetween('scan_time', [$from, $to])
+                ->orderBy('scan_time')
+                ->get()
+                ->filter(fn (FingerprintRawLog $log) => (int) ($processor->employeeForRawLog($log)?->id ?? 0) === (int) $employee->id)
+                ->values();
+
+            $days = [];
+            foreach ($logs->groupBy(fn (FingerprintRawLog $log) => Carbon::parse($log->scan_time)->toDateString()) as $date => $dayLogs) {
+                $hasRegisteredScans = EmployeeAttendanceScan::query()
+                    ->where('employee_id', $employee->id)
+                    ->whereDate('work_date', $date)
+                    ->exists();
+
+                if ($hasRegisteredScans) {
+                    continue;
+                }
+
+                $first = $dayLogs->first();
+                $last = $dayLogs->last();
+                $days[] = [
+                    'date' => $date,
+                    'logs_count' => $dayLogs->count(),
+                    'first_scan_at' => $first ? Carbon::parse($first->scan_time)->toIso8601String() : null,
+                    'last_scan_at' => $last ? Carbon::parse($last->scan_time)->toIso8601String() : null,
+                    'device_user_id' => (string) ($first?->device_user_id ?? ''),
+                ];
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'days' => array_values($days),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function importWeeklyOffAttendanceDay(Request $request, FingerprintAttendanceProcessor $processor)
+    {
+        try {
+            $request->validate([
+                'employee_id' => 'required|integer|exists:employee_details,id',
+                'date' => 'required|date',
+            ]);
+
+            $employee = EmployeeDetail::findOrFail($request->employee_id);
+            $date = Carbon::parse($request->date)->toDateString();
+
+            if (EmployeeAttendanceScan::query()
+                ->where('employee_id', $employee->id)
+                ->whereDate('work_date', $date)
+                ->exists()) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'day_already_registered',
+                    'imported_count' => 0,
+                    'date' => $date,
+                ], 200);
+            }
+
+            $logs = FingerprintRawLog::query()
+                ->where('processing_status', 'ignored')
+                ->where('processing_error', 'weekly_off')
+                ->whereDate('scan_time', $date)
+                ->orderBy('scan_time')
+                ->get()
+                ->filter(fn (FingerprintRawLog $log) => (int) ($processor->employeeForRawLog($log)?->id ?? 0) === (int) $employee->id)
+                ->values();
+
+            if ($logs->isEmpty()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.something_wrong'),
+                ], 200);
+            }
+
+            $processed = 0;
+            DB::transaction(function () use ($logs, $processor, &$processed) {
+                foreach ($logs as $log) {
+                    $log->update([
+                        'processing_status' => 'pending',
+                        'processing_error' => null,
+                        'processed_at' => null,
+                    ]);
+
+                    $processor->processRawLog($log->fresh());
+                    $processed++;
+                }
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'imported_count' => $processed,
+                'date' => $date,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
