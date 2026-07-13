@@ -1142,9 +1142,7 @@ public function store(Request $request)
                 $dailySession,
                 'instant',
                 (int) $mainInstantSale->id,
-                (float) (($mainInstantSale->payment_box_value ?? 0) > 0
-                    ? $mainInstantSale->payment_box_value
-                    : $mainInstantSale->total_cost),
+                (float) ($mainInstantSale->payment_box_value ?? 0),
                 $mainInstantSale->payment_box_id ? (int) $mainInstantSale->payment_box_id : null
             );
         }
@@ -1412,9 +1410,7 @@ public function store(Request $request)
                     $dailySession,
                     'instant',
                     (int) $mainInstantSale->id,
-                    (float) (($mainInstantSale->payment_box_value ?? 0) > 0
-                        ? $mainInstantSale->payment_box_value
-                        : $mainInstantSale->total_cost),
+                    (float) ($mainInstantSale->payment_box_value ?? 0),
                     $mainInstantSale->payment_box_id ? (int) $mainInstantSale->payment_box_id : null
                 );
             }

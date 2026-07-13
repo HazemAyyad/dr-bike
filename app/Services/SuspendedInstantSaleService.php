@@ -406,6 +406,12 @@ class SuspendedInstantSaleService
         if (! isset($payload['type'])) {
             $payload['type'] = 'normal';
         }
+        if (
+            ! empty($payload['payment_box_id'])
+            && ! array_key_exists('payment_box_value', $payload)
+        ) {
+            $payload['payment_box_value'] = 0;
+        }
 
         return $payload;
     }
