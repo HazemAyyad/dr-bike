@@ -130,7 +130,7 @@ class EmployeeTaskDetailsService
             'started_at' => $occurrence->started_at,
             'submitted_at' => $occurrence->submitted_at,
             'reviewed_at' => $occurrence->reviewed_at,
-            'progress' => $subTotal > 0 ? round(($subDone / $subTotal) * 100) : 0,
+            'progress' => $this->progressPercent($occurrence, $subTotal, $subDone),
             'timeline' => $this->timeline->listCombined($occurrence->legacy_task_id, $occurrence->id),
             'sub_tasks' => $subTasks,
             'task_recurrence' => $occurrence->template?->recurrence_type ?? 'noRepeat',
@@ -287,11 +287,33 @@ class EmployeeTaskDetailsService
     {
         $subTotal = $subTasks->count();
         if ($subTotal === 0) {
-            return $status === 'completed' ? 100 : 0;
+            return $this->statusProgressFallback($status);
         }
+
         $subDone = $subTasks->where('status', 'completed')->count();
 
         return (int) round(($subDone / $subTotal) * 100);
+    }
+
+    private function progressPercent(EmployeeTask|EmployeeTaskOccurrence $task, int $subTotal, int $subDone): int
+    {
+        if ($subTotal > 0) {
+            return $subDone >= $subTotal
+                ? 100
+                : (int) round(($subDone / $subTotal) * 100);
+        }
+
+        return $this->statusProgressFallback($task->status);
+    }
+
+    private function statusProgressFallback(?string $status): int
+    {
+        return match (EmployeeTaskStatus::normalize($status)) {
+            EmployeeTaskStatus::Completed => 100,
+            EmployeeTaskStatus::WaitingReview => 90,
+            EmployeeTaskStatus::InProgress => 50,
+            default => 0,
+        };
     }
 
     /**
