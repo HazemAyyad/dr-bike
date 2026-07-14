@@ -713,6 +713,8 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales,Follow-up 
       //products
     Route::get('/all/products' , [Products::class,'allproducts']);
     Route::post('/product/retail-price' , [Products::class,'updateRetailPrice']);
+    Route::post('/products/paste-suggestions' , [Products::class,'pasteSuggestions']);
+    Route::post('/products/paste-alias' , [Products::class,'storePasteAlias']);
   });
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Sales','refresh.token.expiry']], function () {

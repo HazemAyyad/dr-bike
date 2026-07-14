@@ -53,8 +53,7 @@ class EmployeeReminderService
                     $this->recordHistory($reminder, 'notified', $occurrence, null, 'تم إرسال إشعار التنبيه');
                     $this->createNextOccurrenceIfNeeded($reminder, $scheduledAt);
                 } else {
-                    $this->notifyAssignment($occurrence);
-                    $this->recordHistory($reminder, 'assigned_notification', $occurrence, null, 'تم إرسال إشعار إضافة التنبيه');
+                    $this->recordHistory($reminder, 'scheduled', $occurrence, null, 'تم جدولة التنبيه لوقت لاحق');
                 }
 
                 $reminders->push($reminder->fresh(['employee.user', 'occurrences']));
@@ -199,27 +198,6 @@ class EmployeeReminderService
                 'reminder_id' => (string) $reminder->id,
                 'occurrence_id' => (string) $occurrence->id,
                 'scheduled_at' => optional($occurrence->scheduled_at)->toIso8601String(),
-            ],
-            'employee_reminder_occurrence',
-            (int) $occurrence->id
-        );
-    }
-
-    private function notifyAssignment(EmployeeReminderOccurrence $occurrence): void
-    {
-        $reminder = $occurrence->reminder;
-        $scheduledAt = Carbon::parse($occurrence->scheduled_at)->format('Y-m-d H:i');
-
-        $this->notifications->create(
-            $occurrence->employee,
-            EmployeeNotificationService::TYPE_OPERATIONAL_REMINDER,
-            'تمت إضافة تنبيه جديد',
-            'تمت إضافة تنبيه "'.$reminder->title.'" بتاريخ '.$scheduledAt,
-            [
-                'reminder_id' => (string) $reminder->id,
-                'occurrence_id' => (string) $occurrence->id,
-                'scheduled_at' => optional($occurrence->scheduled_at)->toIso8601String(),
-                'event' => 'assigned',
             ],
             'employee_reminder_occurrence',
             (int) $occurrence->id

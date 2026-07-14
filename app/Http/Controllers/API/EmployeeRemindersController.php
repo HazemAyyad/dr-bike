@@ -136,6 +136,22 @@ class EmployeeRemindersController extends Controller
             ]);
         }
 
+        if ($request->boolean('due_only')) {
+            $now = now();
+            $query->where(function ($q) use ($now) {
+                $q->where(function ($pending) use ($now) {
+                    $pending
+                        ->where('status', EmployeeReminderOccurrence::STATUS_PENDING)
+                        ->where('scheduled_at', '<=', $now);
+                })->orWhere(function ($snoozed) use ($now) {
+                    $snoozed
+                        ->where('status', EmployeeReminderOccurrence::STATUS_SNOOZED)
+                        ->whereNotNull('snoozed_until')
+                        ->where('snoozed_until', '<=', $now);
+                });
+            });
+        }
+
         if ($request->filled('from')) {
             $query->where('scheduled_at', '>=', $request->input('from'));
         }
