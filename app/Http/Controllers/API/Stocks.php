@@ -61,7 +61,7 @@ class Stocks extends Controller
             };
 
             $query = Product::query()
-                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'tags' => function ($q) {
+                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'purchasePrices' => fn ($q) => $q->latest('id'), 'tags' => function ($q) {
                     $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                 }])
                 ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at');
@@ -100,6 +100,15 @@ class Stocks extends Controller
                 }
             }
 
+            if ($this->isAdminRequest($request) && $request->filled('cost_price_status')) {
+                $status = (string) $request->input('cost_price_status');
+                if ($status === 'with') {
+                    $query->whereHas('purchasePrices', fn ($q) => $q->where('price', '>', 0));
+                } elseif ($status === 'without') {
+                    $query->whereDoesntHave('purchasePrices', fn ($q) => $q->where('price', '>', 0));
+                }
+            }
+
             if ($request->filled('date_from')) {
                 $query->whereDate('created_at', '>=', $request->date('date_from'));
             }
@@ -112,7 +121,8 @@ class Stocks extends Controller
                 ->orderBy($sortColumn, $sortDirection)
                 ->paginate($perPage);
 
-            $formatted = $products->getCollection()->map(fn ($product) => $this->formatProductListItem($product));
+            $formatted = $products->getCollection()
+                ->map(fn ($product) => $this->formatProductListItem($product, $this->isAdminRequest($request)));
 
             return response()->json([
                 'status' => 'success',
@@ -520,11 +530,12 @@ class Stocks extends Controller
         return trim((string) ($row[$columns[$key]] ?? ''));
     }
 
-    private function formatProductListItem(Product $product): array
+    private function formatProductListItem(Product $product, bool $includeCostPrice = false): array
     {
         $images = \App\Support\ProductImageResolver::formatForList($product);
+        $costPrice = optional($product->purchasePrices->first())->price;
 
-        return [
+        $row = [
             'product_id' => $product->id,
             'category_id' => $product->category_id !== null ? (int) $product->category_id : null,
             'product_name' => $product->nameAr,
@@ -542,6 +553,50 @@ class Stocks extends Controller
             'store_section_id' => $product->store_section_id !== null ? (int) $product->store_section_id : null,
             'store_section_name' => $product->storeSection?->name,
         ];
+
+        if ($includeCostPrice) {
+            $row['cost_price'] = $costPrice !== null ? (float) $costPrice : null;
+            $row['has_cost_price'] = $costPrice !== null && (float) $costPrice > 0;
+        }
+
+        return $row;
+    }
+
+    public function updateProductCostPrice(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'cost_price' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $price = (float) ($data['cost_price'] ?? 0);
+
+        $row = PurchaseProduct::query()
+            ->where('product_id', $data['product_id'])
+            ->orderByDesc('id')
+            ->first();
+
+        if ($row !== null) {
+            $row->update(['price' => $price]);
+        } else {
+            PurchaseProduct::create([
+                'product_id' => $data['product_id'],
+                'seller_id' => null,
+                'price' => $price,
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تحديث سعر التكلفة',
+            'product_id' => (int) $data['product_id'],
+            'cost_price' => $price,
+            'has_cost_price' => $price > 0,
+        ], 200);
     }
 
     public function showProduct(Request $request)

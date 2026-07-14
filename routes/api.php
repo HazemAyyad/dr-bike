@@ -805,6 +805,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::get('/get/product/size-options' , [Stocks::class,'productSizeOptions']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
     Route::post('/edit/product' , [Stocks::class,'editProduct']);
+    Route::post('/product/cost-price' , [Stocks::class,'updateProductCostPrice']);
     /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */
     Route::post('/create/product' , [Stocks::class,'createProduct']);
     Route::post('/update/product/full' , [Stocks::class,'updateProductFull']);
