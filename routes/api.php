@@ -32,6 +32,7 @@ use App\Http\Controllers\API\EmployeePointCategoryController;
 use App\Http\Controllers\API\EmployeePointsController;
 use App\Http\Controllers\API\EmployeeRewardRuleController;
 use App\Http\Controllers\API\EmployeeRemindersController;
+use App\Http\Controllers\API\EmployeeSuggestionsController;
 use App\Http\Controllers\API\Employees\EmployeeData;
 use App\Http\Controllers\API\Employees\EmployeeOwnTasks;
 use App\Http\Controllers\API\Employees\OrdersAPI;
@@ -976,6 +977,10 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/admin/cron-job-logs', [\App\Http\Controllers\API\CronJobLogController::class, 'index']);
     Route::get('/admin/cron-job-logs/{id}', [\App\Http\Controllers\API\CronJobLogController::class, 'show']);
 
+    Route::get('/admin/employee-suggestions', [EmployeeSuggestionsController::class, 'adminIndex']);
+    Route::put('/admin/employee-suggestions/{suggestion}', [EmployeeSuggestionsController::class, 'update'])
+        ->whereNumber('suggestion');
+
     Route::post('/admin/impersonate-employee/{employeeId}', [\App\Http\Controllers\API\AdminImpersonationController::class, 'impersonate']);
 
     Route::get('/admin/users', [\App\Http\Controllers\API\AdminUsersController::class, 'index']);
@@ -1036,6 +1041,9 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
         ->whereNumber('occurrence');
     Route::post('/employee/reminders/{occurrence}/snooze', [EmployeeRemindersController::class, 'snooze'])
         ->whereNumber('occurrence');
+
+    Route::get('/employee/suggestions', [EmployeeSuggestionsController::class, 'employeeIndex']);
+    Route::post('/employee/suggestions', [EmployeeSuggestionsController::class, 'store']);
 
     // employee tasks
     Route::post('/employee/edit/employee/task/images', [EmployeeOwnTasks::class, 'editEmployeeTasksImages']);
