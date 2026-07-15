@@ -53,7 +53,7 @@ class Products extends Controller
                 'image3d',
                 'storeSection:id,name',
                 'sizes.colorSizes',
-                'purchasePrices' => fn ($q) => $q->orderByDesc('id')->limit(1),
+                'purchasePrices' => fn ($q) => $q->orderByDesc('id'),
             ]);
 
         if ($request->filled('search')) {
@@ -139,7 +139,7 @@ class Products extends Controller
                 'image3d',
                 'storeSection:id,name',
                 'sizes.colorSizes',
-                'purchasePrices' => fn ($q) => $q->orderByDesc('id')->limit(1),
+                'purchasePrices' => fn ($q) => $q->orderByDesc('id'),
             ])
             ->get([
                 'id',
