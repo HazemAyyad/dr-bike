@@ -25,6 +25,7 @@ class InstantSale extends Model
         'discount',
         'project_id',
         'type',
+        'sale_kind',
         'buyer_type',
         'buyer_id',
         'seller_id',

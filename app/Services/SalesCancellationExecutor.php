@@ -186,6 +186,10 @@ class SalesCancellationExecutor
      */
     private function stockLinesForSale(InstantSale $mainSale)
     {
+        if (($mainSale->sale_kind ?? 'regular') === 'adjustment') {
+            return collect();
+        }
+
         $lines = collect();
 
         if ($mainSale->offer_package_id === null && $mainSale->product_id) {

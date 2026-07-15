@@ -32,6 +32,22 @@ use function PHPUnit\Framework\isEmpty;
 
 class InstantSales extends Controller
 {
+    private const SALE_KIND_REGULAR = 'regular';
+
+    private const SALE_KIND_ADJUSTMENT = 'adjustment';
+
+    private function resolveSaleKind(Request $request): string
+    {
+        return $request->input('sale_kind') === self::SALE_KIND_ADJUSTMENT
+            ? self::SALE_KIND_ADJUSTMENT
+            : self::SALE_KIND_REGULAR;
+    }
+
+    private function isAdjustmentSaleKind(string $saleKind): bool
+    {
+        return $saleKind === self::SALE_KIND_ADJUSTMENT;
+    }
+
     private function invoiceProductImage(?Product $product): string
     {
         if ($product === null) {
@@ -233,6 +249,10 @@ class InstantSales extends Controller
      */
     private function stockLinesForSale(InstantSale $mainSale)
     {
+        if ($this->isAdjustmentInstantSale($mainSale)) {
+            return collect();
+        }
+
         $lines = collect();
 
         if ($mainSale->offer_package_id === null && $mainSale->product_id) {
@@ -246,6 +266,11 @@ class InstantSales extends Controller
         }
 
         return $lines;
+    }
+
+    private function isAdjustmentInstantSale(InstantSale $sale): bool
+    {
+        return ($sale->sale_kind ?? self::SALE_KIND_REGULAR) === self::SALE_KIND_ADJUSTMENT;
     }
 
     private function saleLineQuantity(InstantSale $line): int
@@ -866,7 +891,11 @@ public function store(Request $request)
     $replaceId = 0;
 
     try{
-    $dailySession = app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
+    $saleKind = $this->resolveSaleKind($request);
+    $isAdjustmentSale = $this->isAdjustmentSaleKind($saleKind);
+    $dailySession = $isAdjustmentSale
+        ? null
+        : app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
 
     if ($request->input('project_id') === '' || $request->input('project_id') === '0') {
         $request->merge(['project_id' => null]);
@@ -886,6 +915,7 @@ public function store(Request $request)
         'additional_notes.*.amount' => 'nullable|numeric|min:0',
 
         'type' => 'required|string|in:normal,project',
+        'sale_kind' => 'nullable|string|in:regular,adjustment',
         'project_id' => 'nullable|exists:projects,id',
 
         'other_products' => 'nullable|array',
@@ -926,9 +956,25 @@ public function store(Request $request)
             $data['type'] ?? null
         );
         $paymentBoxPayload = $this->resolvePaymentBoxForStorage($request);
-        $this->assertDailySalesPaymentBox($request, $paymentBoxPayload);
+        if ($isAdjustmentSale) {
+            $paymentBoxPayload = [
+                'payment_box_id' => null,
+                'payment_box_name' => null,
+                'payment_box_value' => 0,
+                'status' => 'active',
+            ];
+        } else {
+            $this->assertDailySalesPaymentBox($request, $paymentBoxPayload);
+        }
         $additionalNotes = $this->normalizeInstantSaleNotes($request->input('additional_notes', []));
         $additionalNotesTotal = $this->instantSaleNotesTotal($additionalNotes);
+
+        if ($isAdjustmentSale && ! empty($data['offer_package_id'])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'فاتورة التعويض لا تدعم الباكيجات حالياً. اختر المنتجات كسطور تعويض.',
+            ], 200);
+        }
 
         if (! empty($data['offer_package_id'])) {
             $data['additional_notes'] = $additionalNotes;
@@ -948,7 +994,7 @@ public function store(Request $request)
             ? $this->auditFieldsForUpdate()
             : array_merge(
                 $this->auditFieldsForCreate(),
-                ['sales_daily_session_id' => $dailySession->id]
+                ['sales_daily_session_id' => $dailySession?->id]
             );
 
         $mainData = $this->sanitizeInstantSaleAttributes(
@@ -971,6 +1017,7 @@ public function store(Request $request)
                 ->merge($auditAndSession)
                 ->toArray()
         );
+        $mainData['sale_kind'] = $saleKind;
         $mainData['additional_notes'] = $additionalNotes;
         $mainData['notes'] = $this->instantSaleNotesText($additionalNotes, $mainData['notes'] ?? null);
 
@@ -995,15 +1042,18 @@ public function store(Request $request)
 
         $mainSaleQuantity = (int) round((float) $request->quantity);
         $mainSizeColorId = isset($data['size_color_id']) ? (int) $data['size_color_id'] : null;
-        $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId);
-        if (! ($mainStockCheck['ok'] ?? false)) {
-            if ($replaceId > 0) {
-                DB::rollBack();
+        $mainStockCheck = ['ok' => true, 'size_color_id' => $mainSizeColorId, 'size_id' => $data['size_id'] ?? null];
+        if (! $isAdjustmentSale) {
+            $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId);
+            if (! ($mainStockCheck['ok'] ?? false)) {
+                if ($replaceId > 0) {
+                    DB::rollBack();
+                }
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $mainStockCheck['message'] ?? __('messages.cant_sale'),
+                ], 200);
             }
-            return response()->json([
-                'status' => 'error',
-                'message' => $mainStockCheck['message'] ?? __('messages.cant_sale'),
-            ], 200);
         }
 
         $mainSizeColorId = (int) ($mainStockCheck['size_color_id'] ?? $mainSizeColorId ?: 0);
@@ -1021,7 +1071,10 @@ public function store(Request $request)
             $otherNames[] = $product->nameAr ?? 'بدون اسم';
             $lineQty = (int) round((float) $item['quantity']);
             $lineSizeColorId = isset($item['size_color_id']) ? (int) $item['size_color_id'] : null;
-            $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId);
+            $lineCheck = ['ok' => true, 'size_color_id' => $lineSizeColorId, 'size_id' => $item['size_id'] ?? null];
+            if (! $isAdjustmentSale) {
+                $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId);
+            }
             if (! ($lineCheck['ok'] ?? false)) {
                     if ($replaceId > 0) {
                         DB::rollBack();
@@ -1071,15 +1124,17 @@ public function store(Request $request)
             $mainInstantSale->fresh(['product', 'offerPackage', 'paymentBox'])
         );
 
-        $stockService->deductForSale(
-            product: $mainProduct,
-            quantity: $mainSaleQuantity,
-            sizeColorId: $mainSizeColorId > 0 ? $mainSizeColorId : null,
-            sizeId: isset($mainData['size_id']) ? (int) $mainData['size_id'] : null,
-            referenceType: 'instant_sale',
-            referenceId: (int) $mainInstantSale->id,
-            userId: auth()->id() ? (int) auth()->id() : null,
-        );
+        if (! $isAdjustmentSale) {
+            $stockService->deductForSale(
+                product: $mainProduct,
+                quantity: $mainSaleQuantity,
+                sizeColorId: $mainSizeColorId > 0 ? $mainSizeColorId : null,
+                sizeId: isset($mainData['size_id']) ? (int) $mainData['size_id'] : null,
+                referenceType: 'instant_sale',
+                referenceId: (int) $mainInstantSale->id,
+                userId: auth()->id() ? (int) auth()->id() : null,
+            );
+        }
 
         // Save other  if provided
         if ($request->has('other_products')) {
@@ -1100,7 +1155,10 @@ public function store(Request $request)
                 $subProjectId = isset($product['project_id']) ? (int) $product['project_id'] : null;
                 $lineQty = (int) round((float) $product['quantity']);
                 $lineSizeColorId = isset($product['size_color_id']) ? (int) $product['size_color_id'] : null;
-                $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId);
+                $lineCheck = ['ok' => true, 'size_color_id' => $lineSizeColorId, 'size_id' => $product['size_id'] ?? null];
+                if (! $isAdjustmentSale) {
+                    $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId);
+                }
                 if (! ($lineCheck['ok'] ?? false)) {
                     if ($replaceId > 0) {
                         DB::rollBack();
@@ -1123,21 +1181,24 @@ public function store(Request $request)
                     'total_cost' => (float) $product['cost'] * $lineQty,
                     'parent_id' => $mainInstantSale->id,
                     'type' => $product['type'],
+                    'sale_kind' => $saleKind,
                     'project_id' => $product['project_id'] ?? null,
                 ], $buyerPayload)));
 
-                $stockService->deductForSale(
-                    product: $subProduct,
-                    quantity: $lineQty,
-                    sizeColorId: $lineSizeColorId > 0 ? $lineSizeColorId : null,
-                    sizeId: $lineCheck['size_id'] ?? null,
-                    referenceType: 'instant_sale',
-                    referenceId: (int) $subSale->id,
-                    userId: auth()->id() ? (int) auth()->id() : null,
-                );
+                if (! $isAdjustmentSale) {
+                    $stockService->deductForSale(
+                        product: $subProduct,
+                        quantity: $lineQty,
+                        sizeColorId: $lineSizeColorId > 0 ? $lineSizeColorId : null,
+                        sizeId: $lineCheck['size_id'] ?? null,
+                        referenceType: 'instant_sale',
+                        referenceId: (int) $subSale->id,
+                        userId: auth()->id() ? (int) auth()->id() : null,
+                    );
+                }
             }
         }
-     $logDescription = "اضافة بيع فوري جديد للمنتج: " . ($mainInstantSale->product->nameAr ?? 'بدون اسم');
+     $logDescription = ($isAdjustmentSale ? "اضافة فاتورة تعويض للمنتج: " : "اضافة بيع فوري جديد للمنتج: ") . ($mainInstantSale->product->nameAr ?? 'بدون اسم');
      if(count($otherNames)>0){
              $logDescription .= " مع منتجات إضافية: " . implode(", ", $otherNames);
 
@@ -1145,11 +1206,13 @@ public function store(Request $request)
      $logDescription .= " بإجمالي تكلفة: " . $mainInstantSale->total_cost??0;
 
         Logs::createLog(
-            $replaceId > 0 ? 'تعديل بيع فوري' : 'اضافة بيع فوري جديد',
+            $isAdjustmentSale
+                ? ($replaceId > 0 ? 'تعديل فاتورة تعويض' : 'اضافة فاتورة تعويض')
+                : ($replaceId > 0 ? 'تعديل بيع فوري' : 'اضافة بيع فوري جديد'),
         $logDescription,
         'instant_sales');
 
-        if ($replaceId <= 0) {
+        if ($replaceId <= 0 && ! $isAdjustmentSale) {
             app(SalesDailySessionService::class)->notifyExternalSaleMovement(
                 $request->user(),
                 $dailySession,
@@ -1657,6 +1720,10 @@ public function store(Request $request)
                 'maintenance_invoice_number' => $sale->maintenance_id
                     ? 'MNT-'.str_pad((string) $sale->maintenance_id, 6, '0', STR_PAD_LEFT)
                     : null,
+                'sale_kind' => $sale->sale_kind ?? self::SALE_KIND_REGULAR,
+                'sale_kind_label_ar' => ($sale->sale_kind ?? self::SALE_KIND_REGULAR) === self::SALE_KIND_ADJUSTMENT
+                    ? 'فاتورة تعويض / تعديل'
+                    : 'بيع فوري',
                 'sale_type' => $isPackageSale ? 'package' : 'product',
                 'sale_composition' => $saleComposition,
                 'has_additional_products' => $hasAdditionalProducts,
@@ -2085,6 +2152,10 @@ public function edit(Request $request)
                 'invoice_number' => (string) ($sale->serial_number ?: 'SAL-'.str_pad((string) $sale->id, 7, '0', STR_PAD_LEFT)),
                 'serial_number' => $sale->serial_number,
                 'invoice_date' => optional($sale->created_at)->format('Y-m-d H:i:s'),
+                'sale_kind' => $sale->sale_kind ?? self::SALE_KIND_REGULAR,
+                'sale_kind_label_ar' => ($sale->sale_kind ?? self::SALE_KIND_REGULAR) === self::SALE_KIND_ADJUSTMENT
+                    ? 'فاتورة تعويض / تعديل'
+                    : 'بيع فوري',
                 'sale_type' => $isPackageSale ? 'package' : 'product',
                 'sale_composition' => $saleComposition,
                 'has_additional_products' => $hasAdditionalProducts,

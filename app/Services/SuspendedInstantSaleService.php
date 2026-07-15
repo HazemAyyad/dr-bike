@@ -57,6 +57,7 @@ class SuspendedInstantSaleService
             'notes' => 'nullable|string',
             'additional_notes' => 'nullable|array',
             'type' => 'nullable|string|in:normal,project',
+            'sale_kind' => 'nullable|string|in:regular,adjustment',
             'project_id' => 'nullable',
             'other_products' => 'nullable|array',
             'other_products.*.product_id' => 'required_with:other_products|exists:products,id',
@@ -145,8 +146,6 @@ class SuspendedInstantSaleService
 
     public function store(User $user, Request $request): SuspendedInstantSale
     {
-        $session = $this->sessionService->getActiveSession($user, autoOpen: false)
-            ?? $this->sessionService->findGlobalOpenSession();
         $data = $request->validate([
             'current_step' => 'required|string|in:product_picker,checkout',
             'payload' => 'required|array',
@@ -155,6 +154,11 @@ class SuspendedInstantSaleService
         ]);
 
         $payload = $this->validatePayload($data['payload']);
+        $isAdjustmentSale = ($payload['sale_kind'] ?? null) === 'adjustment';
+        $session = $isAdjustmentSale
+            ? null
+            : ($this->sessionService->getActiveSession($user, autoOpen: false)
+                ?? $this->sessionService->findGlobalOpenSession());
         $owner = $this->sessionService->resolveOwner($user);
         $noteText = trim((string) ($data['note'] ?? ''));
 
@@ -324,7 +328,10 @@ class SuspendedInstantSaleService
             array_merge($record->payload ?? [], $data['payload'] ?? [])
         );
 
-        $this->sessionService->assertCanCreateSale($user);
+        $isAdjustmentSale = ($payload['sale_kind'] ?? null) === 'adjustment';
+        if (! $isAdjustmentSale) {
+            $this->sessionService->assertCanCreateSale($user);
+        }
 
         return DB::transaction(function () use ($user, $record, $payload) {
             $record->update([
@@ -405,6 +412,13 @@ class SuspendedInstantSaleService
         }
         if (! isset($payload['type'])) {
             $payload['type'] = 'normal';
+        }
+        if (! isset($payload['sale_kind'])) {
+            $payload['sale_kind'] = 'regular';
+        }
+        if (($payload['sale_kind'] ?? null) === 'adjustment') {
+            unset($payload['payment_box_id'], $payload['payment_box_name']);
+            $payload['payment_box_value'] = 0;
         }
         if (
             ! empty($payload['payment_box_id'])
