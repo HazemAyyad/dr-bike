@@ -89,6 +89,46 @@ class EmployeeSuggestionsController extends Controller
         ], 201);
     }
 
+    public function employeeUpdate(Request $request, EmployeeSuggestion $suggestion)
+    {
+        $this->assertEmployeeOwner($request, $suggestion);
+
+        $validated = $request->validate([
+            'category' => ['nullable', 'string', Rule::in(EmployeeSuggestion::CATEGORIES)],
+            'title' => ['nullable', 'string', 'max:255'],
+            'message' => ['required', 'string', 'max:5000'],
+            'is_anonymous' => ['nullable', 'boolean'],
+        ]);
+
+        $suggestion->update([
+            'category' => $validated['category'] ?? EmployeeSuggestion::CATEGORY_SUGGESTION,
+            'title' => $validated['title'] ?? null,
+            'message' => $validated['message'],
+            'is_anonymous' => (bool) ($validated['is_anonymous'] ?? false),
+            'status' => EmployeeSuggestion::STATUS_NEW,
+            'admin_note' => null,
+            'reviewed_by' => null,
+            'reviewed_at' => null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تحديث الاقتراح بنجاح',
+            'suggestion' => $this->employeePayload($suggestion->fresh('reviewer:id,name')),
+        ]);
+    }
+
+    public function employeeDestroy(Request $request, EmployeeSuggestion $suggestion)
+    {
+        $this->assertEmployeeOwner($request, $suggestion);
+        $suggestion->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم حذف الاقتراح بنجاح',
+        ]);
+    }
+
     public function update(Request $request, EmployeeSuggestion $suggestion)
     {
         $validated = $request->validate([
@@ -151,5 +191,10 @@ class EmployeeSuggestionsController extends Controller
             'reviewed_at' => optional($suggestion->reviewed_at)->toIso8601String(),
             'created_at' => optional($suggestion->created_at)->toIso8601String(),
         ];
+    }
+
+    private function assertEmployeeOwner(Request $request, EmployeeSuggestion $suggestion): void
+    {
+        abort_unless((int) $suggestion->employee_id === (int) $request->user()->employee->id, 403);
     }
 }

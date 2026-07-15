@@ -1045,6 +1045,10 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     Route::get('/employee/suggestions', [EmployeeSuggestionsController::class, 'employeeIndex']);
     Route::post('/employee/suggestions', [EmployeeSuggestionsController::class, 'store']);
+    Route::put('/employee/suggestions/{suggestion}', [EmployeeSuggestionsController::class, 'employeeUpdate'])
+        ->whereNumber('suggestion');
+    Route::delete('/employee/suggestions/{suggestion}', [EmployeeSuggestionsController::class, 'employeeDestroy'])
+        ->whereNumber('suggestion');
 
     // employee tasks
     Route::post('/employee/edit/employee/task/images', [EmployeeOwnTasks::class, 'editEmployeeTasksImages']);
