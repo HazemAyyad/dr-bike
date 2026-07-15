@@ -26,4 +26,9 @@ class PersonProductSetting extends Model
     {
         return $this->belongsTo(Product::class);
     }
+
+    public function priceTiers()
+    {
+        return $this->hasMany(PersonProductPriceTier::class)->orderBy('min_qty');
+    }
 }

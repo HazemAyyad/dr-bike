@@ -240,10 +240,11 @@ class PersonCategoryTransferService
 
         $settings = PersonProductSetting::query()
             ->where($fromColumn, $fromId)
+            ->with('priceTiers')
             ->get();
 
         foreach ($settings as $setting) {
-            PersonProductSetting::query()->updateOrCreate(
+            $newSetting = PersonProductSetting::query()->updateOrCreate(
                 [
                     $toColumn => $toId,
                     'product_id' => $setting->product_id,
@@ -254,6 +255,15 @@ class PersonCategoryTransferService
                     'is_hidden' => $setting->is_hidden,
                 ]
             );
+
+            $newSetting->priceTiers()->delete();
+            foreach ($setting->priceTiers as $tier) {
+                $newSetting->priceTiers()->create([
+                    'min_qty' => $tier->min_qty,
+                    'max_qty' => $tier->max_qty,
+                    'unit_price' => $tier->unit_price,
+                ]);
+            }
         }
 
         PersonProductSetting::query()

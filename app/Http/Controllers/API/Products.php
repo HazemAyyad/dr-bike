@@ -41,6 +41,7 @@ class Products extends Controller
         if (($customerId !== null) xor ($sellerId !== null)) {
             $settings = PersonProductSetting::query()
                 ->where($customerId !== null ? 'customer_id' : 'seller_id', $customerId ?? $sellerId)
+                ->with('priceTiers')
                 ->get()
                 ->keyBy('product_id');
         }
@@ -316,6 +317,7 @@ class Products extends Controller
         if (($customerId !== null) xor ($sellerId !== null)) {
             return PersonProductSetting::query()
                 ->where($customerId !== null ? 'customer_id' : 'seller_id', $customerId ?? $sellerId)
+                ->with('priceTiers')
                 ->get()
                 ->keyBy('product_id');
         }
@@ -498,6 +500,17 @@ class Products extends Controller
         } else {
             $row['has_custom_price'] = false;
         }
+        $row['price_tiers'] = $setting === null
+            ? []
+            : $setting->priceTiers
+                ->sortBy('min_qty')
+                ->values()
+                ->map(fn ($tier) => [
+                    'min_qty' => (int) $tier->min_qty,
+                    'max_qty' => $tier->max_qty === null ? null : (int) $tier->max_qty,
+                    'unit_price' => (float) $tier->unit_price,
+                ])
+                ->all();
 
         if (auth()->user()?->canViewCostPrice()) {
             $row['purchase_cost'] = (float) ($product->purchasePrices->first()?->price ?? 0);
