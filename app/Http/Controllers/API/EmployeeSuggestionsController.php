@@ -69,7 +69,7 @@ class EmployeeSuggestionsController extends Controller
         $validated = $request->validate([
             'category' => ['nullable', 'string', Rule::in(EmployeeSuggestion::CATEGORIES)],
             'title' => ['nullable', 'string', 'max:255'],
-            'message' => ['required', 'string', 'min:5', 'max:5000'],
+            'message' => ['required', 'string', 'max:5000'],
             'is_anonymous' => ['nullable', 'boolean'],
         ]);
 
