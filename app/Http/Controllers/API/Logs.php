@@ -3,16 +3,22 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
 use App\Models\Debt;
+use App\Models\DebtTransaction;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
 use App\Models\Expense;
+use App\Models\InstantSale;
 use App\Models\Log;
 use App\Models\Product;
+use App\Models\Seller;
+use Carbon\Carbon;
 use Exception;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class Logs extends Controller
@@ -58,6 +64,125 @@ class Logs extends Controller
     });
 }
 
+public function activitySummary(Request $request)
+{
+    try {
+        [$from, $to] = $this->activityDateRange($request);
+
+        $logsQuery = Log::query()->where('is_canceled', 0);
+        $this->applyCreatedAtRange($logsQuery, $from, $to);
+
+        $logTypeCounts = (clone $logsQuery)
+            ->select('type', DB::raw('COUNT(*) as total'))
+            ->groupBy('type')
+            ->orderByDesc('total')
+            ->get()
+            ->map(fn ($row) => [
+                'type' => $row->type ?: 'غير محدد',
+                'count' => (int) $row->total,
+            ])
+            ->values();
+
+        $salesQuery = InstantSale::query()
+            ->whereNull('parent_id')
+            ->whereNull('cancelled_at')
+            ->where(function ($query) {
+                $query->whereNull('status')->orWhere('status', '!=', 'cancelled');
+            })
+            ->where(function ($query) {
+                $query->whereNull('sale_kind')->orWhere('sale_kind', '!=', 'adjustment');
+            });
+        $this->applyCreatedAtRange($salesQuery, $from, $to);
+
+        $sales = $salesQuery
+            ->select([
+                'id',
+                'total_cost',
+                'payment_box_value',
+                'buyer_type',
+                'buyer_id',
+                'seller_id',
+                'buyer_name',
+                'created_at',
+            ])
+            ->get();
+
+        $salesParentIds = $sales->pluck('id')->values();
+        $saleLines = collect();
+        if ($salesParentIds->isNotEmpty()) {
+            $saleLines = InstantSale::query()
+                ->with(['product' => function ($query) {
+                    $query->withTrashed()->select('id', 'nameAr', 'nameEng');
+                }])
+                ->where(function ($query) use ($salesParentIds) {
+                    $query->whereIn('id', $salesParentIds)
+                        ->orWhereIn('parent_id', $salesParentIds);
+                })
+                ->get(['id', 'parent_id', 'product_id', 'quantity', 'total_cost']);
+        }
+
+        $debtQuery = DebtTransaction::query()->active();
+        $this->applyCreatedAtRange($debtQuery, $from, $to);
+        $debts = $debtQuery
+            ->with(['customer:id,name', 'seller:id,name'])
+            ->get(['id', 'customer_id', 'seller_id', 'type', 'amount', 'note', 'source', 'source_id', 'created_at']);
+
+        $customerIds = $sales->pluck('buyer_id')->filter()->merge(
+            $debts->pluck('customer_id')->filter()
+        )->unique()->values();
+        $sellerIds = $sales->pluck('seller_id')->filter()->merge(
+            $debts->pluck('seller_id')->filter()
+        )->unique()->values();
+
+        $customerNames = Customer::query()
+            ->whereIn('id', $customerIds)
+            ->pluck('name', 'id');
+        $sellerNames = Seller::query()
+            ->whereIn('id', $sellerIds)
+            ->pluck('name', 'id');
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'range' => [
+                    'from' => $from?->toDateString(),
+                    'to' => $to?->toDateString(),
+                ],
+                'totals' => [
+                    'logs_count' => (int) (clone $logsQuery)->count(),
+                    'log_types_count' => $logTypeCounts->count(),
+                    'customers_count' => $customerIds->count(),
+                    'people_count' => $customerIds->count() + $sellerIds->count() + $sales->whereNull('buyer_id')->whereNull('seller_id')->whereNotNull('buyer_name')->count(),
+                    'invoices_count' => $sales->count(),
+                    'sales_count' => $sales->count(),
+                    'sales_amount' => round((float) $sales->sum('total_cost'), 2),
+                    'paid_amount' => round((float) $sales->sum('payment_box_value'), 2),
+                    'remaining_amount' => round(max(0, (float) $sales->sum('total_cost') - (float) $sales->sum('payment_box_value')), 2),
+                    'debt_transactions_count' => $debts->count(),
+                    'debt_amount' => round((float) $debts->sum('amount'), 2),
+                    'debt_given_amount' => round((float) $debts->where('type', 'given')->sum('amount'), 2),
+                    'debt_taken_amount' => round((float) $debts->where('type', 'taken')->sum('amount'), 2),
+                    'sold_items_quantity' => round((float) $saleLines->sum('quantity'), 2),
+                ],
+                'log_type_counts' => $logTypeCounts,
+                'sales_people' => $this->summarizeSalesByPerson($sales, $customerNames, $sellerNames),
+                'debt_people' => $this->summarizeDebtsByPerson($debts),
+                'sold_products' => $this->summarizeSoldProducts($saleLines),
+            ],
+        ], 200);
+    } catch (QueryException $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => __('messages.retrieve_data_error'),
+        ], 200);
+    } catch (\Exception $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => __('messages.something_wrong'),
+        ], 200);
+    }
+}
+
 public function getEmployeesLogs()
 {
     return $this->respondWithLogs(function () {
@@ -94,7 +219,7 @@ public function getEmployeesLogs()
             'message' => __('messages.something_wrong'),
         ], 200);
     }
-  }  
+  }
 
 
   public function showLog(Request $request){

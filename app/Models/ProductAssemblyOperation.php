@@ -21,6 +21,7 @@ class ProductAssemblyOperation extends Model
         'quantity',
         'unit_cost',
         'total_cost',
+        'additional_cost',
         'note',
         'created_by',
     ];
@@ -29,6 +30,7 @@ class ProductAssemblyOperation extends Model
         'quantity' => 'integer',
         'unit_cost' => 'float',
         'total_cost' => 'float',
+        'additional_cost' => 'float',
     ];
 
     public function recipe()

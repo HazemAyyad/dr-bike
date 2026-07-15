@@ -15,6 +15,7 @@ return new class extends Migration
                 $table->unsignedBigInteger('target_size_color_id')->nullable();
                 $table->string('name')->nullable();
                 $table->decimal('unit_cost', 12, 2)->default(0);
+                $table->decimal('additional_cost', 12, 2)->default(0);
                 $table->boolean('is_active')->default(true);
                 $table->unsignedBigInteger('created_by')->nullable();
                 $table->timestamps();
@@ -50,6 +51,7 @@ return new class extends Migration
                 $table->integer('quantity');
                 $table->decimal('unit_cost', 12, 2)->default(0);
                 $table->decimal('total_cost', 12, 2)->default(0);
+                $table->decimal('additional_cost', 12, 2)->default(0);
                 $table->text('note')->nullable();
                 $table->unsignedBigInteger('created_by')->nullable();
                 $table->timestamps();

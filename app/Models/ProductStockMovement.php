@@ -43,6 +43,8 @@ class ProductStockMovement extends Model
         'quantity',
         'stock_before',
         'stock_after',
+        'unit_cost',
+        'total_cost',
         'reference_type',
         'reference_id',
         'note',
@@ -53,6 +55,8 @@ class ProductStockMovement extends Model
         'quantity' => 'integer',
         'stock_before' => 'integer',
         'stock_after' => 'integer',
+        'unit_cost' => 'float',
+        'total_cost' => 'float',
     ];
 
     public function product()

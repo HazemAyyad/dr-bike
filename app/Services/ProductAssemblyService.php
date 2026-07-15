@@ -26,17 +26,20 @@ class ProductAssemblyService
         ?int $targetSizeColorId,
         int $quantity,
         array $components,
+        float $additionalCost,
         ?string $note,
         ?int $userId,
     ): ProductAssemblyOperation {
         $this->ensurePositiveQuantity($quantity);
+        $additionalCost = max(0, round($additionalCost, 2));
         $targetProduct = Product::query()->findOrFail($targetProductId);
         $this->validateVariantBelongsToProduct($targetProduct, $targetSizeColorId);
         $this->ensureVariantChosenWhenNeeded($targetProduct, $targetSizeColorId);
 
-        return DB::transaction(function () use ($targetProduct, $targetSizeColorId, $quantity, $components, $note, $userId) {
+        return DB::transaction(function () use ($targetProduct, $targetSizeColorId, $quantity, $components, $additionalCost, $note, $userId) {
             $normalized = $this->normalizeComponents($components);
-            $unitCost = $this->calculateRecipeUnitCost($normalized);
+            $componentsCost = $this->calculateRecipeUnitCost($normalized);
+            $unitCost = round($componentsCost + $additionalCost, 2);
 
             foreach ($normalized as $component) {
                 $required = (int) $component['quantity'] * $quantity;
@@ -52,6 +55,7 @@ class ProductAssemblyService
                 targetSizeColorId: $targetSizeColorId,
                 components: $normalized,
                 unitCost: $unitCost,
+                additionalCost: $additionalCost,
                 userId: $userId,
             );
 
@@ -60,6 +64,7 @@ class ProductAssemblyService
                 type: ProductAssemblyOperation::TYPE_ASSEMBLE,
                 quantity: $quantity,
                 unitCost: $unitCost,
+                additionalCost: $additionalCost,
                 note: $note,
                 userId: $userId,
             );
@@ -85,8 +90,10 @@ class ProductAssemblyService
                     sizeColorId: $item->component_size_color_id ? (int) $item->component_size_color_id : null,
                     referenceType: 'product_assembly',
                     referenceId: (int) $operation->id,
-                    note: $this->stockNote('تركيب منتج - خصم مكوّن', $operation),
+                    note: $this->stockNote('تركيب منتج - خصم مكوّن', $operation, (float) $item->unit_cost, (float) $item->unit_cost * $totalQuantity),
                     userId: $userId,
+                    unitCost: (float) $item->unit_cost,
+                    totalCost: (float) $item->unit_cost * $totalQuantity,
                 );
             }
 
@@ -97,8 +104,10 @@ class ProductAssemblyService
                 sizeColorId: $targetSizeColorId,
                 referenceType: 'product_assembly',
                 referenceId: (int) $operation->id,
-                note: $this->stockNote('تركيب منتج - زيادة المنتج الناتج', $operation),
+                note: $this->stockNote('تركيب منتج - زيادة المنتج الناتج', $operation, (float) $unitCost, (float) $unitCost * $quantity, $additionalCost),
                 userId: $userId,
+                unitCost: (float) $unitCost,
+                totalCost: (float) $unitCost * $quantity,
             );
 
             return $operation->fresh([
@@ -139,6 +148,7 @@ class ProductAssemblyService
                 type: ProductAssemblyOperation::TYPE_DISASSEMBLE,
                 quantity: $quantity,
                 unitCost: (float) $recipe->unit_cost,
+                additionalCost: (float) $recipe->additional_cost,
                 note: $note,
                 userId: $userId,
             );
@@ -150,8 +160,10 @@ class ProductAssemblyService
                 sizeColorId: $recipe->target_size_color_id ? (int) $recipe->target_size_color_id : null,
                 referenceType: 'product_disassembly',
                 referenceId: (int) $operation->id,
-                note: $this->stockNote('فك تركيب - خصم المنتج المركب', $operation),
+                note: $this->stockNote('فك تركيب - خصم المنتج المركب', $operation, (float) $recipe->unit_cost, (float) $recipe->unit_cost * $quantity),
                 userId: $userId,
+                unitCost: (float) $recipe->unit_cost,
+                totalCost: (float) $recipe->unit_cost * $quantity,
             );
 
             foreach ($recipe->items as $item) {
@@ -175,8 +187,10 @@ class ProductAssemblyService
                     sizeColorId: $item->component_size_color_id ? (int) $item->component_size_color_id : null,
                     referenceType: 'product_disassembly',
                     referenceId: (int) $operation->id,
-                    note: $this->stockNote('فك تركيب - إرجاع مكوّن', $operation),
+                    note: $this->stockNote('فك تركيب - إرجاع مكوّن', $operation, (float) $item->unit_cost, (float) $item->unit_cost * $totalQuantity),
                     userId: $userId,
+                    unitCost: (float) $item->unit_cost,
+                    totalCost: (float) $item->unit_cost * $totalQuantity,
                 );
             }
 
@@ -194,8 +208,10 @@ class ProductAssemblyService
             ->with([
                 'targetProduct:id,nameAr,stock,product_code',
                 'targetSizeColor:id,colorAr,sizeId,stock',
+                'targetSizeColor.size:id,size',
                 'items.componentProduct:id,nameAr,stock,product_code',
                 'items.componentSizeColor:id,colorAr,sizeId,stock',
+                'items.componentSizeColor.size:id,size',
             ])
             ->where('is_active', true)
             ->latest()
@@ -265,13 +281,14 @@ class ProductAssemblyService
     /**
      * @param array<int, array{product_id:int, quantity:int, size_color_id:int|null, unit_cost:float}> $components
      */
-    private function createRecipe(Product $targetProduct, ?int $targetSizeColorId, array $components, float $unitCost, ?int $userId): ProductAssemblyRecipe
+    private function createRecipe(Product $targetProduct, ?int $targetSizeColorId, array $components, float $unitCost, float $additionalCost, ?int $userId): ProductAssemblyRecipe
     {
         $recipe = ProductAssemblyRecipe::create([
             'target_product_id' => $targetProduct->id,
             'target_size_color_id' => $targetSizeColorId,
             'name' => $targetProduct->nameAr,
             'unit_cost' => $unitCost,
+            'additional_cost' => $additionalCost,
             'is_active' => true,
             'created_by' => $userId,
         ]);
@@ -294,6 +311,7 @@ class ProductAssemblyService
         string $type,
         int $quantity,
         float $unitCost,
+        float $additionalCost,
         ?string $note,
         ?int $userId,
     ): ProductAssemblyOperation {
@@ -305,6 +323,7 @@ class ProductAssemblyService
             'quantity' => $quantity,
             'unit_cost' => $unitCost,
             'total_cost' => round($unitCost * $quantity, 2),
+            'additional_cost' => $additionalCost,
             'note' => $note,
             'created_by' => $userId,
         ]);
@@ -378,8 +397,19 @@ class ProductAssemblyService
         return (float) $product->purchasePrices()->latest('id')->value('price');
     }
 
-    private function stockNote(string $prefix, ProductAssemblyOperation $operation): string
+    private function stockNote(string $prefix, ProductAssemblyOperation $operation, ?float $unitCost = null, ?float $totalCost = null, ?float $additionalCost = null): string
     {
-        return $prefix.' #'.$operation->id;
+        $note = $prefix.' رقم العملية #'.$operation->id;
+        if ($unitCost !== null) {
+            $note .= ' | تكلفة الوحدة: '.round($unitCost, 2);
+        }
+        if ($additionalCost !== null && $additionalCost > 0) {
+            $note .= ' | تكلفة إضافية للوحدة: '.round($additionalCost, 2);
+        }
+        if ($totalCost !== null) {
+            $note .= ' | إجمالي التكلفة: '.round($totalCost, 2);
+        }
+
+        return $note;
     }
 }

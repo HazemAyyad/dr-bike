@@ -8,6 +8,7 @@ use App\Models\Category;
 use App\Models\Closeout;
 use App\Models\Combination;
 use App\Models\Product;
+use App\Models\ProductAssemblyRecipe;
 use App\Models\Project;
 use App\Models\PurchaseProduct;
 use App\Models\Size;
@@ -23,6 +24,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class Stocks extends Controller
@@ -1481,6 +1483,65 @@ class Stocks extends Controller
                     ])->values(),
                 ];
             });
+
+            if (Schema::hasTable('product_assembly_recipes')) {
+                $latestAssemblyRecipes = ProductAssemblyRecipe::query()
+                    ->with([
+                        'targetProduct.viewImages:id,itemId,imageUrl',
+                        'targetProduct.normalImages:id,itemId,imageUrl',
+                        'targetProduct.image3d:id,itemId,imageUrl',
+                        'targetProduct.tags' => function ($q) {
+                            $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+                        },
+                        'targetSizeColor.size:id,size',
+                    ])
+                    ->withCount('items')
+                    ->where('is_active', true)
+                    ->latest()
+                    ->get()
+                    ->unique('target_product_id')
+                    ->values();
+
+                $assemblyFormatted = $latestAssemblyRecipes
+                    ->filter(fn ($recipe) => $recipe->targetProduct instanceof Product)
+                    ->map(function (ProductAssemblyRecipe $recipe) {
+                        $product = $recipe->targetProduct;
+                        $images = \App\Support\ProductImageResolver::formatForList($product);
+                        $size = $recipe->targetSizeColor?->size?->size;
+                        $color = $recipe->targetSizeColor?->colorAr;
+                        $variantLabel = collect([$size, $color])
+                            ->filter(fn ($value) => filled($value))
+                            ->implode(' / ');
+
+                        return [
+                            'product_id' => $product->id,
+                            'product_name' => $variantLabel
+                                ? $product->nameAr.' - '.$variantLabel
+                                : $product->nameAr,
+                            'product_stock' => $product->stock,
+                            'product_code' => $product->product_code,
+                            'product_image' => $images['product_image'],
+                            'product_viewImages' => $images['product_viewImages'],
+                            'product_normalImages' => $images['product_normalImages'],
+                            'product_image3d' => $images['product_image3d'],
+                            'number_of_used_products' => $recipe->items_count,
+                            'cost_price' => (float) $recipe->unit_cost,
+                            'has_cost_price' => true,
+                            'assembly_recipe_id' => $recipe->id,
+                            'assembly_additional_cost' => (float) $recipe->additional_cost,
+                            'tags' => $product->tags->map(fn ($t) => [
+                                'id' => $t->id,
+                                'name' => $t->name,
+                                'color' => $t->color,
+                            ])->values(),
+                        ];
+                    });
+
+                $existingIds = $formatted->pluck('product_id')->map(fn ($id) => (int) $id)->all();
+                $formatted = $formatted
+                    ->concat($assemblyFormatted->reject(fn ($row) => in_array((int) $row['product_id'], $existingIds, true)))
+                    ->values();
+            }
 
             return response()->json([
                 'status' => 'success',

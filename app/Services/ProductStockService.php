@@ -313,12 +313,14 @@ class ProductStockService
         ?int $referenceId = null,
         ?string $note = null,
         ?int $userId = null,
+        ?float $unitCost = null,
+        ?float $totalCost = null,
     ): void {
         if ($quantityDelta === 0) {
             return;
         }
 
-        DB::transaction(function () use ($product, $quantityDelta, $type, $sizeColorId, $referenceType, $referenceId, $note, $userId) {
+        DB::transaction(function () use ($product, $quantityDelta, $type, $sizeColorId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost) {
             $lockedProduct = Product::lockForUpdate()->findOrFail($product->id);
 
             if ($sizeColorId !== null && $sizeColorId > 0) {
@@ -339,6 +341,8 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
+                    unitCost: $unitCost,
+                    totalCost: $totalCost,
                 );
 
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
@@ -359,6 +363,8 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
+                    unitCost: $unitCost,
+                    totalCost: $totalCost,
                 );
             }
 
@@ -473,12 +479,14 @@ class ProductStockService
         ?int $referenceId,
         ?string $note,
         ?int $userId,
+        ?float $unitCost = null,
+        ?float $totalCost = null,
     ): void {
         if (! Schema::hasTable('product_stock_movements')) {
             return;
         }
 
-        ProductStockMovement::create([
+        $payload = [
             'product_id' => $productId,
             'size_id' => $sizeId,
             'size_color_id' => $sizeColorId,
@@ -490,7 +498,16 @@ class ProductStockService
             'reference_id' => $referenceId,
             'note' => $note,
             'created_by' => $userId,
-        ]);
+        ];
+
+        if (Schema::hasColumn('product_stock_movements', 'unit_cost')) {
+            $payload['unit_cost'] = $unitCost;
+        }
+        if (Schema::hasColumn('product_stock_movements', 'total_cost')) {
+            $payload['total_cost'] = $totalCost;
+        }
+
+        ProductStockMovement::create($payload);
     }
 
     private function refreshCloseoutStatus(int $productId, bool $reopen = false): void

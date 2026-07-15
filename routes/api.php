@@ -968,6 +968,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
    //logs
       Route::get('/all/logs' , [Logs::class,'getAllLogs']);
+      Route::get('/activity/summary' , [Logs::class,'activitySummary']);
       Route::post('/cancel/log' , [Logs::class,'cancelLog']);
       Route::post('/show/log' , [Logs::class,'showLog']);
       Route::get('/admin/home/page/data' , [Logs::class,'homeData']);

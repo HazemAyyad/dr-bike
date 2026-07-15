@@ -14,12 +14,14 @@ class ProductAssemblyRecipe extends Model
         'target_size_color_id',
         'name',
         'unit_cost',
+        'additional_cost',
         'is_active',
         'created_by',
     ];
 
     protected $casts = [
         'unit_cost' => 'float',
+        'additional_cost' => 'float',
         'is_active' => 'boolean',
     ];
 

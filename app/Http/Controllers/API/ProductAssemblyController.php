@@ -147,6 +147,7 @@ class ProductAssemblyController extends Controller
                 'target_product_id' => ['required', 'integer', 'exists:products,id'],
                 'target_size_color_id' => ['nullable', 'integer', 'exists:size_colors,id'],
                 'quantity' => ['required', 'integer', 'min:1'],
+                'additional_cost' => ['nullable', 'numeric', 'min:0'],
                 'note' => ['nullable', 'string', 'max:500'],
                 'components' => ['required', 'array', 'min:1'],
                 'components.*.product_id' => ['required', 'integer', 'exists:products,id'],
@@ -159,6 +160,7 @@ class ProductAssemblyController extends Controller
                 targetSizeColorId: isset($data['target_size_color_id']) ? (int) $data['target_size_color_id'] : null,
                 quantity: (int) $data['quantity'],
                 components: $data['components'],
+                additionalCost: isset($data['additional_cost']) ? (float) $data['additional_cost'] : 0.0,
                 note: $data['note'] ?? null,
                 userId: auth()->id() ? (int) auth()->id() : null,
             );
@@ -248,6 +250,7 @@ class ProductAssemblyController extends Controller
             'quantity' => $operation->quantity,
             'unit_cost' => (float) $operation->unit_cost,
             'total_cost' => (float) $operation->total_cost,
+            'additional_cost' => (float) $operation->additional_cost,
             'note' => $operation->note,
             'items' => $operation->items->map(fn ($item) => [
                 'component_product_id' => $item->component_product_id,
@@ -272,7 +275,9 @@ class ProductAssemblyController extends Controller
             'target_product_code' => $recipe->targetProduct?->product_code,
             'target_size_color_id' => $recipe->target_size_color_id,
             'target_color_ar' => $recipe->targetSizeColor?->colorAr,
+            'target_size' => $recipe->targetSizeColor?->size?->size,
             'unit_cost' => (float) $recipe->unit_cost,
+            'additional_cost' => (float) $recipe->additional_cost,
             'items' => $recipe->items->map(fn ($item) => [
                 'component_product_id' => $item->component_product_id,
                 'component_product_name' => $item->componentProduct?->nameAr,
@@ -280,6 +285,7 @@ class ProductAssemblyController extends Controller
                 'component_product_code' => $item->componentProduct?->product_code,
                 'component_size_color_id' => $item->component_size_color_id,
                 'component_color_ar' => $item->componentSizeColor?->colorAr,
+                'component_size' => $item->componentSizeColor?->size?->size,
                 'quantity_per_unit' => (float) $item->quantity_per_unit,
                 'unit_cost' => (float) $item->unit_cost,
             ])->values(),

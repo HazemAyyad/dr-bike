@@ -153,6 +153,8 @@ class ProductStockController extends Controller
                     'quantity' => $m->quantity,
                     'stock_before' => $m->stock_before,
                     'stock_after' => $m->stock_after,
+                    'unit_cost' => $m->unit_cost,
+                    'total_cost' => $m->total_cost,
                     'size' => $m->size?->size,
                     'color_ar' => $m->sizeColor?->colorAr,
                     'note' => $m->note,
