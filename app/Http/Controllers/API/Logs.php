@@ -300,4 +300,118 @@ public function getEmployeesLogs()
                 ], 200);
             }
         }
+
+private function activityDateRange(Request $request): array
+{
+    $from = $request->filled('date_from')
+        ? Carbon::parse($request->date_from)->startOfDay()
+        : null;
+    $to = $request->filled('date_to')
+        ? Carbon::parse($request->date_to)->endOfDay()
+        : null;
+
+    return [$from, $to];
+}
+
+private function applyCreatedAtRange($query, ?Carbon $from, ?Carbon $to): void
+{
+    if ($from) {
+        $query->where('created_at', '>=', $from);
+    }
+
+    if ($to) {
+        $query->where('created_at', '<=', $to);
+    }
+}
+
+private function summarizeSalesByPerson($sales, $customerNames, $sellerNames)
+{
+    return $sales
+        ->groupBy(function ($sale) {
+            if ($sale->buyer_id) {
+                return 'customer:' . $sale->buyer_id;
+            }
+            if ($sale->seller_id) {
+                return 'seller:' . $sale->seller_id;
+            }
+            return 'walkin:' . ($sale->buyer_name ?: 'غير محدد');
+        })
+        ->map(function ($group, $key) use ($customerNames, $sellerNames) {
+            [$type, $id] = array_pad(explode(':', $key, 2), 2, null);
+            $first = $group->first();
+            $name = $first->buyer_name ?: 'غير محدد';
+            if ($type === 'customer') {
+                $name = $customerNames[$id] ?? $name;
+            } elseif ($type === 'seller') {
+                $name = $sellerNames[$id] ?? $name;
+            }
+
+            return [
+                'person_type' => $type,
+                'person_id' => is_numeric($id) ? (int) $id : null,
+                'name' => $name,
+                'invoices_count' => $group->count(),
+                'sales_amount' => round((float) $group->sum('total_cost'), 2),
+                'paid_amount' => round((float) $group->sum('payment_box_value'), 2),
+                'remaining_amount' => round(max(0, (float) $group->sum('total_cost') - (float) $group->sum('payment_box_value')), 2),
+            ];
+        })
+        ->sortByDesc('sales_amount')
+        ->take(10)
+        ->values();
+}
+
+private function summarizeDebtsByPerson($debts)
+{
+    return $debts
+        ->groupBy(function ($debt) {
+            if ($debt->customer_id) {
+                return 'customer:' . $debt->customer_id;
+            }
+            if ($debt->seller_id) {
+                return 'seller:' . $debt->seller_id;
+            }
+            return 'unknown:0';
+        })
+        ->map(function ($group, $key) {
+            [$type, $id] = array_pad(explode(':', $key, 2), 2, null);
+            $first = $group->first();
+            $name = $first->customer?->name ?? $first->seller?->name ?? 'غير محدد';
+
+            return [
+                'person_type' => $type,
+                'person_id' => is_numeric($id) ? (int) $id : null,
+                'name' => $name,
+                'transactions_count' => $group->count(),
+                'amount' => round((float) $group->sum('amount'), 2),
+                'given_amount' => round((float) $group->where('type', 'given')->sum('amount'), 2),
+                'taken_amount' => round((float) $group->where('type', 'taken')->sum('amount'), 2),
+                'last_note' => optional($group->sortByDesc('created_at')->first())->note,
+            ];
+        })
+        ->sortByDesc('amount')
+        ->take(10)
+        ->values();
+}
+
+private function summarizeSoldProducts($saleLines)
+{
+    return $saleLines
+        ->whereNotNull('product_id')
+        ->groupBy('product_id')
+        ->map(function ($group, $productId) {
+            $product = $group->first()->product;
+
+            return [
+                'product_id' => $productId,
+                'name' => $product?->nameAr ?? $product?->nameEng ?? ('منتج #' . $productId),
+                'quantity' => round((float) $group->sum('quantity'), 2),
+                'sales_amount' => round((float) $group->sum('total_cost'), 2),
+                'lines_count' => $group->count(),
+            ];
+        })
+        ->sortByDesc('quantity')
+        ->take(10)
+        ->values();
+}
 }
