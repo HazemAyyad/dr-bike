@@ -36,15 +36,17 @@ class BackupDatabase extends Command
             return self::FAILURE;
         }
 
-        $filename = sprintf('%s-%s.sql', $database, now('Asia/Hebron')->format('Y-m-d-His'));
-        $fullPath = rtrim($backupPath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$filename;
+        $baseFilename = sprintf('%s-%s', $database, now('Asia/Hebron')->format('Y-m-d-His'));
+        $workingPath = rtrim($backupPath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$baseFilename.'-in-progress.sql';
+        $completePath = rtrim($backupPath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$baseFilename.'-complete.sql';
+        $failedPath = rtrim($backupPath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$baseFilename.'-failed.txt';
 
         $command = $this->buildDumpCommand($connection, $database);
         $process = new Process($command, base_path(), $this->buildEnvironment($connection), null, 300);
 
-        $handle = fopen($fullPath, 'wb');
+        $handle = fopen($workingPath, 'wb');
         if ($handle === false) {
-            $this->error("Could not write backup file: {$fullPath}");
+            $this->error("Could not write backup file: {$workingPath}");
 
             return self::FAILURE;
         }
@@ -60,16 +62,19 @@ class BackupDatabase extends Command
         }
 
         if (! $process->isSuccessful()) {
-            File::delete($fullPath);
+            File::delete($workingPath);
+            File::put($failedPath, $this->failureReport($process));
             $this->error('Database backup failed.');
             $this->line(trim($process->getErrorOutput()) ?: 'No error output was returned by mysqldump.');
+            $this->line("Failure details saved: {$failedPath}");
 
             return self::FAILURE;
         }
 
+        File::move($workingPath, $completePath);
         $this->deleteOldBackups($backupPath, (int) ($this->option('keep-days') ?: config('database_backup.keep_days')));
 
-        $this->info("Database backup created: {$fullPath}");
+        $this->info("Database backup created: {$completePath}");
 
         return self::SUCCESS;
     }
@@ -142,6 +147,22 @@ class BackupDatabase extends Command
         return $password === '' ? [] : ['MYSQL_PWD' => $password];
     }
 
+    private function failureReport(Process $process): string
+    {
+        return implode(PHP_EOL, [
+            'Database backup status: failed',
+            'Failed at: '.now('Asia/Hebron')->toDateTimeString().' Asia/Hebron',
+            'Exit code: '.($process->getExitCode() ?? 'unknown'),
+            '',
+            'Error output:',
+            trim($process->getErrorOutput()) ?: 'No error output was returned by mysqldump.',
+            '',
+            'Standard output:',
+            trim($process->getOutput()) ?: 'No standard output was returned.',
+            '',
+        ]);
+    }
+
     private function deleteOldBackups(string $backupPath, int $keepDays): void
     {
         if ($keepDays <= 0) {
@@ -150,7 +171,11 @@ class BackupDatabase extends Command
 
         $deleteBefore = now()->subDays($keepDays)->getTimestamp();
 
-        foreach (File::glob(rtrim($backupPath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'*.sql') ?: [] as $file) {
+        foreach (File::glob(rtrim($backupPath, DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.'*') ?: [] as $file) {
+            if (! str_ends_with($file, '.sql') && ! str_ends_with($file, '.txt')) {
+                continue;
+            }
+
             if (File::lastModified($file) < $deleteBefore) {
                 File::delete($file);
             }
