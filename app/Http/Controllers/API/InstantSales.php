@@ -891,7 +891,16 @@ public function store(Request $request)
     $replaceId = 0;
 
     try{
+    $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
     $saleKind = $this->resolveSaleKind($request);
+    if ($replaceId > 0 && ! $request->has('sale_kind')) {
+        $existingKind = InstantSale::query()
+            ->whereKey($replaceId)
+            ->value('sale_kind');
+        if ($existingKind === self::SALE_KIND_ADJUSTMENT) {
+            $saleKind = self::SALE_KIND_ADJUSTMENT;
+        }
+    }
     $isAdjustmentSale = $this->isAdjustmentSaleKind($saleKind);
     $dailySession = $isAdjustmentSale
         ? null
@@ -942,9 +951,6 @@ public function store(Request $request)
         'seller_id' => 'nullable|integer|exists:sellers,id',
 
     ]);
-
-
-        $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
 
         $otherNames = [];
 
@@ -1876,11 +1882,12 @@ public function edit(Request $request)
                     ]);
                 }
 
+                $isAdjustmentSale = $this->isAdjustmentInstantSale($instantSale);
                 $oldQuantity = (float) $instantSale->quantity;
                 $newQuantity = (float) $data['quantity'];
                 $quantityDelta = $newQuantity - $oldQuantity;
 
-                if ($quantityDelta > 0) {
+                if (! $isAdjustmentSale && $quantityDelta > 0) {
                     $product = $instantSale->product ?? Product::findOrFail($instantSale->product_id);
                     if ($product->stock < $quantityDelta) {
                         throw ValidationException::withMessages([
@@ -1889,7 +1896,7 @@ public function edit(Request $request)
                     }
                     $product->stock -= $quantityDelta;
                     $product->save();
-                } elseif ($quantityDelta < 0) {
+                } elseif (! $isAdjustmentSale && $quantityDelta < 0) {
                     $product = $instantSale->product ?? Product::findOrFail($instantSale->product_id);
                     $product->stock += abs($quantityDelta);
                     $product->save();
@@ -1912,9 +1919,11 @@ public function edit(Request $request)
                     $data['total_cost'] = $newTotal;
                 }
                 $oldPaid = (float) ($instantSale->payment_box_value ?? 0);
-                $newPaid = $request->has('payment_box_value')
+                $newPaid = $isAdjustmentSale
+                    ? 0
+                    : ($request->has('payment_box_value')
                     ? max(0, (float) $request->input('payment_box_value'))
-                    : $oldPaid;
+                    : $oldPaid);
 
                 if ($newPaid > $newTotal + 0.0001) {
                     throw ValidationException::withMessages([
@@ -1923,7 +1932,7 @@ public function edit(Request $request)
                 }
 
                 $paidDelta = $newPaid - $oldPaid;
-                if (abs($paidDelta) > 0.0001 && $instantSale->payment_box_id) {
+                if (! $isAdjustmentSale && abs($paidDelta) > 0.0001 && $instantSale->payment_box_id) {
                     $box = Box::lockForUpdate()->findOrFail($instantSale->payment_box_id);
 
                     if ($paidDelta < 0 && (float) $box->total < abs($paidDelta)) {
