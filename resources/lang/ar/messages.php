@@ -315,6 +315,7 @@ return [
     'suspended_instant_sale_cancelled' => 'تم إلغاء الفاتورة العالقة',
     'suspended_instant_sale_note_saved' => 'تم حفظ ملاحظة الفاتورة العالقة',
     'suspended_instant_sale_empty' => 'أضف منتجاً أو باكيجاً على الأقل قبل التعليق',
+    'suspended_instant_sale_cannot_suspend_edit' => 'لا يمكن تعليق فاتورة مبيعات أثناء تعديل فاتورة مباعة',
     'suspended_instant_sale_forbidden' => 'لا تملك صلاحية لهذه الفاتورة العالقة',
     'suspended_instant_sale_not_active' => 'هذه الفاتورة العالقة غير متاحة',
     'suspended_instant_sale_default_label' => 'فاتورة عالقة',

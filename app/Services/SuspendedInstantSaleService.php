@@ -58,6 +58,7 @@ class SuspendedInstantSaleService
             'additional_notes' => 'nullable|array',
             'type' => 'nullable|string|in:normal,project',
             'sale_kind' => 'nullable|string|in:regular,adjustment',
+            'source_instant_sale_id' => 'nullable|integer',
             'project_id' => 'nullable',
             'other_products' => 'nullable|array',
             'other_products.*.product_id' => 'required_with:other_products|exists:products,id',
@@ -154,6 +155,12 @@ class SuspendedInstantSaleService
         ]);
 
         $payload = $this->validatePayload($data['payload']);
+        if (! empty($payload['source_instant_sale_id'])) {
+            throw ValidationException::withMessages([
+                'payload' => [__('messages.suspended_instant_sale_cannot_suspend_edit')],
+            ]);
+        }
+
         $isAdjustmentSale = ($payload['sale_kind'] ?? null) === 'adjustment';
         $session = $isAdjustmentSale
             ? null

@@ -306,6 +306,7 @@ return [
     'suspended_instant_sale_cancelled' => 'Suspended invoice cancelled',
     'suspended_instant_sale_note_saved' => 'Suspended invoice note saved',
     'suspended_instant_sale_empty' => 'Add at least one product or package before suspending',
+    'suspended_instant_sale_cannot_suspend_edit' => 'A sold invoice cannot be suspended while it is being edited',
     'suspended_instant_sale_forbidden' => 'You do not have access to this suspended invoice',
     'suspended_instant_sale_not_active' => 'This suspended invoice is not available',
     'suspended_instant_sale_default_label' => 'Suspended invoice',

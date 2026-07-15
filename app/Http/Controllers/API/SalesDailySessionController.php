@@ -19,6 +19,31 @@ class SalesDailySessionController extends Controller
         protected SalesCancellationExecutor $cancellationExecutor
     ) {}
 
+    private function normalizeCashCountInput(Request $request): void
+    {
+        $cashCounts = $request->input('cash_counts');
+        if (! is_array($cashCounts)) {
+            return;
+        }
+
+        foreach ($cashCounts as &$row) {
+            if (! is_array($row)) {
+                continue;
+            }
+
+            foreach (['physical_count', 'float_to_keep', 'payments_counts', 'payment_counts'] as $key) {
+                if (! array_key_exists($key, $row) || ! is_string($row[$key])) {
+                    continue;
+                }
+
+                $row[$key] = trim(str_replace([',', '،', '٬', ' '], '', $row[$key]));
+            }
+        }
+        unset($row);
+
+        $request->merge(['cash_counts' => $cashCounts]);
+    }
+
     public function current(Request $request)
     {
         try {
@@ -213,6 +238,8 @@ class SalesDailySessionController extends Controller
     public function requestClosing(Request $request)
     {
         try {
+            $this->normalizeCashCountInput($request);
+
             $data = $request->validate([
                 'cash_counts' => 'required|array|min:1',
                 'cash_counts.*.currency' => 'required|string',
@@ -346,6 +373,8 @@ class SalesDailySessionController extends Controller
                     'message' => __('messages.unauthorized'),
                 ], 200);
             }
+
+            $this->normalizeCashCountInput($request);
 
             $data = $request->validate([
                 'cash_counts' => 'required|array|min:1',
