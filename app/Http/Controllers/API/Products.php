@@ -499,8 +499,9 @@ class Products extends Controller
             $row['has_custom_price'] = false;
         }
 
-        if (auth()->user()?->type === 'admin') {
+        if (auth()->user()?->canViewCostPrice()) {
             $row['purchase_cost'] = (float) ($product->purchasePrices->first()?->price ?? 0);
+            $row['cost_price'] = $row['purchase_cost'];
         }
 
         return $row;
