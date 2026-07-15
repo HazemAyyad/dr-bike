@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Http\Controllers\API\InstantSales;
+use App\Models\Box;
+use App\Models\SalesDailySession;
 use App\Models\SuspendedInstantSale;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -336,12 +338,18 @@ class SuspendedInstantSaleService
         );
 
         $isAdjustmentSale = ($payload['sale_kind'] ?? null) === 'adjustment';
+        $activeSession = null;
         if (! $isAdjustmentSale) {
-            $this->sessionService->assertCanCreateSale($user);
+            $activeSession = $this->sessionService->assertCanCreateSale($user);
         }
 
-        return DB::transaction(function () use ($user, $record, $payload) {
+        return DB::transaction(function () use ($user, $record, $payload, $activeSession) {
+            $payload = $activeSession
+                ? $this->movePaymentBoxToActiveSession($payload, $activeSession)
+                : $payload;
+
             $record->update([
+                'sales_daily_session_id' => $activeSession?->id,
                 'payload' => $payload,
                 'summary_label' => $this->buildSummaryLabel($payload),
                 'total_cost' => $this->resolveTotalCost($payload),
@@ -435,6 +443,67 @@ class SuspendedInstantSaleService
         }
 
         return $payload;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function movePaymentBoxToActiveSession(array $payload, SalesDailySession $session): array
+    {
+        $boxId = (int) ($payload['payment_box_id'] ?? 0);
+        if ($boxId <= 0) {
+            return $payload;
+        }
+
+        $box = Box::query()->find($boxId);
+        if (! $box || ! $box->isDailySalesBox()) {
+            return $payload;
+        }
+
+        if ($this->boxBelongsToSession($box, $session)) {
+            return $payload;
+        }
+
+        $targetBox = $this->dailySalesBoxForSession($session, $box->currency ?: null);
+        if (! $targetBox) {
+            return $payload;
+        }
+
+        $payload['payment_box_id'] = (int) $targetBox->id;
+        $payload['payment_box_name'] = $targetBox->name;
+
+        return $payload;
+    }
+
+    private function boxBelongsToSession(Box $box, SalesDailySession $session): bool
+    {
+        if ($session->employee_id) {
+            return (int) $box->employee_id === (int) $session->employee_id;
+        }
+
+        return ! $box->employee_id && (int) $box->user_id === (int) $session->user_id;
+    }
+
+    private function dailySalesBoxForSession(SalesDailySession $session, ?string $currency): ?Box
+    {
+        $query = Box::query()
+            ->where('type', config('sales_daily.box_type'));
+
+        if ($currency !== null && trim($currency) !== '') {
+            $query->where('currency', $currency);
+        }
+
+        if ($session->employee_id) {
+            $query->where('employee_id', $session->employee_id);
+        } else {
+            $query->where('user_id', $session->user_id)->whereNull('employee_id');
+        }
+
+        return $query
+            ->orderByRaw("CASE WHEN currency = 'شيكل' THEN 0 ELSE 1 END")
+            ->orderBy('currency')
+            ->first();
     }
 
     /**
