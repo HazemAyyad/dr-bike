@@ -140,6 +140,50 @@ class ProductAssemblyController extends Controller
         }
     }
 
+    public function operations(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'product_id' => ['required', 'integer', 'exists:products,id'],
+                'limit' => ['nullable', 'integer', 'min:1', 'max:100'],
+            ]);
+
+            $limit = (int) ($data['limit'] ?? 50);
+            $operations = ProductAssemblyOperation::query()
+                ->with([
+                    'targetProduct:id,nameAr,product_code,stock',
+                    'targetSizeColor:id,colorAr,sizeId,stock',
+                    'targetSizeColor.size:id,size',
+                    'items.componentProduct:id,nameAr,product_code,stock',
+                    'items.componentSizeColor:id,colorAr,sizeId,stock',
+                    'items.componentSizeColor.size:id,size',
+                ])
+                ->where('operation_type', ProductAssemblyOperation::TYPE_ASSEMBLE)
+                ->where('target_product_id', (int) $data['product_id'])
+                ->latest()
+                ->limit($limit)
+                ->get();
+
+            return response()->json([
+                'status' => 'success',
+                'operations' => $operations
+                    ->map(fn (ProductAssemblyOperation $operation) => $this->formatOperation($operation))
+                    ->values(),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function assemble(Request $request)
     {
         try {
@@ -235,9 +279,11 @@ class ProductAssemblyController extends Controller
     {
         $operation->loadMissing([
             'targetProduct',
+            'targetSizeColor.size',
             'recipe.items.componentProduct',
             'recipe.targetProduct',
             'items.componentProduct',
+            'items.componentSizeColor.size',
         ]);
 
         return [
@@ -247,6 +293,8 @@ class ProductAssemblyController extends Controller
             'target_product_id' => $operation->target_product_id,
             'target_product_name' => $operation->targetProduct?->nameAr ?? $operation->recipe?->targetProduct?->nameAr,
             'target_size_color_id' => $operation->target_size_color_id,
+            'target_color_ar' => $operation->targetSizeColor?->colorAr,
+            'target_size' => $operation->targetSizeColor?->size?->size,
             'quantity' => $operation->quantity,
             'unit_cost' => (float) $operation->unit_cost,
             'total_cost' => (float) $operation->total_cost,
@@ -255,7 +303,10 @@ class ProductAssemblyController extends Controller
             'items' => $operation->items->map(fn ($item) => [
                 'component_product_id' => $item->component_product_id,
                 'component_product_name' => $item->componentProduct?->nameAr,
+                'component_product_code' => $item->componentProduct?->product_code,
                 'component_size_color_id' => $item->component_size_color_id,
+                'component_color_ar' => $item->componentSizeColor?->colorAr,
+                'component_size' => $item->componentSizeColor?->size?->size,
                 'quantity_per_unit' => (float) $item->quantity_per_unit,
                 'total_quantity' => (float) $item->total_quantity,
                 'unit_cost' => (float) $item->unit_cost,
