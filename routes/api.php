@@ -716,6 +716,7 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales,Follow-up 
     Route::post('/product/retail-price' , [Products::class,'updateRetailPrice']);
     Route::post('/products/paste-suggestions' , [Products::class,'pasteSuggestions']);
     Route::post('/products/paste-alias' , [Products::class,'storePasteAlias']);
+    Route::post('/products/ocr-text' , [Products::class,'ocrText']);
   });
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Sales','refresh.token.expiry']], function () {

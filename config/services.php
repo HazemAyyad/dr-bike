@@ -38,4 +38,8 @@ return [
         'admin_phone' => env('TWILIO_ADMIN_PHONE'),
     ],
 
+    'google_vision' => [
+        'api_key' => env('GOOGLE_CLOUD_VISION_API_KEY'),
+    ],
+
 ];

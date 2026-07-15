@@ -247,6 +247,68 @@ class Products extends Controller
         ]);
     }
 
+    public function ocrText(Request $request)
+    {
+        $request->validate([
+            'image' => 'required|image|max:8192',
+        ]);
+
+        $apiKey = config('services.google_vision.api_key');
+        if (!$apiKey) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Google Vision API key is not configured.',
+                'text' => '',
+            ], 503);
+        }
+
+        $image = $request->file('image');
+        $content = base64_encode(file_get_contents($image->getRealPath()));
+
+        $response = Http::timeout(30)->post(
+            'https://vision.googleapis.com/v1/images:annotate?key='.$apiKey,
+            [
+                'requests' => [
+                    [
+                        'image' => ['content' => $content],
+                        'features' => [
+                            ['type' => 'DOCUMENT_TEXT_DETECTION'],
+                        ],
+                        'imageContext' => [
+                            'languageHints' => ['ar', 'en'],
+                        ],
+                    ],
+                ],
+            ]
+        );
+
+        if (!$response->successful()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'OCR provider failed.',
+                'text' => '',
+            ], 502);
+        }
+
+        $payload = $response->json();
+        $result = $payload['responses'][0] ?? [];
+        if (isset($result['error'])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $result['error']['message'] ?? 'OCR provider failed.',
+                'text' => '',
+            ], 502);
+        }
+
+        $text = $result['fullTextAnnotation']['text']
+            ?? ($result['textAnnotations'][0]['description'] ?? '');
+
+        return response()->json([
+            'status' => 'success',
+            'text' => trim((string) $text),
+        ]);
+    }
+
     private function personProductSettingsForRequest(Request $request)
     {
         $customerId = $request->filled('customer_id') ? (int) $request->input('customer_id') : null;
