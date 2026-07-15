@@ -82,6 +82,12 @@ class Kernel extends ConsoleKernel
         $schedule->command('employee-tasks:ensure-occurrences')
             ->dailyAt('00:10')
             ->timezone('Asia/Hebron');
+
+        $schedule->command('database:backup')
+            ->everySixHours()
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping()
+            ->runInBackground();
     }
 
     /**
