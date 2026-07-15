@@ -104,6 +104,10 @@ class ProductStockController extends Controller
                     ProductStockMovement::TYPE_MANUAL_ADD,
                     ProductStockMovement::TYPE_MANUAL_SET,
                     ProductStockMovement::TYPE_IMPORT,
+                    ProductStockMovement::TYPE_ASSEMBLY_COMPONENT,
+                    ProductStockMovement::TYPE_ASSEMBLY_OUTPUT,
+                    ProductStockMovement::TYPE_DISASSEMBLY_COMPONENT,
+                    ProductStockMovement::TYPE_DISASSEMBLY_OUTPUT,
                 ])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);
@@ -138,6 +142,8 @@ class ProductStockController extends Controller
             $rows = $paginated->getCollection()->map(function (ProductStockMovement $m) {
                 $invoiceNumber = null;
                 if ($m->reference_type === 'instant_sale' && $m->reference_id) {
+                    $invoiceNumber = '#'.$m->reference_id;
+                } elseif (in_array($m->reference_type, ['product_assembly', 'product_disassembly'], true) && $m->reference_id) {
                     $invoiceNumber = '#'.$m->reference_id;
                 }
 

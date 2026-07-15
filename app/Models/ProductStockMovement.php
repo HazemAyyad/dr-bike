@@ -27,6 +27,14 @@ class ProductStockMovement extends Model
 
     public const TYPE_IMPORT = 'import';
 
+    public const TYPE_ASSEMBLY_COMPONENT = 'assembly_component';
+
+    public const TYPE_ASSEMBLY_OUTPUT = 'assembly_output';
+
+    public const TYPE_DISASSEMBLY_COMPONENT = 'disassembly_component';
+
+    public const TYPE_DISASSEMBLY_OUTPUT = 'disassembly_output';
+
     protected $fillable = [
         'product_id',
         'size_id',

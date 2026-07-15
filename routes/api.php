@@ -68,6 +68,7 @@ use App\Http\Controllers\API\PaymentAndRecieve;
 use App\Http\Controllers\API\Pictures;
 use App\Http\Controllers\API\ProductDevelopmentApi;
 use App\Http\Controllers\API\Products;
+use App\Http\Controllers\API\ProductAssemblyController;
 use App\Http\Controllers\API\ProductTagController;
 use App\Http\Controllers\API\StoreSectionController;
 use App\Http\Controllers\API\Profile;
@@ -814,6 +815,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::post('/delete/products' , [Stocks::class,'deleteProducts']);
     Route::post('/product/stock/adjust' , [ProductStockController::class,'adjust']);
     Route::post('/product/stock/movements' , [ProductStockController::class,'movements']);
+    Route::get('/product/assembly/recipes' , [ProductAssemblyController::class,'recipes']);
+    Route::post('/product/assembly/execute' , [ProductAssemblyController::class,'assemble']);
+    Route::post('/product/assembly/disassemble' , [ProductAssemblyController::class,'disassemble']);
     Route::post('/add/product/to/closeouts' , [Stocks::class,'addProductToCloseout']);
     Route::post('/archive/closeout' , [Stocks::class,'archiveCloseout']);
 
