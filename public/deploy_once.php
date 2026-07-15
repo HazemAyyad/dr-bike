@@ -50,6 +50,11 @@ if (! config('app.debug')) {
 // وضع الرابط مبكراً يضمن إنشاء public/storage حتى عند فشل قاعدة البيانات.
 $allowedCommands = [
     ['name' => 'config:clear', 'params' => []],
+    [
+        'name' => 'database:backup',
+        'params' => [],
+        'label' => '=== نسخة احتياطية قبل الديبلو (php artisan database:backup) ===',
+    ],
     ['name' => 'storage:link', 'params' => []],
     [
         'name' => 'migrate',
