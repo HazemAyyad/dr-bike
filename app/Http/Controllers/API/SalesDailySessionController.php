@@ -19,29 +19,60 @@ class SalesDailySessionController extends Controller
         protected SalesCancellationExecutor $cancellationExecutor
     ) {}
 
-    private function normalizeCashCountInput(Request $request): void
+    private function normalizeNumericInput($value)
     {
-        $cashCounts = $request->input('cash_counts');
-        if (! is_array($cashCounts)) {
+        if (! is_string($value)) {
+            return $value;
+        }
+
+        $value = trim(str_replace([' ', '٬', '،'], ['', ',', ','], $value));
+        $hasDot = str_contains($value, '.');
+        $commaCount = substr_count($value, ',');
+
+        if (! $hasDot && $commaCount === 1 && preg_match('/,\d{1,2}$/', $value)) {
+            return str_replace(',', '.', $value);
+        }
+
+        if ($hasDot && $commaCount > 0 && strrpos($value, ',') > strrpos($value, '.')) {
+            return str_replace(',', '.', str_replace('.', '', $value));
+        }
+
+        return str_replace(',', '', $value);
+    }
+
+    private function normalizeCountRowsInput(Request $request, string $field): void
+    {
+        $rows = $request->input($field);
+        if (! is_array($rows)) {
             return;
         }
 
-        foreach ($cashCounts as &$row) {
+        foreach ($rows as &$row) {
             if (! is_array($row)) {
                 continue;
             }
 
             foreach (['physical_count', 'float_to_keep', 'payments_counts', 'payment_counts'] as $key) {
-                if (! array_key_exists($key, $row) || ! is_string($row[$key])) {
+                if (! array_key_exists($key, $row)) {
                     continue;
                 }
 
-                $row[$key] = trim(str_replace([',', '،', '٬', ' '], '', $row[$key]));
+                $row[$key] = $this->normalizeNumericInput($row[$key]);
             }
         }
         unset($row);
 
-        $request->merge(['cash_counts' => $cashCounts]);
+        $request->merge([$field => $rows]);
+    }
+
+    private function normalizeCashCountInput(Request $request): void
+    {
+        $this->normalizeCountRowsInput($request, 'cash_counts');
+    }
+
+    private function normalizeOpeningCountInput(Request $request): void
+    {
+        $this->normalizeCountRowsInput($request, 'opening_counts');
     }
 
     public function current(Request $request)
@@ -64,6 +95,8 @@ class SalesDailySessionController extends Controller
     public function open(Request $request)
     {
         try {
+            $this->normalizeOpeningCountInput($request);
+
             $data = $request->validate([
                 'opening_counts' => 'nullable|array',
                 'opening_counts.*.currency' => 'required|string',
