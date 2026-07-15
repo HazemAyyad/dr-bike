@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Product;
 use App\Models\ProductAssemblyOperation;
 use App\Models\ProductAssemblyRecipe;
 use App\Services\ProductAssemblyService;
+use App\Services\ProductStockService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -15,6 +17,109 @@ class ProductAssemblyController extends Controller
     public function __construct(
         private readonly ProductAssemblyService $assemblyService
     ) {}
+
+    public function products(Request $request)
+    {
+        try {
+            $stockService = app(ProductStockService::class);
+
+            $products = Product::query()
+                ->with([
+                    'projects:product_id,project_id',
+                    'viewImages',
+                    'normalImages',
+                    'image3d',
+                    'storeSection:id,name',
+                    'sizes.colorSizes',
+                    'purchasePrices' => fn ($q) => $q->latest('id'),
+                ]);
+
+            if ($request->filled('search')) {
+                $term = '%' . $request->string('search') . '%';
+                $products->where(function ($q) use ($term) {
+                    $q->where('nameAr', 'like', $term)
+                        ->orWhere('product_code', 'like', $term)
+                        ->orWhereHas('storeSection', function ($section) use ($term) {
+                            $section->where('name', 'like', $term);
+                        })
+                        ->orWhereHas('sizes', function ($size) use ($term) {
+                            $size->where('size', 'like', $term)
+                                ->orWhereHas('colorSizes', function ($color) use ($term) {
+                                    $color->where('colorAr', 'like', $term)
+                                        ->orWhere('colorEn', 'like', $term)
+                                        ->orWhere('colorAbbr', 'like', $term);
+                                });
+                        });
+                });
+            }
+
+            $canViewCost = $request->user()?->canViewCostPrice() ?? false;
+
+            $rows = $products
+                ->get([
+                    'id',
+                    'nameAr',
+                    'stock',
+                    'normailPrice',
+                    'wholesalePrice',
+                    'price',
+                    'min_sale_price',
+                    'rate',
+                    'product_code',
+                    'store_section_id',
+                ])
+                ->map(function (Product $product) use ($stockService, $canViewCost) {
+                    $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
+                    if ($unitPrice <= 0) {
+                        $unitPrice = (float) ($product->min_sale_price ?? 0);
+                    }
+
+                    $variantPayload = $stockService->formatProductForSaleApi($product);
+                    $cost = (float) ($product->purchasePrices->first()?->price ?? 0);
+
+                    $row = array_merge(
+                        [
+                            'id' => $product->id,
+                            'nameAr' => $product->nameAr,
+                            'stock' => $variantPayload['stock'],
+                            'has_variants' => $variantPayload['has_variants'],
+                            'sizes' => $variantPayload['sizes'],
+                            'normail_price' => $unitPrice,
+                            'wholesale_price' => (float) ($product->wholesalePrice ?? 0),
+                            'rate' => (float) ($product->rate ?? 0),
+                            'product_code' => $product->product_code,
+                            'store_section_id' => $product->store_section_id !== null
+                                ? (int) $product->store_section_id
+                                : null,
+                            'store_section_name' => $product->storeSection?->name,
+                            'projects' => $product->projects->pluck('project_id')->toArray(),
+                            'has_custom_price' => false,
+                        ],
+                        \App\Support\ProductImageResolver::formatForList($product),
+                    );
+
+                    if ($canViewCost) {
+                        $row['purchase_cost'] = $cost;
+                        $row['cost_price'] = $cost;
+                        $row['has_cost_price'] = $cost > 0;
+                    }
+
+                    return $row;
+                })
+                ->values();
+
+            return response()->json([
+                'status' => 'success',
+                'can_view_cost_price' => $canViewCost,
+                'products' => $rows,
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
 
     public function recipes(Request $request)
     {
