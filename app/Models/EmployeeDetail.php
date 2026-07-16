@@ -59,6 +59,11 @@ class EmployeeDetail extends Model
         return $this->hasMany(EmployeeSuggestion::class, 'employee_id');
     }
 
+    public function supportConversations()
+    {
+        return $this->hasMany(SupportConversation::class, 'employee_id');
+    }
+
     public function boxes(){
         return $this->hasMany(Box::class);
     }

@@ -33,6 +33,7 @@ use App\Http\Controllers\API\EmployeePointsController;
 use App\Http\Controllers\API\EmployeeRewardRuleController;
 use App\Http\Controllers\API\EmployeeRemindersController;
 use App\Http\Controllers\API\EmployeeSuggestionsController;
+use App\Http\Controllers\API\SupportConversationController;
 use App\Http\Controllers\API\Employees\EmployeeData;
 use App\Http\Controllers\API\Employees\EmployeeOwnTasks;
 use App\Http\Controllers\API\Employees\OrdersAPI;
@@ -1021,6 +1022,20 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/fingerprint/users/{deviceUserId}/link', [AdminFingerprintUsersController::class, 'link']);
     Route::post('/admin/fingerprint/users/{deviceUserId}/unlink', [AdminFingerprintUsersController::class, 'unlink']);
 
+});
+
+   Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function() {
+    Route::get('/support/conversations', [SupportConversationController::class, 'index']);
+    Route::post('/support/conversations', [SupportConversationController::class, 'store']);
+    Route::get('/support/conversations/unread-count', [SupportConversationController::class, 'unreadCount']);
+    Route::get('/support/conversations/{conversation}', [SupportConversationController::class, 'show'])
+        ->whereNumber('conversation');
+    Route::post('/support/conversations/{conversation}/messages', [SupportConversationController::class, 'sendMessage'])
+        ->whereNumber('conversation');
+    Route::post('/support/conversations/{conversation}/read', [SupportConversationController::class, 'markRead'])
+        ->whereNumber('conversation');
+    Route::put('/support/conversations/{conversation}/status', [SupportConversationController::class, 'updateStatus'])
+        ->whereNumber('conversation');
 });
 
    Route::post('/send/notification' , [Notifications::class,'pushNotification']);

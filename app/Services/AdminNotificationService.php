@@ -67,6 +67,8 @@ class AdminNotificationService
 
     public const TYPE_STORE_ORDER_CANCELED = 'store_order_canceled';
 
+    public const TYPE_SUPPORT_MESSAGE = 'support_message';
+
     /**
      * @param  array<string, mixed>  $data
      */
