@@ -139,6 +139,7 @@ class SupportConversationController extends Controller
 
         return response()->json([
             'status' => 'success',
+            'can_manage_support' => $this->canManageSupport($request),
             'conversation' => $this->conversationPayload(
                 $conversation->fresh(['employee.user:id,name', 'assignee:id,name', 'suggestion:id,title,category,is_anonymous'])
             ),
