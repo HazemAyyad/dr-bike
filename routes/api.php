@@ -352,10 +352,16 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Projects and Purch
 
 });
 
-Route::group(['middleware'=>['auth:sanctum','check.permission:General Data,Data Completion,Sales','refresh.token.expiry']] , function() {
+Route::group(['middleware'=>['auth:sanctum','check.permission:General Data,Data Completion,Sales,Maintenance','refresh.token.expiry']] , function() {
 
       //customers
     Route::post('/create/person' , [Customers::class,'store']);
+
+});
+
+Route::group(['middleware'=>['auth:sanctum','check.permission:General Data,Data Completion,Sales','refresh.token.expiry']] , function() {
+
+      //customers
     Route::post('/show/person' , [Customers::class,'showCustomer']);
     Route::post('/cancel/customer' , [Customers::class,'deleteCustomer']);
     Route::post('/restore/customer' , [Customers::class,'restoreCustomer']);

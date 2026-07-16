@@ -244,7 +244,15 @@ class SalesDailySessionService
      */
     public function expectedOpeningCountsForNextSession(): array
     {
-        $previous = SalesDailySession::query()
+        return $this->expectedOpeningCountsForSession();
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function expectedOpeningCountsForSession(?SalesDailySession $session = null): array
+    {
+        $previousQuery = SalesDailySession::query()
             ->with([
                 'user',
                 'closingRequests' => fn ($query) => $query
@@ -252,7 +260,26 @@ class SalesDailySessionService
                     ->latest('id')
                     ->limit(1),
             ])
-            ->where('status', config('sales_daily.session_status.closed'))
+            ->where('status', config('sales_daily.session_status.closed'));
+
+        if ($session) {
+            if ($session->opened_at) {
+                $previousQuery->where('closed_at', '<=', $session->opened_at);
+            } else {
+                $previousQuery->where(function ($query) use ($session) {
+                    $query
+                        ->whereDate('business_date', '<', $session->business_date)
+                        ->orWhere(function ($sameDay) use ($session) {
+                            $sameDay
+                                ->whereDate('business_date', $session->business_date)
+                                ->where('id', '<', $session->id);
+                        });
+                });
+            }
+            $previousQuery->where('id', '!=', $session->id);
+        }
+
+        $previous = $previousQuery
             ->orderByDesc('closed_at')
             ->orderByDesc('id')
             ->first();
@@ -1158,6 +1185,7 @@ class SalesDailySessionService
             ],
             'can_finalize_closing' => $this->canReviewAllSessions($viewer),
             'currencies' => $currencies,
+            'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],
             'pending_closing_request_id' => $pendingClosing?->id,
@@ -2000,6 +2028,7 @@ class SalesDailySessionService
     {
         $session->loadMissing(['user', 'employee.user']);
         $counts = $this->salesCountsForSession($session);
+        $owner = User::query()->find($session->user_id);
 
         return [
             'id' => $session->id,
@@ -2014,6 +2043,8 @@ class SalesDailySessionService
                 && $session->closed_at->toDateString() > $session->business_date->toDateString(),
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],
+            'currencies' => $owner ? $this->buildCurrenciesForSession($session, $owner) : [],
+            'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
         ];
     }
 
