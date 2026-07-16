@@ -501,6 +501,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::post('/change/maintenance/to/ready' , [MaintenanceAPI::class,'changeToReady']);
     Route::post('/change/maintenance/to/delivered' , [MaintenanceAPI::class,'changeToDone']);
     Route::post('/show/maintenance' , [MaintenanceAPI::class,'showMaintenance']);
+    Route::post('/delete/maintenance' , [MaintenanceAPI::class,'deleteMaintenance']);
     Route::post('/change/maintenance/status' , [MaintenanceAPI::class,'commonUpdate']);
     Route::post('/maintenance/sync/products' , [MaintenanceAPI::class,'syncProducts']);
     Route::post('/maintenance/deliver' , [MaintenanceAPI::class,'deliver']);

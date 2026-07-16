@@ -240,6 +240,8 @@ return [
     'maintenance_delivered_successfully' => 'Maintenance delivered and invoice created successfully',
     'maintenance_already_delivered' => 'This maintenance has already been delivered',
     'maintenance_invoice_already_created' => 'An invoice was already created for this maintenance',
+    'maintenance_deleted_successfully' => 'Maintenance request deleted successfully',
+    'maintenance_delete_not_allowed' => 'Maintenance requests can only be deleted while new or in progress',
 
     // Boxes
     'box_created_successfully'     => 'Box created successfully.',

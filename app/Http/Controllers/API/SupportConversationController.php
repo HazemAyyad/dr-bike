@@ -274,7 +274,7 @@ class SupportConversationController extends Controller
     private function storeAttachment(SupportConversation $conversation, SupportMessage $message, UploadedFile $file): void
     {
         $path = $file->store("support/attachments/{$conversation->id}", 'public');
-        $type = $this->attachmentType((string) $file->getMimeType());
+        $type = $this->attachmentType($file);
 
         $message->attachments()->create([
             'disk' => 'public',
@@ -411,18 +411,24 @@ class SupportConversationController extends Controller
     {
         $first = $attachments[0] ?? null;
         if ($first instanceof UploadedFile) {
-            return $this->attachmentType((string) $first->getMimeType());
+            return $this->attachmentType($first);
         }
 
         return SupportMessage::TYPE_TEXT;
     }
 
-    private function attachmentType(string $mime): string
+    private function attachmentType(UploadedFile $file): string
     {
+        $mime = (string) $file->getMimeType();
+        $extension = strtolower((string) ($file->getClientOriginalExtension() ?: $file->extension()));
+
         return match (true) {
+            in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true) => SupportMessage::TYPE_IMAGE,
+            in_array($extension, ['mp3', 'm4a', 'aac', 'ogg', 'wav'], true) => SupportMessage::TYPE_AUDIO,
+            in_array($extension, ['mp4', 'mov', 'webm'], true) => SupportMessage::TYPE_VIDEO,
             str_starts_with($mime, 'image/') => SupportMessage::TYPE_IMAGE,
-            str_starts_with($mime, 'video/') => SupportMessage::TYPE_VIDEO,
             str_starts_with($mime, 'audio/') => SupportMessage::TYPE_AUDIO,
+            str_starts_with($mime, 'video/') => SupportMessage::TYPE_VIDEO,
             default => SupportMessage::TYPE_DOCUMENT,
         };
     }

@@ -13,6 +13,8 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Validation\ValidationException;
 
 class MaintenanceAPI extends Controller
@@ -311,6 +313,73 @@ class MaintenanceAPI extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong')
+            ], 200);
+        }
+    }
+
+    public function deleteMaintenance(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'maintenance_id' => 'required|exists:maintenance,id',
+            ]);
+
+            $maintenance = Maintenance::with(['customer:id,name', 'seller:id,name'])
+                ->findOrFail($data['maintenance_id']);
+
+            if (! in_array($maintenance->status, ['new', 'ongoing'], true)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.maintenance_delete_not_allowed'),
+                ], 200);
+            }
+
+            if ($maintenance->instant_sale_id) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.maintenance_delete_not_allowed'),
+                ], 200);
+            }
+
+            $name = $maintenance->customer_id
+                ? ($maintenance->customer?->name ?? '#'.$maintenance->customer_id)
+                : ($maintenance->seller?->name ?? '#'.$maintenance->seller_id);
+            $logDescription = $maintenance->customer_id
+                ? 'تم حذف طلب الصيانة للزبون '.$name
+                : 'تم حذف طلب الصيانة للتاجر '.$name;
+            $files = is_array($maintenance->files) ? $maintenance->files : [];
+
+            DB::transaction(function () use ($maintenance, $logDescription) {
+                Logs::createLog('حذف طلب صيانة', $logDescription, 'maintenances');
+                $maintenance->delete();
+            });
+
+            foreach ($files as $file) {
+                $path = public_path('MaintenanceFiles/'.basename((string) $file));
+                if (File::exists($path)) {
+                    File::delete($path);
+                }
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.maintenance_deleted_successfully'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.maintenance_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }

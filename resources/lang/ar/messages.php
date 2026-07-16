@@ -246,6 +246,8 @@ return [
     'maintenance_delivered_successfully' => 'تم تسليم الصيانة وإنشاء الفاتورة بنجاح',
     'maintenance_already_delivered' => 'تم تسليم هذه الصيانة مسبقاً',
     'maintenance_invoice_already_created' => 'تم إنشاء فاتورة لهذه الصيانة مسبقاً',
+    'maintenance_deleted_successfully' => 'تم حذف طلب الصيانة بنجاح',
+    'maintenance_delete_not_allowed' => 'لا يمكن حذف طلب الصيانة بعد أن يصبح جاهزاً أو مسلّماً',
 
     // Boxes
     'box_created_successfully'     => 'تم إنشاء الصندوق بنجاح.',
