@@ -2,12 +2,17 @@
 
 namespace App\Support;
 
+use App\Models\EmployeeDetail;
 use App\Models\EmployeeSuggestion;
 use App\Models\Followup;
+use App\Models\IncomingCheck;
 use App\Models\Maintenance;
+use App\Models\OutgoingCheck;
 use App\Models\SupportConversation;
 use App\Models\SuspendedInstantSale;
 use App\Models\User;
+use App\Services\AttendanceSalaryService;
+use Carbon\Carbon;
 
 class DashboardSectionBadges
 {
@@ -41,6 +46,7 @@ class DashboardSectionBadges
 
         return [
             'technical_support' => (int) $supportQuery->count(),
+            'employees_absent_today' => self::employeesAbsentToday(),
             'maintenance' => (int) Maintenance::query()->where('status', '!=', 'delivered')->count(),
             'follow_up' => (int) Followup::query()
                 ->where('status', 'ongoing')
@@ -50,7 +56,50 @@ class DashboardSectionBadges
                 ->count(),
             'sales' => (int) $salesQuery->count(),
             'suggestions' => (int) $suggestionsQuery->count(),
+            'checks_incoming_red' => self::urgentChecksCount(IncomingCheck::class, 'red'),
+            'checks_incoming_yellow' => self::urgentChecksCount(IncomingCheck::class, 'yellow'),
+            'checks_outgoing_red' => self::urgentChecksCount(OutgoingCheck::class, 'red'),
+            'checks_outgoing_yellow' => self::urgentChecksCount(OutgoingCheck::class, 'yellow'),
         ];
+    }
+
+    private static function employeesAbsentToday(): int
+    {
+        $today = EmployeeAttendanceToday::todayDateString();
+        $todayName = strtolower(Carbon::parse($today, EmployeeAttendanceToday::TIMEZONE)->format('l'));
+        $salaryService = app(AttendanceSalaryService::class);
+
+        return EmployeeDetail::query()
+            ->get(['id', 'weekly_days_off'])
+            ->filter(function (EmployeeDetail $employee) use ($salaryService, $todayName) {
+                $weeklyDaysOff = $salaryService->effectiveWeeklyDaysOff($employee);
+
+                return ! in_array($todayName, $weeklyDaysOff, true)
+                    && ! EmployeeAttendanceToday::hasCheckedInToday((int) $employee->id);
+            })
+            ->count();
+    }
+
+    /**
+     * @param class-string<IncomingCheck|OutgoingCheck> $model
+     */
+    private static function urgentChecksCount(string $model, string $level): int
+    {
+        $today = Carbon::now(EmployeeAttendanceToday::TIMEZONE)->toDateString();
+        $yellowEnd = Carbon::now(EmployeeAttendanceToday::TIMEZONE)->addDays(5)->toDateString();
+
+        $query = $model::query()
+            ->where('status', 'not_cashed')
+            ->whereNotNull('due_date');
+
+        if ($level === 'red') {
+            $query->whereDate('due_date', '<=', $today);
+        } else {
+            $query->whereDate('due_date', '>', $today)
+                ->whereDate('due_date', '<=', $yellowEnd);
+        }
+
+        return (int) $query->count();
     }
 
     private static function canManageSupport(User $user): bool
