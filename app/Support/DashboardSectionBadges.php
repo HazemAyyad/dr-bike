@@ -117,6 +117,10 @@ class DashboardSectionBadges
         return app(EmployeeTaskListService::class)
             ->getOngoingItems(fn ($employee) => '')
             ->filter(function ($item) use ($today) {
+                if (($item['status'] ?? '') === 'waiting_review') {
+                    return false;
+                }
+
                 $start = $item['start_time'] ?? null;
                 if (! $start) {
                     return false;
