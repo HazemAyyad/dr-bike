@@ -61,11 +61,17 @@ class Products extends Controller
         ProductSearchFilter::apply($products, $request->input('search'));
 
         if ($request->filled('store_section_id')) {
-            $storeSectionId = $request->input('store_section_id');
-            if (in_array((string) $storeSectionId, ['none', 'null', '0'], true)) {
-                $products->whereNull('store_section_id');
-            } else {
-                $products->where('store_section_id', (int) $storeSectionId);
+            $storeSectionFilter = $this->parseStoreSectionFilter($request->input('store_section_id'));
+            if ($storeSectionFilter['include_none'] || $storeSectionFilter['ids'] !== []) {
+                $products->where(function ($q) use ($storeSectionFilter) {
+                    if ($storeSectionFilter['ids'] !== []) {
+                        $q->whereIn('store_section_id', $storeSectionFilter['ids']);
+                    }
+                    if ($storeSectionFilter['include_none']) {
+                        $method = $storeSectionFilter['ids'] !== [] ? 'orWhereNull' : 'whereNull';
+                        $q->{$method}('store_section_id');
+                    }
+                });
             }
         }
 
@@ -104,6 +110,32 @@ class Products extends Controller
             ], 200);
         }
 
+    }
+
+    private function parseStoreSectionFilter($value): array
+    {
+        $raw = is_array($value) ? $value : explode(',', (string) $value);
+        $ids = [];
+        $includeNone = false;
+
+        foreach ($raw as $item) {
+            $token = trim((string) $item);
+            if ($token === '') {
+                continue;
+            }
+            if (in_array($token, ['none', 'null', '0'], true)) {
+                $includeNone = true;
+                continue;
+            }
+            if (ctype_digit($token)) {
+                $ids[] = (int) $token;
+            }
+        }
+
+        return [
+            'ids' => array_values(array_unique($ids)),
+            'include_none' => $includeNone,
+        ];
     }
 
     public function pasteSuggestions(Request $request)
