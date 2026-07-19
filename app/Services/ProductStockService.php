@@ -85,19 +85,28 @@ class ProductStockService
     /**
      * @return array{ok: bool, message?: string, size_id?: int|null, size_color_id?: int|null, legacy_aggregate_stock?: bool}
      */
-    public function validateSaleStock(Product $product, int $quantity, ?int $sizeColorId = null): array
+    public function validateSaleStock(
+        Product $product,
+        int $quantity,
+        ?int $sizeColorId = null,
+        bool $allowNegative = false
+    ): array
     {
         if ($quantity < 1) {
             return ['ok' => false, 'message' => __('messages.cant_sale')];
         }
 
         if ($sizeColorId !== null && $sizeColorId > 0) {
-            return $this->validateExplicitVariantSale($product, $quantity, $sizeColorId);
+            return $this->validateExplicitVariantSale($product, $quantity, $sizeColorId, $allowNegative);
         }
 
         $hasVariants = $this->productHasVariants($product);
 
         if (! $hasVariants) {
+            if ($allowNegative) {
+                return ['ok' => true, 'size_id' => null];
+            }
+
             if ((int) $product->stock < $quantity || (int) $product->stock <= 0) {
                 return ['ok' => false, 'message' => __('messages.cant_sale')];
             }
@@ -131,7 +140,12 @@ class ProductStockService
     /**
      * @return array{ok: bool, message?: string, size_id?: int|null, size_color_id?: int}
      */
-    private function validateExplicitVariantSale(Product $product, int $quantity, int $sizeColorId): array
+    private function validateExplicitVariantSale(
+        Product $product,
+        int $quantity,
+        int $sizeColorId,
+        bool $allowNegative = false
+    ): array
     {
         $variant = SizeColor::query()
             ->with('size')
@@ -146,7 +160,7 @@ class ProductStockService
             return ['ok' => false, 'message' => __('messages.cant_sale')];
         }
 
-        if ((int) $variant->stock < $quantity) {
+        if (! $allowNegative && (int) $variant->stock < $quantity) {
             return ['ok' => false, 'message' => __('messages.cant_sale')];
         }
 
@@ -186,15 +200,30 @@ class ProductStockService
         ?int $referenceId = null,
         ?string $note = null,
         ?int $userId = null,
-    ): void {
-        DB::transaction(function () use ($product, $quantity, $sizeColorId, $sizeId, $referenceType, $referenceId, $note, $userId) {
+        bool $allowNegative = false,
+    ): array {
+        return DB::transaction(function () use ($product, $quantity, $sizeColorId, $sizeId, $referenceType, $referenceId, $note, $userId, $allowNegative) {
             $lockedProduct = Product::lockForUpdate()->findOrFail($product->id);
+            $result = [
+                'product_id' => (int) $lockedProduct->id,
+                'size_id' => $sizeId,
+                'size_color_id' => $sizeColorId,
+                'stock_before' => 0,
+                'stock_after' => 0,
+            ];
 
             if ($sizeColorId !== null && $sizeColorId > 0) {
                 $variant = SizeColor::lockForUpdate()->findOrFail($sizeColorId);
                 $before = (int) $variant->stock;
-                $after = max(0, $before - $quantity);
+                $after = $allowNegative ? $before - $quantity : max(0, $before - $quantity);
                 $variant->update(['stock' => $after]);
+                $result = [
+                    'product_id' => (int) $lockedProduct->id,
+                    'size_id' => $sizeId ?? (int) $variant->sizeId,
+                    'size_color_id' => $sizeColorId,
+                    'stock_before' => $before,
+                    'stock_after' => $after,
+                ];
 
                 $this->logMovement(
                     productId: (int) $lockedProduct->id,
@@ -213,8 +242,15 @@ class ProductStockService
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
             } else {
                 $before = (int) $lockedProduct->stock;
-                $after = max(0, $before - $quantity);
+                $after = $allowNegative ? $before - $quantity : max(0, $before - $quantity);
                 $lockedProduct->update(['stock' => $after]);
+                $result = [
+                    'product_id' => (int) $lockedProduct->id,
+                    'size_id' => null,
+                    'size_color_id' => null,
+                    'stock_before' => $before,
+                    'stock_after' => $after,
+                ];
 
                 $this->logMovement(
                     productId: (int) $lockedProduct->id,
@@ -232,6 +268,8 @@ class ProductStockService
             }
 
             $this->refreshCloseoutStatus((int) $lockedProduct->id);
+
+            return $result;
         });
     }
 

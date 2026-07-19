@@ -13,6 +13,7 @@ use App\Models\Product;
 use App\Models\Project;
 use App\Models\SalesOrder;
 use App\Models\Seller;
+use App\Services\AdminNotificationService;
 use App\Services\CustomerProductPriceHistoryService;
 use App\Services\DebtLedgerService;
 use App\Services\DocumentSerialService;
@@ -1050,7 +1051,7 @@ public function store(Request $request)
         $mainSizeColorId = isset($data['size_color_id']) ? (int) $data['size_color_id'] : null;
         $mainStockCheck = ['ok' => true, 'size_color_id' => $mainSizeColorId, 'size_id' => $data['size_id'] ?? null];
         if (! $isAdjustmentSale) {
-            $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId);
+            $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId, allowNegative: true);
             if (! ($mainStockCheck['ok'] ?? false)) {
                 if ($replaceId > 0) {
                     DB::rollBack();
@@ -1079,7 +1080,7 @@ public function store(Request $request)
             $lineSizeColorId = isset($item['size_color_id']) ? (int) $item['size_color_id'] : null;
             $lineCheck = ['ok' => true, 'size_color_id' => $lineSizeColorId, 'size_id' => $item['size_id'] ?? null];
             if (! $isAdjustmentSale) {
-                $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId);
+                $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId, allowNegative: true);
             }
             if (! ($lineCheck['ok'] ?? false)) {
                     if ($replaceId > 0) {
@@ -1131,7 +1132,7 @@ public function store(Request $request)
         );
 
         if (! $isAdjustmentSale) {
-            $stockService->deductForSale(
+            $stockImpact = $stockService->deductForSale(
                 product: $mainProduct,
                 quantity: $mainSaleQuantity,
                 sizeColorId: $mainSizeColorId > 0 ? $mainSizeColorId : null,
@@ -1139,7 +1140,9 @@ public function store(Request $request)
                 referenceType: 'instant_sale',
                 referenceId: (int) $mainInstantSale->id,
                 userId: auth()->id() ? (int) auth()->id() : null,
+                allowNegative: true,
             );
+            $this->notifyAdminIfNegativeInstantSaleStock($request, $mainProduct, $mainInstantSale, $stockImpact);
         }
 
         // Save other  if provided
@@ -1163,7 +1166,7 @@ public function store(Request $request)
                 $lineSizeColorId = isset($product['size_color_id']) ? (int) $product['size_color_id'] : null;
                 $lineCheck = ['ok' => true, 'size_color_id' => $lineSizeColorId, 'size_id' => $product['size_id'] ?? null];
                 if (! $isAdjustmentSale) {
-                    $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId);
+                    $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId, allowNegative: true);
                 }
                 if (! ($lineCheck['ok'] ?? false)) {
                     if ($replaceId > 0) {
@@ -1192,7 +1195,7 @@ public function store(Request $request)
                 ], $buyerPayload)));
 
                 if (! $isAdjustmentSale) {
-                    $stockService->deductForSale(
+                    $stockImpact = $stockService->deductForSale(
                         product: $subProduct,
                         quantity: $lineQty,
                         sizeColorId: $lineSizeColorId > 0 ? $lineSizeColorId : null,
@@ -1200,7 +1203,9 @@ public function store(Request $request)
                         referenceType: 'instant_sale',
                         referenceId: (int) $subSale->id,
                         userId: auth()->id() ? (int) auth()->id() : null,
+                        allowNegative: true,
                     );
+                    $this->notifyAdminIfNegativeInstantSaleStock($request, $subProduct, $subSale, $stockImpact);
                 }
             }
         }
@@ -1999,6 +2004,68 @@ public function edit(Request $request)
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $stockImpact
+     */
+    private function notifyAdminIfNegativeInstantSaleStock(
+        Request $request,
+        Product $product,
+        InstantSale $sale,
+        array $stockImpact
+    ): void {
+        $after = (int) ($stockImpact['stock_after'] ?? 0);
+        if ($after >= 0) {
+            return;
+        }
+
+        $before = (int) ($stockImpact['stock_before'] ?? 0);
+        $user = $request->user();
+        $userName = $user?->name ?? 'مستخدم غير معروف';
+        $employeeId = $user?->employee?->id ? (int) $user->employee->id : null;
+        $variantLabel = null;
+        $sizeColorId = (int) ($stockImpact['size_color_id'] ?? 0);
+        if ($sizeColorId > 0) {
+            $variant = \App\Models\SizeColor::query()
+                ->with('size')
+                ->find($sizeColorId);
+            if ($variant) {
+                $size = $variant->size?->size;
+                $color = $variant->colorAr;
+                $variantLabel = trim(($size ? $size.' / ' : '').($color ?: ''));
+            }
+        }
+
+        $invoice = $sale->serial_number ?: 'SAL-'.str_pad((string) $sale->id, 7, '0', STR_PAD_LEFT);
+        $productLabel = $product->nameAr ?? 'منتج محذوف';
+        $body = "تم بيع منتج بمخزون غير كافٍ بواسطة {$userName}. المنتج: {$productLabel}";
+        if ($variantLabel) {
+            $body .= " ({$variantLabel})";
+        }
+        $body .= ". المخزون قبل البيع: {$before}، بعد البيع: {$after}. الفاتورة: {$invoice}.";
+
+        app(AdminNotificationService::class)->create(
+            AdminNotificationService::TYPE_NEGATIVE_INSTANT_SALE_STOCK,
+            'بيع بمخزون سالب',
+            $body,
+            [
+                'instant_sale_id' => (string) $sale->id,
+                'invoice_number' => (string) $invoice,
+                'product_id' => (string) $product->id,
+                'product_name' => (string) $productLabel,
+                'size_color_id' => $sizeColorId > 0 ? (string) $sizeColorId : '',
+                'variant_label' => (string) ($variantLabel ?? ''),
+                'stock_before' => (string) $before,
+                'stock_after' => (string) $after,
+                'quantity' => (string) ((int) round((float) $sale->quantity)),
+                'created_by_user_id' => (string) ($user?->id ?? ''),
+                'created_by_name' => (string) $userName,
+            ],
+            $employeeId,
+            InstantSale::class,
+            (int) $sale->id
+        );
     }
 
     private function assertDailySalesPaymentBox(Request $request, array $paymentBoxPayload): void

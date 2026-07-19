@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API\Employees;
 
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
+use App\Support\DashboardSectionBadges;
 use App\Support\EmployeeVisibleTasks;
 use App\Support\EmployeeWorkingDays;
 use ArPHP\I18N\Arabic;
@@ -38,6 +39,7 @@ class EmployeeData extends Controller
 
             $employee['tasks'] = EmployeeVisibleTasks::dashboardPayload($employee->id);
             $employee['today_tasks_summary'] = EmployeeVisibleTasks::todaySummaryForEmployee($employee->id);
+            $employee['dashboard_badges'] = DashboardSectionBadges::forUser($user);
 
             return response()->json([
                 'status' => 'success',
@@ -129,4 +131,3 @@ class EmployeeData extends Controller
         }
     }
     }
-

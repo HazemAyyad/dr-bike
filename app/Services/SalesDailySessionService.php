@@ -1845,7 +1845,7 @@ class SalesDailySessionService
     /**
      * @return array{instant_sales: array<int, array<string, mixed>>, profit_sales: array<int, array<string, mixed>>}
      */
-    private function buildSessionSalesLog(SalesDailySession $session): array
+    public function buildSessionSalesLog(SalesDailySession $session): array
     {
         $sales = InstantSale::query()
             ->where('sales_daily_session_id', $session->id)
@@ -2062,6 +2062,10 @@ class SalesDailySessionService
         $isLateClose = $businessDate && $requestedDate
             ? $requestedDate > $businessDate
             : (bool) $request->late_close_reason;
+        $salesLog = $session ? $this->buildSessionSalesLog($session) : [
+            'instant_sales' => [],
+            'profit_sales' => [],
+        ];
 
         return [
             'id' => $request->id,
@@ -2080,6 +2084,8 @@ class SalesDailySessionService
             'is_late_close' => $isLateClose,
             'late_close_reason' => $request->late_close_reason,
             'business_date' => $businessDate,
+            'instant_sales' => $salesLog['instant_sales'],
+            'profit_sales' => $salesLog['profit_sales'],
         ];
     }
 

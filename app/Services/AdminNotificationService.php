@@ -69,6 +69,8 @@ class AdminNotificationService
 
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
 
+    public const TYPE_NEGATIVE_INSTANT_SALE_STOCK = 'negative_instant_sale_stock';
+
     /**
      * @param  array<string, mixed>  $data
      */

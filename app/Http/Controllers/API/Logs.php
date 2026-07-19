@@ -13,6 +13,7 @@ use App\Models\InstantSale;
 use App\Models\Log;
 use App\Models\Product;
 use App\Models\Seller;
+use App\Support\DashboardSectionBadges;
 use Carbon\Carbon;
 use Exception;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -252,7 +253,7 @@ public function getEmployeesLogs()
   }
     
     // admin home page data 
-    public function homeData(){
+    public function homeData(Request $request){
         try{
 
         $totalDebtsWeOwe = Debt::where('type','we owe')
@@ -282,6 +283,7 @@ public function getEmployeesLogs()
                 'total_expenses' => $totalExpenses,
                 'total_completed_tasks' => $totalCompletedTasks,
                 'total_incompleted_tasks' => $totalIncompletedTasks,
+                'dashboard_badges' => DashboardSectionBadges::forUser($request->user()),
             ],
         ],200);
         }
