@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
+use App\Support\AppUpdateSettings;
 use App\Support\AttendanceSettings;
 use App\Support\SalesDailySettings;
 use App\Support\ShiplySettings;
@@ -53,6 +54,7 @@ class AppSettingsController extends Controller
                 'sales_daily_max_float' => 'sometimes|array',
                 'attendance' => 'sometimes|array',
                 'shiply' => 'sometimes|array',
+                'app_update' => 'sometimes|array',
             ], $maxFloatRules));
 
             if ($request->has('employee_task_subtask_bonus_default')) {
@@ -94,6 +96,9 @@ class AppSettingsController extends Controller
             if ($request->has('shiply') && is_array($request->input('shiply'))) {
                 ShiplySettings::updateFromArray($request->input('shiply'));
             }
+            if ($request->has('app_update') && is_array($request->input('app_update'))) {
+                AppUpdateSettings::updateFromArray($request->input('app_update'));
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -134,6 +139,7 @@ class AppSettingsController extends Controller
             'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),
             'attendance' => AttendanceSettings::toArray(),
             'shiply' => ShiplySettings::toArray(),
+            'app_update' => AppUpdateSettings::all(),
         ];
     }
 }

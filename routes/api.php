@@ -7,6 +7,7 @@ use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\AppSettingsController;
+use App\Http\Controllers\API\AppUpdateController;
 use App\Http\Controllers\API\AdminAttendanceSettingsController;
 use App\Http\Controllers\API\AdminEmployeeAttendanceController;
 use App\Http\Controllers\API\EmployeeAttendanceOvertimeController;
@@ -112,6 +113,7 @@ use App\Http\Controllers\API\MetaCatalogController;
 
     /** صور المتجر القديم (.NET) — بروكسي لـ Flutter Web (CORS) */
     Route::get('/legacy-store-image', [LegacyStoreImageController::class, 'show']);
+    Route::get('/app/update-check', [AppUpdateController::class, 'check']);
 
     // Fingerprint ADMS / Push receiver (public)
     Route::match(['GET', 'POST'], '/fingerprint/push/attendance', [FingerprintPushController::class, 'attendance']);

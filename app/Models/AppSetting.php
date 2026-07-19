@@ -10,6 +10,24 @@ class AppSetting extends Model
     public const KEY_SUBTASK_BONUS_DEFAULT = 'employee_task_subtask_bonus_default';
     public const KEY_ADMIN_FAB_OPTIONS = 'admin_fab_options';
 
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_ACTIVE = 'app_update_admin_android_active';
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_LATEST_VERSION = 'app_update_admin_android_latest_version';
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_LATEST_BUILD = 'app_update_admin_android_latest_build';
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_MINIMUM_BUILD = 'app_update_admin_android_minimum_build';
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_FORCE = 'app_update_admin_android_force';
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_URL = 'app_update_admin_android_url';
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_TITLE = 'app_update_admin_android_title';
+    public const KEY_APP_UPDATE_ADMIN_ANDROID_MESSAGE = 'app_update_admin_android_message';
+
+    public const KEY_APP_UPDATE_ADMIN_IOS_ACTIVE = 'app_update_admin_ios_active';
+    public const KEY_APP_UPDATE_ADMIN_IOS_LATEST_VERSION = 'app_update_admin_ios_latest_version';
+    public const KEY_APP_UPDATE_ADMIN_IOS_LATEST_BUILD = 'app_update_admin_ios_latest_build';
+    public const KEY_APP_UPDATE_ADMIN_IOS_MINIMUM_BUILD = 'app_update_admin_ios_minimum_build';
+    public const KEY_APP_UPDATE_ADMIN_IOS_FORCE = 'app_update_admin_ios_force';
+    public const KEY_APP_UPDATE_ADMIN_IOS_URL = 'app_update_admin_ios_url';
+    public const KEY_APP_UPDATE_ADMIN_IOS_TITLE = 'app_update_admin_ios_title';
+    public const KEY_APP_UPDATE_ADMIN_IOS_MESSAGE = 'app_update_admin_ios_message';
+
     /** JSON array of preset size labels for product add/edit dropdown. */
     public const KEY_PRODUCT_SIZE_OPTIONS = 'product_size_options';
 

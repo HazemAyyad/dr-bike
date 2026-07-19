@@ -20,6 +20,10 @@ class SupportConversationController extends Controller
 {
     public const PERMISSION = 'Technical Support';
 
+    private const ATTACHMENT_MAX_KB = 102400;
+
+    private const ATTACHMENT_MIMES = 'jpg,jpeg,png,webp,heic,heif,pdf,doc,docx,xls,xlsx,txt,mp3,m4a,aac,ogg,wav,mp4,mov,webm,3gp,m4v,avi';
+
     private const ALLOWED_REACTIONS = ['👍', '😂', '✅', '❌', '👎', '❤️', '😮'];
 
     public function __construct(
@@ -86,7 +90,7 @@ class SupportConversationController extends Controller
             'priority' => ['nullable', 'string', Rule::in(SupportConversation::PRIORITIES)],
             'message' => ['nullable', 'string', 'max:5000'],
             'attachments' => ['nullable', 'array', 'max:10'],
-            'attachments.*' => ['file', 'max:32768', 'mimes:jpg,jpeg,png,webp,pdf,doc,docx,xls,xlsx,txt,mp3,m4a,ogg,wav,mp4,mov,webm'],
+            'attachments.*' => ['file', 'max:'.self::ATTACHMENT_MAX_KB, 'mimes:'.self::ATTACHMENT_MIMES],
         ]);
 
         if (! empty($validated['employee_suggestion_id'])) {
@@ -158,7 +162,7 @@ class SupportConversationController extends Controller
         $validated = $request->validate([
             'message' => ['nullable', 'string', 'max:5000'],
             'attachments' => ['nullable', 'array', 'max:10'],
-            'attachments.*' => ['file', 'max:32768', 'mimes:jpg,jpeg,png,webp,pdf,doc,docx,xls,xlsx,txt,mp3,m4a,ogg,wav,mp4,mov,webm'],
+            'attachments.*' => ['file', 'max:'.self::ATTACHMENT_MAX_KB, 'mimes:'.self::ATTACHMENT_MIMES],
         ]);
 
         abort_if(
@@ -213,6 +217,13 @@ class SupportConversationController extends Controller
                     'employee_detail_id' => $request->user()->employee?->id,
                     'reaction' => $reaction,
                 ]
+            );
+
+            $this->notifyAfterReaction(
+                $conversation->fresh(['employee.user:id,name']),
+                $message->fresh(['senderUser:id,name,type', 'senderEmployee.user:id,name']),
+                $request,
+                $reaction
             );
         }
 
@@ -420,6 +431,57 @@ class SupportConversationController extends Controller
         );
     }
 
+    private function notifyAfterReaction(SupportConversation $conversation, SupportMessage $message, Request $request, string $reaction): void
+    {
+        $reactor = $request->user();
+        if (! $reactor || (int) $message->sender_user_id === (int) $reactor->id) {
+            return;
+        }
+
+        $reactorName = (string) ($reactor->name ?? 'مستخدم');
+        $body = "{$reactorName} تفاعل مع رسالتك {$reaction}";
+        $data = array_merge($this->notificationData($conversation, $message), [
+            'reaction' => $reaction,
+            'reactor_user_id' => (string) $reactor->id,
+            'reactor_name' => $reactorName,
+            'source' => 'technical_support_reaction',
+        ]);
+
+        if ($message->sender_employee_id) {
+            $targetEmployee = EmployeeDetail::query()
+                ->with('user:id,name,fcm_token')
+                ->find($message->sender_employee_id);
+
+            if ($targetEmployee) {
+                $this->employeeNotifications->create(
+                    $targetEmployee,
+                    EmployeeNotificationService::TYPE_SUPPORT_MESSAGE,
+                    'تفاعل جديد في الدعم الفني',
+                    $body,
+                    $data,
+                    'support_message_reaction',
+                    $message->id,
+                    true
+                );
+            }
+
+            return;
+        }
+
+        if ($message->senderUser?->type === 'admin') {
+            $this->adminNotifications->create(
+                AdminNotificationService::TYPE_SUPPORT_MESSAGE,
+                'تفاعل جديد في الدعم الفني',
+                $body,
+                $data,
+                $conversation->employee_id,
+                'support_message_reaction',
+                $message->id,
+                true
+            );
+        }
+    }
+
     private function authorizeConversation(Request $request, SupportConversation $conversation): void
     {
         if ($this->canManageSupport($request)) {
@@ -466,9 +528,9 @@ class SupportConversationController extends Controller
         $extension = strtolower((string) ($file->getClientOriginalExtension() ?: $file->extension()));
 
         return match (true) {
-            in_array($extension, ['jpg', 'jpeg', 'png', 'webp'], true) => SupportMessage::TYPE_IMAGE,
+            in_array($extension, ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'], true) => SupportMessage::TYPE_IMAGE,
             in_array($extension, ['mp3', 'm4a', 'aac', 'ogg', 'wav'], true) => SupportMessage::TYPE_AUDIO,
-            in_array($extension, ['mp4', 'mov', 'webm'], true) => SupportMessage::TYPE_VIDEO,
+            in_array($extension, ['mp4', 'mov', 'webm', '3gp', 'm4v', 'avi'], true) => SupportMessage::TYPE_VIDEO,
             str_starts_with($mime, 'image/') => SupportMessage::TYPE_IMAGE,
             str_starts_with($mime, 'audio/') => SupportMessage::TYPE_AUDIO,
             str_starts_with($mime, 'video/') => SupportMessage::TYPE_VIDEO,
