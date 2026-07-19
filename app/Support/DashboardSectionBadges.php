@@ -58,8 +58,8 @@ class DashboardSectionBadges
             'suggestions' => (int) $suggestionsQuery->count(),
             'checks_incoming_red' => self::urgentChecksCount(IncomingCheck::class, 'red'),
             'checks_incoming_yellow' => self::urgentChecksCount(IncomingCheck::class, 'yellow'),
-            'checks_outgoing_red' => self::urgentChecksCount(OutgoingCheck::class, 'red'),
-            'checks_outgoing_yellow' => self::urgentChecksCount(OutgoingCheck::class, 'yellow'),
+            'checks_outgoing_red' => self::urgentChecksCount(OutgoingCheck::class, 'red', ['not_cashed', 'cashed_to_person']),
+            'checks_outgoing_yellow' => self::urgentChecksCount(OutgoingCheck::class, 'yellow', ['not_cashed', 'cashed_to_person']),
         ];
     }
 
@@ -83,20 +83,21 @@ class DashboardSectionBadges
     /**
      * @param class-string<IncomingCheck|OutgoingCheck> $model
      */
-    private static function urgentChecksCount(string $model, string $level): int
+    private static function urgentChecksCount(string $model, string $level, array $statuses = ['not_cashed']): int
     {
-        $today = Carbon::now(EmployeeAttendanceToday::TIMEZONE)->toDateString();
-        $yellowEnd = Carbon::now(EmployeeAttendanceToday::TIMEZONE)->addDays(5)->toDateString();
+        $today = Carbon::now(EmployeeAttendanceToday::TIMEZONE)->startOfDay();
+        $redEnd = $today->copy()->addDay();
+        $yellowEnd = $today->copy()->addDays(6);
 
         $query = $model::query()
-            ->where('status', 'not_cashed')
+            ->whereIn('status', $statuses)
             ->whereNotNull('due_date');
 
         if ($level === 'red') {
-            $query->whereDate('due_date', '<=', $today);
+            $query->whereDate('due_date', '<=', $redEnd->toDateString());
         } else {
-            $query->whereDate('due_date', '>', $today)
-                ->whereDate('due_date', '<=', $yellowEnd);
+            $query->whereDate('due_date', '>', $redEnd->toDateString())
+                ->whereDate('due_date', '<=', $yellowEnd->toDateString());
         }
 
         return (int) $query->count();
