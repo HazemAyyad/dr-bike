@@ -8,6 +8,7 @@ use App\Models\Followup;
 use App\Models\IncomingCheck;
 use App\Models\Maintenance;
 use App\Models\OutgoingCheck;
+use App\Models\SpecialTask;
 use App\Models\SupportConversation;
 use App\Models\SuspendedInstantSale;
 use App\Models\User;
@@ -46,6 +47,8 @@ class DashboardSectionBadges
 
         return [
             'technical_support' => (int) $supportQuery->count(),
+            'employee_tasks_today_pending' => self::employeeTasksTodayPending($user),
+            'special_tasks_today_pending' => self::specialTasksTodayPending(),
             'employees_absent_today' => self::employeesAbsentToday(),
             'maintenance' => (int) Maintenance::query()->where('status', '!=', 'delivered')->count(),
             'follow_up' => (int) Followup::query()
@@ -77,6 +80,30 @@ class DashboardSectionBadges
                 return ! in_array($todayName, $weeklyDaysOff, true)
                     && ! EmployeeAttendanceToday::hasCheckedInToday((int) $employee->id);
             })
+            ->count();
+    }
+
+    private static function employeeTasksTodayPending(User $user): int
+    {
+        $employeeId = (int) ($user->employee?->id ?? 0);
+
+        if ($user->type !== 'admin') {
+            return $employeeId > 0
+                ? EmployeePendingTasksForToday::pendingActionForEmployee($employeeId)->count()
+                : 0;
+        }
+
+        return EmployeeDetail::query()
+            ->pluck('id')
+            ->sum(fn ($id) => EmployeePendingTasksForToday::pendingActionForEmployee((int) $id)->count());
+    }
+
+    private static function specialTasksTodayPending(): int
+    {
+        return (int) SpecialTask::query()
+            ->where('is_canceled', 0)
+            ->where('status', '!=', 'completed')
+            ->whereDate('start_date', EmployeePendingTasksForToday::todayDateString())
             ->count();
     }
 

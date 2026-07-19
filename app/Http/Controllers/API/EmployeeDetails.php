@@ -1691,7 +1691,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     'overtime_request_status' => null,
                     'overtime_requested_minutes' => 0,
                     'overtime_approved_minutes' => null,
-                    'can_edit_day' => false,
+                    'can_edit_day' => $forAdmin,
                     'attendance_status' => $isWeeklyDayOff ? 'weekly_day_off' : 'absent',
                     'attendance_status_label' => $isWeeklyDayOff ? 'عطلة رسمية' : 'عدم حضور',
                     'worked_hours' => $salaryService->formatHours(0),
