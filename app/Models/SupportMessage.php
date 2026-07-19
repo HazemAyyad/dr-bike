@@ -52,4 +52,9 @@ class SupportMessage extends Model
     {
         return $this->hasMany(SupportMessageAttachment::class, 'support_message_id');
     }
+
+    public function reactions(): HasMany
+    {
+        return $this->hasMany(SupportMessageReaction::class, 'support_message_id');
+    }
 }

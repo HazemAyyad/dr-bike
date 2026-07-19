@@ -7,6 +7,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeSuggestion;
 use App\Models\SupportConversation;
 use App\Models\SupportMessage;
+use App\Models\SupportMessageReaction;
 use App\Services\AdminNotificationService;
 use App\Services\EmployeeNotificationService;
 use Illuminate\Http\Request;
@@ -18,6 +19,8 @@ use Illuminate\Validation\Rule;
 class SupportConversationController extends Controller
 {
     public const PERMISSION = 'Technical Support';
+
+    private const ALLOWED_REACTIONS = ['👍', '😂', '✅', '❌', '👎', '❤️', '😮'];
 
     public function __construct(
         protected AdminNotificationService $adminNotifications,
@@ -131,11 +134,11 @@ class SupportConversationController extends Controller
         $this->authorizeConversation($request, $conversation);
 
         $messages = $conversation->messages()
-            ->with(['attachments', 'senderUser:id,name'])
+            ->with(['attachments', 'senderUser:id,name', 'reactions.user:id,name'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(min(max((int) $request->input('per_page', 30), 1), 100))
-            ->through(fn ($message) => $this->messagePayload($message));
+            ->through(fn ($message) => $this->messagePayload($message, (int) $request->user()->id));
 
         return response()->json([
             'status' => 'success',
@@ -168,7 +171,7 @@ class SupportConversationController extends Controller
             $message = $this->createMessage($request, $conversation, $validated['message'] ?? null);
             $this->touchConversationAfterMessage($conversation, $message, $request);
 
-            return $message->fresh(['attachments', 'senderUser:id,name']);
+            return $message->fresh(['attachments', 'senderUser:id,name', 'reactions.user:id,name']);
         });
 
         $this->notifyAfterMessage($conversation->fresh(['employee.user']), $message);
@@ -176,11 +179,51 @@ class SupportConversationController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تم إرسال الرسالة',
-            'support_message' => $this->messagePayload($message),
+            'support_message' => $this->messagePayload($message, (int) $request->user()->id),
             'conversation' => $this->conversationPayload(
                 $conversation->fresh(['employee.user:id,name', 'assignee:id,name', 'suggestion:id,title,category,is_anonymous'])
             ),
         ], 201);
+    }
+
+    public function reactToMessage(Request $request, SupportConversation $conversation, SupportMessage $message)
+    {
+        $this->authorizeConversation($request, $conversation);
+        abort_unless((int) $message->support_conversation_id === (int) $conversation->id, 404);
+
+        $validated = $request->validate([
+            'reaction' => ['nullable', 'string', Rule::in(self::ALLOWED_REACTIONS)],
+        ]);
+
+        $reaction = $validated['reaction'] ?? null;
+        $userId = (int) $request->user()->id;
+
+        if ($reaction === null || $reaction === '') {
+            SupportMessageReaction::query()
+                ->where('support_message_id', $message->id)
+                ->where('user_id', $userId)
+                ->delete();
+        } else {
+            SupportMessageReaction::updateOrCreate(
+                [
+                    'support_message_id' => $message->id,
+                    'user_id' => $userId,
+                ],
+                [
+                    'employee_detail_id' => $request->user()->employee?->id,
+                    'reaction' => $reaction,
+                ]
+            );
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تحديث التفاعل',
+            'support_message' => $this->messagePayload(
+                $message->fresh(['attachments', 'senderUser:id,name', 'reactions.user:id,name']),
+                $userId
+            ),
+        ]);
     }
 
     public function markRead(Request $request, SupportConversation $conversation)
@@ -489,8 +532,11 @@ class SupportConversationController extends Controller
         ];
     }
 
-    private function messagePayload(SupportMessage $message): array
+    private function messagePayload(SupportMessage $message, ?int $viewerUserId = null): array
     {
+        $message->loadMissing('reactions.user:id,name');
+        $reactions = $message->reactions;
+
         return [
             'id' => $message->id,
             'conversation_id' => $message->support_conversation_id,
@@ -509,6 +555,21 @@ class SupportConversationController extends Controller
                 'mime_type' => $attachment->mime_type,
                 'size' => (int) $attachment->size,
             ])->values(),
+            'reactions' => $reactions
+                ->groupBy('reaction')
+                ->map(fn ($items, $reaction) => [
+                    'reaction' => (string) $reaction,
+                    'count' => $items->count(),
+                    'reacted' => $viewerUserId !== null && $items->contains(fn ($item) => (int) $item->user_id === $viewerUserId),
+                    'users' => $items
+                        ->map(fn ($item) => (string) ($item->user?->name ?? ''))
+                        ->filter()
+                        ->values(),
+                ])
+                ->values(),
+            'my_reaction' => $viewerUserId === null
+                ? null
+                : optional($reactions->first(fn ($item) => (int) $item->user_id === $viewerUserId))->reaction,
             'created_at' => optional($message->created_at)->toIso8601String(),
         ];
     }

@@ -1039,6 +1039,9 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
         ->whereNumber('conversation');
     Route::post('/support/conversations/{conversation}/messages', [SupportConversationController::class, 'sendMessage'])
         ->whereNumber('conversation');
+    Route::post('/support/conversations/{conversation}/messages/{message}/reaction', [SupportConversationController::class, 'reactToMessage'])
+        ->whereNumber('conversation')
+        ->whereNumber('message');
     Route::post('/support/conversations/{conversation}/read', [SupportConversationController::class, 'markRead'])
         ->whereNumber('conversation');
     Route::put('/support/conversations/{conversation}/status', [SupportConversationController::class, 'updateStatus'])
