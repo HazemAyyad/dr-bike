@@ -52,6 +52,7 @@ return [
     'task_completed' => 'task is completed',
     'task_completed_by_other' => 'This task was completed by :name and you cannot execute it',
     'task_transfered'=>'task was transfered successfully',
+    'transfer_task_past_day' => 'You cannot transfer the task to a past day',
 
     // update profile
     'profile_updated' => 'personal information were updated successfully',

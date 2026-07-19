@@ -804,7 +804,7 @@ if ($request->has('sub_special_tasks')) {
         ], 200);
     }
     }
-    // change end date
+    // Move the task to a new day.
     public function transerTask(Request $request){
         try{
             $request->validate([
@@ -813,22 +813,42 @@ if ($request->has('sub_special_tasks')) {
 
             ]);
         $task = SpecialTask::findOrFail($request->special_task_id);
-        $endDate = Carbon::parse($request->end_date);
-        $startDate = Carbon::parse($task->start_date);
+        $targetDay = Carbon::parse($request->end_date)->timezone('Asia/Hebron');
+        $today = now()->timezone('Asia/Hebron')->startOfDay();
 
-        if ($endDate->lt($startDate)) {
+        if ($targetDay->copy()->startOfDay()->lt($today)) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.end_date_before_start'),
+                'message' => __('messages.transfer_task_past_day'),
             ], 400);
         }
-        $task->update(['end_date'=>$request->end_date]);
+
+        $newStartDate = $targetDay->copy()->startOfDay();
+        $newEndDate = $targetDay->copy()->endOfDay();
+
+        $updatePayload = [
+            'start_date' => $newStartDate->format('Y-m-d H:i:s'),
+            'end_date' => $newEndDate->format('Y-m-d H:i:s'),
+        ];
+
+        if ($task->task_recurrence === 'weekly') {
+            $updatePayload['task_recurrence_time'] = [
+                strtolower($newStartDate->format('l')),
+            ];
+        } elseif ($task->task_recurrence === 'monthly') {
+            $updatePayload['task_recurrence_time'] = [
+                (string) $newStartDate->day,
+            ];
+        }
+
+        $task->update($updatePayload);
         if(!$task->parent_id){
             SpecialTask::where('parent_id',$task->id)->delete();
+            $task->refresh();
             $this->createHelper($task,$task->task_recurrence);
         }
         Logs::createLog('نقل مهمة خاصة','تم نقل مهمة خاصة باسم'.' '.$task->name
-        .' '.'لتاريخ'.$request->end_date,'special_tasks');
+        .' '.'لتاريخ'.$newStartDate->format('Y-m-d'),'special_tasks');
 
         return response()->json([
             'status'=>'success',

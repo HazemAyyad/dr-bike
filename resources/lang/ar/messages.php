@@ -51,6 +51,7 @@ return [
     'task_completed' => 'تم اكمال المهمة',
     'task_completed_by_other' => 'أنجزت المهمة بواسطة :name ولا يمكنك تنفيذها',
     'task_transfered'=>'تم نقل المهمة بنجاح',
+    'transfer_task_past_day' => 'لا يمكنك نقل المهمة ليوم ماضي',
     // update profile
     'profile_updated' => 'تم تحديث المعلومات الشخصية بنجاح',
 
