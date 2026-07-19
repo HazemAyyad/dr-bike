@@ -15,6 +15,7 @@ use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\ViewImageProduct;
 use App\Services\ProductStockService;
+use App\Support\ProductSearchFilter;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -57,24 +58,7 @@ class Products extends Controller
                 'purchasePrices' => fn ($q) => $q->orderByDesc('id'),
             ]);
 
-        if ($request->filled('search')) {
-            $term = '%'.$request->string('search').'%';
-            $products->where(function ($q) use ($term) {
-                $q->where('nameAr', 'like', $term)
-                    ->orWhere('product_code', 'like', $term)
-                    ->orWhereHas('storeSection', function ($section) use ($term) {
-                        $section->where('name', 'like', $term);
-                    })
-                    ->orWhereHas('sizes', function ($size) use ($term) {
-                        $size->where('size', 'like', $term)
-                            ->orWhereHas('colorSizes', function ($color) use ($term) {
-                                $color->where('colorAr', 'like', $term)
-                                    ->orWhere('colorEn', 'like', $term)
-                                    ->orWhere('colorAbbr', 'like', $term);
-                            });
-                    });
-            });
-        }
+        ProductSearchFilter::apply($products, $request->input('search'));
 
         if ($request->filled('store_section_id')) {
             $storeSectionId = $request->input('store_section_id');

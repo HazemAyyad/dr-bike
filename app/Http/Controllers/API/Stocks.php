@@ -20,6 +20,7 @@ use App\Services\ProductFormService;
 use App\Services\ProductTagService;
 use App\Services\StoreManageItemService;
 use App\Support\ApiImageUrl;
+use App\Support\ProductSearchFilter;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -68,13 +69,7 @@ class Stocks extends Controller
                 }])
                 ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at');
 
-            if ($request->filled('search')) {
-                $term = '%'.$request->string('search').'%';
-                $query->where(function ($q) use ($term) {
-                    $q->where('nameAr', 'like', $term)
-                        ->orWhere('product_code', 'like', $term);
-                });
-            }
+            ProductSearchFilter::apply($query, $request->input('search'));
 
             if ($request->filled('category_id')) {
                 $query->where('category_id', (int) $request->input('category_id'));
@@ -1641,7 +1636,7 @@ class Stocks extends Controller
             $request->validate(['name' => 'required|string']);
             $search = $request->name;
 
-            $products = Product::where('nameAr', 'like', "%{$search}%")
+            $products = ProductSearchFilter::apply(Product::query(), $search)
                 ->with([
                     'viewImages:id,itemId,imageUrl',
                     'normalImages:id,itemId,imageUrl',
