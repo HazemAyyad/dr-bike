@@ -13,6 +13,7 @@ use App\Models\SupportConversation;
 use App\Models\SuspendedInstantSale;
 use App\Models\User;
 use App\Services\AttendanceSalaryService;
+use App\Services\EmployeeTasks\EmployeeTaskListService;
 use Carbon\Carbon;
 
 class DashboardSectionBadges
@@ -88,14 +89,16 @@ class DashboardSectionBadges
         $employeeId = (int) ($user->employee?->id ?? 0);
 
         if ($user->type !== 'admin') {
-            return $employeeId > 0
-                ? EmployeePendingTasksForToday::pendingActionForEmployee($employeeId)->count()
-                : 0;
+            if ($employeeId <= 0) {
+                return 0;
+            }
+
+            return self::ongoingEmployeeTaskItemsForToday()
+                ->filter(fn ($item) => (int) ($item['employee_id'] ?? 0) === $employeeId)
+                ->count();
         }
 
-        return EmployeeDetail::query()
-            ->pluck('id')
-            ->sum(fn ($id) => EmployeePendingTasksForToday::pendingActionForEmployee((int) $id)->count());
+        return self::ongoingEmployeeTaskItemsForToday()->count();
     }
 
     private static function specialTasksTodayPending(): int
@@ -105,6 +108,26 @@ class DashboardSectionBadges
             ->where('status', '!=', 'completed')
             ->whereDate('start_date', EmployeePendingTasksForToday::todayDateString())
             ->count();
+    }
+
+    private static function ongoingEmployeeTaskItemsForToday()
+    {
+        $today = EmployeePendingTasksForToday::todayDateString();
+
+        return app(EmployeeTaskListService::class)
+            ->getOngoingItems(fn ($employee) => '')
+            ->filter(function ($item) use ($today) {
+                $start = $item['start_time'] ?? null;
+                if (! $start) {
+                    return false;
+                }
+
+                return Carbon::parse($start)
+                    ->timezone(EmployeePendingTasksForToday::TIMEZONE)
+                    ->toDateString() === $today;
+            })
+            ->unique(fn ($item) => (string) ($item['task_id'] ?? '').':'.(string) ($item['employee_id'] ?? ''))
+            ->values();
     }
 
     /**
