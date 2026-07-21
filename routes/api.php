@@ -8,6 +8,7 @@ use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\AppSettingsController;
 use App\Http\Controllers\API\AppUpdateController;
+use App\Http\Controllers\API\AppVersionController;
 use App\Http\Controllers\API\AdminAttendanceSettingsController;
 use App\Http\Controllers\API\AdminEmployeeAttendanceController;
 use App\Http\Controllers\API\EmployeeAttendanceOvertimeController;
@@ -154,6 +155,7 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::post('/update/profile' , [Profile::class,'updatePersonalInformation']);
     Route::post('/me' , [Authentication::class,'me']);
     Route::post('/update/fcm-token' , [Authentication::class,'updateFcmToken']);
+    Route::post('/app/version-seen', [AppVersionController::class, 'seen']);
 
     // only for customers
     // orders
@@ -1009,6 +1011,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     Route::get('/app/settings', [AppSettingsController::class, 'show']);
     Route::put('/app/settings', [AppSettingsController::class, 'update']);
+    Route::get('/app/version-report', [AppVersionController::class, 'report']);
 
     // Attendance settings (QR/Fingerprint)
     Route::get('/admin/settings/attendance', [AdminAttendanceSettingsController::class, 'show']);

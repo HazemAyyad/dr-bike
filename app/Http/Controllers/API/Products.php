@@ -88,9 +88,11 @@ class Products extends Controller
                 'store_section_id',
             ]);
 
+        $canViewCostPrice = $request->user()?->canViewCostPrice() ?? false;
+
         $formatted = $products
           ->reject(fn ($product) => (bool) ($settings->get($product->id)?->is_hidden ?? false))
-          ->map(fn ($product) => $this->formatSaleProduct($product, $stockService, $settings))
+          ->map(fn ($product) => $this->formatSaleProduct($product, $stockService, $settings, $canViewCostPrice))
           ->values();
 
             return response()->json([
@@ -148,6 +150,7 @@ class Products extends Controller
 
         $stockService = app(ProductStockService::class);
         $settings = $this->personProductSettingsForRequest($request);
+        $canViewCostPrice = $request->user()?->canViewCostPrice() ?? false;
         $products = Product::query()
             ->with([
                 'projects:product_id,project_id',
@@ -182,7 +185,7 @@ class Products extends Controller
             ->map(fn ($line) => trim((string) $line))
             ->filter()
             ->values()
-            ->map(function (string $line, int $index) use ($products, $settings, $stockService, $aliasRows) {
+            ->map(function (string $line, int $index) use ($products, $settings, $stockService, $aliasRows, $canViewCostPrice) {
                 $parsed = $this->parsePasteLine($line);
                 $normalized = $this->normalizeAlias($parsed['search_text']);
                 $tokens = $this->pasteTokens($parsed['search_text']);
@@ -194,7 +197,7 @@ class Products extends Controller
                         $suggestions[$product->id] = [
                             'score' => 1000 + (int) $alias->times_used,
                             'reason' => 'تعلم سابق',
-                            'product' => $this->formatSaleProduct($product, $stockService, $settings),
+                            'product' => $this->formatSaleProduct($product, $stockService, $settings, $canViewCostPrice),
                         ];
                     }
                 }
@@ -209,7 +212,7 @@ class Products extends Controller
                         $suggestions[$product->id] = [
                             'score' => $score,
                             'reason' => 'تشابه الاسم والكلمات',
-                            'product' => $this->formatSaleProduct($product, $stockService, $settings),
+                            'product' => $this->formatSaleProduct($product, $stockService, $settings, $canViewCostPrice),
                         ];
                     }
                 }
@@ -480,7 +483,7 @@ class Products extends Controller
         ]);
     }
 
-    private function formatSaleProduct(Product $product, ProductStockService $stockService, $settings): array
+    private function formatSaleProduct(Product $product, ProductStockService $stockService, $settings, bool $includeCostPrice = false): array
     {
         $unitPrice = (float) ($product->normailPrice ?? $product->price ?? 0);
         if ($unitPrice <= 0) {
@@ -528,7 +531,7 @@ class Products extends Controller
                 ])
                 ->all();
 
-        if (auth()->user()?->canViewCostPrice()) {
+        if ($includeCostPrice) {
             $row['purchase_cost'] = (float) ($product->purchasePrices->first()?->price ?? 0);
             $row['cost_price'] = $row['purchase_cost'];
         }
