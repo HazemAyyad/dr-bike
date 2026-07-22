@@ -80,13 +80,14 @@ class SpecialTasks extends Controller
             ->withCount([
             'subTasks',
             'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
+            'subTasks as subtasks_closed_count' => fn ($q) => $q->whereIn('status', ['completed', 'canceled', 'rejected']),
         ]);
     }
 
     private function formatSpecialTaskListItem(SpecialTask $task): array
     {
         $subTotal = (int) ($task->sub_tasks_count ?? 0);
-        $subDone = (int) ($task->subtasks_completed_count ?? 0);
+        $subDone = (int) ($task->subtasks_closed_count ?? $task->subtasks_completed_count ?? 0);
 
         if ($subTotal > 0) {
             $progress = $subDone >= $subTotal
@@ -706,14 +707,7 @@ if ($request->has('sub_special_tasks')) {
         Logs::createLog('اكمال مهمة خاصة فرعية','اكمال مهمة خاصة فرعية باسم'.' '.$subTask->name,'special_tasks');
 
         
-        $allSubTasks = SubTask::where('special_task_id',$subTask->special_task_id)
-        ->where('status', '!=', 'completed')
-        ->exists();
-        if(!$allSubTasks){
-            $specialTask = SpecialTask::findOrFail($subTask->special_task_id);
-            $specialTask->update(['status'=>'completed']);
-
-        }
+        $this->markSpecialTaskCompletedIfSubtasksClosed($subTask->special_task_id);
             return response()->json([
             'status' => 'success',
             'message' => __('messages.task_completed'),
@@ -749,6 +743,65 @@ if ($request->has('sub_special_tasks')) {
         ], 200);
     }
     }
+
+    public function cancelSubTask(Request $request){
+        try{
+            $request->validate([
+                'sub_task_id'=>'required|exists:sub_tasks,id',
+            ]);
+
+            $subTask = SubTask::findOrFail($request->sub_task_id);
+            $subTask->update(['status'=>'canceled']);
+
+            Logs::createLog('الغاء مهمة خاصة فرعية','الغاء مهمة خاصة فرعية باسم'.' '.$subTask->name,'special_tasks');
+
+            $this->markSpecialTaskCompletedIfSubtasksClosed($subTask->special_task_id);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.task_canceled'),
+            ], 200);
+        }
+        catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.task_not_found'),
+            ], 200);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+
+        }
+        catch(QueryException $e){
+            return response([
+                'status'=>'error',
+                'message' => __('messages.update_data_error'),
+            ],200);
+        }
+
+        catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    private function markSpecialTaskCompletedIfSubtasksClosed($specialTaskId): void
+    {
+        $hasOpenSubTasks = SubTask::where('special_task_id', $specialTaskId)
+            ->whereNotIn('status', ['completed', 'canceled', 'rejected'])
+            ->exists();
+
+        if (!$hasOpenSubTasks) {
+            $specialTask = SpecialTask::findOrFail($specialTaskId);
+            $specialTask->update(['status'=>'completed']);
+        }
+    }
+
     public function changeSpecialTaskToCompleted(Request $request){
         try{
         $request->validate([
@@ -757,7 +810,7 @@ if ($request->has('sub_special_tasks')) {
 
         $task = SpecialTask::findOrFail($request->special_task_id);
         $hasIncomplete = $task->subTasks()
-            ->where('status', '!=', 'completed')
+            ->whereNotIn('status', ['completed', 'canceled', 'rejected'])
             ->exists();
 
         if ($hasIncomplete) {
