@@ -125,7 +125,14 @@ class EmployeeDetails extends Controller
             'Sales', 'Sales Daily Close Review', 'Sales Cancel Closed Review' => 'sales',
             'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings' => 'stock',
             'Employees Section', 'Employee Tasks', 'Special Tasks', 'Employee Impersonation',
-            'Edit Employee Task', 'Clone Employee Task' => 'employees',
+            'Edit Employee Task', 'Clone Employee Task',
+            'Employees View', 'Employees Create', 'Employees Edit Basic', 'Employees Delete',
+            'Employees Permissions View', 'Employees Permissions Manage',
+            'Employees Financial View', 'Employees Salary Pay',
+            'Employees Points View', 'Employees Points Manage',
+            'Employees Attendance View', 'Employees Attendance Manage',
+            'Employees Logs View', 'Employees Orders Manage',
+            'Employees Fingerprint Manage', 'Employees Rewards Rules Manage' => 'employees',
             'Debts', 'Boxes Section', 'Expenses and Financial Affairs', 'Checks', 'Daily Boxes' => 'financial',
             'Maintenance' => 'maintenance',
             'Messages Section', 'Technical Support' => 'communication',
@@ -189,6 +196,10 @@ class EmployeeDetails extends Controller
             return $requestedPermissionIds;
         }
 
+        if (! $this->actorCanManageEmployeePermissions($request)) {
+            return $existingPermissionIds;
+        }
+
         $actorEmployeeId = (int) optional($actor->employee)->id;
         if ($actor->type === 'employee' && $actorEmployeeId === (int) $employee->id) {
             return $existingPermissionIds;
@@ -203,6 +214,38 @@ class EmployeeDetails extends Controller
         $editableRequestedIds = array_values(array_diff($requestedPermissionIds, $adminOnlyIds));
 
         return array_values(array_unique(array_merge($editableRequestedIds, $preservedAdminOnlyIds)));
+    }
+
+    private function actorCanManageEmployeePermissions(Request $request): bool
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return false;
+        }
+
+        if ($actor->type === 'admin') {
+            return true;
+        }
+
+        return (bool) $actor->employee?->permissions()
+            ->whereHas('permission', fn ($q) => $q->where('name_en', 'Employees Permissions Manage'))
+            ->exists();
+    }
+
+    private function actorCanManageEmployeeFingerprint(Request $request): bool
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return false;
+        }
+
+        if ($actor->type === 'admin') {
+            return true;
+        }
+
+        return (bool) $actor->employee?->permissions()
+            ->whereHas('permission', fn ($q) => $q->where('name_en', 'Employees Fingerprint Manage'))
+            ->exists();
     }
 
     private function normalizeDeviceUserId(mixed $value): ?string
@@ -916,13 +959,19 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             'weekly_days_off' => $this->normalizeWeeklyDaysOff($data['weekly_days_off'] ?? null),
             'employee_img' => $employeeImage,
             'document_img' => $documentImage,
-            'fingerprint_enabled' => (bool) ($data['fingerprint_enabled'] ?? false),
-            'device_user_id' => $this->normalizeDeviceUserId($data['device_user_id'] ?? null),
+            'fingerprint_enabled' => $this->actorCanManageEmployeeFingerprint($request)
+                ? (bool) ($data['fingerprint_enabled'] ?? false)
+                : false,
+            'device_user_id' => $this->actorCanManageEmployeeFingerprint($request)
+                ? $this->normalizeDeviceUserId($data['device_user_id'] ?? null)
+                : null,
 
         ]);
 
 
-        $newPermissionIds = $this->normalizePermissionIds($data['permissions'] ?? []);
+        $newPermissionIds = $this->actorCanManageEmployeePermissions($request)
+            ? $this->normalizePermissionIds($data['permissions'] ?? [])
+            : [];
         if (($request->user()?->type ?? null) === 'employee') {
             $newPermissionIds = array_values(array_diff(
                 $newPermissionIds,
@@ -1062,6 +1111,10 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         
         if (array_key_exists('device_user_id', $updateData)) {
             $updateData['device_user_id'] = $this->normalizeDeviceUserId($updateData['device_user_id']);
+        }
+
+        if (! $this->actorCanManageEmployeeFingerprint($request)) {
+            unset($updateData['fingerprint_enabled'], $updateData['device_user_id']);
         }
 
         $finalData = array_merge($updateData,

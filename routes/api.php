@@ -22,6 +22,7 @@ use App\Http\Controllers\API\Bills;
 use App\Http\Controllers\API\Boxes;
 use App\Http\Controllers\API\BoxLogs;
 use App\Http\Controllers\API\Customers;
+use App\Http\Controllers\API\DatabaseBackupController;
 use App\Http\Controllers\API\Debts;
 use App\Http\Controllers\API\DebtLedger;
 use App\Http\Controllers\API\Deposits;
@@ -200,93 +201,145 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Special Tasks','re
 
 });
 
-Route::group(['middleware'=>['auth:sanctum','check.permission:Employees Section','refresh.token.expiry']] , function() {
+Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function() {
     // employees
-    Route::post('/create/employee' , [EmployeeDetails::class,'addEmployee']);
-    Route::get('/working/times' , [EmployeeDetails::class,'workingTimes']);
-    Route::get('/financial/dues' , [EmployeeDetails::class,'financialDues']);
-    Route::post('/edit/employee' , [EmployeeDetails::class,'editEmployee']);
-    Route::post('/delete/employee' , [EmployeeDetails::class,'deleteEmployee']);
-    Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions']);
-    Route::post('/employee/permissions' , [EmployeeDetails::class,'getEmployeePermissions']);
+    Route::post('/create/employee' , [EmployeeDetails::class,'addEmployee'])
+        ->middleware('check.permission:Employees Create');
+    Route::get('/working/times' , [EmployeeDetails::class,'workingTimes'])
+        ->middleware('check.permission:Employees Attendance View');
+    Route::get('/financial/dues' , [EmployeeDetails::class,'financialDues'])
+        ->middleware('check.permission:Employees Financial View');
+    Route::post('/edit/employee' , [EmployeeDetails::class,'editEmployee'])
+        ->middleware('check.permission:Employees Edit Basic');
+    Route::post('/delete/employee' , [EmployeeDetails::class,'deleteEmployee'])
+        ->middleware('check.permission:Employees Delete');
+    Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions'])
+        ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
+    Route::post('/employee/permissions' , [EmployeeDetails::class,'getEmployeePermissions'])
+        ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
 
-    Route::post('/add/points/to/employee' , [EmployeeDetails::class,'addPoints']);
-    Route::post('/minus/points/from/employee' , [EmployeeDetails::class,'minusPoints']);
+    Route::post('/add/points/to/employee' , [EmployeeDetails::class,'addPoints'])
+        ->middleware('check.permission:Employees Points Manage');
+    Route::post('/minus/points/from/employee' , [EmployeeDetails::class,'minusPoints'])
+        ->middleware('check.permission:Employees Points Manage');
 
-    Route::post('/show/employee/financial/details' , [EmployeeDetails::class,'showFinancialDetails']);
-    Route::post('/pay/employee/salary' , [EmployeeDetails::class,'paySalary']);
-    Route::post('/get/employee/financial/data/report' , [EmployeeDetails::class,'employeeReportData']);
+    Route::post('/show/employee/financial/details' , [EmployeeDetails::class,'showFinancialDetails'])
+        ->middleware('check.permission:Employees Financial View');
+    Route::post('/pay/employee/salary' , [EmployeeDetails::class,'paySalary'])
+        ->middleware('check.permission:Employees Salary Pay');
+    Route::post('/get/employee/financial/data/report' , [EmployeeDetails::class,'employeeReportData'])
+        ->middleware('check.permission:Employees Financial View');
 
-    Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs']);
-    Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory']);
-    Route::get('/employee/attendance/weekly-off-import-candidates', [EmployeeDetails::class, 'weeklyOffAttendanceImportCandidates']);
-    Route::post('/employee/attendance/import-weekly-off-day', [EmployeeDetails::class, 'importWeeklyOffAttendanceDay']);
+    Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs'])
+        ->middleware('check.permission:Employees Logs View');
+    Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory'])
+        ->middleware('check.permission:Employees Attendance View');
+    Route::get('/employee/attendance/weekly-off-import-candidates', [EmployeeDetails::class, 'weeklyOffAttendanceImportCandidates'])
+        ->middleware('check.permission:Employees Attendance Manage');
+    Route::post('/employee/attendance/import-weekly-off-day', [EmployeeDetails::class, 'importWeeklyOffAttendanceDay'])
+        ->middleware('check.permission:Employees Attendance Manage');
     Route::post('/admin/employees/{employeeId}/attendance/manual-checkout', [AdminEmployeeAttendanceController::class, 'manualCheckout'])
-        ->whereNumber('employeeId');
+        ->whereNumber('employeeId')
+        ->middleware('check.permission:Employees Attendance Manage');
     Route::put('/admin/employees/{employeeId}/attendance/day', [AdminEmployeeAttendanceController::class, 'updateDay'])
-        ->whereNumber('employeeId');
-    Route::get('/employee/attendance/overtime-requests', [EmployeeAttendanceOvertimeController::class, 'index']);
+        ->whereNumber('employeeId')
+        ->middleware('check.permission:Employees Attendance Manage');
+    Route::get('/employee/attendance/overtime-requests', [EmployeeAttendanceOvertimeController::class, 'index'])
+        ->middleware('check.permission:Employees Attendance View,Employees Orders Manage');
     Route::post('/employee/attendance/overtime-requests/{requestId}/approve', [EmployeeAttendanceOvertimeController::class, 'approve'])
-        ->whereNumber('requestId');
+        ->whereNumber('requestId')
+        ->middleware('check.permission:Employees Attendance Manage,Employees Orders Manage');
     Route::post('/employee/attendance/overtime-requests/{requestId}/reject', [EmployeeAttendanceOvertimeController::class, 'reject'])
-        ->whereNumber('requestId');
-    Route::get('/employee-attendance/reports', [EmployeeAttendanceReportController::class, 'index']);
+        ->whereNumber('requestId')
+        ->middleware('check.permission:Employees Attendance Manage,Employees Orders Manage');
+    Route::get('/employee-attendance/reports', [EmployeeAttendanceReportController::class, 'index'])
+        ->middleware('check.permission:Employees Attendance View');
 
     // Employee points and rewards (manual management)
-    Route::get('/employees/points/categories', [EmployeePointsController::class, 'categories']);
+    Route::get('/employees/points/categories', [EmployeePointsController::class, 'categories'])
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
     Route::post('/employees/{employee}/points/add', [EmployeePointsController::class, 'add'])
-        ->whereNumber('employee');
+        ->whereNumber('employee')
+        ->middleware('check.permission:Employees Points Manage');
     Route::post('/employees/{employee}/points/deduct', [EmployeePointsController::class, 'deduct'])
-        ->whereNumber('employee');
+        ->whereNumber('employee')
+        ->middleware('check.permission:Employees Points Manage');
     Route::get('/employees/{employee}/points/logs', [EmployeePointsController::class, 'logs'])
-        ->whereNumber('employee');
+        ->whereNumber('employee')
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
     Route::get('/employees/{employee}/points/monthly-summary', [EmployeePointsController::class, 'monthlySummary'])
-        ->whereNumber('employee');
+        ->whereNumber('employee')
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
 
     // Global points (admin only manages all employees in one place)
-    Route::get('/employee-points/employees', [EmployeePointsController::class, 'globalEmployees']);
-    Route::get('/employee-points/reports', [EmployeePointsController::class, 'globalReport']);
+    Route::get('/employee-points/employees', [EmployeePointsController::class, 'globalEmployees'])
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
+    Route::get('/employee-points/reports', [EmployeePointsController::class, 'globalReport'])
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
 
     // Reward rules CRUD
-    Route::get('/employee-reward-rules', [EmployeeRewardRuleController::class, 'index']);
-    Route::post('/employee-reward-rules', [EmployeeRewardRuleController::class, 'store']);
+    Route::get('/employee-reward-rules', [EmployeeRewardRuleController::class, 'index'])
+        ->middleware('check.permission:Employees Rewards Rules Manage');
+    Route::post('/employee-reward-rules', [EmployeeRewardRuleController::class, 'store'])
+        ->middleware('check.permission:Employees Rewards Rules Manage');
     Route::put('/employee-reward-rules/{id}', [EmployeeRewardRuleController::class, 'update'])
-        ->whereNumber('id');
+        ->whereNumber('id')
+        ->middleware('check.permission:Employees Rewards Rules Manage');
     Route::delete('/employee-reward-rules/{id}', [EmployeeRewardRuleController::class, 'destroy'])
-        ->whereNumber('id');
+        ->whereNumber('id')
+        ->middleware('check.permission:Employees Rewards Rules Manage');
 
     // Point categories CRUD (admin defines the value of each behavior)
-    Route::get('/employee-point-categories', [EmployeePointCategoryController::class, 'index']);
-    Route::post('/employee-point-categories', [EmployeePointCategoryController::class, 'store']);
+    Route::get('/employee-point-categories', [EmployeePointCategoryController::class, 'index'])
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
+    Route::post('/employee-point-categories', [EmployeePointCategoryController::class, 'store'])
+        ->middleware('check.permission:Employees Points Manage');
     Route::put('/employee-point-categories/{id}', [EmployeePointCategoryController::class, 'update'])
-        ->whereNumber('id');
+        ->whereNumber('id')
+        ->middleware('check.permission:Employees Points Manage');
     Route::delete('/employee-point-categories/{id}', [EmployeePointCategoryController::class, 'destroy'])
-        ->whereNumber('id');
+        ->whereNumber('id')
+        ->middleware('check.permission:Employees Points Manage');
 
     // Banks (checks)
-    Route::get('/banks', [BanksController::class, 'index']);
-    Route::post('/banks', [BanksController::class, 'store']);
-    Route::post('/banks/find-or-create', [BanksController::class, 'findOrCreate']);
-    Route::put('/banks/{id}', [BanksController::class, 'update'])->whereNumber('id');
-    Route::delete('/banks/{id}', [BanksController::class, 'destroy'])->whereNumber('id');
+    Route::get('/banks', [BanksController::class, 'index'])
+        ->middleware('check.permission:Employees Section');
+    Route::post('/banks', [BanksController::class, 'store'])
+        ->middleware('check.permission:Employees Section');
+    Route::post('/banks/find-or-create', [BanksController::class, 'findOrCreate'])
+        ->middleware('check.permission:Employees Section');
+    Route::put('/banks/{id}', [BanksController::class, 'update'])->whereNumber('id')
+        ->middleware('check.permission:Employees Section');
+    Route::delete('/banks/{id}', [BanksController::class, 'destroy'])->whereNumber('id')
+        ->middleware('check.permission:Employees Section');
 
 
        // employee orders
-      Route::get('/employee/loan/orders' , [EmployeeOrders::class,'employeeLoanOrders']);
-      Route::get('/employee/overtime/orders' , [EmployeeOrders::class,'employeeOvertimeOrders']);
+      Route::get('/employee/loan/orders' , [EmployeeOrders::class,'employeeLoanOrders'])
+          ->middleware('check.permission:Employees Orders Manage');
+      Route::get('/employee/overtime/orders' , [EmployeeOrders::class,'employeeOvertimeOrders'])
+          ->middleware('check.permission:Employees Orders Manage');
       Route::get('/employees/{employee}/advances' , [EmployeeOrders::class,'employeeAdvancesByMonth'])
-          ->whereNumber('employee');
+          ->whereNumber('employee')
+          ->middleware('check.permission:Employees Financial View,Employees Orders Manage');
 
-      Route::post('/approve/employee/loan/order' , [EmployeeOrders::class,'approveLoanRequest']);
-      Route::post('/reject/employee/order' , [EmployeeOrders::class,'reject']);
+      Route::post('/approve/employee/loan/order' , [EmployeeOrders::class,'approveLoanRequest'])
+          ->middleware('check.permission:Employees Orders Manage');
+      Route::post('/reject/employee/order' , [EmployeeOrders::class,'reject'])
+          ->middleware('check.permission:Employees Orders Manage');
    
-      Route::post('/show/employee/loan/order' , [EmployeeOrders::class,'showLoanOrder']);
-      Route::post('/show/employee/overtime/order' , [EmployeeOrders::class,'showOvertimeOrder']);
-      Route::post('/approve/employee/overtime/order' , [EmployeeOrders::class,'approveOvertimeRequest']);
+      Route::post('/show/employee/loan/order' , [EmployeeOrders::class,'showLoanOrder'])
+          ->middleware('check.permission:Employees Orders Manage');
+      Route::post('/show/employee/overtime/order' , [EmployeeOrders::class,'showOvertimeOrder'])
+          ->middleware('check.permission:Employees Orders Manage');
+      Route::post('/approve/employee/overtime/order' , [EmployeeOrders::class,'approveOvertimeRequest'])
+          ->middleware('check.permission:Employees Orders Manage');
 
     // qr generation
-    Route::get('/qr-generation', [AttendanceController::class, 'generateQr']);
-    Route::get('/qr-history', [AttendanceController::class, 'qrHistory']);
+    Route::get('/qr-generation', [AttendanceController::class, 'generateQr'])
+        ->middleware('check.permission:Employees Attendance Manage');
+    Route::get('/qr-history', [AttendanceController::class, 'qrHistory'])
+        ->middleware('check.permission:Employees Attendance View,Employees Attendance Manage');
 
 
 });
@@ -762,7 +815,7 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales','refresh.
    Route::post('/add/deposit' , [Deposits::class,'store']);
   });
 
-Route::group(['middleware' => ['auth:sanctum','check.permission:Employees Section,Employee Tasks,Goal Creation','refresh.token.expiry']], function () {
+Route::group(['middleware' => ['auth:sanctum','check.permission:Employees View,Employees Section,Employee Tasks,Goal Creation','refresh.token.expiry']], function () {
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
 
   });
@@ -996,6 +1049,9 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     Route::get('/admin/cron-job-logs', [\App\Http\Controllers\API\CronJobLogController::class, 'index']);
     Route::get('/admin/cron-job-logs/{id}', [\App\Http\Controllers\API\CronJobLogController::class, 'show']);
+    Route::get('/admin/database-backups', [DatabaseBackupController::class, 'index']);
+    Route::get('/admin/database-backups/{filename}/download', [DatabaseBackupController::class, 'download'])
+        ->where('filename', '[^/]+');
 
     Route::get('/admin/employee-suggestions', [EmployeeSuggestionsController::class, 'adminIndex']);
     Route::put('/admin/employee-suggestions/{suggestion}', [EmployeeSuggestionsController::class, 'update'])
