@@ -13,6 +13,7 @@ use App\Models\Product;
 use App\Models\Project;
 use App\Models\SalesOrder;
 use App\Models\Seller;
+use App\Models\SizeColor;
 use App\Services\AdminNotificationService;
 use App\Services\CustomerProductPriceHistoryService;
 use App\Services\DebtLedgerService;
@@ -49,8 +50,15 @@ class InstantSales extends Controller
         return $saleKind === self::SALE_KIND_ADJUSTMENT;
     }
 
-    private function invoiceProductImage(?Product $product): string
+    private function invoiceProductImage(?Product $product, ?SizeColor $sizeColor = null): string
     {
+        if ($sizeColor instanceof SizeColor) {
+            $variantImage = trim((string) $sizeColor->image_url);
+            if ($variantImage !== '' && strtolower($variantImage) !== 'no image') {
+                return ApiImageUrl::normalize($variantImage);
+            }
+        }
+
         if ($product === null) {
             return 'no image';
         }
@@ -59,6 +67,19 @@ class InstantSales extends Controller
             ?? $product->normalImages->first();
 
         return $image ? ApiImageUrl::normalize($image->imageUrl) : 'no image';
+    }
+
+    private function hasRemainingInstantSaleAmount(array $data, Request $request): bool
+    {
+        $total = round((float) ($data['total_cost'] ?? 0), 2);
+        $paid = round((float) $request->input('payment_box_value', 0), 2);
+
+        return max(0, $total - min($paid, $total)) > 0.009;
+    }
+
+    private function hasRequiredDebtBuyer(Request $request): bool
+    {
+        return $request->filled('buyer_id') || $request->filled('seller_id');
     }
 
     private const TRADER_CUSTOMER_TYPES = [
@@ -1038,6 +1059,17 @@ public function store(Request $request)
             round($mainLineTotal + $otherProductsTotal + $additionalNotesTotal - (float) ($mainData['discount'] ?? 0), 2)
         );
 
+        if ($this->hasRemainingInstantSaleAmount($mainData, $request) && ! $this->hasRequiredDebtBuyer($request)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'عند وجود مبلغ باقي يجب اختيار زبون أو تاجر.',
+                'errors' => [
+                    'buyer_id' => ['عند وجود مبلغ باقي يجب اختيار زبون أو تاجر.'],
+                    'seller_id' => ['عند وجود مبلغ باقي يجب اختيار زبون أو تاجر.'],
+                ],
+            ], 200);
+        }
+
         $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
         $stockService = app(ProductStockService::class);
 
@@ -1371,6 +1403,17 @@ public function store(Request $request)
                 'type' => $data['type'],
                 'project_id' => $data['project_id'] ?? null,
             ], $buyerPayload, $paymentBoxPayload, $auditAndSession));
+
+            if ($this->hasRemainingInstantSaleAmount($mainData, $request) && ! $this->hasRequiredDebtBuyer($request)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'عند وجود مبلغ باقي يجب اختيار زبون أو تاجر.',
+                    'errors' => [
+                        'buyer_id' => ['عند وجود مبلغ باقي يجب اختيار زبون أو تاجر.'],
+                        'seller_id' => ['عند وجود مبلغ باقي يجب اختيار زبون أو تاجر.'],
+                    ],
+                ], 200);
+            }
 
             if ($replaceId > 0) {
                 $mainInstantSale = InstantSale::lockForUpdate()->findOrFail($replaceId);
@@ -2247,7 +2290,7 @@ public function edit(Request $request)
                 ...$variantFields,
                 'product_image' => $isPackageSale
                     ? app(OfferPackageService::class)->imagePublicPath($sale->offerPackage?->image_path)
-                    : $this->invoiceProductImage($sale->product),
+                    : $this->invoiceProductImage($sale->product, $sale->sizeColor),
                 'cost' => $sale->cost,
                 'quantity' => $sale->quantity,
                 'subtotal' => $subtotalBeforeDiscount,
@@ -2292,7 +2335,7 @@ public function edit(Request $request)
                         'project_id' => $sub->project_id,
                         ...$this->formatInstantSaleSubProductDisplay($subBase, $subVariant),
                         ...$subVariant,
-                        'product_image' => $this->invoiceProductImage($sub->product),
+                        'product_image' => $this->invoiceProductImage($sub->product, $sub->sizeColor),
                         'cost' => $sub->cost,
                         'quantity' => $sub->quantity,
                         'subtotal' => $lineSubtotal,

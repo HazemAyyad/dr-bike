@@ -119,6 +119,50 @@ class EmployeeDetails extends Controller
             ->all();
     }
 
+    private function permissionGroupKey(?string $nameEn): string
+    {
+        return match ($nameEn) {
+            'Sales', 'Sales Daily Close Review', 'Sales Cancel Closed Review' => 'sales',
+            'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings' => 'stock',
+            'Employees Section', 'Employee Tasks', 'Special Tasks', 'Employee Impersonation',
+            'Edit Employee Task', 'Clone Employee Task' => 'employees',
+            'Debts', 'Boxes Section', 'Expenses and Financial Affairs', 'Checks', 'Daily Boxes' => 'financial',
+            'Maintenance' => 'maintenance',
+            'Messages Section', 'Technical Support' => 'communication',
+            default => 'general',
+        };
+    }
+
+    private function permissionGroupName(string $groupKey): string
+    {
+        return match ($groupKey) {
+            'sales' => 'المبيعات',
+            'stock' => 'المخزون والمشتريات',
+            'employees' => 'الموظفين والمهام',
+            'financial' => 'المالية والصناديق',
+            'maintenance' => 'الصيانة',
+            'communication' => 'التواصل والدعم',
+            default => 'إعدادات عامة',
+        };
+    }
+
+    private function formatSystemPermission(Permission $permission): array
+    {
+        $groupKey = $this->permissionGroupKey($permission->name_en);
+
+        return [
+            'id' => (int) $permission->id,
+            'name' => $permission->name,
+            'name_en' => $permission->name_en,
+            'permission_id' => (int) $permission->id,
+            'permission_name' => $permission->name,
+            'permission_name_en' => $permission->name_en,
+            'group_key' => $groupKey,
+            'group_name' => $this->permissionGroupName($groupKey),
+            'admin_only' => in_array($permission->name_en, $this->adminOnlyGrantablePermissionNames(), true),
+        ];
+    }
+
     /**
      * @param array<int|string> $permissionIds
      * @return int[]
@@ -1152,9 +1196,18 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
     // retrieve the permissions in the system
     public function allPermissions(){
         try{
-            $permissions = Permission::get(['id','name','name_en']);
+            $query = Permission::query()->orderBy('id');
+            if (($requestUser = request()->user()) && $requestUser->type === 'employee') {
+                $query->whereNotIn('name_en', $this->adminOnlyGrantablePermissionNames());
+            }
+
+            $permissions = $query
+                ->get(['id','name','name_en'])
+                ->map(fn (Permission $permission) => $this->formatSystemPermission($permission))
+                ->values();
             return response()->json([
                 'status' => 'success',
+                'permissions' => $permissions,
                 'permissions of the system' => $permissions], 200);
         } catch (QueryException $e) {
             return response(['status' => 'error', 'message' => __('messages.retrieve_data_error')], 200);
