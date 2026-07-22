@@ -13,7 +13,6 @@ class InstantSale extends Model
 
     protected $fillable = [
         'product_id',
-        'product_name',
         'size_id',
         'size_color_id',
         'offer_package_id',
