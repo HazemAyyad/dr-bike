@@ -366,6 +366,18 @@ class InstantSales extends Controller
         return rtrim(rtrim(number_format($amount, 2, '.', ''), '0'), '.');
     }
 
+    private function instantSaleProductNameSnapshot(?Product $product, mixed $requestedName = null): string
+    {
+        $name = trim((string) ($requestedName ?? ''));
+        if ($name !== '') {
+            return mb_substr($name, 0, 255);
+        }
+
+        $name = trim((string) ($product?->nameAr ?? ''));
+
+        return $name !== '' ? mb_substr($name, 0, 255) : 'منتج';
+    }
+
     /**
      * @return array{
      *     size_color_id: int|null,
@@ -504,7 +516,7 @@ class InstantSales extends Controller
             $packageName = $mainSale->offerPackage?->name ?? 'باكيج';
             $parts[] = $packageName.' × '.$this->saleLineQuantity($mainSale);
         } else {
-            $mainName = $mainSale->product?->nameAr ?? 'منتج';
+            $mainName = $mainSale->product_name ?: ($mainSale->product?->nameAr ?? 'منتج');
             $parts[] = $mainName.' × '.$this->saleLineQuantity($mainSale);
         }
 
@@ -512,7 +524,7 @@ class InstantSales extends Controller
             if ($sub->isCancelled()) {
                 continue;
             }
-            $subName = $sub->product?->nameAr ?? 'منتج';
+            $subName = $sub->product_name ?: ($sub->product?->nameAr ?? 'منتج');
             $parts[] = $subName.' × '.$this->saleLineQuantity($sub);
         }
 
@@ -935,6 +947,7 @@ public function store(Request $request)
     $data = $request->validate([
         'offer_package_id' => 'nullable|integer|exists:offer_packages,id',
         'product_id' => 'required_without:offer_package_id|nullable|exists:products,id',
+        'product_name' => 'nullable|string|max:255',
         'quantity' => 'required|numeric|min:1',
         'cost' => 'required|numeric|min:0',
         'discount' => 'required|numeric|min:0',
@@ -951,6 +964,7 @@ public function store(Request $request)
 
         'other_products' => 'nullable|array',
         'other_products.*.product_id' => 'required|exists:products,id',
+        'other_products.*.product_name' => 'nullable|string|max:255',
         'other_products.*.size_color_id' => 'nullable|integer|exists:size_colors,id',
         'other_products.*.size_id' => 'nullable|integer|exists:sizes,id',
         'other_products.*.cost' => 'required|numeric|min:0',
@@ -1101,6 +1115,10 @@ public function store(Request $request)
             $mainData['size_id'] = $mainStockCheck['size_id'] ?? ($data['size_id'] ?? null);
         }
 
+        if (Schema::hasColumn('instant_sales', 'product_name')) {
+            $mainData['product_name'] = $this->instantSaleProductNameSnapshot($mainProduct, $data['product_name'] ?? null);
+        }
+
 
 
         if ($request->has('other_products')) {
@@ -1214,6 +1232,7 @@ public function store(Request $request)
 
                 $subSale = InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                     'product_id' => $product['product_id'],
+                    'product_name' => $this->instantSaleProductNameSnapshot($subProduct, $product['product_name'] ?? null),
                     'size_color_id' => $lineSizeColorId > 0 ? $lineSizeColorId : null,
                     'size_id' => $lineCheck['size_id'] ?? ($product['size_id'] ?? null),
                     'cost' => $product['cost'],
@@ -1443,6 +1462,7 @@ public function store(Request $request)
 
                 InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                     'product_id' => $item->product_id,
+                    'product_name' => $this->instantSaleProductNameSnapshot($subProduct),
                     'cost' => 0,
                     'quantity' => $lineQty,
                     'discount' => 0,
@@ -1498,6 +1518,7 @@ public function store(Request $request)
 
                     InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                         'product_id' => $item['product_id'],
+                        'product_name' => $this->instantSaleProductNameSnapshot($subProduct, $item['product_name'] ?? null),
                         'cost' => $lineCost,
                         'quantity' => $lineQty,
                         'discount' => 0,
@@ -1761,7 +1782,7 @@ public function store(Request $request)
                 $variantFields = $this->formatInstantSaleVariantFields($isPackageSale ? null : $sale);
                 $baseProductName = $isPackageSale
                     ? ($packageName ?? 'باكيج محذوف')
-                    : (optional($sale->product)->nameAr ?? 'منتج محذوف');
+                    : ($sale->product_name ?: (optional($sale->product)->nameAr ?? 'منتج محذوف'));
                 $productDisplay = $isPackageSale
                     ? ['product_base' => $baseProductName, 'product' => $baseProductName]
                     : $this->formatInstantSaleProductDisplay($baseProductName, $variantFields);
@@ -1808,7 +1829,7 @@ public function store(Request $request)
                 'sub_products' => $sale->subProducts->map(function ($sub) use ($isPackageSale) {
                     $lineCost = (float) $sub->cost;
                     $subVariant = $this->formatInstantSaleVariantFields($sub);
-                    $subBase = optional($sub->product)->nameAr ?? 'منتج محذوف';
+                    $subBase = $sub->product_name ?: (optional($sub->product)->nameAr ?? 'منتج محذوف');
 
                     return [
                         'id' => $sub->id,
@@ -2251,7 +2272,7 @@ public function edit(Request $request)
                 : 'product';
             $displayName = $isPackageSale
                 ? ($sale->offerPackage?->name ?? 'باكيج محذوف')
-                : ($sale->product?->nameAr ?? '-');
+                : ($sale->product_name ?: ($sale->product?->nameAr ?? '-'));
             $variantFields = $this->formatInstantSaleVariantFields($isPackageSale ? null : $sale);
             $productDisplay = $isPackageSale
                 ? ['product_base' => $displayName, 'product' => $displayName]
@@ -2323,7 +2344,7 @@ public function edit(Request $request)
                     $lineCost = (float) $sub->cost;
                     $lineSubtotal = $lineCost * (float) $sub->quantity;
                     $subVariant = $this->formatInstantSaleVariantFields($sub);
-                    $subBase = $sub->product?->nameAr ?? '-';
+                    $subBase = $sub->product_name ?: ($sub->product?->nameAr ?? '-');
 
                     return [
                         'id' => $sub->id,
