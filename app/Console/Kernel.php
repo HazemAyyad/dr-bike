@@ -80,7 +80,7 @@ class Kernel extends ConsoleKernel
             ->timezone('Asia/Hebron');
 
         $schedule->command('database:backup')
-            ->everySixHours()
+            ->hourly()
             ->timezone('Asia/Hebron')
             ->withoutOverlapping()
             ->runInBackground();

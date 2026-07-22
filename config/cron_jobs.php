@@ -33,7 +33,7 @@ return [
             'label' => 'نسخة احتياطية من قاعدة البيانات',
             'description' => 'إنشاء ملف SQL من قاعدة بيانات MySQL وحفظه داخل storage/app/backups/database مع حذف النسخ القديمة حسب DB_BACKUP_KEEP_DAYS.',
             'scheduled' => true,
-            'schedule_human' => 'كل 6 ساعات (Asia/Hebron)',
+            'schedule_human' => 'كل ساعة (Asia/Hebron)',
         ],
         'sync:store' => [
             'label' => 'مزامنة المتجر',

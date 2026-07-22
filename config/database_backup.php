@@ -14,7 +14,7 @@ return [
 
     'path' => env('DB_BACKUP_PATH', storage_path('app/backups/database')),
 
-    'keep_days' => (int) env('DB_BACKUP_KEEP_DAYS', 14),
+    'keep_days' => (int) env('DB_BACKUP_KEEP_DAYS', 4),
 
     'mysqldump_binary' => env('MYSQLDUMP_BINARY', 'mysqldump'),
 ];
