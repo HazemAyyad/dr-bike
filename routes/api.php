@@ -195,6 +195,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Special Tasks','re
     Route::post('/change/sub/special/task/to/completed' ,
      [SpecialTasks::class,'changeSubTaskToCompleted'])
     ;
+    Route::post('/change/sub/special/task/to/pending' , [SpecialTasks::class,'changeSubTaskToPending']);
     Route::post('/cancel/sub/special/task' , [SpecialTasks::class,'cancelSubTask']);
     Route::post('/transfer/special/task' , [SpecialTasks::class,'transerTask']);
     Route::post('/update/special/task' , [SpecialTasks::class,'updateTask']);

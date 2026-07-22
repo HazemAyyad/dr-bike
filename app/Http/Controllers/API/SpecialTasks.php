@@ -790,6 +790,53 @@ if ($request->has('sub_special_tasks')) {
         }
     }
 
+    public function changeSubTaskToPending(Request $request){
+        try{
+            $request->validate([
+                'sub_task_id'=>'required|exists:sub_tasks,id',
+            ]);
+
+            $subTask = SubTask::findOrFail($request->sub_task_id);
+            $subTask->update(['status'=>'ongoing']);
+
+            $specialTask = SpecialTask::findOrFail($subTask->special_task_id);
+            $specialTask->update(['status'=>'ongoing']);
+
+            Logs::createLog('التراجع عن اكمال مهمة خاصة فرعية','التراجع عن اكمال مهمة خاصة فرعية باسم'.' '.$subTask->name,'special_tasks');
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.employee_task_updated_successfully'),
+            ], 200);
+        }
+        catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.task_not_found'),
+            ], 200);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+
+        }
+        catch(QueryException $e){
+            return response([
+                'status'=>'error',
+                'message' => __('messages.update_data_error'),
+            ],200);
+        }
+
+        catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     private function markSpecialTaskCompletedIfSubtasksClosed($specialTaskId): void
     {
         $hasOpenSubTasks = SubTask::where('special_task_id', $specialTaskId)
