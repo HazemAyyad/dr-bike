@@ -29,11 +29,15 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class EmployeeDetails extends Controller
 {
+    private const GRANT_POLICY_ADMIN_ONLY = 'admin_only';
+    private const GRANT_POLICY_PERMISSIONS_MANAGE = 'permissions_manage';
+
     private function normalizeEmployeePhone(mixed $value): ?string
     {
         if ($value === null || trim((string) $value) === '') {
@@ -107,16 +111,52 @@ class EmployeeDetails extends Controller
         ];
     }
 
+    private function permissionsGrantPolicyColumnExists(): bool
+    {
+        return Schema::hasColumn('permissions', 'grant_policy');
+    }
+
     /**
      * @return int[]
      */
     private function adminOnlyGrantablePermissionIds(): array
     {
-        return Permission::query()
-            ->whereIn('name_en', $this->adminOnlyGrantablePermissionNames())
-            ->pluck('id')
+        $query = Permission::query();
+
+        if ($this->permissionsGrantPolicyColumnExists()) {
+            $query->where(function ($q) {
+                $q->where('grant_policy', self::GRANT_POLICY_ADMIN_ONLY)
+                    ->orWhere(function ($fallback) {
+                        $fallback
+                            ->whereNull('grant_policy')
+                            ->whereIn('name_en', $this->adminOnlyGrantablePermissionNames());
+                    });
+            });
+        } else {
+            $query->whereIn('name_en', $this->adminOnlyGrantablePermissionNames());
+        }
+
+        return $query->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
+    }
+
+    private function permissionGrantPolicy(Permission $permission): string
+    {
+        if ($this->permissionsGrantPolicyColumnExists() &&
+            is_string($permission->grant_policy) &&
+            $permission->grant_policy !== '') {
+            return $permission->grant_policy;
+        }
+
+        return in_array($permission->name_en, $this->adminOnlyGrantablePermissionNames(), true)
+            ? self::GRANT_POLICY_ADMIN_ONLY
+            : self::GRANT_POLICY_PERMISSIONS_MANAGE;
+    }
+
+    private function permissionIsAdminOnlyGrantable(Permission $permission): bool
+    {
+        return $this->permissionGrantPolicy($permission) === self::GRANT_POLICY_ADMIN_ONLY;
     }
 
     private function permissionGroupKey(?string $nameEn): string
@@ -169,7 +209,8 @@ class EmployeeDetails extends Controller
             'permission_name_en' => $permission->name_en,
             'group_key' => $groupKey,
             'group_name' => $this->permissionGroupName($groupKey),
-            'admin_only' => in_array($permission->name_en, $this->adminOnlyGrantablePermissionNames(), true),
+            'grant_policy' => $this->permissionGrantPolicy($permission),
+            'admin_only' => $this->permissionIsAdminOnlyGrantable($permission),
         ];
     }
 
@@ -1254,11 +1295,22 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         try{
             $query = Permission::query()->orderBy('id');
             if (($requestUser = request()->user()) && $requestUser->type === 'employee') {
-                $query->whereNotIn('name_en', $this->adminOnlyGrantablePermissionNames());
+                if ($this->permissionsGrantPolicyColumnExists()) {
+                    $query->where(function ($q) {
+                        $q->whereNull('grant_policy')
+                            ->orWhere('grant_policy', '!=', self::GRANT_POLICY_ADMIN_ONLY);
+                    });
+                } else {
+                    $query->whereNotIn('name_en', $this->adminOnlyGrantablePermissionNames());
+                }
             }
 
+            $columns = $this->permissionsGrantPolicyColumnExists()
+                ? ['id','name','name_en','grant_policy']
+                : ['id','name','name_en'];
+
             $permissions = $query
-                ->get(['id','name','name_en'])
+                ->get($columns)
                 ->map(fn (Permission $permission) => $this->formatSystemPermission($permission))
                 ->values();
             return response()->json([
@@ -1391,6 +1443,76 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
     public function minusPoints(Request $request){
         return $this->changePoints($request,'minus');
+    }
+
+    public function updatePermissionGrantPolicy(Request $request)
+    {
+        try {
+            if (! $this->permissionsGrantPolicyColumnExists()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Permission grant policy is not migrated yet.',
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'permission_id' => ['required', 'integer', 'exists:permissions,id'],
+                'grant_policy' => [
+                    'required',
+                    Rule::in([
+                        self::GRANT_POLICY_ADMIN_ONLY,
+                        self::GRANT_POLICY_PERMISSIONS_MANAGE,
+                    ]),
+                ],
+                'apply_to_group' => ['nullable', 'boolean'],
+            ]);
+
+            $permission = Permission::query()->findOrFail($data['permission_id']);
+            $applyToGroup = (bool) ($data['apply_to_group'] ?? false);
+            $permissionIds = [(int) $permission->id];
+
+            if ($applyToGroup) {
+                $groupKey = $this->permissionGroupKey($permission->name_en);
+                $permissionIds = Permission::query()
+                    ->get(['id', 'name_en'])
+                    ->filter(fn (Permission $candidate) => $this->permissionGroupKey($candidate->name_en) === $groupKey)
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->values()
+                    ->all();
+            }
+
+            Permission::query()
+                ->whereIn('id', $permissionIds)
+                ->update([
+                    'grant_policy' => $data['grant_policy'],
+                    'updated_at' => now(),
+                ]);
+
+            $permissions = Permission::query()
+                ->whereIn('id', $permissionIds)
+                ->orderBy('id')
+                ->get(['id', 'name', 'name_en', 'grant_policy'])
+                ->map(fn (Permission $item) => $this->formatSystemPermission($item))
+                ->values();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Permission policy updated successfully.',
+                'permissions' => $permissions,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 
 

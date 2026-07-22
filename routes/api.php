@@ -192,9 +192,10 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Special Tasks','re
     Route::post('/cancel/special/task/with/repitition' , [SpecialTasks::class,'cancelSpecialTaskWithRepition']);
     Route::get('/no-date/special/tasks' , [SpecialTasks::class,'noDateTasks']);
     Route::post('/change/special/task/to/completed' , [SpecialTasks::class,'changeSpecialTaskToCompleted']);
-        Route::post('/change/sub/special/task/to/completed' ,
+    Route::post('/change/sub/special/task/to/completed' ,
      [SpecialTasks::class,'changeSubTaskToCompleted'])
     ;
+    Route::post('/cancel/sub/special/task' , [SpecialTasks::class,'cancelSubTask']);
     Route::post('/transfer/special/task' , [SpecialTasks::class,'transerTask']);
     Route::post('/update/special/task' , [SpecialTasks::class,'updateTask']);
     Route::post('/convert/special/task/to/employee' , [TaskConversionController::class,'specialToEmployee']);
@@ -217,6 +218,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
     Route::post('/employee/permissions' , [EmployeeDetails::class,'getEmployeePermissions'])
         ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
+    Route::post('/permissions/grant-policy' , [EmployeeDetails::class,'updatePermissionGrantPolicy'])
+        ->middleware('admin');
 
     Route::post('/add/points/to/employee' , [EmployeeDetails::class,'addPoints'])
         ->middleware('check.permission:Employees Points Manage');
