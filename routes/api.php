@@ -218,7 +218,7 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions'])
         ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
     Route::post('/employee/permissions' , [EmployeeDetails::class,'getEmployeePermissions'])
-        ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
+        ->middleware('check.permission:Employees View,Employees Permissions View,Employees Permissions Manage');
     Route::post('/permissions/grant-policy' , [EmployeeDetails::class,'updatePermissionGrantPolicy'])
         ->middleware('admin');
 

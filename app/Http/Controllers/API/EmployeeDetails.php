@@ -276,6 +276,25 @@ class EmployeeDetails extends Controller
             ->exists();
     }
 
+    private function actorCanViewEmployeePermissions(Request $request): bool
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return false;
+        }
+
+        if ($actor->type === 'admin') {
+            return true;
+        }
+
+        return (bool) $actor->employee?->permissions()
+            ->whereHas('permission', fn ($q) => $q->whereIn('name_en', [
+                'Employees Permissions View',
+                'Employees Permissions Manage',
+            ]))
+            ->exists();
+    }
+
     private function actorCanManageEmployeeFingerprint(Request $request): bool
     {
         $actor = $request->user();
@@ -1335,7 +1354,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             $employee = EmployeeDetail::with('user')->findOrFail($request->employee_id);
 
-            $employeePermissions = $employee->permissions->map(function($permission){
+            $employeePermissions = $this->actorCanViewEmployeePermissions($request)
+                ? $employee->permissions->map(function($permission){
 
                 return [
                     "permission_id" => $permission->permission->id,
@@ -1343,7 +1363,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     "permission_name_en" => $permission->permission->name_en,
 
                 ];
-            });
+            })
+                : collect();
 
             $employeeRewardsAndPunishments = $employee->rewards->map(function($reward){
                 return [
