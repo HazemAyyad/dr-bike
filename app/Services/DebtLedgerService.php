@@ -586,6 +586,7 @@ class DebtLedgerService
             'created_at' => $transaction->created_at?->format('Y-m-d H:i:s'),
             'box_id' => $transaction->box_id,
             'source' => $transaction->source,
+            'source_id' => $transaction->source_id,
             'archived_at' => $transaction->archived_at?->format('Y-m-d H:i:s'),
             'deleted_at' => $transaction->deleted_at?->format('Y-m-d H:i:s'),
         ];
