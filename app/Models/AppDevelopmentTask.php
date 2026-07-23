@@ -39,6 +39,8 @@ class AppDevelopmentTask extends Model
         'description',
         'status',
         'priority',
+        'tags',
+        'due_at',
         'manual_progress',
         'started_at',
         'completed_at',
@@ -47,6 +49,8 @@ class AppDevelopmentTask extends Model
 
     protected $casts = [
         'manual_progress' => 'integer',
+        'tags' => 'array',
+        'due_at' => 'date',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
         'closed_at' => 'datetime',

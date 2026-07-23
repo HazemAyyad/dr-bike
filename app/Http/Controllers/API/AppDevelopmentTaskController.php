@@ -75,6 +75,14 @@ class AppDevelopmentTaskController extends Controller
 
         $this->scopeForUser($query, $request->user());
 
+        if ($request->input('scope') === 'mine') {
+            $userId = (int) $request->user()->id;
+            $query->where(function ($q) use ($userId) {
+                $q->where('assigned_to_user_id', $userId)
+                    ->orWhere('created_by_user_id', $userId);
+            });
+        }
+
         if ($request->filled('status') && in_array($request->input('status'), AppDevelopmentTask::STATUSES, true)) {
             $query->where('status', $request->input('status'));
         }
@@ -91,7 +99,8 @@ class AppDevelopmentTaskController extends Controller
             $search = trim((string) $request->input('search'));
             $query->where(function ($q) use ($search) {
                 $q->where('title', 'like', "%{$search}%")
-                    ->orWhere('description', 'like', "%{$search}%");
+                    ->orWhere('description', 'like', "%{$search}%")
+                    ->orWhere('tags', 'like', "%{$search}%");
             });
         }
 
@@ -115,6 +124,9 @@ class AppDevelopmentTaskController extends Controller
             'title' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:10000'],
             'priority' => ['nullable', 'string', Rule::in(AppDevelopmentTask::PRIORITIES)],
+            'tags' => ['nullable', 'array', 'max:8'],
+            'tags.*' => ['nullable', 'string', 'max:32'],
+            'due_at' => ['nullable', 'date'],
             'manual_progress' => ['nullable', 'integer', 'min:0', 'max:100'],
             'attachments' => ['nullable', 'array', 'max:10'],
             'attachments.*' => ['file', 'max:'.self::ATTACHMENT_MAX_KB, 'mimes:'.self::ATTACHMENT_MIMES],
@@ -142,6 +154,8 @@ class AppDevelopmentTaskController extends Controller
                 'description' => $validated['description'] ?? null,
                 'status' => AppDevelopmentTask::STATUS_NEW,
                 'priority' => $validated['priority'] ?? AppDevelopmentTask::PRIORITIES[1],
+                'tags' => $this->normalizeTags($validated['tags'] ?? []),
+                'due_at' => $validated['due_at'] ?? null,
                 'manual_progress' => $validated['manual_progress'] ?? null,
             ]);
 
@@ -200,6 +214,7 @@ class AppDevelopmentTaskController extends Controller
             ->findOrFail($id);
 
         abort_unless($this->canAccessTask($request->user(), $task), 403);
+        $this->markTaskRead($task, $request->user());
 
         return response()->json([
             'status' => 'success',
@@ -422,6 +437,52 @@ class AppDevelopmentTaskController extends Controller
         }
     }
 
+    private function normalizeTags(array $tags): array
+    {
+        return collect($tags)
+            ->map(fn ($tag) => trim((string) $tag))
+            ->filter()
+            ->map(fn ($tag) => mb_substr($tag, 0, 32))
+            ->unique()
+            ->take(8)
+            ->values()
+            ->all();
+    }
+
+    private function markTaskRead(AppDevelopmentTask $task, User $user): void
+    {
+        DB::table('app_development_task_reads')->updateOrInsert(
+            [
+                'app_development_task_id' => $task->id,
+                'user_id' => $user->id,
+            ],
+            [
+                'read_at' => now(),
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    private function unreadMessagesCount(AppDevelopmentTask $task): int
+    {
+        $viewerId = auth()->id();
+        if ($viewerId === null) {
+            return 0;
+        }
+
+        $readAt = DB::table('app_development_task_reads')
+            ->where('app_development_task_id', $task->id)
+            ->where('user_id', $viewerId)
+            ->value('read_at');
+
+        return AppDevelopmentTaskMessage::query()
+            ->where('app_development_task_id', $task->id)
+            ->where('sender_user_id', '!=', $viewerId)
+            ->when($readAt, fn ($query) => $query->where('created_at', '>', $readAt))
+            ->count();
+    }
+
     private function notifyOtherParty(AppDevelopmentTask $task, User $actor, string $title, string $body): void
     {
         $recipientId = $this->otherPartyRecipientId($task, $actor);
@@ -501,6 +562,7 @@ class AppDevelopmentTaskController extends Controller
             'in_progress' => $rows->where('status', AppDevelopmentTask::STATUS_IN_PROGRESS)->count(),
             'waiting_owner' => $rows->where('status', AppDevelopmentTask::STATUS_WAITING_OWNER)->count(),
             'done' => $done,
+            'review' => $rows->where('status', AppDevelopmentTask::STATUS_REVIEW)->count(),
             'progress_percent' => $total > 0 ? (int) round(($done / $total) * 100) : 0,
         ];
     }
@@ -518,6 +580,8 @@ class AppDevelopmentTaskController extends Controller
             'status_label' => $this->statusLabel($task->status),
             'priority' => $task->priority,
             'priority_label' => $this->priorityLabel($task->priority),
+            'tags' => $task->tags ?? [],
+            'due_at' => optional($task->due_at)->toDateString(),
             'progress' => $this->progress($task),
             'created_by_user_id' => $task->created_by_user_id,
             'assigned_to_user_id' => $task->assigned_to_user_id,
@@ -526,6 +590,7 @@ class AppDevelopmentTaskController extends Controller
             'subtasks_count' => (int) ($task->subtasks_count ?? $task->subtasks()->count()),
             'completed_subtasks_count' => (int) ($task->completed_subtasks_count ?? 0),
             'messages_count' => (int) ($task->messages_count ?? $task->messages()->count()),
+            'unread_messages_count' => $this->unreadMessagesCount($task),
             'attachments_count' => (int) ($task->attachments_count ?? $task->attachments()->count()),
             'started_at' => $task->started_at,
             'completed_at' => $task->completed_at,
@@ -617,9 +682,9 @@ class AppDevelopmentTaskController extends Controller
 
         return match ($task->status) {
             AppDevelopmentTask::STATUS_NEW => 0,
-            AppDevelopmentTask::STATUS_REVIEW => 10,
             AppDevelopmentTask::STATUS_IN_PROGRESS => 50,
             AppDevelopmentTask::STATUS_WAITING_OWNER => 80,
+            AppDevelopmentTask::STATUS_REVIEW => 90,
             AppDevelopmentTask::STATUS_DONE,
             AppDevelopmentTask::STATUS_CLOSED => 100,
             default => 0,
