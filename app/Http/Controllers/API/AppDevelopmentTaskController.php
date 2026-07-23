@@ -509,11 +509,20 @@ class AppDevelopmentTaskController extends Controller
     private function attachmentType(UploadedFile $file): string
     {
         $mime = (string) $file->getMimeType();
+        $extension = strtolower((string) $file->getClientOriginalExtension());
+
+        if (in_array($extension, ['mp3', 'm4a', 'aac', 'ogg', 'wav'], true)) {
+            return 'audio';
+        }
+
+        if (in_array($extension, ['mp4', 'mov', 'webm', '3gp', 'm4v', 'avi'], true)) {
+            return 'video';
+        }
 
         return match (true) {
             str_starts_with($mime, 'image/') => 'image',
-            str_starts_with($mime, 'video/') => 'video',
             str_starts_with($mime, 'audio/') => 'audio',
+            str_starts_with($mime, 'video/') => 'video',
             default => 'document',
         };
     }
