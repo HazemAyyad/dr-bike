@@ -257,7 +257,19 @@ class AppDevelopmentTaskController extends Controller
         });
 
         if ($oldStatus !== $newStatus) {
-            $this->notifyOtherParty($task->fresh(), $request->user(), 'تم تغيير حالة مهمة تطوير', $task->title.' - '.$this->statusLabel($newStatus));
+            $freshTask = $task->fresh();
+            $otherPartyId = $this->otherPartyRecipientId($freshTask, $request->user());
+            $this->notifyOtherParty($freshTask, $request->user(), 'تم تغيير حالة مهمة تطوير', $task->title.' - '.$this->statusLabel($newStatus));
+
+            if ($newStatus === AppDevelopmentTask::STATUS_DONE) {
+                $this->notifyAppOwners(
+                    $freshTask,
+                    $request->user(),
+                    'تم إنجاز مهمة تطوير',
+                    $task->title,
+                    array_filter([$otherPartyId])
+                );
+            }
         }
 
         return response()->json([
@@ -412,14 +424,49 @@ class AppDevelopmentTaskController extends Controller
 
     private function notifyOtherParty(AppDevelopmentTask $task, User $actor, string $title, string $body): void
     {
+        $recipientId = $this->otherPartyRecipientId($task, $actor);
+
+        if ($recipientId === null) {
+            return;
+        }
+
+        $this->notifyUser($task, $actor, $title, $body, $recipientId);
+    }
+
+    private function otherPartyRecipientId(AppDevelopmentTask $task, User $actor): ?int
+    {
         $recipientId = (int) $task->assigned_to_user_id === (int) $actor->id
             ? (int) $task->created_by_user_id
             : (int) $task->assigned_to_user_id;
 
-        if ($recipientId <= 0 || $recipientId === (int) $actor->id) {
-            return;
-        }
+        return $recipientId > 0 && $recipientId !== (int) $actor->id ? $recipientId : null;
+    }
 
+    /**
+     * @param  array<int|null>  $excludeUserIds
+     */
+    private function notifyAppOwners(AppDevelopmentTask $task, User $actor, string $title, string $body, array $excludeUserIds = []): void
+    {
+        $exclude = collect($excludeUserIds)
+            ->push((int) $actor->id)
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        User::query()
+            ->where('type', 'admin')
+            ->whereNull('deleted_at')
+            ->where('is_blocked', false)
+            ->where('development_role', User::DEVELOPMENT_ROLE_OWNER)
+            ->whereNotIn('id', $exclude)
+            ->pluck('id')
+            ->each(fn ($ownerId) => $this->notifyUser($task, $actor, $title, $body, (int) $ownerId));
+    }
+
+    private function notifyUser(AppDevelopmentTask $task, User $actor, string $title, string $body, int $recipientId): void
+    {
         $this->adminNotifications->create(
             AdminNotificationService::TYPE_APP_DEVELOPMENT_TASK,
             $title,
