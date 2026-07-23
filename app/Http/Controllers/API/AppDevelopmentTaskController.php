@@ -222,6 +222,59 @@ class AppDevelopmentTaskController extends Controller
         ]);
     }
 
+    public function update(Request $request, int $id)
+    {
+        $this->authorizeDevelopment($request);
+
+        $validated = $request->validate([
+            'assigned_to_user_id' => ['sometimes', 'required', 'integer', 'exists:users,id'],
+            'title' => ['sometimes', 'required', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:10000'],
+            'priority' => ['sometimes', 'required', 'string', Rule::in(AppDevelopmentTask::PRIORITIES)],
+            'tags' => ['nullable', 'array', 'max:8'],
+            'tags.*' => ['nullable', 'string', 'max:32'],
+            'due_at' => ['nullable', 'date'],
+            'manual_progress' => ['nullable', 'integer', 'min:0', 'max:100'],
+        ]);
+
+        $task = AppDevelopmentTask::query()->findOrFail($id);
+        abort_unless($this->canAccessTask($request->user(), $task), 403);
+
+        $payload = [];
+
+        if (array_key_exists('assigned_to_user_id', $validated)) {
+            $assignee = User::query()
+                ->where('type', 'admin')
+                ->where('development_role', User::DEVELOPMENT_ROLE_DEVELOPER)
+                ->findOrFail((int) $validated['assigned_to_user_id']);
+            $payload['assigned_to_user_id'] = $assignee->id;
+        }
+
+        foreach (['title', 'description', 'priority', 'manual_progress'] as $field) {
+            if (array_key_exists($field, $validated)) {
+                $payload[$field] = $validated[$field];
+            }
+        }
+
+        if (array_key_exists('tags', $validated)) {
+            $payload['tags'] = $this->normalizeTags($validated['tags'] ?? []);
+        }
+
+        if (array_key_exists('due_at', $validated)) {
+            $payload['due_at'] = $validated['due_at'] ?? null;
+        }
+
+        if (! empty($payload)) {
+            $task->update($payload);
+            $this->notifyOtherParty($task->fresh(), $request->user(), 'تم تعديل مهمة تطوير', $task->title);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'task' => $this->taskPayload($task->fresh()),
+        ]);
+    }
+
     public function updateStatus(Request $request, int $id)
     {
         $this->authorizeDevelopment($request);

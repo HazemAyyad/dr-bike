@@ -1075,6 +1075,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/admin/app-development/tasks', [AppDevelopmentTaskController::class, 'index']);
     Route::post('/admin/app-development/tasks', [AppDevelopmentTaskController::class, 'store']);
     Route::get('/admin/app-development/tasks/{id}', [AppDevelopmentTaskController::class, 'show'])->whereNumber('id');
+    Route::post('/admin/app-development/tasks/{id}', [AppDevelopmentTaskController::class, 'update'])->whereNumber('id');
     Route::post('/admin/app-development/tasks/{id}/status', [AppDevelopmentTaskController::class, 'updateStatus'])->whereNumber('id');
     Route::post('/admin/app-development/tasks/{id}/messages', [AppDevelopmentTaskController::class, 'storeMessage'])->whereNumber('id');
     Route::post('/admin/app-development/tasks/{id}/messages/{messageId}/reaction', [AppDevelopmentTaskController::class, 'reactToMessage'])
