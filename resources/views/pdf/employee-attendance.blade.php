@@ -43,12 +43,22 @@
                 <th>التاريخ</th>
                 <th>وقت الوصول</th>
                 <th>وقت المغادرة</th>
-                <th>عدد ساعات العمل</th>
+                <th>إجمالي ساعات العمل</th>
+                <th>ساعات عادية</th>
+                <th>أوفر تايم</th>
 
             </tr>
         </thead>
         <tbody>
             @foreach($attendances as $attendance)
+                @php
+                    $workedMinutes = (int) ($attendance->worked_minutes ?? 0);
+                    $normalMinutes = (int) ($attendance->normal_minutes ?? 0);
+                    $overtimeMinutes = (int) ($attendance->overtime_minutes ?? 0);
+                    if ($workedMinutes > 0 && ($normalMinutes + $overtimeMinutes) <= 0) {
+                        $normalMinutes = $workedMinutes;
+                    }
+                @endphp
                 <tr>
                     <td>{{ $attendance->date? $attendance->date : $attendance->created_at->format('Y-m-d') }}</td>
                 <td>
@@ -66,11 +76,17 @@
 
 
                 <td>
-                    @if($attendance->worked_minutes)
-                        {{ \Carbon\CarbonInterval::minutes($attendance->worked_minutes)->cascade()->format('%H:%I:%S') }}
+                    @if($workedMinutes > 0)
+                        {{ \Carbon\CarbonInterval::minutes($workedMinutes)->cascade()->format('%H:%I:%S') }}
                     @else
                         لا يوجد عدد ساعات عمل
                     @endif
+                </td>
+                <td>
+                    {{ $normalMinutes > 0 ? \Carbon\CarbonInterval::minutes($normalMinutes)->cascade()->format('%H:%I:%S') : '00:00:00' }}
+                </td>
+                <td>
+                    {{ $overtimeMinutes > 0 ? \Carbon\CarbonInterval::minutes($overtimeMinutes)->cascade()->format('%H:%I:%S') : '00:00:00' }}
                 </td>
 
               

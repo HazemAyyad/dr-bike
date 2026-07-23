@@ -97,6 +97,12 @@
             <th>إجمالي التأخير</th>
             <td>{{ $financialData['delay_hours'] ?? '0.00' }} ساعة</td>
         </tr>
+        <tr>
+            <th>إجمالي الساعات العادية</th>
+            <td>{{ $financialData['attendance_summary']['normal_hours'] ?? '0.00' }} ساعة</td>
+            <th>إجمالي ساعات الأوفر تايم</th>
+            <td>{{ $financialData['overtime_hours'] ?? ($financialData['attendance_summary']['overtime_hours'] ?? '0.00') }} ساعة</td>
+        </tr>
     </table>
 
     <h3>تفاصيل الدوام</h3>
@@ -109,16 +115,28 @@
                     <th>التاريخ</th>
                     <th>وقت الوصول</th>
                     <th>وقت المغادرة</th>
-                    <th>ساعات العمل</th>
+                    <th>إجمالي ساعات العمل</th>
+                    <th>ساعات عادية</th>
+                    <th>أوفر تايم</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach($attendances as $attendance)
+                    @php
+                        $workedMinutes = (int) ($attendance->worked_minutes ?? 0);
+                        $normalMinutes = (int) ($attendance->normal_minutes ?? 0);
+                        $overtimeMinutes = (int) ($attendance->overtime_minutes ?? 0);
+                        if ($workedMinutes > 0 && ($normalMinutes + $overtimeMinutes) <= 0) {
+                            $normalMinutes = $workedMinutes;
+                        }
+                    @endphp
                     <tr>
                         <td>{{ $attendance->date ? $attendance->date : $attendance->created_at->format('Y-m-d') }}</td>
                         <td>{{ $attendance->arrived_at ? \Carbon\Carbon::createFromFormat('H:i:s', $attendance->arrived_at)->format('h:i A') : 'لا يوجد وقت حضور' }}</td>
                         <td>{{ $attendance->left_at ? \Carbon\Carbon::createFromFormat('H:i:s', $attendance->left_at)->format('h:i A') : 'لا يوجد وقت انصراف' }}</td>
-                        <td>{{ $attendance->worked_minutes ? \Carbon\CarbonInterval::minutes($attendance->worked_minutes)->cascade()->format('%H:%I') : '0:00' }}</td>
+                        <td>{{ $workedMinutes > 0 ? \Carbon\CarbonInterval::minutes($workedMinutes)->cascade()->format('%H:%I') : '0:00' }}</td>
+                        <td>{{ $normalMinutes > 0 ? \Carbon\CarbonInterval::minutes($normalMinutes)->cascade()->format('%H:%I') : '0:00' }}</td>
+                        <td>{{ $overtimeMinutes > 0 ? \Carbon\CarbonInterval::minutes($overtimeMinutes)->cascade()->format('%H:%I') : '0:00' }}</td>
                     </tr>
                 @endforeach
             </tbody>
