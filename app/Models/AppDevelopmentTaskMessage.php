@@ -29,4 +29,9 @@ class AppDevelopmentTaskMessage extends Model
     {
         return $this->hasMany(AppDevelopmentTaskAttachment::class, 'app_development_task_message_id');
     }
+
+    public function reactions(): HasMany
+    {
+        return $this->hasMany(AppDevelopmentTaskMessageReaction::class, 'app_development_task_message_id');
+    }
 }

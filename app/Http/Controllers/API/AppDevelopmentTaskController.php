@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AppDevelopmentTask;
 use App\Models\AppDevelopmentTaskAttachment;
 use App\Models\AppDevelopmentTaskMessage;
+use App\Models\AppDevelopmentTaskMessageReaction;
 use App\Models\AppDevelopmentTaskStatusLog;
 use App\Models\User;
 use App\Services\AdminNotificationService;
@@ -20,6 +21,10 @@ class AppDevelopmentTaskController extends Controller
     private const ATTACHMENT_MAX_KB = 102400;
 
     private const ATTACHMENT_MIMES = 'jpg,jpeg,png,webp,heic,heif,pdf,doc,docx,xls,xlsx,txt,zip,rar,mp3,m4a,aac,ogg,wav,mp4,mov,webm,3gp,m4v,avi';
+
+    private const ALLOWED_ATTACHMENT_TYPES = ['image', 'audio', 'video', 'document'];
+
+    private const ALLOWED_REACTIONS = ['👍', '😂', '✅', '❌', '👎', '❤️', '😮'];
 
     public function __construct(
         private readonly AdminNotificationService $adminNotifications
@@ -113,6 +118,8 @@ class AppDevelopmentTaskController extends Controller
             'manual_progress' => ['nullable', 'integer', 'min:0', 'max:100'],
             'attachments' => ['nullable', 'array', 'max:10'],
             'attachments.*' => ['file', 'max:'.self::ATTACHMENT_MAX_KB, 'mimes:'.self::ATTACHMENT_MIMES],
+            'attachment_types' => ['nullable', 'array', 'max:10'],
+            'attachment_types.*' => ['nullable', 'string', Rule::in(self::ALLOWED_ATTACHMENT_TYPES)],
         ]);
 
         $assignee = User::query()
@@ -178,6 +185,7 @@ class AppDevelopmentTaskController extends Controller
                 'attachments',
                 'messages.sender:id,name,development_role',
                 'messages.attachments',
+                'messages.reactions.user:id,name',
                 'statusLogs.changer:id,name',
             ])
             ->withCount([
@@ -266,6 +274,8 @@ class AppDevelopmentTaskController extends Controller
             'body' => ['nullable', 'string', 'max:10000'],
             'attachments' => ['nullable', 'array', 'max:10'],
             'attachments.*' => ['file', 'max:'.self::ATTACHMENT_MAX_KB, 'mimes:'.self::ATTACHMENT_MIMES],
+            'attachment_types' => ['nullable', 'array', 'max:10'],
+            'attachment_types.*' => ['nullable', 'string', Rule::in(self::ALLOWED_ATTACHMENT_TYPES)],
         ]);
 
         abort_if(! $request->filled('body') && ! $request->hasFile('attachments'), 422, 'body or attachments are required');
@@ -284,7 +294,48 @@ class AppDevelopmentTaskController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'message' => $this->messagePayload($message->fresh(['sender', 'attachments'])),
+            'message' => $this->messagePayload($message->fresh(['sender', 'attachments', 'reactions.user'])),
+        ]);
+    }
+
+    public function reactToMessage(Request $request, int $id, int $messageId)
+    {
+        $this->authorizeDevelopment($request);
+
+        $validated = $request->validate([
+            'reaction' => ['nullable', 'string', Rule::in(self::ALLOWED_REACTIONS)],
+        ]);
+
+        $task = AppDevelopmentTask::query()->findOrFail($id);
+        abort_unless($this->canAccessTask($request->user(), $task), 403);
+
+        $message = AppDevelopmentTaskMessage::query()
+            ->where('app_development_task_id', $task->id)
+            ->findOrFail($messageId);
+
+        $reaction = $validated['reaction'] ?? null;
+        $userId = (int) $request->user()->id;
+
+        if ($reaction === null || $reaction === '') {
+            AppDevelopmentTaskMessageReaction::query()
+                ->where('app_development_task_message_id', $message->id)
+                ->where('user_id', $userId)
+                ->delete();
+        } else {
+            AppDevelopmentTaskMessageReaction::updateOrCreate(
+                [
+                    'app_development_task_message_id' => $message->id,
+                    'user_id' => $userId,
+                ],
+                ['reaction' => $reaction]
+            );
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $this->messagePayload(
+                $message->fresh(['sender:id,name,development_role', 'attachments', 'reactions.user:id,name'])
+            ),
         ]);
     }
 
@@ -335,9 +386,12 @@ class AppDevelopmentTaskController extends Controller
 
     private function storeAttachments(Request $request, AppDevelopmentTask $task, ?AppDevelopmentTaskMessage $message = null): void
     {
-        foreach ($request->file('attachments', []) as $file) {
+        $attachmentTypes = $request->input('attachment_types', []);
+
+        foreach ($request->file('attachments', []) as $index => $file) {
             if ($file instanceof UploadedFile) {
                 $path = $file->store('app-development-tasks/'.$task->id, 'public');
+                $forcedType = is_array($attachmentTypes) ? ($attachmentTypes[$index] ?? null) : null;
 
                 AppDevelopmentTaskAttachment::create([
                     'app_development_task_id' => $task->id,
@@ -348,7 +402,9 @@ class AppDevelopmentTaskController extends Controller
                     'original_name' => $file->getClientOriginalName(),
                     'mime_type' => $file->getMimeType(),
                     'size' => $file->getSize() ?: 0,
-                    'attachment_type' => $this->attachmentType($file),
+                    'attachment_type' => in_array($forcedType, self::ALLOWED_ATTACHMENT_TYPES, true)
+                        ? $forcedType
+                        : $this->attachmentType($file),
                 ]);
             }
         }
@@ -453,7 +509,9 @@ class AppDevelopmentTaskController extends Controller
 
     private function messagePayload(AppDevelopmentTaskMessage $message): array
     {
-        $message->loadMissing(['sender:id,name,development_role', 'attachments']);
+        $message->loadMissing(['sender:id,name,development_role', 'attachments', 'reactions.user:id,name']);
+        $viewerUserId = auth()->id();
+        $reactions = $message->reactions;
 
         return [
             'id' => $message->id,
@@ -462,6 +520,21 @@ class AppDevelopmentTaskController extends Controller
             'message_type' => $message->message_type,
             'body' => $message->body,
             'attachments' => $message->attachments->map(fn ($attachment) => $this->attachmentPayload($attachment)),
+            'reactions' => $reactions
+                ->groupBy('reaction')
+                ->map(fn ($items, $reaction) => [
+                    'reaction' => (string) $reaction,
+                    'count' => $items->count(),
+                    'reacted' => $viewerUserId !== null && $items->contains(fn ($item) => (int) $item->user_id === (int) $viewerUserId),
+                    'users' => $items
+                        ->map(fn ($item) => $item->user?->name)
+                        ->filter()
+                        ->values(),
+                ])
+                ->values(),
+            'my_reaction' => $viewerUserId === null
+                ? null
+                : optional($reactions->first(fn ($item) => (int) $item->user_id === (int) $viewerUserId))->reaction,
             'created_at' => $message->created_at,
         ];
     }
