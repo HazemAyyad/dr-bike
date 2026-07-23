@@ -7,6 +7,7 @@ use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\AppSettingsController;
+use App\Http\Controllers\API\AppDevelopmentTaskController;
 use App\Http\Controllers\API\AppUpdateController;
 use App\Http\Controllers\API\AppVersionController;
 use App\Http\Controllers\API\AdminAttendanceSettingsController;
@@ -1068,6 +1069,13 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/users/{id}/edit', [\App\Http\Controllers\API\AdminUsersController::class, 'update'])->whereNumber('id');
     Route::post('/admin/users/{id}/delete', [\App\Http\Controllers\API\AdminUsersController::class, 'destroy'])->whereNumber('id');
     Route::post('/admin/users/{id}/toggle-block', [\App\Http\Controllers\API\AdminUsersController::class, 'toggleBlock'])->whereNumber('id');
+
+    Route::get('/admin/app-development/metadata', [AppDevelopmentTaskController::class, 'metadata']);
+    Route::get('/admin/app-development/tasks', [AppDevelopmentTaskController::class, 'index']);
+    Route::post('/admin/app-development/tasks', [AppDevelopmentTaskController::class, 'store']);
+    Route::get('/admin/app-development/tasks/{id}', [AppDevelopmentTaskController::class, 'show'])->whereNumber('id');
+    Route::post('/admin/app-development/tasks/{id}/status', [AppDevelopmentTaskController::class, 'updateStatus'])->whereNumber('id');
+    Route::post('/admin/app-development/tasks/{id}/messages', [AppDevelopmentTaskController::class, 'storeMessage'])->whereNumber('id');
 
     Route::get('/app/settings', [AppSettingsController::class, 'show']);
     Route::put('/app/settings', [AppSettingsController::class, 'update']);

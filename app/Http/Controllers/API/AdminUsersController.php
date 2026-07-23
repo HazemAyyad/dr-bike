@@ -46,6 +46,7 @@ class AdminUsersController extends Controller
                 'email' => ['required', 'string', 'email', 'max:255', $this->uniqueActiveEmailRule()],
                 'phone' => ['nullable', 'string', 'max:255'],
                 'password' => ['required', 'string', 'min:8', 'confirmed'],
+                'development_role' => ['nullable', 'string', Rule::in(User::DEVELOPMENT_ROLES)],
             ]);
 
             $user = User::create([
@@ -54,6 +55,7 @@ class AdminUsersController extends Controller
                 'phone' => $data['phone'] ?? null,
                 'password' => Hash::make($data['password']),
                 'type' => 'admin',
+                'development_role' => $data['development_role'] ?? User::DEVELOPMENT_ROLE_NONE,
                 'is_blocked' => false,
             ]);
 
@@ -92,12 +94,14 @@ class AdminUsersController extends Controller
                 'email' => ['required', 'string', 'email', 'max:255', $this->uniqueActiveEmailRule($user->id)],
                 'phone' => ['nullable', 'string', 'max:255'],
                 'password' => ['nullable', 'string', 'min:8', 'confirmed'],
+                'development_role' => ['nullable', 'string', Rule::in(User::DEVELOPMENT_ROLES)],
             ]);
 
             $payload = [
                 'name' => $data['name'],
                 'email' => $data['email'],
                 'phone' => $data['phone'] ?? null,
+                'development_role' => $data['development_role'] ?? User::DEVELOPMENT_ROLE_NONE,
             ];
 
             if (! empty($data['password'])) {
@@ -258,6 +262,7 @@ class AdminUsersController extends Controller
             'name' => $user->name,
             'email' => $user->email,
             'phone' => $user->phone,
+            'development_role' => $user->development_role ?? User::DEVELOPMENT_ROLE_NONE,
             'is_blocked' => (bool) $user->is_blocked,
             'is_online' => $activeSessions > 0,
             'active_sessions_count' => $activeSessions,

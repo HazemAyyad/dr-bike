@@ -13,7 +13,12 @@ class AdminNotificationCenterController extends Controller
     public function index(Request $request)
     {
         try {
-            $query = AdminNotification::query()->orderByDesc('id');
+            $query = AdminNotification::query()
+                ->where(function ($q) use ($request) {
+                    $q->whereNull('recipient_user_id')
+                        ->orWhere('recipient_user_id', $request->user()->id);
+                })
+                ->orderByDesc('id');
 
             if ($request->boolean('unread_only')) {
                 $query->where('is_read', false);
@@ -49,7 +54,13 @@ class AdminNotificationCenterController extends Controller
     public function unreadCount()
     {
         try {
-            $count = AdminNotification::query()->where('is_read', false)->count();
+            $count = AdminNotification::query()
+                ->where(function ($q) {
+                    $q->whereNull('recipient_user_id')
+                        ->orWhere('recipient_user_id', auth()->id());
+                })
+                ->where('is_read', false)
+                ->count();
 
             return response()->json([
                 'status' => 'success',
@@ -66,7 +77,12 @@ class AdminNotificationCenterController extends Controller
     public function markRead(Request $request, int $id)
     {
         try {
-            $notification = AdminNotification::query()->findOrFail($id);
+            $notification = AdminNotification::query()
+                ->where(function ($q) use ($request) {
+                    $q->whereNull('recipient_user_id')
+                        ->orWhere('recipient_user_id', $request->user()->id);
+                })
+                ->findOrFail($id);
             $notification->update([
                 'is_read' => true,
                 'read_at' => now(),
@@ -91,7 +107,13 @@ class AdminNotificationCenterController extends Controller
     public function markAllRead()
     {
         try {
-            AdminNotification::query()->where('is_read', false)->update([
+            AdminNotification::query()
+                ->where(function ($q) {
+                    $q->whereNull('recipient_user_id')
+                        ->orWhere('recipient_user_id', auth()->id());
+                })
+                ->where('is_read', false)
+                ->update([
                 'is_read' => true,
                 'read_at' => now(),
             ]);
@@ -107,10 +129,16 @@ class AdminNotificationCenterController extends Controller
         }
     }
 
-    public function destroy(int $id)
+    public function destroy(Request $request, int $id)
     {
         try {
-            AdminNotification::query()->whereKey($id)->delete();
+            AdminNotification::query()
+                ->where(function ($q) use ($request) {
+                    $q->whereNull('recipient_user_id')
+                        ->orWhere('recipient_user_id', $request->user()->id);
+                })
+                ->whereKey($id)
+                ->delete();
 
             return response()->json([
                 'status' => 'success',

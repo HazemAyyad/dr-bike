@@ -33,6 +33,7 @@ class User extends Authenticatable
         'city',
         'address',
         'type',
+        'development_role',
         'is_blocked',
     ];
 
@@ -54,6 +55,16 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'is_blocked' => 'boolean',
+    ];
+
+    public const DEVELOPMENT_ROLE_NONE = 'none';
+    public const DEVELOPMENT_ROLE_OWNER = 'owner';
+    public const DEVELOPMENT_ROLE_DEVELOPER = 'developer';
+
+    public const DEVELOPMENT_ROLES = [
+        self::DEVELOPMENT_ROLE_NONE,
+        self::DEVELOPMENT_ROLE_OWNER,
+        self::DEVELOPMENT_ROLE_DEVELOPER,
     ];
 
    

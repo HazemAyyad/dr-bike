@@ -71,6 +71,8 @@ class AdminNotificationService
 
     public const TYPE_NEGATIVE_INSTANT_SALE_STOCK = 'negative_instant_sale_stock';
 
+    public const TYPE_APP_DEVELOPMENT_TASK = 'app_development_task';
+
     /**
      * @param  array<string, mixed>  $data
      */
@@ -82,13 +84,15 @@ class AdminNotificationService
         ?int $employeeId = null,
         ?string $relatedType = null,
         ?int $relatedId = null,
-        bool $sendPush = true
+        bool $sendPush = true,
+        ?int $recipientUserId = null
     ): AdminNotification {
         $notification = AdminNotification::create([
             'type' => $type,
             'title' => $title,
             'body' => $body,
             'employee_id' => $employeeId,
+            'recipient_user_id' => $recipientUserId,
             'related_type' => $relatedType,
             'related_id' => $relatedId,
             'data' => $data,
@@ -827,13 +831,19 @@ class AdminNotificationService
      */
     public function pushToAdminDevices(AdminNotification $notification): array
     {
-        $tokens = AdminDeviceToken::query()->pluck('fcm_token')->all();
+        $tokensQuery = AdminDeviceToken::query();
+        if ($notification->recipient_user_id !== null) {
+            $tokensQuery->where('user_id', $notification->recipient_user_id);
+        }
+
+        $tokens = $tokensQuery->pluck('fcm_token')->all();
         $tokenCount = count($tokens);
 
         Log::info('Admin FCM broadcast start', [
             'notification_id' => $notification->id,
             'type' => $notification->type,
             'title' => $notification->title,
+            'recipient_user_id' => $notification->recipient_user_id,
             'token_count' => $tokenCount,
             'channel_id' => FirebaseService::ADMIN_CHANNEL_ID,
         ]);
@@ -897,6 +907,7 @@ class AdminNotificationService
             'related_type' => (string) ($row->related_type ?? ''),
             'related_id' => (string) ($row->related_id ?? ''),
             'employee_id' => (string) ($row->employee_id ?? ''),
+            'recipient_user_id' => (string) ($row->recipient_user_id ?? ''),
             'task_id' => '',
             'check_id' => '',
         ]);

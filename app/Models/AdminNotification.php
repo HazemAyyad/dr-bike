@@ -12,6 +12,7 @@ class AdminNotification extends Model
         'title',
         'body',
         'employee_id',
+        'recipient_user_id',
         'related_type',
         'related_id',
         'data',
@@ -28,5 +29,10 @@ class AdminNotification extends Model
     public function employee(): BelongsTo
     {
         return $this->belongsTo(EmployeeDetail::class, 'employee_id');
+    }
+
+    public function recipient(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'recipient_user_id');
     }
 }
