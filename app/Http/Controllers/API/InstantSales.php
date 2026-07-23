@@ -1692,10 +1692,12 @@ public function store(Request $request)
     try {
             $request->validate([
                 'search' => 'nullable|string|max:255',
+                'date' => 'nullable|date_format:Y-m-d',
                 'sort_direction' => 'nullable|string|in:asc,desc',
             ]);
 
             $search = trim((string) $request->input('search', ''));
+            $date = $request->input('date');
             $sortDirection = strtolower((string) $request->input('sort_direction', 'desc')) === 'asc'
                 ? 'asc'
                 : 'desc';
@@ -1714,6 +1716,10 @@ public function store(Request $request)
                     'createdByUser:id,name',
                     'updatedByUser:id,name',
                 ]);
+
+            if (! empty($date)) {
+                $query->whereDate('created_at', $date);
+            }
 
             if ($search !== '') {
                 $term = '%'.$search.'%';
