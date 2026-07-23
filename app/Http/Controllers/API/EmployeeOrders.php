@@ -37,11 +37,22 @@ class EmployeeOrders extends Controller
                     'id' => $order->id,
                     'status' => $order->status,
                     'amount' => (float) ($order->loan_value ?? 0),
+                    'approved_loan_value' => $order->status === 'approved'
+                        ? (float) ($order->loan_value ?? 0)
+                        : null,
+                    'reviewed_at' => $order->status === 'pending'
+                        ? null
+                        : $order->updated_at?->format('Y-m-d h:i A'),
+                    'rejection_reason' => $order->rejection_reason,
                     'day' => $created->format('l'),
                     'date' => $created->toDateString(),
                     'time' => $created->format('h:i A'),
                 ];
             })->values();
+
+            $approvedTotal = $orders
+                ->filter(fn ($order) => in_array($order->status, ['approved', 'paid'], true))
+                ->sum(fn ($order) => (float) ($order->loan_value ?? 0));
 
             return response()->json([
                 'status' => 'success',
@@ -53,6 +64,7 @@ class EmployeeOrders extends Controller
                     'month' => $month->format('Y-m'),
                     'advances' => $advances,
                     'total' => (float) $orders->sum(fn ($order) => (float) ($order->loan_value ?? 0)),
+                    'approved_total' => (float) $approvedTotal,
                 ],
             ], 200);
         } catch (ValidationException $e) {
@@ -94,11 +106,19 @@ class EmployeeOrders extends Controller
                     'order_status' => $order->status,
                     'type' => $order->type,
                     'order_date' => $order->created_at->format('Y-m-d'),
+                    'can_review' => $order->status === 'pending',
+                    'reviewed_at' => $order->status === 'pending'
+                        ? null
+                        : $order->updated_at?->format('Y-m-d h:i A'),
+                    'rejection_reason' => $order->rejection_reason,
 
                 ];
           
                 if($type==='loan'){
                     $base['loan_value'] = $order->loan_value;
+                    $base['approved_loan_value'] = $order->status === 'approved'
+                        ? $order->loan_value
+                        : null;
                 }
                 elseif($type==='overtime'){
                         if($order->overtime_value !== null){
@@ -196,7 +216,13 @@ class EmployeeOrders extends Controller
             ]);
 
             $order = EmployeeOrder::findOrFail($request->employee_order_id);
-            $previousStatus = (string) $order->status;
+            if ($order->status !== 'pending') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'تمت مراجعة هذا الطلب مسبقاً',
+                ], 200);
+            }
+
             $reason = trim((string) $request->input('rejection_reason', ''));
             $payload = ['status'=>$status];
             if ($status === 'rejected') {
@@ -205,14 +231,6 @@ class EmployeeOrders extends Controller
             $order->update($payload);
 
             if ($status === 'rejected' && $order->type === 'loan') {
-                if ($previousStatus === 'approved') {
-                    $employee = $order->employee;
-                    if ($employee) {
-                        $employee->debts = max(0, (float) $employee->debts - (float) ($order->loan_value ?? 0));
-                        $employee->save();
-                    }
-                }
-
                 try {
                     app(EmployeeNotificationService::class)->notifyLoanRejected($order->fresh(), $reason);
                 } catch (\Throwable $e) {
@@ -254,8 +272,13 @@ class EmployeeOrders extends Controller
             ]);
 
             $order = EmployeeOrder::findOrFail($request->employee_order_id);
-            $previousStatus = (string) $order->status;
-            $previousLoanValue = (float) ($order->loan_value ?? 0);
+            if ($order->status !== 'pending') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'تمت مراجعة هذا الطلب مسبقاً',
+                ], 200);
+            }
+
             $approvedLoanValue = (float) $request->loan_value;
             $order->update([
                 'status'=>'approved',
@@ -264,11 +287,7 @@ class EmployeeOrders extends Controller
             ]);
 
             $employee = $order->employee;
-            if ($previousStatus === 'approved') {
-                $employee->debts += ($approvedLoanValue - $previousLoanValue);
-            } else {
-                $employee->debts += $approvedLoanValue;
-            }
+            $employee->debts += $approvedLoanValue;
             $employee->save();
 
             try {
@@ -331,6 +350,13 @@ class EmployeeOrders extends Controller
             ],200);         
            }
             $order = EmployeeOrder::findOrFail($request->employee_order_id);
+            if ($order->status !== 'pending') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'تمت مراجعة هذا الطلب مسبقاً',
+                ], 200);
+            }
+
             $employee = $order->employee;
             if($request->filled('overtime_value')){
                 $order->update(['status'=>'approved','overtime_value'=>$request->overtime_value]);
