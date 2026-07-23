@@ -1698,6 +1698,20 @@ public function store(Request $request)
 
             $search = trim((string) $request->input('search', ''));
             $date = $request->input('date');
+            $normalizedInvoiceSearch = strtoupper(str_replace([' ', '_'], '', $search));
+            $invoiceSearchDigits = preg_replace('/\D+/', '', $search) ?? '';
+            $isZeroPaddedInvoiceSearch = ctype_digit($search)
+                && strlen($search) > 1
+                && str_starts_with($search, '0');
+            $invoiceSearchPrefix = null;
+            if (preg_match('/^(SAL|MNT)-?\d+$/i', $normalizedInvoiceSearch, $invoiceMatch) === 1) {
+                $invoiceSearchPrefix = strtoupper($invoiceMatch[1]);
+            }
+            $looksLikeInvoiceSearch = $search !== ''
+                && (
+                    $invoiceSearchPrefix !== null
+                    || (ctype_digit($search) && strlen($search) <= 7)
+                );
             $sortDirection = strtolower((string) $request->input('sort_direction', 'desc')) === 'asc'
                 ? 'asc'
                 : 'desc';
@@ -1717,17 +1731,20 @@ public function store(Request $request)
                     'updatedByUser:id,name',
                 ]);
 
-            if (! empty($date)) {
+            if (! empty($date) && ! $looksLikeInvoiceSearch) {
                 $query->whereDate('created_at', $date);
             }
 
             if ($search !== '') {
                 $term = '%'.$search.'%';
-                $query->where(function ($q) use ($term, $search) {
+                $query->where(function ($q) use ($term, $search, $invoiceSearchDigits, $invoiceSearchPrefix, $isZeroPaddedInvoiceSearch) {
                     $q->where('buyer_name', 'like', $term)
                         ->orWhere('buyer_phone', 'like', $term)
                         ->orWhere('buyer_address', 'like', $term)
                         ->orWhere('notes', 'like', $term)
+                        ->orWhere('serial_number', 'like', $term)
+                        ->orWhereRaw("CONCAT('SAL-', LPAD(id, 7, '0')) LIKE ?", [$term])
+                        ->orWhereRaw("CONCAT('MNT-', LPAD(maintenance_id, 6, '0')) LIKE ?", [$term])
                         ->orWhereHas('product', function ($productQuery) use ($term) {
                             $productQuery->where('nameAr', 'like', $term);
                         })
@@ -1742,7 +1759,17 @@ public function store(Request $request)
                         });
 
                     if (ctype_digit($search)) {
-                        $q->orWhere('id', (int) $search);
+                        $q->orWhere('id', (int) $search)
+                            ->orWhere('serial_number', 'like', '%'.$search.'%');
+                    }
+
+                    if ($invoiceSearchDigits !== '' && ctype_digit($invoiceSearchDigits)) {
+                        $q->orWhere('id', (int) ltrim($invoiceSearchDigits, '0'))
+                            ->orWhere('serial_number', 'like', '%'.$invoiceSearchDigits.'%');
+
+                        if ($invoiceSearchPrefix !== 'SAL' && ! $isZeroPaddedInvoiceSearch) {
+                            $q->orWhere('maintenance_id', (int) ltrim($invoiceSearchDigits, '0'));
+                        }
                     }
                 });
             }
