@@ -5,10 +5,12 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
+use App\Services\EmployeeNotificationService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class EmployeeOrders extends Controller
@@ -183,10 +185,37 @@ class EmployeeOrders extends Controller
     //for reject
     private function common(Request $request,$status){
         try{
-            $request->validate(['employee_order_id'=>'required|exists:employee_orders,id']);
+            $request->validate([
+                'employee_order_id'=>'required|exists:employee_orders,id',
+                'rejection_reason' => 'nullable|string|max:1000',
+            ]);
 
             $order = EmployeeOrder::findOrFail($request->employee_order_id);
-            $order->update(['status'=>$status]);
+            $previousStatus = (string) $order->status;
+            $reason = trim((string) $request->input('rejection_reason', ''));
+            $payload = ['status'=>$status];
+            if ($status === 'rejected') {
+                $payload['rejection_reason'] = $reason !== '' ? $reason : null;
+            }
+            $order->update($payload);
+
+            if ($status === 'rejected' && $order->type === 'loan') {
+                if ($previousStatus === 'approved') {
+                    $employee = $order->employee;
+                    if ($employee) {
+                        $employee->debts = max(0, (float) $employee->debts - (float) ($order->loan_value ?? 0));
+                        $employee->save();
+                    }
+                }
+
+                try {
+                    app(EmployeeNotificationService::class)->notifyLoanRejected($order->fresh(), $reason);
+                } catch (\Throwable $e) {
+                    Log::error('Employee notification (loan rejected) failed: '.$e->getMessage(), [
+                        'employee_order_id' => $order->id,
+                    ]);
+                }
+            }
 
             return response()->json([
                 'status'=>'success',
@@ -220,11 +249,30 @@ class EmployeeOrders extends Controller
             ]);
 
             $order = EmployeeOrder::findOrFail($request->employee_order_id);
-            $order->update(['status'=>'approved','loan_value'=>$request->loan_value]);
+            $previousStatus = (string) $order->status;
+            $previousLoanValue = (float) ($order->loan_value ?? 0);
+            $approvedLoanValue = (float) $request->loan_value;
+            $order->update([
+                'status'=>'approved',
+                'loan_value'=>$approvedLoanValue,
+                'rejection_reason' => null,
+            ]);
 
             $employee = $order->employee;
-            $employee->debts += $request->loan_value;
+            if ($previousStatus === 'approved') {
+                $employee->debts += ($approvedLoanValue - $previousLoanValue);
+            } else {
+                $employee->debts += $approvedLoanValue;
+            }
             $employee->save();
+
+            try {
+                app(EmployeeNotificationService::class)->notifyLoanApproved($order->fresh());
+            } catch (\Throwable $e) {
+                Log::error('Employee notification (loan approved) failed: '.$e->getMessage(), [
+                    'employee_order_id' => $order->id,
+                ]);
+            }
 
         Logs::createLog('قبول طلب سلفة ',' تم قبول طلب سلفة  لموظف باسم'.' '.$employee->user->name
         .' '.'بقيمة '.' '.$request->loan_value

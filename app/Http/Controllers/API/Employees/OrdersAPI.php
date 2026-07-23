@@ -5,8 +5,10 @@ namespace App\Http\Controllers\API\Employees;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeOrder;
+use App\Services\AdminNotificationService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class OrdersAPI extends Controller
@@ -68,12 +70,21 @@ public function createLoanOrder(Request $request){
         ]);
 
         $user = $request->user();
-        EmployeeOrder::create([
+        $order = EmployeeOrder::create([
             'employee_id' => $user->employee->id,
             'type' => 'loan',
             'loan_value' => $request->loan_value,
             
         ]);
+
+        try {
+            app(AdminNotificationService::class)->notifyEmployeeLoanRequest($order);
+        } catch (\Throwable $e) {
+            Log::error('Admin notification (employee loan request) failed: '.$e->getMessage(), [
+                'employee_order_id' => $order->id,
+                'employee_id' => $user->employee->id ?? null,
+            ]);
+        }
     
         Logs::createLog('انشاء طلب سلفة ',' انشاء طلب سلفة  لموظف باسم'.' '.$user->name
         .' '.'بقيمة '.' '.$request->loan_value

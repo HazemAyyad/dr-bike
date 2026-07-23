@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AdminDeviceToken;
 use App\Models\AdminNotification;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeOrder;
 use App\Models\EmployeeSubTask;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
@@ -60,6 +61,8 @@ class AdminNotificationService
     public const TYPE_ATTENDANCE_ABSENT_REMINDER = 'attendance_absent_reminder';
 
     public const TYPE_ATTENDANCE_OVERTIME_REQUEST = 'attendance_overtime_request';
+
+    public const TYPE_EMPLOYEE_LOAN_REQUEST = 'employee_loan_request';
 
     public const TYPE_STORE_USER_REGISTERED = 'store_user_registered';
 
@@ -319,6 +322,34 @@ class AdminNotificationService
                 $employee->id,
                 'attendance_overtime_request',
                 (int) $request->id,
+                true
+            );
+        });
+    }
+
+    public function notifyEmployeeLoanRequest(EmployeeOrder $order): AdminNotification
+    {
+        return $this->withArabicLocale(function () use ($order) {
+            $order->loadMissing('employee.user');
+            $employee = $order->employee;
+            $name = $employee?->user?->name ?? __('messages.employee_default_name');
+            $amount = number_format((float) ($order->loan_value ?? 0), 2, '.', '');
+
+            return $this->create(
+                self::TYPE_EMPLOYEE_LOAN_REQUEST,
+                'طلب سلفة جديد',
+                "الموظف {$name} طلب سلفة بقيمة {$amount}",
+                [
+                    'employee_order_id' => (string) $order->id,
+                    'employee_id' => (string) ($employee?->id ?? ''),
+                    'employee_name' => $name,
+                    'loan_value' => $amount,
+                    'status' => (string) ($order->status ?? 'pending'),
+                    'requested_at' => optional($order->created_at)->toIso8601String() ?? now()->toIso8601String(),
+                ],
+                $employee?->id,
+                'employee_order',
+                (int) $order->id,
                 true
             );
         });

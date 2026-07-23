@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeNotification;
+use App\Models\EmployeeOrder;
 use App\Support\EmployeeAttendanceToday;
 use App\Support\EmployeePendingTasksForToday;
 use Illuminate\Support\Facades\App;
@@ -35,6 +36,10 @@ class EmployeeNotificationService
     public const TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN = 'sales_daily_previous_day_open';
 
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
+
+    public const TYPE_EMPLOYEE_LOAN_APPROVED = 'employee_loan_approved';
+
+    public const TYPE_EMPLOYEE_LOAN_REJECTED = 'employee_loan_rejected';
 
     public function __construct(
         protected FirebaseService $firebaseService
@@ -113,6 +118,67 @@ class EmployeeNotificationService
         );
 
         return $result !== null;
+    }
+
+    public function notifyLoanApproved(EmployeeOrder $order): ?EmployeeNotification
+    {
+        return $this->withArabicLocale(function () use ($order) {
+            $order->loadMissing('employee.user');
+            $employee = $order->employee;
+            if (! $employee) {
+                return null;
+            }
+
+            $amount = number_format((float) ($order->loan_value ?? 0), 2, '.', '');
+
+            return $this->create(
+                $employee,
+                self::TYPE_EMPLOYEE_LOAN_APPROVED,
+                'تم قبول طلب السلفة',
+                "تم قبول طلب السلفة بقيمة {$amount}",
+                [
+                    'employee_order_id' => (string) $order->id,
+                    'loan_value' => $amount,
+                    'status' => 'approved',
+                    'reviewed_at' => now()->toIso8601String(),
+                ],
+                'employee_order',
+                (int) $order->id,
+                true
+            );
+        });
+    }
+
+    public function notifyLoanRejected(EmployeeOrder $order, ?string $reason = null): ?EmployeeNotification
+    {
+        return $this->withArabicLocale(function () use ($order, $reason) {
+            $order->loadMissing('employee.user');
+            $employee = $order->employee;
+            if (! $employee) {
+                return null;
+            }
+
+            $amount = number_format((float) ($order->loan_value ?? 0), 2, '.', '');
+            $reason = trim((string) ($reason ?? $order->rejection_reason ?? ''));
+            $reasonLabel = $reason !== '' ? $reason : 'لم يتم توضيح السبب';
+
+            return $this->create(
+                $employee,
+                self::TYPE_EMPLOYEE_LOAN_REJECTED,
+                'تم رفض طلب السلفة',
+                "تم رفض طلب السلفة بقيمة {$amount}. السبب: {$reasonLabel}",
+                [
+                    'employee_order_id' => (string) $order->id,
+                    'loan_value' => $amount,
+                    'status' => 'rejected',
+                    'rejection_reason' => $reasonLabel,
+                    'reviewed_at' => now()->toIso8601String(),
+                ],
+                'employee_order',
+                (int) $order->id,
+                true
+            );
+        });
     }
 
     /**
