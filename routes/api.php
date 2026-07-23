@@ -1067,6 +1067,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/admin/users', [\App\Http\Controllers\API\AdminUsersController::class, 'index']);
     Route::post('/admin/users', [\App\Http\Controllers\API\AdminUsersController::class, 'store']);
     Route::post('/admin/users/{id}/edit', [\App\Http\Controllers\API\AdminUsersController::class, 'update'])->whereNumber('id');
+    Route::post('/admin/users/{id}/development-role', [\App\Http\Controllers\API\AdminUsersController::class, 'updateDevelopmentRole'])->whereNumber('id');
     Route::post('/admin/users/{id}/delete', [\App\Http\Controllers\API\AdminUsersController::class, 'destroy'])->whereNumber('id');
     Route::post('/admin/users/{id}/toggle-block', [\App\Http\Controllers\API\AdminUsersController::class, 'toggleBlock'])->whereNumber('id');
 

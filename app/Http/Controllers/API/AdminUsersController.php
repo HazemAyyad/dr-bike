@@ -9,6 +9,7 @@ use App\Services\UserSessionManager;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -55,9 +56,14 @@ class AdminUsersController extends Controller
                 'phone' => $data['phone'] ?? null,
                 'password' => Hash::make($data['password']),
                 'type' => 'admin',
-                'development_role' => $data['development_role'] ?? User::DEVELOPMENT_ROLE_NONE,
                 'is_blocked' => false,
             ]);
+
+            if (Schema::hasColumn('users', 'development_role')) {
+                $user->forceFill([
+                    'development_role' => $data['development_role'] ?? User::DEVELOPMENT_ROLE_NONE,
+                ])->save();
+            }
 
             Logs::createLog(
                 'إضافة مدير',
@@ -100,9 +106,15 @@ class AdminUsersController extends Controller
             $payload = [
                 'name' => $data['name'],
                 'email' => $data['email'],
-                'phone' => $data['phone'] ?? null,
-                'development_role' => $data['development_role'] ?? User::DEVELOPMENT_ROLE_NONE,
             ];
+
+            if (array_key_exists('phone', $data)) {
+                $payload['phone'] = $data['phone'] ?: null;
+            }
+
+            if (Schema::hasColumn('users', 'development_role')) {
+                $payload['development_role'] = $data['development_role'] ?? User::DEVELOPMENT_ROLE_NONE;
+            }
 
             if (! empty($data['password'])) {
                 $payload['password'] = Hash::make($data['password']);
@@ -114,6 +126,56 @@ class AdminUsersController extends Controller
             Logs::createLog(
                 'تعديل مدير',
                 'تم تعديل مدير باسم '.$user->name,
+                'admins'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.admin_updated_successfully'),
+                'admin' => $this->formatAdmin($user->fresh()),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.admin_not_found'),
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function updateDevelopmentRole(Request $request, int $id)
+    {
+        try {
+            if (! Schema::hasColumn('users', 'development_role')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'development_role column is missing. Run migrations first.',
+                ], 200);
+            }
+
+            $user = $this->findAdmin($id);
+
+            $data = $request->validate([
+                'development_role' => ['required', 'string', Rule::in(User::DEVELOPMENT_ROLES)],
+            ]);
+
+            $user->update([
+                'development_role' => $data['development_role'],
+            ]);
+
+            Logs::createLog(
+                'تعديل دور مدير',
+                'تم تعديل دور تطوير التطبيق للمدير '.$user->name,
                 'admins'
             );
 
