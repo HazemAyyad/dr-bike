@@ -80,12 +80,17 @@ class EmployeeOrders extends Controller
 
     private function getOrdersByType(String $type){
         try{
-            $orders = EmployeeOrder::where('type',$type)->get();
+            $orders = EmployeeOrder::with('employee.user')
+                ->where('type',$type)
+                ->latest()
+                ->get();
             $formatted = $orders->map(function($order) use ($type){
+                $employee = $order->employee;
+                $images = is_array($employee?->employee_img) ? $employee->employee_img : [];
                 $base = [
                     'id' => $order->id,
-                    'employee_name' => $order->employee->user->name?? 'unkonwn',
-                    'employee_img' => $order->employee->employee_img? 'public/EmployeeImages/'.$order->employee->employee_img[0]:  'no images',
+                    'employee_name' => $employee?->user?->name ?? 'unknown',
+                    'employee_img' => ! empty($images) ? 'public/EmployeeImages/'.$images[0] :  'no images',
                     'order_status' => $order->status,
                     'type' => $order->type,
                     'order_date' => $order->created_at->format('Y-m-d'),
