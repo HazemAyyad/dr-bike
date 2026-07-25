@@ -76,6 +76,8 @@ class AdminNotificationService
 
     public const TYPE_APP_DEVELOPMENT_TASK = 'app_development_task';
 
+    public const TYPE_PASSWORD_RESET_OTP = 'password_reset_otp';
+
     /**
      * @param  array<string, mixed>  $data
      */
@@ -448,6 +450,35 @@ class AdminNotificationService
                 null,
                 'store_order',
                 (int) $order->id,
+                true
+            );
+        });
+    }
+
+    public function notifyPasswordResetOtp(\App\Models\User $user, string $code): AdminNotification
+    {
+        return $this->withArabicLocale(function () use ($user, $code) {
+            $name = (string) ($user->name ?: $user->email);
+            $email = (string) $user->email;
+
+            return $this->create(
+                self::TYPE_PASSWORD_RESET_OTP,
+                __('messages.admin_notify_password_reset_otp_title'),
+                __('messages.admin_notify_password_reset_otp_body', [
+                    'user' => $name,
+                    'email' => $email,
+                    'code' => $code,
+                ]),
+                [
+                    'user_id' => (string) $user->id,
+                    'user_name' => $name,
+                    'email' => $email,
+                    'otp' => $code,
+                    'requested_at' => now()->toIso8601String(),
+                ],
+                null,
+                'password_reset_code',
+                null,
                 true
             );
         });

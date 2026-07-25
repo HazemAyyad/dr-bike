@@ -875,6 +875,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     });
 
     Route::get('/get/products/list' , [Stocks::class,'allProducts']);
+    Route::get('/get/deleted/products' , [Stocks::class,'deletedProducts']);
     Route::get('/get/product/size-options' , [Stocks::class,'productSizeOptions']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
     Route::post('/edit/product' , [Stocks::class,'editProduct']);

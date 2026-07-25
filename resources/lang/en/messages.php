@@ -523,6 +523,8 @@ return [
     'admin_notify_store_user_registered_body' => ':user registered a new store subscription (:email, :phone).',
     'admin_notify_store_order_created_title' => 'New store order — :serial',
     'admin_notify_store_order_created_body' => 'New store order :serial for :customer (:phone), city: :city, total: :total.',
+    'admin_notify_password_reset_otp_title' => 'Password reset code',
+    'admin_notify_password_reset_otp_body' => ':user (:email) requested a password reset. Code: :code',
     'admin_notify_source_fingerprint' => ' (fingerprint)',
     'admin_notify_source_qr' => ' (QR scan)',
     'admin_notify_source_manual' => ' (manual)',
@@ -530,6 +532,9 @@ return [
     'employee_default_name' => 'Employee',
 
     'settings_updated' => 'Settings updated successfully.',
+    'reset_code_sent_to_admin' => 'The reset code was sent to admin. Contact an admin to get the code.',
+    'reset_code_sent_by_sms' => 'The reset code was sent by SMS.',
+    'reset_code_sms_body' => 'Your password reset code is: :code',
     'fingerprint_user_id_taken' => 'This fingerprint user ID is already assigned to another employee.',
     'task_completion_points' => 'Task completion points: :task',
     'products_location_moved' => 'Products moved successfully',

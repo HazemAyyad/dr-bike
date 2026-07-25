@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Mail\ResetPasswordMail;
 use App\Mail\VerifyTokenMail;
 use App\Models\AdminDeviceToken;
+use App\Models\AppSetting;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeDetail;
 use App\Models\PasswordResetCode;
@@ -18,6 +19,8 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Validation\ValidationException;
@@ -457,6 +460,32 @@ class Authentication extends Controller
                 ['token' => $code]
             );
 
+            $user = User::where('email', $request->email)->firstOrFail();
+            $method = strtolower(trim((string) AppSetting::get(
+                AppSetting::KEY_PASSWORD_RESET_OTP_DELIVERY_METHOD,
+                'email'
+            )));
+
+            if ($method === 'admin') {
+                app(AdminNotificationService::class)->notifyPasswordResetOtp($user, (string) $code);
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => __('messages.reset_code_sent_to_admin'),
+                ], 200);
+            }
+
+            if ($method === 'sms') {
+                $smsSent = $this->sendResetCodeSms($user, (string) $code);
+
+                return response()->json([
+                    'status' => $smsSent ? 'success' : 'error',
+                    'message' => $smsSent
+                        ? __('messages.reset_code_sent_by_sms')
+                        : __('messages.reset_code_failed'),
+                ], 200);
+            }
+
             Mail::to($request['email'])->send(new ResetPasswordMail($request['email'], $code));
 
             return response()->json([
@@ -483,6 +512,74 @@ class Authentication extends Controller
 
             ], 200);
         }
+    }
+
+    private function sendResetCodeSms(User $user, string $code): bool
+    {
+        $phone = $this->normalizeSmsPhone($user->phone ?: $user->sub_phone);
+        if ($phone === null) {
+            Log::warning('password_reset_sms_missing_phone', ['user_id' => $user->id]);
+
+            return false;
+        }
+
+        $accountSid = config('services.twilio.account_sid');
+        $authToken = config('services.twilio.auth_token');
+        $from = config('services.twilio.from');
+        if (! $accountSid || ! $authToken || ! $from) {
+            Log::warning('password_reset_sms_missing_twilio_config');
+
+            return false;
+        }
+
+        try {
+            $response = Http::asForm()
+                ->withBasicAuth($accountSid, $authToken)
+                ->post("https://api.twilio.com/2010-04-01/Accounts/{$accountSid}/Messages.json", [
+                    'From' => $from,
+                    'To' => $phone,
+                    'Body' => __('messages.reset_code_sms_body', ['code' => $code]),
+                ]);
+
+            if ($response->successful()) {
+                return true;
+            }
+
+            Log::warning('password_reset_sms_failed', [
+                'user_id' => $user->id,
+                'phone' => $phone,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+
+            return false;
+        } catch (\Throwable $e) {
+            Log::warning('password_reset_sms_exception', [
+                'user_id' => $user->id,
+                'phone' => $phone,
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+    private function normalizeSmsPhone(?string $phone): ?string
+    {
+        if ($phone === null) {
+            return null;
+        }
+
+        $normalized = preg_replace('/\s+/', '', trim($phone));
+        if ($normalized === '') {
+            return null;
+        }
+
+        if (! str_starts_with($normalized, '+')) {
+            $normalized = '+'.$normalized;
+        }
+
+        return preg_match('/^\+\d{8,15}$/', $normalized) ? $normalized : null;
     }
 
     // reset the passsword

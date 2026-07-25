@@ -50,6 +50,7 @@ class AppSettingsController extends Controller
             $data = $request->validate(array_merge([
                 'employee_task_subtask_bonus_default' => 'sometimes|integer|min:0|max:9999',
                 'admin_fab_options' => 'nullable|string|max:500',
+                'password_reset_otp_delivery_method' => 'sometimes|string|in:email,admin,sms',
                 'sales_daily_variance_alert_threshold' => 'sometimes|numeric|min:0|max:999999',
                 'sales_daily_max_float' => 'sometimes|array',
                 'attendance' => 'sometimes|array',
@@ -67,6 +68,12 @@ class AppSettingsController extends Controller
                 AppSetting::set(
                     AppSetting::KEY_ADMIN_FAB_OPTIONS,
                     (string) ($data['admin_fab_options'] ?? '')
+                );
+            }
+            if ($request->has('password_reset_otp_delivery_method')) {
+                AppSetting::set(
+                    AppSetting::KEY_PASSWORD_RESET_OTP_DELIVERY_METHOD,
+                    (string) $data['password_reset_otp_delivery_method']
                 );
             }
             if ($request->has('sales_daily_variance_alert_threshold')) {
@@ -134,6 +141,10 @@ class AppSettingsController extends Controller
             'admin_fab_options' => AppSetting::get(
                 AppSetting::KEY_ADMIN_FAB_OPTIONS,
                 'newInvoice,newEmployee,newExpense,newCustomer'
+            ),
+            'password_reset_otp_delivery_method' => AppSetting::get(
+                AppSetting::KEY_PASSWORD_RESET_OTP_DELIVERY_METHOD,
+                'email'
             ),
             'sales_daily_variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
             'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),

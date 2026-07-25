@@ -534,6 +534,8 @@ return [
     'admin_notify_store_user_registered_body' => 'سجّل :user اشتراكاً جديداً في المتجر (:email، :phone).',
     'admin_notify_store_order_created_title' => 'طلب جديد من المتجر — :serial',
     'admin_notify_store_order_created_body' => 'وصل طلب متجر جديد رقم :serial للزبون :customer (:phone)، المدينة: :city، الإجمالي: :total.',
+    'admin_notify_password_reset_otp_title' => 'كود استعادة كلمة المرور',
+    'admin_notify_password_reset_otp_body' => 'طلب :user (:email) استعادة كلمة المرور. الكود: :code',
     'admin_notify_source_fingerprint' => ' (بصمة)',
     'admin_notify_source_qr' => ' (مسح QR)',
     'admin_notify_source_manual' => ' (يدوي)',
@@ -542,6 +544,9 @@ return [
 
     'task_completed_without_review' => 'تم إنهاء المهمة مباشرة دون مراجعة.',
     'settings_updated' => 'تم تحديث الإعدادات بنجاح.',
+    'reset_code_sent_to_admin' => 'تم إرسال كود الاستعادة إلى الإدارة. تواصل مع الأدمن للحصول على الكود.',
+    'reset_code_sent_by_sms' => 'تم إرسال كود الاستعادة برسالة SMS.',
+    'reset_code_sms_body' => 'كود استعادة كلمة المرور: :code',
     'fingerprint_user_id_taken' => 'رقم مستخدم البصمة مستخدم لموظف آخر.',
     'task_completion_points' => 'نقاط إتمام المهمة: :task',
     'products_location_moved' => 'تم نقل المنتجات بنجاح',

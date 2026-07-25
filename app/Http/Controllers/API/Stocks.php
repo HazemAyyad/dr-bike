@@ -152,6 +152,53 @@ class Stocks extends Controller
         }
     }
 
+    public function deletedProducts(Request $request)
+    {
+        try {
+            ini_set('max_execution_time', 2000);
+
+            $perPage = min(max((int) $request->input('per_page', 15), 1), 100);
+
+            $query = Product::onlyTrashed()
+                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'purchasePrices' => fn ($q) => $q->latest('id'), 'tags' => function ($q) {
+                    $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+                }])
+                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at', 'deleted_at');
+
+            ProductSearchFilter::apply($query, $request->input('search'));
+
+            $products = $query
+                ->orderByDesc('deleted_at')
+                ->paginate($perPage);
+
+            $formatted = $products->getCollection()
+                ->map(fn ($product) => $this->formatProductListItem($product, $this->isAdminRequest($request)));
+
+            return response()->json([
+                'status' => 'success',
+                'products' => $formatted->values(),
+                'pagination' => [
+                    'current_page' => $products->currentPage(),
+                    'last_page' => $products->lastPage(),
+                    'per_page' => $products->perPage(),
+                    'total' => $products->total(),
+                    'next_page_url' => $products->nextPageUrl(),
+                    'prev_page_url' => $products->previousPageUrl(),
+                ],
+            ], 200);
+        } catch (QueryException $e) {
+            return response([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     private function parseStoreSectionFilter($value): array
     {
         $raw = is_array($value) ? $value : explode(',', (string) $value);
