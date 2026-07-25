@@ -435,6 +435,10 @@ class SuspendedInstantSaleService
             unset($payload['payment_box_id'], $payload['payment_box_name']);
             $payload['payment_box_value'] = 0;
         }
+        if ((float) ($payload['payment_box_value'] ?? 0) <= 0) {
+            unset($payload['payment_box_id'], $payload['payment_box_name']);
+            $payload['payment_box_value'] = 0;
+        }
         if (
             ! empty($payload['payment_box_id'])
             && ! array_key_exists('payment_box_value', $payload)
@@ -457,15 +461,13 @@ class SuspendedInstantSaleService
         }
 
         $box = Box::query()->find($boxId);
-        if (! $box || ! $box->isDailySalesBox()) {
+        $currency = $box?->currency ?: null;
+
+        if ($box && $box->isDailySalesBox() && $this->boxBelongsToSession($box, $session)) {
             return $payload;
         }
 
-        if ($this->boxBelongsToSession($box, $session)) {
-            return $payload;
-        }
-
-        $targetBox = $this->dailySalesBoxForSession($session, $box->currency ?: null);
+        $targetBox = $this->dailySalesBoxForSession($session, $currency);
         if (! $targetBox) {
             return $payload;
         }
