@@ -6,6 +6,7 @@ use App\Http\Controllers\API\CheckNotificationRulesController;
 use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
+use App\Http\Controllers\API\AdminPasswordResetCodeController;
 use App\Http\Controllers\API\AppSettingsController;
 use App\Http\Controllers\API\AppDevelopmentTaskController;
 use App\Http\Controllers\API\AppUpdateController;
@@ -1052,6 +1053,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::delete('/admin/notifications/{id}', [AdminNotificationCenterController::class, 'destroy']);
     Route::post('/admin/device-token', [AdminNotificationCenterController::class, 'storeDeviceToken']);
     Route::delete('/admin/device-token', [AdminNotificationCenterController::class, 'destroyDeviceToken']);
+    Route::get('/admin/password-reset-codes', [AdminPasswordResetCodeController::class, 'index']);
 
     Route::get('/admin/cron-job-logs', [\App\Http\Controllers\API\CronJobLogController::class, 'index']);
     Route::get('/admin/cron-job-logs/{id}', [\App\Http\Controllers\API\CronJobLogController::class, 'show']);

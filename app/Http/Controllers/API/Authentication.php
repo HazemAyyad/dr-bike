@@ -455,16 +455,29 @@ class Authentication extends Controller
 
             $code = random_int(1000, 9999);
 
-            PasswordResetCode::updateOrCreate(
-                ['email' => $request->email],
-                ['token' => $code]
-            );
-
             $user = User::where('email', $request->email)->firstOrFail();
             $method = strtolower(trim((string) AppSetting::get(
                 AppSetting::KEY_PASSWORD_RESET_OTP_DELIVERY_METHOD,
                 'email'
             )));
+
+            PasswordResetCode::query()
+                ->where('email', $request->email)
+                ->whereNull('used_at')
+                ->where(function ($query) {
+                    $query->whereNull('expires_at')
+                        ->orWhere('expires_at', '>', now());
+                })
+                ->update(['expires_at' => now()]);
+
+            PasswordResetCode::create([
+                'user_id' => $user->id,
+                'email' => $request->email,
+                'token' => $code,
+                'delivery_method' => in_array($method, ['email', 'admin', 'sms'], true) ? $method : 'email',
+                'expires_at' => now()->addMinutes(15),
+                'used_at' => null,
+            ]);
 
             if ($method === 'admin') {
                 app(AdminNotificationService::class)->notifyPasswordResetOtp($user, (string) $code);
@@ -594,6 +607,12 @@ class Authentication extends Controller
 
             $record = PasswordResetCode::where('email', $request->email)
                 ->where('token', $request->token)
+                ->whereNull('used_at')
+                ->where(function ($query) {
+                    $query->whereNull('expires_at')
+                        ->orWhere('expires_at', '>=', now());
+                })
+                ->orderByDesc('id')
                 ->first();
 
             if (! $record) {
@@ -607,8 +626,8 @@ class Authentication extends Controller
             $user->password = Hash::make($request->password);
             $user->save();
 
-            // Delete token after use
-            $record->delete();
+            $record->used_at = now();
+            $record->save();
 
             return response()->json([
                 'status' => 'success',
