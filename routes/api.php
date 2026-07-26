@@ -64,6 +64,7 @@ use App\Http\Controllers\API\LegacyStoreImageController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\Notifications;
+use App\Http\Controllers\API\NotesController;
 use App\Http\Controllers\API\OfferPackageController;
 use App\Http\Controllers\API\Orders;
 use App\Http\Controllers\API\OutgoingChecks;
@@ -159,6 +160,18 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::post('/me' , [Authentication::class,'me']);
     Route::post('/update/fcm-token' , [Authentication::class,'updateFcmToken']);
     Route::post('/app/version-seen', [AppVersionController::class, 'seen']);
+
+    Route::get('/notes/users', [NotesController::class, 'users']);
+    Route::get('/notes', [NotesController::class, 'index']);
+    Route::post('/notes', [NotesController::class, 'store']);
+    Route::get('/notes/{id}', [NotesController::class, 'show'])->whereNumber('id');
+    Route::put('/notes/{id}', [NotesController::class, 'update'])->whereNumber('id');
+    Route::delete('/notes/{id}', [NotesController::class, 'destroy'])->whereNumber('id');
+    Route::post('/notes/{id}/sharing', [NotesController::class, 'syncSharing'])->whereNumber('id');
+    Route::post('/notes/{id}/attachments', [NotesController::class, 'storeAttachment'])->whereNumber('id');
+    Route::delete('/notes/{id}/attachments/{attachmentId}', [NotesController::class, 'destroyAttachment'])
+        ->whereNumber('id')
+        ->whereNumber('attachmentId');
 
     // only for customers
     // orders
