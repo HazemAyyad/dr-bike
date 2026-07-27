@@ -84,6 +84,8 @@ class BoxLogs extends Controller
                     'box_balance_before' => round((float) $log->box_balance_before, 2),
                     'box_balance_after' => round((float) $log->box_balance_after, 2),
                     'type' => $log->type,
+                    'payment_method' => $log->payment_method,
+                    'affects_cash_balance' => (bool) ($log->affects_cash_balance ?? true),
                     'created_at' => optional($log->created_at)->toJSON(),
                     'updated_at' => optional($log->updated_at)->toJSON(),
                     'from_box' => null,

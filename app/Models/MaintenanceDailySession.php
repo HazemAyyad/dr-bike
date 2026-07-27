@@ -9,6 +9,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class MaintenanceDailySession extends Model
 {
     protected $fillable = [
+        'user_id',
+        'employee_id',
         'business_date',
         'status',
         'box_id',
@@ -32,6 +34,16 @@ class MaintenanceDailySession extends Model
     public function box(): BelongsTo
     {
         return $this->belongsTo(Box::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    public function employee(): BelongsTo
+    {
+        return $this->belongsTo(EmployeeDetail::class, 'employee_id');
     }
 
     public function openedBy(): BelongsTo

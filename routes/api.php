@@ -586,6 +586,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::post('/maintenance/invoice' , [MaintenanceAPI::class,'invoiceData']);
     Route::post('/maintenance/invoice/pdf' , [MaintenanceAPI::class,'invoicePdf']);
     Route::post('/maintenance/daily-box' , [MaintenanceAPI::class,'dailyBox']);
+    Route::get('/maintenance/daily-session/current' , [MaintenanceAPI::class,'dailySessionCurrent']);
+    Route::post('/maintenance/daily-session/open' , [MaintenanceAPI::class,'dailySessionOpen']);
 
   
 

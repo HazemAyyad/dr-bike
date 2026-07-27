@@ -89,6 +89,8 @@ class MaintenanceAPI extends Controller
                 'parts_total' => round((float) ($maintenance->parts_total ?? 0), 2),
                 'labor_cost' => round((float) ($maintenance->labor_cost ?? 0), 2),
                 'invoice_total' => round((float) ($maintenance->invoice_total ?? 0), 2),
+                'paid_amount' => round((float) ($maintenance->paid_amount ?? 0), 2),
+                'remaining_amount' => max(0, round((float) ($maintenance->invoice_total ?? 0) - (float) ($maintenance->paid_amount ?? 0), 2)),
                 'instant_sale_id' => $maintenance->instant_sale_id,
                 //"remaining_time_in_hours" => $diffInHours,
                 "media_files" => $imagePath??'no image files',
@@ -595,6 +597,10 @@ class MaintenanceAPI extends Controller
                 'discount' => 'nullable|numeric|min:0',
                 'payment_amount' => 'nullable|numeric|min:0',
                 'payment_box_id' => 'nullable|integer|exists:boxes,id',
+                'payments' => 'nullable|array',
+                'payments.*.method' => 'required_with:payments|string|in:cash,visa,card,bank_transfer,transfer',
+                'payments.*.amount' => 'required_with:payments|numeric|min:0',
+                'payments.*.note' => 'nullable|string|max:1000',
             ]);
 
             $maintenance = Maintenance::findOrFail($data['maintenance_id']);
@@ -742,12 +748,55 @@ class MaintenanceAPI extends Controller
 
             return response()->json([
                 'status' => 'success',
-                'daily_box' => $this->maintenanceDailyBoxService->payload($data['date'] ?? null),
+                'daily_box' => $this->maintenanceDailyBoxService->payload(
+                    $data['date'] ?? null,
+                    $request->user()
+                ),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function dailySessionCurrent(Request $request)
+    {
+        try {
+            return response()->json([
+                'status' => 'success',
+                'daily_box' => $this->maintenanceDailyBoxService->payload(null, $request->user()),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function dailySessionOpen(Request $request)
+    {
+        try {
+            $session = $this->maintenanceDailyBoxService->openToday($request->user());
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم فتح صندوق الصيانة اليومي',
+                'daily_box' => $this->maintenanceDailyBoxService->payload(null, $request->user()),
+                'session_id' => $session->id,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {

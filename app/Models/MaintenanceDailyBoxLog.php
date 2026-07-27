@@ -15,6 +15,8 @@ class MaintenanceDailyBoxLog extends Model
         'user_id',
         'actor_name',
         'type',
+        'payment_method',
+        'affects_cash_balance',
         'amount',
         'box_balance_before',
         'box_balance_after',
@@ -26,6 +28,7 @@ class MaintenanceDailyBoxLog extends Model
         'amount' => 'float',
         'box_balance_before' => 'float',
         'box_balance_after' => 'float',
+        'affects_cash_balance' => 'boolean',
     ];
 
     public function session(): BelongsTo

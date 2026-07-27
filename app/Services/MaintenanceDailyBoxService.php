@@ -13,25 +13,48 @@ use Illuminate\Validation\ValidationException;
 
 class MaintenanceDailyBoxService
 {
+    /**
+     * @return array{user_id: int, employee_id: int|null}
+     */
+    public function resolveOwner(User $user): array
+    {
+        return [
+            'user_id' => (int) $user->id,
+            'employee_id' => $user->employee?->id ? (int) $user->employee->id : null,
+        ];
+    }
+
     public function businessDate(?Carbon $at = null): Carbon
     {
         return ($at ?? now())->copy()->startOfDay();
     }
 
-    public function ensureBox(): Box
+    public function ensureBox(User $user): Box
     {
-        $box = Box::query()
+        $owner = $this->resolveOwner($user);
+        $displayName = $user->name ?? 'مستخدم';
+
+        $query = Box::query()
             ->where('type', config('maintenance_daily.box_type', 'daily_maintenance'))
-            ->where('currency', config('maintenance_daily.currency', 'شيكل'))
-            ->first();
+            ->where('currency', config('maintenance_daily.currency', 'شيكل'));
+
+        if ($owner['employee_id']) {
+            $query->where('employee_id', $owner['employee_id']);
+        } else {
+            $query->where('user_id', $owner['user_id'])->whereNull('employee_id');
+        }
+
+        $box = $query->first();
 
         if ($box) {
             return $box;
         }
 
         return Box::create([
-            'name' => config('maintenance_daily.box_name', 'صندوق الصيانة اليومي'),
+            'name' => config('maintenance_daily.box_name', 'صندوق الصيانة اليومي').' - '.$displayName,
             'type' => config('maintenance_daily.box_type', 'daily_maintenance'),
+            'employee_id' => $owner['employee_id'],
+            'user_id' => $owner['employee_id'] ? null : $owner['user_id'],
             'total' => 0,
             'is_shown' => 0,
             'currency' => config('maintenance_daily.currency', 'شيكل'),
@@ -53,13 +76,34 @@ class MaintenanceDailyBoxService
         }
     }
 
-    public function getOrOpenSession(User $user, ?Carbon $at = null): MaintenanceDailySession
+    public function currentSession(User $user, ?Carbon $at = null): ?MaintenanceDailySession
+    {
+        $at = $at ?? now();
+        $owner = $this->resolveOwner($user);
+        $date = $this->businessDate($at);
+
+        return MaintenanceDailySession::query()
+            ->with(['box:id,name,total,currency,type'])
+            ->where('user_id', $owner['user_id'])
+            ->whereDate('business_date', $date)
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    public function requireOpenSession(User $user, ?Carbon $at = null): MaintenanceDailySession
     {
         $at = $at ?? now();
         $this->assertWithinOpenWindow($at);
-        $date = $this->businessDate($at);
 
-        return $this->openSession($date, $user);
+        $session = $this->currentSession($user, $at);
+
+        if (! $session || ! $session->isOpen()) {
+            throw ValidationException::withMessages([
+                'maintenance_daily_box' => ['يجب فتح صندوق الصيانة اليومي قبل تسليم الصيانة.'],
+            ]);
+        }
+
+        return $session;
     }
 
     public function openToday(?User $user = null, ?Carbon $at = null): MaintenanceDailySession
@@ -67,14 +111,22 @@ class MaintenanceDailyBoxService
         $at = $at ?? now();
         $this->assertWithinOpenWindow($at);
 
+        if (! $user) {
+            throw ValidationException::withMessages([
+                'maintenance_daily_box' => ['لا يمكن فتح صندوق الصيانة بدون مستخدم.'],
+            ]);
+        }
+
         return $this->openSession($this->businessDate($at), $user);
     }
 
-    private function openSession(Carbon $date, ?User $user = null): MaintenanceDailySession
+    private function openSession(Carbon $date, User $user): MaintenanceDailySession
     {
         return DB::transaction(function () use ($user, $date) {
-            $box = Box::lockForUpdate()->find($this->ensureBox()->id);
+            $owner = $this->resolveOwner($user);
+            $box = Box::lockForUpdate()->find($this->ensureBox($user)->id);
             $session = MaintenanceDailySession::query()
+                ->where('user_id', $owner['user_id'])
                 ->whereDate('business_date', $date)
                 ->lockForUpdate()
                 ->first();
@@ -90,6 +142,8 @@ class MaintenanceDailyBoxService
             }
 
             return MaintenanceDailySession::create([
+                'user_id' => $owner['user_id'],
+                'employee_id' => $owner['employee_id'],
                 'business_date' => $date->toDateString(),
                 'status' => config('maintenance_daily.session_status.open', 'open'),
                 'box_id' => $box->id,
@@ -107,7 +161,9 @@ class MaintenanceDailyBoxService
         Maintenance $maintenance,
         User $user,
         float $amount,
-        ?int $instantSaleId = null
+        ?int $instantSaleId = null,
+        string $method = 'cash',
+        ?string $note = null
     ): array {
         if ($amount <= 0) {
             throw ValidationException::withMessages([
@@ -115,14 +171,17 @@ class MaintenanceDailyBoxService
             ]);
         }
 
-        return DB::transaction(function () use ($maintenance, $user, $amount, $instantSaleId) {
-            $session = $this->getOrOpenSession($user);
+        return DB::transaction(function () use ($maintenance, $user, $amount, $instantSaleId, $method, $note) {
+            $session = $this->requireOpenSession($user);
             $box = Box::lockForUpdate()->findOrFail($session->box_id);
             $before = round((float) $box->total, 2);
-            $after = round($before + $amount, 2);
+            $affectsCash = $method === 'cash';
+            $after = $affectsCash ? round($before + $amount, 2) : $before;
 
-            $box->total = $after;
-            $box->save();
+            if ($affectsCash) {
+                $box->total = $after;
+                $box->save();
+            }
 
             $log = MaintenanceDailyBoxLog::create([
                 'session_id' => $session->id,
@@ -132,11 +191,13 @@ class MaintenanceDailyBoxService
                 'user_id' => $user->id,
                 'actor_name' => $user->name,
                 'type' => 'add',
+                'payment_method' => $method,
+                'affects_cash_balance' => $affectsCash,
                 'amount' => round($amount, 2),
                 'box_balance_before' => $before,
                 'box_balance_after' => $after,
-                'description' => 'قبض صيانة #'.$maintenance->id,
-                'note' => 'صيانة #'.$maintenance->id.' | المستخدم: '.$user->name,
+                'description' => $this->paymentDescription($method, $maintenance),
+                'note' => trim('صيانة #'.$maintenance->id.' | المستخدم: '.$user->name.($note ? ' | '.$note : '')),
             ]);
 
             return [
@@ -175,17 +236,22 @@ class MaintenanceDailyBoxService
     /**
      * @return array<string, mixed>
      */
-    public function payload(?string $date = null): array
+    public function payload(?string $date = null, ?User $user = null): array
     {
         $businessDate = $date
             ? Carbon::parse($date)->toDateString()
             : $this->businessDate()->toDateString();
 
-        $box = $this->ensureBox();
-        $session = MaintenanceDailySession::query()
-            ->with(['box:id,name,total,currency,type'])
-            ->whereDate('business_date', $businessDate)
-            ->first();
+        $box = $user ? $this->ensureBox($user) : null;
+        $sessionQuery = MaintenanceDailySession::query()
+            ->with(['box:id,name,total,currency,type', 'user:id,name'])
+            ->whereDate('business_date', $businessDate);
+
+        if ($user) {
+            $sessionQuery->where('user_id', $this->resolveOwner($user)['user_id']);
+        }
+
+        $session = $sessionQuery->orderByDesc('id')->first();
 
         $logs = $session
             ? MaintenanceDailyBoxLog::query()
@@ -203,6 +269,8 @@ class MaintenanceDailyBoxService
                     'user_id' => $log->user_id,
                     'actor_name' => $log->actor_name ?? $log->user?->name,
                     'type' => $log->type,
+                    'payment_method' => $log->payment_method,
+                    'affects_cash_balance' => (bool) ($log->affects_cash_balance ?? true),
                     'amount' => round((float) $log->amount, 2),
                     'box_balance_before' => round((float) $log->box_balance_before, 2),
                     'box_balance_after' => round((float) $log->box_balance_after, 2),
@@ -216,6 +284,8 @@ class MaintenanceDailyBoxService
         return [
             'session' => $session ? [
                 'id' => $session->id,
+                'user_id' => $session->user_id,
+                'employee_name' => $session->user?->name,
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
                 'opening_balance' => round((float) $session->opening_balance, 2),
@@ -225,18 +295,40 @@ class MaintenanceDailyBoxService
                 'opened_at' => optional($session->opened_at)->format('Y-m-d H:i:s'),
                 'closed_at' => optional($session->closed_at)->format('Y-m-d H:i:s'),
             ] : null,
-            'box' => [
+            'box' => $box ? [
                 'id' => $box->id,
                 'name' => $box->name,
                 'currency' => $box->currency,
                 'total' => round((float) $box->total, 2),
-            ],
+            ] : null,
             'logs' => $logs,
             'logs_total' => round((float) $logs->sum('amount'), 2),
+            'cash_total' => round((float) $logs
+                ->where('affects_cash_balance', true)
+                ->filter(fn ($log) => in_array($log['payment_method'] ?? null, ['cash', null], true))
+                ->sum('amount'), 2),
+            'visa_total' => round((float) $logs
+                ->where('payment_method', 'visa')
+                ->sum('amount'), 2),
+            'transfer_total' => round((float) $logs
+                ->where('payment_method', 'bank_transfer')
+                ->sum('amount'), 2),
+            'non_cash_total' => round((float) $logs
+                ->where('affects_cash_balance', false)
+                ->sum('amount'), 2),
             'config' => [
                 'open_time' => config('maintenance_daily.open_time', '08:00'),
                 'close_time' => config('maintenance_daily.close_time', '00:00'),
             ],
         ];
+    }
+
+    private function paymentDescription(string $method, Maintenance $maintenance): string
+    {
+        return match ($method) {
+            'visa' => 'قبض فيزا صيانة #'.$maintenance->id,
+            'bank_transfer' => 'قبض حوالة صيانة #'.$maintenance->id,
+            default => 'قبض كاش صيانة #'.$maintenance->id,
+        };
     }
 }

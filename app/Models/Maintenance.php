@@ -69,4 +69,9 @@ class Maintenance extends Model
     {
         return $this->belongsTo(MaintenanceDailySession::class);
     }
+
+    public function payments()
+    {
+        return $this->hasMany(MaintenancePayment::class);
+    }
 }

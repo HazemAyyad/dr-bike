@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\InstantSale;
 use App\Models\Maintenance;
+use App\Models\MaintenancePayment;
 use App\Models\MaintenanceProduct;
 use App\Models\MaintenanceDailySession;
 use App\Models\Product;
@@ -26,7 +27,7 @@ class MaintenanceDeliveryService
      */
     public function formatProductsSummary(Maintenance $maintenance): array
     {
-        $maintenance->loadMissing(['products.product:id,nameAr,nameEng']);
+        $maintenance->loadMissing(['products.product:id,nameAr,nameEng', 'payments']);
 
         $items = $maintenance->products->map(function (MaintenanceProduct $item) {
             return [
@@ -53,6 +54,17 @@ class MaintenanceDeliveryService
             'discount' => $discount,
             'invoice_total' => $invoiceTotal,
             'paid_amount' => round((float) $maintenance->paid_amount, 2),
+            'remaining_amount' => max(0, round($invoiceTotal - (float) $maintenance->paid_amount, 2)),
+            'payments' => $maintenance->payments
+                ? $maintenance->payments->map(fn (MaintenancePayment $payment) => [
+                    'id' => $payment->id,
+                    'method' => $payment->method,
+                    'amount' => round((float) $payment->amount, 2),
+                    'currency' => $payment->currency,
+                    'note' => $payment->note,
+                    'created_at' => optional($payment->created_at)->format('Y-m-d H:i:s'),
+                ])->values()->all()
+                : [],
             'instant_sale_id' => $maintenance->instant_sale_id,
             'serial_number' => $maintenance->instantSale?->serial_number,
         ];
@@ -207,12 +219,11 @@ class MaintenanceDeliveryService
                 ];
             }
 
-            $paidAmount = isset($payload['payment_amount'])
-                ? min((float) $payload['payment_amount'], $invoiceTotal)
-                : $invoiceTotal;
+            $payments = $this->normalizePayments($payload, $invoiceTotal);
+            $paidAmount = min($invoiceTotal, round(collect($payments)->sum('amount'), 2));
 
             $maintenanceSession = $paidAmount > 0
-                ? $this->maintenanceDailyBoxService->getOrOpenSession($user)
+                ? $this->maintenanceDailyBoxService->requireOpenSession($user)
                 : null;
             $paymentBox = $maintenanceSession?->box
                 ? ['id' => (int) $maintenanceSession->box->id, 'name' => (string) $maintenanceSession->box->name]
@@ -228,13 +239,40 @@ class MaintenanceDeliveryService
             );
 
             $maintenanceBoxMovement = null;
-            if ($paidAmount > 0) {
-                $maintenanceBoxMovement = $this->maintenanceDailyBoxService->recordPayment(
+            foreach ($payments as $payment) {
+                $movement = $this->maintenanceDailyBoxService->recordPayment(
+                    $maintenance,
+                    $user,
+                    (float) $payment['amount'],
+                    $instantSale->id,
+                    (string) $payment['method'],
+                    $payment['note'] ?? null
+                );
+                $maintenanceBoxMovement ??= $movement;
+
+                MaintenancePayment::create([
+                    'maintenance_id' => $maintenance->id,
+                    'maintenance_daily_session_id' => $movement['session']->id ?? $maintenanceSession?->id,
+                    'box_id' => $movement['box']->id ?? $paymentBox['id'] ?? null,
+                    'instant_sale_id' => $instantSale->id,
+                    'created_by' => $user->id,
+                    'method' => $payment['method'],
+                    'amount' => $payment['amount'],
+                    'currency' => 'شيكل',
+                    'note' => $payment['note'] ?? null,
+                ]);
+            }
+
+            if ($payments === [] && $paidAmount > 0) {
+                $movement = $this->maintenanceDailyBoxService->recordPayment(
                     $maintenance,
                     $user,
                     $paidAmount,
-                    $instantSale->id
+                    $instantSale->id,
+                    'cash',
+                    null
                 );
+                $maintenanceBoxMovement = $movement;
             }
 
             $maintenance->update([
@@ -257,6 +295,8 @@ class MaintenanceDeliveryService
                 [
                     'invoice_total' => $invoiceTotal,
                     'paid_amount' => $paidAmount,
+                    'remaining_amount' => max(0, round($invoiceTotal - $paidAmount, 2)),
+                    'payments' => $payments,
                     'instant_sale_id' => $instantSale->id,
                     'serial_number' => $instantSale->serial_number,
                     'payment_box' => $paymentBox,
@@ -270,6 +310,67 @@ class MaintenanceDeliveryService
                 'instant_sale' => $instantSale->fresh(['product', 'subProducts.product']),
             ];
         });
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<int, array{method: string, amount: float, note: ?string}>
+     */
+    private function normalizePayments(array $payload, float $invoiceTotal): array
+    {
+        $rows = [];
+        $rawPayments = $payload['payments'] ?? null;
+
+        if (is_array($rawPayments) && $rawPayments !== []) {
+            foreach ($rawPayments as $raw) {
+                if (! is_array($raw)) {
+                    continue;
+                }
+                $method = $this->normalizePaymentMethod($raw['method'] ?? 'cash');
+                $amount = round(max(0, (float) ($raw['amount'] ?? 0)), 2);
+                if ($amount <= 0) {
+                    continue;
+                }
+                $rows[] = [
+                    'method' => $method,
+                    'amount' => $amount,
+                    'note' => isset($raw['note']) ? trim((string) $raw['note']) : null,
+                ];
+            }
+        } elseif (isset($payload['payment_amount'])) {
+            $amount = round(max(0, (float) $payload['payment_amount']), 2);
+            if ($amount > 0) {
+                $rows[] = [
+                    'method' => 'cash',
+                    'amount' => $amount,
+                    'note' => null,
+                ];
+            }
+        } else {
+            $rows[] = [
+                'method' => 'cash',
+                'amount' => round(max(0, $invoiceTotal), 2),
+                'note' => null,
+            ];
+        }
+
+        $total = round(collect($rows)->sum('amount'), 2);
+        if ($total > $invoiceTotal) {
+            throw ValidationException::withMessages([
+                'payments' => ['إجمالي الدفعات لا يمكن أن يتجاوز قيمة فاتورة الصيانة.'],
+            ]);
+        }
+
+        return $rows;
+    }
+
+    private function normalizePaymentMethod(mixed $method): string
+    {
+        return match ((string) $method) {
+            'visa', 'card' => 'visa',
+            'bank_transfer', 'transfer' => 'bank_transfer',
+            default => 'cash',
+        };
     }
 
     /**

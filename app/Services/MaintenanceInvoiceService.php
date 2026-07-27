@@ -19,6 +19,7 @@ class MaintenanceInvoiceService
             'customer:id,name,phone,address',
             'seller:id,name,phone,address',
             'products.product:id,nameAr,nameEng',
+            'payments',
             'instantSale:id,serial_number,created_at,payment_box_name,payment_box_value',
         ]);
 
@@ -61,6 +62,7 @@ class MaintenanceInvoiceService
             'invoice_total' => $billing['invoice_total'],
             'paid_amount' => $billing['paid_amount'],
             'remaining_amount' => $remainingAmount,
+            'payments' => $billing['payments'] ?? [],
             'instant_sale_id' => $maintenance->instant_sale_id,
             'instant_sale_serial' => $maintenance->instantSale?->serial_number,
             'payment_box_name' => $maintenance->instantSale?->payment_box_name,
