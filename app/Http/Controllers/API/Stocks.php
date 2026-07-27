@@ -242,7 +242,7 @@ class Stocks extends Controller
 
         $fileName = 'doctor-bike-products-'.now()->format('Y-m-d-H-i').'.xlsx';
 
-        return response()->streamDownload(function () {
+        return response()->streamDownload(function () use ($request) {
             @set_time_limit(300);
             @ini_set('memory_limit', '1024M');
 
@@ -252,6 +252,9 @@ class Stocks extends Controller
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle('Products');
             $sheet->setRightToLeft(true);
+            $sizesSheet = $spreadsheet->createSheet();
+            $sizesSheet->setTitle('Sizes & Colors');
+            $sizesSheet->setRightToLeft(true);
 
             $headers = [
                 'معرف المنتج',
@@ -283,15 +286,31 @@ class Stocks extends Controller
                 'الموديل',
                 'تاريخ الدوران',
                 'الشروة / المشروع',
-                'المقاسات والألوان',
-                'صور المقاسات',
+            ];
+
+            $sizeHeaders = [
+                'معرف المنتج',
+                'كود المنتج',
+                'اسم المنتج',
+                'المقاس',
+                'اللون عربي',
+                'اللون إنجليزي',
+                'اختصار اللون',
+                'صورة اللون',
+                'سعر المفرق',
+                'سعر الجملة',
+                'الخصم',
+                'الكمية',
             ];
 
             $sheet->fromArray($headers, null, 'A1');
             $this->styleProductsExportSheet($sheet, count($headers));
+            $sizesSheet->fromArray($sizeHeaders, null, 'A1');
+            $this->styleSizesExportSheet($sizesSheet, count($sizeHeaders));
 
             $row = 2;
-            Product::query()
+            $sizesRow = 2;
+            $query = Product::query()
                 ->with([
                     'category:id,nameAr',
                     'storeSection:id,name',
@@ -333,11 +352,15 @@ class Stocks extends Controller
                     'manufactureYear',
                     'model',
                     'rotation_date',
-                ])
-                ->orderBy('id')
-                ->chunk(100, function ($products) use ($sheet, &$row, &$temporaryImages, &$thumbnailCache) {
+                ]);
+
+            $this->applyProductExportFilters($query, $request);
+            [$sortColumn, $sortDirection] = $this->productExportSort($request);
+
+            $query
+                ->orderBy($sortColumn, $sortDirection)
+                ->chunk(100, function ($products) use ($sheet, $sizesSheet, &$row, &$sizesRow, &$temporaryImages, &$thumbnailCache) {
                     foreach ($products as $product) {
-                        $sizesText = $this->formatProductSizesForCsv($product);
                         $sheet->fromArray([[
                             $product->id,
                             $product->product_code,
@@ -368,20 +391,39 @@ class Stocks extends Controller
                             $product->model,
                             $product->rotation_date,
                             $product->purchase?->name,
-                            $sizesText,
-                            '',
                         ]], null, 'A'.$row);
 
                         $this->addImageToSheet($sheet, $this->preferredProductImagePath($product), 'D'.$row, $temporaryImages, $thumbnailCache);
-                        $this->addImageToSheet($sheet, $this->preferredSizeImagePath($product), 'AE'.$row, $temporaryImages, $thumbnailCache);
-
-                        $sizeLines = substr_count($sizesText, "\n") + 1;
-                        $sheet->getRowDimension($row)->setRowHeight(max(70, min(180, $sizeLines * 22)));
+                        $sheet->getRowDimension($row)->setRowHeight(70);
                         $row++;
+
+                        foreach ($product->sizes as $size) {
+                            foreach ($size->colorSizes as $color) {
+                                $sizesSheet->fromArray([[
+                                    $product->id,
+                                    $product->product_code,
+                                    $product->nameAr,
+                                    $size->size,
+                                    $color->colorAr,
+                                    $color->colorEn,
+                                    $color->colorAbbr,
+                                    '',
+                                    $color->normailPrice,
+                                    $color->wholesalePrice,
+                                    $color->discount,
+                                    $color->stock,
+                                ]], null, 'A'.$sizesRow);
+
+                                $this->addImageToSheet($sizesSheet, $this->localImagePathFromUrl($color->image_url ?? null), 'H'.$sizesRow, $temporaryImages, $thumbnailCache);
+                                $sizesSheet->getRowDimension($sizesRow)->setRowHeight(70);
+                                $sizesRow++;
+                            }
+                        }
                     }
                 });
 
             $this->styleProductsExportBody($sheet, count($headers), $row - 1);
+            $this->styleProductsExportBody($sizesSheet, count($sizeHeaders), $sizesRow - 1);
 
             $writer = new Xlsx($spreadsheet);
             $writer->setPreCalculateFormulas(false);
@@ -470,6 +512,123 @@ class Stocks extends Controller
         foreach ($widths as $column => $width) {
             $sheet->getColumnDimension($column)->setWidth($width);
         }
+    }
+
+    private function styleSizesExportSheet(Worksheet $sheet, int $columnsCount): void
+    {
+        $highestColumn = Coordinate::stringFromColumnIndex($columnsCount);
+        $headerRange = 'A1:'.$highestColumn.'1';
+
+        $sheet->freezePane('A2');
+        $sheet->setAutoFilter($headerRange);
+        $sheet->getRowDimension(1)->setRowHeight(32);
+
+        $sheet->getStyle($headerRange)->applyFromArray([
+            'font' => [
+                'bold' => true,
+                'size' => 13,
+                'color' => ['rgb' => 'FFFFFF'],
+            ],
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'startColor' => ['rgb' => '497A45'],
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                'vertical' => Alignment::VERTICAL_CENTER,
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => 'D9E2EC'],
+                ],
+            ],
+        ]);
+
+        $sheet->getStyle('A:'.$highestColumn)->getAlignment()
+            ->setWrapText(true)
+            ->setVertical(Alignment::VERTICAL_CENTER);
+
+        $widths = [
+            'A' => 12,
+            'B' => 14,
+            'C' => 28,
+            'D' => 14,
+            'E' => 18,
+            'F' => 18,
+            'G' => 16,
+            'H' => 16,
+            'I' => 14,
+            'J' => 14,
+            'K' => 12,
+            'L' => 12,
+        ];
+
+        foreach ($widths as $column => $width) {
+            $sheet->getColumnDimension($column)->setWidth($width);
+        }
+    }
+
+    private function applyProductExportFilters($query, Request $request): void
+    {
+        ProductSearchFilter::apply($query, $request->input('search'));
+
+        if ($request->filled('category_id')) {
+            $query->where('category_id', (int) $request->input('category_id'));
+        }
+
+        $subCategoryId = $request->input('sub_category_id', $request->input('subcategory_id'));
+        if ($subCategoryId !== null && $subCategoryId !== '') {
+            $query->whereHas('subCategories', function ($q) use ($subCategoryId) {
+                $q->where('sub_category_id', (int) $subCategoryId);
+            });
+        }
+
+        if ($request->filled('store_section_id')) {
+            $storeSectionFilter = $this->parseStoreSectionFilter($request->input('store_section_id'));
+            if ($storeSectionFilter['include_none'] || $storeSectionFilter['ids'] !== []) {
+                $query->where(function ($q) use ($storeSectionFilter) {
+                    if ($storeSectionFilter['ids'] !== []) {
+                        $q->whereIn('store_section_id', $storeSectionFilter['ids']);
+                    }
+                    if ($storeSectionFilter['include_none']) {
+                        $method = $storeSectionFilter['ids'] !== [] ? 'orWhereNull' : 'whereNull';
+                        $q->{$method}('store_section_id');
+                    }
+                });
+            }
+        }
+
+        if ($this->isAdminRequest($request) && $request->filled('cost_price_status')) {
+            $status = (string) $request->input('cost_price_status');
+            if ($status === 'with') {
+                $query->whereHas('purchasePrices', fn ($q) => $q->where('price', '>', 0));
+            } elseif ($status === 'without') {
+                $query->whereDoesntHave('purchasePrices', fn ($q) => $q->where('price', '>', 0));
+            }
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereDate('created_at', '>=', $request->date('date_from'));
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('created_at', '<=', $request->date('date_to'));
+        }
+    }
+
+    private function productExportSort(Request $request): array
+    {
+        $sortBy = $request->input('sort_by', 'created_at');
+        $sortDirection = strtolower((string) $request->input('sort_direction', 'desc')) === 'asc' ? 'asc' : 'desc';
+
+        $sortColumn = match ($sortBy) {
+            'name' => 'nameAr',
+            'updated_at' => 'updated_at',
+            default => 'created_at',
+        };
+
+        return [$sortColumn, $sortDirection];
     }
 
     private function styleProductsExportBody(Worksheet $sheet, int $columnsCount, int $lastRow): void
