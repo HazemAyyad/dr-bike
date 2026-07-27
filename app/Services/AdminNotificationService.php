@@ -78,6 +78,10 @@ class AdminNotificationService
 
     public const TYPE_PASSWORD_RESET_OTP = 'password_reset_otp';
 
+    public const TYPE_NOTE_SHARED = 'note_shared';
+
+    public const TYPE_NOTE_REMINDER = 'note_reminder';
+
     /**
      * @param  array<string, mixed>  $data
      */

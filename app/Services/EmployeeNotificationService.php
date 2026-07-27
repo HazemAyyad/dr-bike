@@ -41,6 +41,10 @@ class EmployeeNotificationService
 
     public const TYPE_EMPLOYEE_LOAN_REJECTED = 'employee_loan_rejected';
 
+    public const TYPE_NOTE_SHARED = 'note_shared';
+
+    public const TYPE_NOTE_REMINDER = 'note_reminder';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}

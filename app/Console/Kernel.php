@@ -30,6 +30,11 @@ class Kernel extends ConsoleKernel
             ->everyFiveMinutes()
             ->timezone('Asia/Hebron');
 
+        $schedule->command('notes:send-due-reminders')
+            ->everyMinute()
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping();
+
         $schedule->command('employees:send-daily-task-reminders')
             ->dailyAt('10:00')
             ->timezone('Asia/Hebron');

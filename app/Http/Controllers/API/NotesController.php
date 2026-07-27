@@ -7,6 +7,7 @@ use App\Models\Note;
 use App\Models\NoteAttachment;
 use App\Models\NoteCollaborator;
 use App\Models\User;
+use App\Services\NoteNotificationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -52,7 +53,12 @@ class NotesController extends Controller
         $scope = (string) $request->input('scope', 'active');
 
         $query = Note::query()
-            ->with(['owner:id,name,type', 'collaborators.user:id,name,type'])
+            ->with([
+                'owner:id,name,type',
+                'owner.employee:id,user_id,job_title,employee_img',
+                'collaborators.user:id,name,type',
+                'collaborators.user.employee:id,user_id,job_title,employee_img',
+            ])
             ->withCount('attachments')
             ->where(fn ($q) => $this->accessibleScope($q, $userId));
 
@@ -104,6 +110,8 @@ class NotesController extends Controller
                 'visibility' => $validated['visibility'] ?? Note::VISIBILITY_PRIVATE,
                 'is_pinned' => (bool) ($validated['is_pinned'] ?? false),
                 'is_archived' => (bool) ($validated['is_archived'] ?? false),
+                'reminder_at' => $validated['reminder_at'] ?? null,
+                'reminder_label' => $validated['reminder_label'] ?? null,
             ]);
 
             $this->syncCollaborators($note, $validated['collaborators'] ?? [], $userId);
@@ -114,7 +122,7 @@ class NotesController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تم إنشاء الملاحظة',
-            'note' => $this->notePayload($note->fresh(['owner:id,name,type', 'collaborators.user:id,name,type', 'attachments']), $userId, true),
+            'note' => $this->notePayload($this->freshNote($note), $userId, true),
         ], 201);
     }
 
@@ -143,10 +151,14 @@ class NotesController extends Controller
         DB::transaction(function () use ($note, $validated, $userId) {
             $payload = [];
 
-            foreach (['title', 'body_json', 'color', 'visibility', 'is_pinned', 'is_archived'] as $field) {
+            foreach (['title', 'body_json', 'color', 'visibility', 'is_pinned', 'is_archived', 'reminder_at', 'reminder_label'] as $field) {
                 if (array_key_exists($field, $validated)) {
                     $payload[$field] = $validated[$field];
                 }
+            }
+
+            if (array_key_exists('reminder_at', $payload)) {
+                $payload['reminder_notified_at'] = null;
             }
 
             if (array_key_exists('title', $payload) || array_key_exists('body_json', $payload)) {
@@ -168,7 +180,7 @@ class NotesController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تم تحديث الملاحظة',
-            'note' => $this->notePayload($note->fresh(['owner:id,name,type', 'collaborators.user:id,name,type', 'attachments']), $userId, true),
+            'note' => $this->notePayload($this->freshNote($note), $userId, true),
         ]);
     }
 
@@ -264,7 +276,7 @@ class NotesController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تم تحديث المشاركة',
-            'note' => $this->notePayload($note->fresh(['owner:id,name,type', 'collaborators.user:id,name,type', 'attachments']), $userId, true),
+            'note' => $this->notePayload($this->freshNote($note), $userId, true),
         ]);
     }
 
@@ -279,6 +291,8 @@ class NotesController extends Controller
             'visibility' => [$presence, 'nullable', 'string', Rule::in(Note::VISIBILITIES)],
             'is_pinned' => [$presence, 'boolean'],
             'is_archived' => [$presence, 'boolean'],
+            'reminder_at' => [$presence, 'nullable', 'date'],
+            'reminder_label' => [$presence, 'nullable', 'string', 'max:255'],
             'collaborators' => [$presence, 'nullable', 'array', 'max:100'],
             'collaborators.*.user_id' => ['required_with:collaborators', 'integer', 'exists:users,id'],
             'collaborators.*.permission' => ['required_with:collaborators', 'string', Rule::in(NoteCollaborator::PERMISSIONS)],
@@ -325,6 +339,11 @@ class NotesController extends Controller
 
     private function syncCollaborators(Note $note, array $collaborators, int $ownerUserId): void
     {
+        $existingUserIds = $note->collaborators()
+            ->pluck('user_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
         $rows = collect($collaborators)
             ->map(fn ($row) => [
                 'user_id' => (int) ($row['user_id'] ?? 0),
@@ -350,11 +369,33 @@ class NotesController extends Controller
         if ($rows->isNotEmpty() && $note->visibility === Note::VISIBILITY_PRIVATE) {
             $note->update(['visibility' => Note::VISIBILITY_SHARED]);
         }
+
+        $newUserIds = $rows
+            ->pluck('user_id')
+            ->diff($existingUserIds)
+            ->values()
+            ->all();
+
+        if ($newUserIds !== []) {
+            DB::afterCommit(function () use ($note, $newUserIds, $ownerUserId) {
+                $freshNote = $this->freshNote($note);
+                $notifier = app(NoteNotificationService::class);
+
+                foreach ($newUserIds as $userId) {
+                    $notifier->notifyCollaboratorAdded($freshNote, (int) $userId, $ownerUserId);
+                }
+            });
+        }
     }
 
     private function notePayload(Note $note, int $viewerUserId, bool $details = false): array
     {
-        $note->loadMissing(['owner:id,name,type', 'collaborators.user:id,name,type']);
+        $note->loadMissing([
+            'owner:id,name,type',
+            'owner.employee:id,user_id,job_title,employee_img',
+            'collaborators.user:id,name,type',
+            'collaborators.user.employee:id,user_id,job_title,employee_img',
+        ]);
         $owner = $this->isOwner($note, $viewerUserId);
         $collaborator = $note->collaborators->firstWhere('user_id', $viewerUserId);
         $permission = $owner ? 'owner' : ($collaborator?->permission ?? ($note->visibility === Note::VISIBILITY_PUBLIC ? 'view' : null));
@@ -367,8 +408,16 @@ class NotesController extends Controller
             'visibility' => $note->visibility,
             'is_pinned' => (bool) $note->is_pinned,
             'is_archived' => (bool) $note->is_archived,
+            'reminder_at' => optional($note->reminder_at)->toIso8601String(),
+            'reminder_label' => $note->reminder_label,
             'owner_user_id' => (int) $note->owner_user_id,
             'owner' => $note->owner,
+            'collaborators' => $note->collaborators->map(fn (NoteCollaborator $collaborator) => [
+                'id' => $collaborator->id,
+                'user_id' => (int) $collaborator->user_id,
+                'permission' => $collaborator->permission,
+                'user' => $collaborator->user,
+            ])->values(),
             'my_permission' => $permission,
             'can_edit' => $owner || $permission === NoteCollaborator::PERMISSION_EDIT,
             'can_manage_sharing' => $owner,
@@ -380,12 +429,6 @@ class NotesController extends Controller
         if ($details) {
             $note->loadMissing('attachments');
             $payload['body_json'] = $note->body_json ?? [];
-            $payload['collaborators'] = $note->collaborators->map(fn (NoteCollaborator $collaborator) => [
-                'id' => $collaborator->id,
-                'user_id' => (int) $collaborator->user_id,
-                'permission' => $collaborator->permission,
-                'user' => $collaborator->user,
-            ])->values();
             $payload['attachments'] = $note->attachments->map(fn (NoteAttachment $attachment) => $this->attachmentPayload($attachment));
         }
 
@@ -404,6 +447,17 @@ class NotesController extends Controller
             'size' => (int) $attachment->size,
             'created_at' => $attachment->created_at,
         ];
+    }
+
+    private function freshNote(Note $note): Note
+    {
+        return $note->fresh([
+            'owner:id,name,type',
+            'owner.employee:id,user_id,job_title,employee_img',
+            'collaborators.user:id,name,type',
+            'collaborators.user.employee:id,user_id,job_title,employee_img',
+            'attachments',
+        ]);
     }
 
     private function attachmentType(UploadedFile $file): string

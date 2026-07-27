@@ -33,7 +33,6 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -243,6 +242,9 @@ class Stocks extends Controller
         $fileName = 'doctor-bike-products-'.now()->format('Y-m-d-H-i').'.xlsx';
 
         return response()->streamDownload(function () {
+            @set_time_limit(300);
+            @ini_set('memory_limit', '1024M');
+
             $spreadsheet = new Spreadsheet();
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle('Products');
@@ -367,8 +369,8 @@ class Stocks extends Controller
                             '',
                         ]], null, 'A'.$row);
 
-                        $this->addImageToSheet($sheet, $this->preferredProductImagePath($product), 'D'.$row, 80, 80);
-                        $this->addImageToSheet($sheet, $this->preferredSizeImagePath($product), 'AE'.$row, 80, 80);
+                        $this->addImageFormulaToSheet($sheet, $this->preferredProductImageUrl($product), 'D'.$row);
+                        $this->addImageFormulaToSheet($sheet, $this->preferredSizeImageUrl($product), 'AE'.$row);
 
                         $sizeLines = substr_count($sizesText, "\n") + 1;
                         $sheet->getRowDimension($row)->setRowHeight(max(70, min(180, $sizeLines * 22)));
@@ -379,6 +381,7 @@ class Stocks extends Controller
             $this->styleProductsExportBody($sheet, count($headers), $row - 1);
 
             $writer = new Xlsx($spreadsheet);
+            $writer->setPreCalculateFormulas(false);
             $writer->save('php://output');
             $spreadsheet->disconnectWorksheets();
         }, $fileName, [
@@ -498,7 +501,7 @@ class Stocks extends Controller
             ->implode(' | ');
     }
 
-    private function preferredProductImagePath(Product $product): ?string
+    private function preferredProductImageUrl(Product $product): ?string
     {
         foreach ([$product->viewImages, $product->normalImages, $product->image3d] as $images) {
             foreach ($images as $image) {
@@ -507,23 +510,19 @@ class Stocks extends Controller
                     continue;
                 }
 
-                $path = $this->localImagePathFromUrl($url);
-                if ($path !== null) {
-                    return $path;
-                }
+                return $this->absoluteImageUrl($url);
             }
         }
 
         return null;
     }
 
-    private function preferredSizeImagePath(Product $product): ?string
+    private function preferredSizeImageUrl(Product $product): ?string
     {
         foreach ($product->sizes as $size) {
             foreach ($size->colorSizes as $color) {
-                $path = $this->localImagePathFromUrl($color->image_url ?? null);
-                if ($path !== null) {
-                    return $path;
+                if (ProductImageResolver::isValidUrl($color->image_url ?? null)) {
+                    return $this->absoluteImageUrl($color->image_url);
                 }
             }
         }
@@ -531,49 +530,24 @@ class Stocks extends Controller
         return null;
     }
 
-    private function localImagePathFromUrl(?string $url): ?string
+    private function absoluteImageUrl(?string $url): string
     {
-        if (! ProductImageResolver::isValidUrl($url)) {
-            return null;
-        }
-
         $normalized = ApiImageUrl::normalize($url);
-        $path = $normalized;
         if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
-            $path = (string) parse_url($normalized, PHP_URL_PATH);
+            return $normalized;
         }
 
-        $relative = ltrim(rawurldecode(str_replace('\\', '/', $path)), '/');
-        $withoutPublic = preg_replace('#^public/#', '', $relative) ?? $relative;
-
-        $candidates = array_unique([
-            public_path($relative),
-            public_path($withoutPublic),
-        ]);
-
-        foreach ($candidates as $candidate) {
-            if (is_string($candidate) && is_file($candidate) && @getimagesize($candidate) !== false) {
-                return $candidate;
-            }
-        }
-
-        return null;
+        return url(ltrim($normalized, '/'));
     }
 
-    private function addImageToSheet(Worksheet $sheet, ?string $path, string $cell, int $width, int $height): void
+    private function addImageFormulaToSheet(Worksheet $sheet, ?string $url, string $cell): void
     {
-        if ($path === null) {
+        if ($url === null || $url === '') {
             return;
         }
 
-        $drawing = new Drawing();
-        $drawing->setPath($path);
-        $drawing->setCoordinates($cell);
-        $drawing->setOffsetX(8);
-        $drawing->setOffsetY(6);
-        $drawing->setWidth($width);
-        $drawing->setHeight($height);
-        $drawing->setWorksheet($sheet);
+        $escapedUrl = str_replace('"', '""', $url);
+        $sheet->setCellValue($cell, '=IMAGE("'.$escapedUrl.'")');
     }
 
     private function formatProductSizesForCsv(Product $product): string

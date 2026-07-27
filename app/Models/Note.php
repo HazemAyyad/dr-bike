@@ -31,12 +31,17 @@ class Note extends Model
         'visibility',
         'is_pinned',
         'is_archived',
+        'reminder_at',
+        'reminder_label',
+        'reminder_notified_at',
     ];
 
     protected $casts = [
         'body_json' => 'array',
         'is_pinned' => 'boolean',
         'is_archived' => 'boolean',
+        'reminder_at' => 'datetime',
+        'reminder_notified_at' => 'datetime',
     ];
 
     public function owner(): BelongsTo
