@@ -20,6 +20,7 @@ use App\Services\ProductFormService;
 use App\Services\ProductTagService;
 use App\Services\StoreManageItemService;
 use App\Support\ApiImageUrl;
+use App\Support\ProductImageResolver;
 use App\Support\ProductSearchFilter;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
