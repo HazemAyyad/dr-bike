@@ -17,6 +17,7 @@
         "laravel/tinker": "^2.8",
         "laravel/ui": "^4.6",
         "mpdf/mpdf": "8.2",
+        "phpoffice/phpspreadsheet": "^2.3",
         "rats/zkteco": "^002.0",
         "simplesoftwareio/simple-qrcode": "^4.2"
     },

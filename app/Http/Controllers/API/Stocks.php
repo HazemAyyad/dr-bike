@@ -28,6 +28,14 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
+use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class Stocks extends Controller
 {
@@ -232,16 +240,19 @@ class Stocks extends Controller
             return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
         }
 
-        $fileName = 'doctor-bike-products-'.now()->format('Y-m-d-H-i').'.csv';
+        $fileName = 'doctor-bike-products-'.now()->format('Y-m-d-H-i').'.xlsx';
 
         return response()->streamDownload(function () {
-            echo "\xEF\xBB\xBF";
-            $handle = fopen('php://output', 'w');
+            $spreadsheet = new Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+            $sheet->setTitle('Products');
+            $sheet->setRightToLeft(true);
 
-            fputcsv($handle, [
+            $headers = [
                 'معرف المنتج',
                 'كود المنتج',
                 'اسم المنتج عربي',
+                'صورة المنتج',
                 'اسم المنتج إنجليزي',
                 'اسم المنتج عبري',
                 'وصف عربي',
@@ -267,10 +278,14 @@ class Stocks extends Controller
                 'الموديل',
                 'تاريخ الدوران',
                 'الشروة / المشروع',
-                'صور المنتج',
                 'المقاسات والألوان',
-            ]);
+                'صور المقاسات',
+            ];
 
+            $sheet->fromArray($headers, null, 'A1');
+            $this->styleProductsExportSheet($sheet, count($headers));
+
+            $row = 2;
             Product::query()
                 ->with([
                     'category:id,nameAr',
@@ -315,12 +330,14 @@ class Stocks extends Controller
                     'rotation_date',
                 ])
                 ->orderBy('id')
-                ->chunk(500, function ($products) use ($handle) {
+                ->chunk(200, function ($products) use ($sheet, &$row) {
                     foreach ($products as $product) {
-                        fputcsv($handle, [
+                        $sizesText = $this->formatProductSizesForCsv($product);
+                        $sheet->fromArray([[
                             $product->id,
                             $product->product_code,
                             $product->nameAr,
+                            '',
                             $product->nameEng,
                             $product->nameAbree,
                             $product->descriptionAr,
@@ -346,15 +363,123 @@ class Stocks extends Controller
                             $product->model,
                             $product->rotation_date,
                             $product->purchase?->name,
-                            $this->formatProductImagesForCsv($product),
-                            $this->formatProductSizesForCsv($product),
-                        ]);
+                            $sizesText,
+                            '',
+                        ]], null, 'A'.$row);
+
+                        $this->addImageToSheet($sheet, $this->preferredProductImagePath($product), 'D'.$row, 80, 80);
+                        $this->addImageToSheet($sheet, $this->preferredSizeImagePath($product), 'AE'.$row, 80, 80);
+
+                        $sizeLines = substr_count($sizesText, "\n") + 1;
+                        $sheet->getRowDimension($row)->setRowHeight(max(70, min(180, $sizeLines * 22)));
+                        $row++;
                     }
                 });
 
-            fclose($handle);
+            $this->styleProductsExportBody($sheet, count($headers), $row - 1);
+
+            $writer = new Xlsx($spreadsheet);
+            $writer->save('php://output');
+            $spreadsheet->disconnectWorksheets();
         }, $fileName, [
-            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    private function styleProductsExportSheet(Worksheet $sheet, int $columnsCount): void
+    {
+        $highestColumn = Coordinate::stringFromColumnIndex($columnsCount);
+        $headerRange = 'A1:'.$highestColumn.'1';
+
+        $sheet->freezePane('A2');
+        $sheet->setAutoFilter($headerRange);
+        $sheet->getRowDimension(1)->setRowHeight(32);
+
+        $sheet->getStyle($headerRange)->applyFromArray([
+            'font' => [
+                'bold' => true,
+                'size' => 13,
+                'color' => ['rgb' => 'FFFFFF'],
+            ],
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'startColor' => ['rgb' => '245A86'],
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                'vertical' => Alignment::VERTICAL_CENTER,
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => 'D9E2EC'],
+                ],
+            ],
+        ]);
+
+        $sheet->getStyle('A:'.$highestColumn)->getAlignment()
+            ->setWrapText(true)
+            ->setVertical(Alignment::VERTICAL_CENTER);
+
+        $widths = [
+            'A' => 12,
+            'B' => 14,
+            'C' => 28,
+            'D' => 16,
+            'E' => 28,
+            'F' => 28,
+            'G' => 42,
+            'H' => 42,
+            'I' => 42,
+            'J' => 24,
+            'K' => 30,
+            'L' => 22,
+            'M' => 14,
+            'N' => 14,
+            'O' => 14,
+            'P' => 14,
+            'Q' => 14,
+            'R' => 12,
+            'S' => 18,
+            'T' => 12,
+            'U' => 14,
+            'V' => 14,
+            'W' => 16,
+            'X' => 14,
+            'Y' => 12,
+            'Z' => 14,
+            'AA' => 18,
+            'AB' => 18,
+            'AC' => 24,
+            'AD' => 72,
+            'AE' => 16,
+        ];
+
+        foreach ($widths as $column => $width) {
+            $sheet->getColumnDimension($column)->setWidth($width);
+        }
+    }
+
+    private function styleProductsExportBody(Worksheet $sheet, int $columnsCount, int $lastRow): void
+    {
+        if ($lastRow < 2) {
+            return;
+        }
+
+        $highestColumn = Coordinate::stringFromColumnIndex($columnsCount);
+        $bodyRange = 'A2:'.$highestColumn.$lastRow;
+
+        $sheet->getStyle($bodyRange)->applyFromArray([
+            'alignment' => [
+                'vertical' => Alignment::VERTICAL_CENTER,
+                'wrapText' => true,
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => 'E6EEF5'],
+                ],
+            ],
         ]);
     }
 
@@ -373,10 +498,8 @@ class Stocks extends Controller
             ->implode(' | ');
     }
 
-    private function formatProductImagesForCsv(Product $product): string
+    private function preferredProductImagePath(Product $product): ?string
     {
-        $urls = [];
-
         foreach ([$product->viewImages, $product->normalImages, $product->image3d] as $images) {
             foreach ($images as $image) {
                 $url = ProductImageResolver::urlFromRecord($image);
@@ -384,14 +507,73 @@ class Stocks extends Controller
                     continue;
                 }
 
-                $urls[] = $this->publicImagePath($url);
+                $path = $this->localImagePathFromUrl($url);
+                if ($path !== null) {
+                    return $path;
+                }
             }
         }
 
-        return collect($urls)
-            ->unique()
-            ->values()
-            ->implode(' | ');
+        return null;
+    }
+
+    private function preferredSizeImagePath(Product $product): ?string
+    {
+        foreach ($product->sizes as $size) {
+            foreach ($size->colorSizes as $color) {
+                $path = $this->localImagePathFromUrl($color->image_url ?? null);
+                if ($path !== null) {
+                    return $path;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function localImagePathFromUrl(?string $url): ?string
+    {
+        if (! ProductImageResolver::isValidUrl($url)) {
+            return null;
+        }
+
+        $normalized = ApiImageUrl::normalize($url);
+        $path = $normalized;
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            $path = (string) parse_url($normalized, PHP_URL_PATH);
+        }
+
+        $relative = ltrim(rawurldecode(str_replace('\\', '/', $path)), '/');
+        $withoutPublic = preg_replace('#^public/#', '', $relative) ?? $relative;
+
+        $candidates = array_unique([
+            public_path($relative),
+            public_path($withoutPublic),
+        ]);
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && is_file($candidate) && @getimagesize($candidate) !== false) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function addImageToSheet(Worksheet $sheet, ?string $path, string $cell, int $width, int $height): void
+    {
+        if ($path === null) {
+            return;
+        }
+
+        $drawing = new Drawing();
+        $drawing->setPath($path);
+        $drawing->setCoordinates($cell);
+        $drawing->setOffsetX(8);
+        $drawing->setOffsetY(6);
+        $drawing->setWidth($width);
+        $drawing->setHeight($height);
+        $drawing->setWorksheet($sheet);
     }
 
     private function formatProductSizesForCsv(Product $product): string
