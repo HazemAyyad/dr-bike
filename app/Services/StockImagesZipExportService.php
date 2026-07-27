@@ -25,6 +25,7 @@ class StockImagesZipExportService
             'status' => 'processing',
             'started_at' => now(),
             'error_message' => null,
+            'source_summary' => $this->initialSourceSummary(),
         ])->save();
 
         try {
@@ -163,15 +164,19 @@ class StockImagesZipExportService
 
         $addedFiles = [];
         $addedImages = 0;
+        $missingImages = 0;
         $processed = 0;
+        $sourceSummary = $this->initialSourceSummary();
 
         $query
             ->orderBy($sortColumn, $sortDirection)
-            ->chunk(100, function ($products) use ($zip, &$addedFiles, &$addedImages, &$processed, $export) {
+            ->chunk(100, function ($products) use ($zip, &$addedFiles, &$addedImages, &$missingImages, &$processed, &$sourceSummary, $export) {
                 foreach ($products as $product) {
                     foreach ($this->productImageRows($product) as $row) {
                         $image = $this->imageBytes($row['url']);
                         if ($image === null) {
+                            $missingImages++;
+                            $this->recordSourceSummary($sourceSummary, $row, false, null);
                             continue;
                         }
 
@@ -185,6 +190,7 @@ class StockImagesZipExportService
 
                         if ($zip->addFromString($zipName, $image['bytes'])) {
                             $addedImages++;
+                            $this->recordSourceSummary($sourceSummary, $row, true, $image['source']);
                         }
                     }
 
@@ -193,6 +199,7 @@ class StockImagesZipExportService
                         $export->forceFill([
                             'processed_products' => $processed,
                             'images_added' => $addedImages,
+                            'source_summary' => $this->finalizeSourceSummary($sourceSummary, $missingImages),
                         ])->save();
                     }
                 }
@@ -208,6 +215,7 @@ class StockImagesZipExportService
             $export->forceFill([
                 'processed_products' => $processed,
                 'images_added' => $addedImages,
+                'source_summary' => $this->finalizeSourceSummary($sourceSummary, $missingImages),
             ])->save();
         }
 
@@ -276,7 +284,13 @@ class StockImagesZipExportService
             foreach ($images as $image) {
                 $url = ProductImageResolver::urlFromRecord($image);
                 if (ProductImageResolver::isValidUrl($url)) {
-                    $rows[] = ['kind' => $kind, 'index' => $index, 'url' => $url];
+                    $rows[] = [
+                        'kind' => $kind,
+                        'index' => $index,
+                        'url' => $url,
+                        'table' => $this->imageKindTable($kind),
+                        'field' => 'imageUrl',
+                    ];
                     $index++;
                 }
             }
@@ -287,7 +301,13 @@ class StockImagesZipExportService
             foreach ($size->colorSizes as $color) {
                 $url = (string) ($color->image_url ?? '');
                 if (ProductImageResolver::isValidUrl($url)) {
-                    $rows[] = ['kind' => 'variant', 'index' => $index, 'url' => $url];
+                    $rows[] = [
+                        'kind' => 'variant',
+                        'index' => $index,
+                        'url' => $url,
+                        'table' => 'size_colors',
+                        'field' => 'image_url',
+                    ];
                     $index++;
                 }
             }
@@ -305,7 +325,11 @@ class StockImagesZipExportService
                 return null;
             }
 
-            return ['bytes' => $bytes, 'extension' => $this->extensionFromPath($localPath)];
+            return [
+                'bytes' => $bytes,
+                'extension' => $this->extensionFromPath($localPath),
+                'source' => $this->sourceLabelForLocalPath($localPath),
+            ];
         }
 
         $downloadUrl = $this->downloadUrl($url);
@@ -331,7 +355,136 @@ class StockImagesZipExportService
         return [
             'bytes' => $bytes,
             'extension' => $this->extensionFromContentType((string) $response->header('Content-Type'), $downloadUrl),
+            'source' => $this->sourceLabelForUrl($downloadUrl),
         ];
+    }
+
+    private function imageKindTable(string $kind): string
+    {
+        return match ($kind) {
+            'view' => 'view_image_products',
+            '3d' => 'image3d_products',
+            default => 'normal_image_products',
+        };
+    }
+
+    private function initialSourceSummary(): array
+    {
+        return [
+            'sources' => [],
+            'tables' => [
+                'normal_image_products.imageUrl' => [
+                    'label' => 'صور المنتج الأساسية',
+                    'links_seen' => 0,
+                    'images_added' => 0,
+                    'missing_images' => 0,
+                ],
+                'view_image_products.imageUrl' => [
+                    'label' => 'صور عرض المنتج',
+                    'links_seen' => 0,
+                    'images_added' => 0,
+                    'missing_images' => 0,
+                ],
+                'image3d_products.imageUrl' => [
+                    'label' => 'صور 3D',
+                    'links_seen' => 0,
+                    'images_added' => 0,
+                    'missing_images' => 0,
+                ],
+                'size_colors.image_url' => [
+                    'label' => 'صور الألوان والمقاسات',
+                    'links_seen' => 0,
+                    'images_added' => 0,
+                    'missing_images' => 0,
+                ],
+            ],
+            'links_seen' => 0,
+            'images_added' => 0,
+            'missing_images' => 0,
+        ];
+    }
+
+    private function recordSourceSummary(array &$summary, array $row, bool $added, ?string $source): void
+    {
+        $tableKey = ($row['table'] ?? 'unknown').'.'.($row['field'] ?? 'url');
+        if (! isset($summary['tables'][$tableKey])) {
+            $summary['tables'][$tableKey] = [
+                'label' => $tableKey,
+                'links_seen' => 0,
+                'images_added' => 0,
+                'missing_images' => 0,
+            ];
+        }
+
+        $summary['links_seen']++;
+        $summary['tables'][$tableKey]['links_seen']++;
+
+        if ($added) {
+            $summary['images_added']++;
+            $summary['tables'][$tableKey]['images_added']++;
+            $sourceKey = $source ?: 'unknown';
+            if (! isset($summary['sources'][$sourceKey])) {
+                $summary['sources'][$sourceKey] = [
+                    'label' => $sourceKey,
+                    'images_added' => 0,
+                ];
+            }
+            $summary['sources'][$sourceKey]['images_added']++;
+        } else {
+            $summary['missing_images']++;
+            $summary['tables'][$tableKey]['missing_images']++;
+        }
+    }
+
+    private function finalizeSourceSummary(array $summary, int $missingImages): array
+    {
+        $summary['missing_images'] = $missingImages;
+        $summary['sources'] = array_values($summary['sources']);
+        $summary['tables'] = array_values($summary['tables']);
+
+        return $summary;
+    }
+
+    private function sourceLabelForLocalPath(string $path): string
+    {
+        $normalized = str_replace('\\', '/', $path);
+        $public = str_replace('\\', '/', public_path());
+        $storagePublic = str_replace('\\', '/', storage_path('app/public'));
+
+        if (str_starts_with($normalized, $storagePublic.'/product-uploads/')) {
+            return 'storage/app/public/product-uploads';
+        }
+        if (str_starts_with($normalized, $public.'/SizeColorImages/')) {
+            return 'public/SizeColorImages';
+        }
+        if (str_starts_with($normalized, $public.'/Images/Items/')) {
+            return 'public/Images/Items';
+        }
+        if (str_starts_with($normalized, $public.'/storage/product-uploads/')) {
+            return 'public/storage/product-uploads';
+        }
+
+        return 'local: '.$this->relativePathForDisplay($normalized);
+    }
+
+    private function sourceLabelForUrl(string $url): string
+    {
+        $host = parse_url($url, PHP_URL_HOST);
+        $path = trim((string) parse_url($url, PHP_URL_PATH), '/');
+
+        return $host
+            ? 'remote: '.$host.($path !== '' ? '/'.dirname($path) : '')
+            : 'remote';
+    }
+
+    private function relativePathForDisplay(string $path): string
+    {
+        $base = str_replace('\\', '/', base_path());
+        if (str_starts_with($path, $base.'/')) {
+            return substr($path, strlen($base) + 1);
+        }
+
+        return $path;
     }
 
     private function localImagePath(?string $url): ?string

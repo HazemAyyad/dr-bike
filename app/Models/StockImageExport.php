@@ -10,6 +10,7 @@ class StockImageExport extends Model
         'user_id',
         'status',
         'filters',
+        'source_summary',
         'total_products',
         'processed_products',
         'images_added',
@@ -23,6 +24,7 @@ class StockImageExport extends Model
 
     protected $casts = [
         'filters' => 'array',
+        'source_summary' => 'array',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
     ];

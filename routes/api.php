@@ -857,6 +857,7 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Stock,Sales','re
 Route::group(['middleware'=>['auth:sanctum','check.permission:Stock,Stock Inventory Settings','refresh.token.expiry']] , function() {
     Route::get('/products/export-csv' , [Stocks::class,'exportProductsCsv']);
     Route::post('/products/images-zip-exports' , [Stocks::class,'startProductsImagesZipExport']);
+    Route::get('/products/images-zip-exports' , [Stocks::class,'listProductsImagesZipExports']);
     Route::get('/products/images-zip-exports/latest' , [Stocks::class,'latestProductsImagesZipExport']);
     Route::get('/products/images-zip-exports/{export}' , [Stocks::class,'showProductsImagesZipExport'])->whereNumber('export');
     Route::get('/products/images-zip-exports/{export}/download' , [Stocks::class,'downloadProductsImagesZipExport'])->whereNumber('export');

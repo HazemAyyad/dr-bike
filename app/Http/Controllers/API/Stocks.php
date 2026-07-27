@@ -512,6 +512,31 @@ class Stocks extends Controller
         ]);
     }
 
+    public function listProductsImagesZipExports(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $perPage = min(max((int) $request->input('per_page', 20), 1), 50);
+        $exports = StockImageExport::query()
+            ->latest('id')
+            ->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'exports' => $exports->getCollection()
+                ->map(fn ($export) => $this->formatStockImageExport($export))
+                ->values(),
+            'pagination' => [
+                'current_page' => $exports->currentPage(),
+                'last_page' => $exports->lastPage(),
+                'per_page' => $exports->perPage(),
+                'total' => $exports->total(),
+            ],
+        ]);
+    }
+
     public function showProductsImagesZipExport(Request $request, int $export)
     {
         if (! $this->isAdminRequest($request)) {
@@ -561,6 +586,7 @@ class Stocks extends Controller
             'file_name' => $export->file_name,
             'file_size' => (int) $export->file_size,
             'file_size_human' => $this->humanFileSize((int) $export->file_size),
+            'source_summary' => $export->source_summary ?: $this->emptyStockImageSourceSummary(),
             'error_message' => $export->error_message,
             'created_at' => optional($export->created_at)->toDateTimeString(),
             'started_at' => optional($export->started_at)->toDateTimeString(),
@@ -568,6 +594,17 @@ class Stocks extends Controller
             'download_url' => $export->status === 'completed'
                 ? url('/api/products/images-zip-exports/'.$export->id.'/download')
                 : null,
+        ];
+    }
+
+    private function emptyStockImageSourceSummary(): array
+    {
+        return [
+            'sources' => [],
+            'tables' => [],
+            'links_seen' => 0,
+            'images_added' => 0,
+            'missing_images' => 0,
         ];
     }
 
