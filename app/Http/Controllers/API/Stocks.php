@@ -33,6 +33,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\Drawing;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -245,6 +246,8 @@ class Stocks extends Controller
             @set_time_limit(300);
             @ini_set('memory_limit', '1024M');
 
+            $temporaryImages = [];
+            $thumbnailCache = [];
             $spreadsheet = new Spreadsheet();
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle('Products');
@@ -332,7 +335,7 @@ class Stocks extends Controller
                     'rotation_date',
                 ])
                 ->orderBy('id')
-                ->chunk(200, function ($products) use ($sheet, &$row) {
+                ->chunk(100, function ($products) use ($sheet, &$row, &$temporaryImages, &$thumbnailCache) {
                     foreach ($products as $product) {
                         $sizesText = $this->formatProductSizesForCsv($product);
                         $sheet->fromArray([[
@@ -369,8 +372,8 @@ class Stocks extends Controller
                             '',
                         ]], null, 'A'.$row);
 
-                        $this->addImageFormulaToSheet($sheet, $this->preferredProductImageUrl($product), 'D'.$row);
-                        $this->addImageFormulaToSheet($sheet, $this->preferredSizeImageUrl($product), 'AE'.$row);
+                        $this->addImageToSheet($sheet, $this->preferredProductImagePath($product), 'D'.$row, $temporaryImages, $thumbnailCache);
+                        $this->addImageToSheet($sheet, $this->preferredSizeImagePath($product), 'AE'.$row, $temporaryImages, $thumbnailCache);
 
                         $sizeLines = substr_count($sizesText, "\n") + 1;
                         $sheet->getRowDimension($row)->setRowHeight(max(70, min(180, $sizeLines * 22)));
@@ -384,6 +387,12 @@ class Stocks extends Controller
             $writer->setPreCalculateFormulas(false);
             $writer->save('php://output');
             $spreadsheet->disconnectWorksheets();
+
+            foreach ($temporaryImages as $temporaryImage) {
+                if (is_string($temporaryImage) && is_file($temporaryImage)) {
+                    @unlink($temporaryImage);
+                }
+            }
         }, $fileName, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
@@ -501,7 +510,7 @@ class Stocks extends Controller
             ->implode(' | ');
     }
 
-    private function preferredProductImageUrl(Product $product): ?string
+    private function preferredProductImagePath(Product $product): ?string
     {
         foreach ([$product->viewImages, $product->normalImages, $product->image3d] as $images) {
             foreach ($images as $image) {
@@ -510,19 +519,9 @@ class Stocks extends Controller
                     continue;
                 }
 
-                return $this->absoluteImageUrl($url);
-            }
-        }
-
-        return null;
-    }
-
-    private function preferredSizeImageUrl(Product $product): ?string
-    {
-        foreach ($product->sizes as $size) {
-            foreach ($size->colorSizes as $color) {
-                if (ProductImageResolver::isValidUrl($color->image_url ?? null)) {
-                    return $this->absoluteImageUrl($color->image_url);
+                $path = $this->localImagePathFromUrl($url);
+                if ($path !== null) {
+                    return $path;
                 }
             }
         }
@@ -530,24 +529,127 @@ class Stocks extends Controller
         return null;
     }
 
-    private function absoluteImageUrl(?string $url): string
+    private function preferredSizeImagePath(Product $product): ?string
     {
-        $normalized = ApiImageUrl::normalize($url);
-        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
-            return $normalized;
+        foreach ($product->sizes as $size) {
+            foreach ($size->colorSizes as $color) {
+                $path = $this->localImagePathFromUrl($color->image_url ?? null);
+                if ($path !== null) {
+                    return $path;
+                }
+            }
         }
 
-        return url(ltrim($normalized, '/'));
+        return null;
     }
 
-    private function addImageFormulaToSheet(Worksheet $sheet, ?string $url, string $cell): void
+    private function localImagePathFromUrl(?string $url): ?string
     {
-        if ($url === null || $url === '') {
+        if (! ProductImageResolver::isValidUrl($url)) {
+            return null;
+        }
+
+        $normalized = ApiImageUrl::normalize($url);
+        $path = $normalized;
+        if (str_starts_with($normalized, 'http://') || str_starts_with($normalized, 'https://')) {
+            $path = (string) parse_url($normalized, PHP_URL_PATH);
+        }
+
+        $relative = ltrim(rawurldecode(str_replace('\\', '/', $path)), '/');
+        $withoutPublic = preg_replace('#^public/#', '', $relative) ?? $relative;
+
+        $candidates = array_unique([
+            public_path($relative),
+            public_path($withoutPublic),
+        ]);
+
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && is_file($candidate) && @getimagesize($candidate) !== false) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<int, string>  $temporaryImages
+     * @param  array<string, string|null>  $thumbnailCache
+     */
+    private function addImageToSheet(Worksheet $sheet, ?string $path, string $cell, array &$temporaryImages, array &$thumbnailCache): void
+    {
+        if ($path === null) {
             return;
         }
 
-        $escapedUrl = str_replace('"', '""', $url);
-        $sheet->setCellValue($cell, '=IMAGE("'.$escapedUrl.'")');
+        $thumbnail = $this->thumbnailForExcel($path, $temporaryImages, $thumbnailCache);
+        if ($thumbnail === null) {
+            return;
+        }
+
+        $drawing = new Drawing();
+        $drawing->setPath($thumbnail);
+        $drawing->setCoordinates($cell);
+        $drawing->setOffsetX(8);
+        $drawing->setOffsetY(6);
+        $drawing->setHeight(64);
+        $drawing->setWorksheet($sheet);
+    }
+
+    /**
+     * @param  array<int, string>  $temporaryImages
+     * @param  array<string, string|null>  $thumbnailCache
+     */
+    private function thumbnailForExcel(string $path, array &$temporaryImages, array &$thumbnailCache): ?string
+    {
+        if (array_key_exists($path, $thumbnailCache)) {
+            return $thumbnailCache[$path];
+        }
+
+        $source = @imagecreatefromstring((string) @file_get_contents($path));
+        if ($source === false) {
+            return $thumbnailCache[$path] = null;
+        }
+
+        $sourceWidth = imagesx($source);
+        $sourceHeight = imagesy($source);
+        if ($sourceWidth <= 0 || $sourceHeight <= 0) {
+            imagedestroy($source);
+
+            return $thumbnailCache[$path] = null;
+        }
+
+        $maxSize = 96;
+        $scale = min($maxSize / $sourceWidth, $maxSize / $sourceHeight, 1);
+        $targetWidth = max(1, (int) round($sourceWidth * $scale));
+        $targetHeight = max(1, (int) round($sourceHeight * $scale));
+        $thumb = imagecreatetruecolor($targetWidth, $targetHeight);
+        imagefill($thumb, 0, 0, imagecolorallocate($thumb, 255, 255, 255));
+        imagecopyresampled($thumb, $source, 0, 0, 0, 0, $targetWidth, $targetHeight, $sourceWidth, $sourceHeight);
+
+        $temp = tempnam(sys_get_temp_dir(), 'products-export-image-');
+        if ($temp === false) {
+            imagedestroy($source);
+            imagedestroy($thumb);
+
+            return $thumbnailCache[$path] = null;
+        }
+
+        $tempJpg = $temp.'.jpg';
+        @unlink($temp);
+        $saved = imagejpeg($thumb, $tempJpg, 70);
+        imagedestroy($source);
+        imagedestroy($thumb);
+
+        if (! $saved) {
+            @unlink($tempJpg);
+
+            return $thumbnailCache[$path] = null;
+        }
+
+        $temporaryImages[] = $tempJpg;
+
+        return $thumbnailCache[$path] = $tempJpg;
     }
 
     private function formatProductSizesForCsv(Product $product): string
