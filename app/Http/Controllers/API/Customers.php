@@ -67,6 +67,61 @@ private function hasCompleteData($query, $fields)
     return $query;
 }
 
+    private function normalizePhoneForValidation(?string $phone): ?string
+    {
+        if ($phone === null) {
+            return null;
+        }
+
+        $phone = trim($phone);
+        if ($phone === '') {
+            return null;
+        }
+
+        if (preg_match('/^\+\d{3}\ \d{9}$/', $phone)) {
+            return $phone;
+        }
+
+        $digits = preg_replace('/\D+/', '', $phone) ?? '';
+        if ($digits === '') {
+            return $phone;
+        }
+
+        if (str_starts_with($digits, '00')) {
+            $digits = substr($digits, 2);
+        }
+
+        $dialCode = '972';
+        if (strlen($digits) >= 12 && in_array(substr($digits, 0, 3), ['970', '972'], true)) {
+            $dialCode = substr($digits, 0, 3);
+            $digits = substr($digits, 3);
+        } elseif (strlen($digits) === 12) {
+            $dialCode = substr($digits, 0, 3);
+            $digits = substr($digits, 3);
+        } elseif (str_starts_with($digits, '0')) {
+            $digits = substr($digits, 1);
+        }
+
+        if (strlen($digits) > 9) {
+            $digits = substr($digits, -9);
+        }
+
+        if (strlen($digits) !== 9) {
+            return $phone;
+        }
+
+        return '+'.$dialCode.' '.$digits;
+    }
+
+    private function normalizeRequestPhones(Request $request): void
+    {
+        $request->merge([
+            'phone' => $this->normalizePhoneForValidation($request->input('phone')),
+            'sub_phone' => $this->normalizePhoneForValidation($request->input('sub_phone')),
+            'relative_phone' => $this->normalizePhoneForValidation($request->input('relative_phone')),
+        ]);
+    }
+
 
 
     // for main display
@@ -170,6 +225,8 @@ public function getIncompletePersons()
     public function store(Request $request)
 {
  try{
+    $this->normalizeRequestPhones($request);
+
     $data = $request->validate([
        'person_type' =>'required|string|in:customer,seller',
         'name'     => 'required|string|max:255',
@@ -450,6 +507,8 @@ public function getIncompletePersons()
 
     public function editPerson(Request $request){
         try{
+        $this->normalizeRequestPhones($request);
+
         $data = $request->validate([
         'customer_id' =>'nullable|integer|exists:customers,id',
         'seller_id' =>'nullable|integer|exists:sellers,id',
