@@ -571,6 +571,42 @@ class Stocks extends Controller
         ]);
     }
 
+    public function deleteProductsImagesZipExport(Request $request, int $export)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $row = StockImageExport::query()->findOrFail($export);
+
+        if (in_array($row->status, ['pending', 'processing'], true)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'لا يمكن حذف ملف تصدير ما زال قيد التجهيز',
+            ], 409);
+        }
+
+        $deletedFile = false;
+        if ($row->file_path && is_file($row->file_path)) {
+            $deletedFile = @unlink($row->file_path);
+        }
+
+        $row->forceFill([
+            'status' => 'deleted',
+            'file_path' => null,
+            'file_name' => null,
+            'file_size' => 0,
+        ])->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $deletedFile
+                ? 'تم حذف الملف المضغوط بنجاح'
+                : 'تم تحديث العملية، والملف غير موجود على السيرفر',
+            'export' => $this->formatStockImageExport($row->fresh()),
+        ]);
+    }
+
     private function formatStockImageExport(?StockImageExport $export): ?array
     {
         if ($export === null) {

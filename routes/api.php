@@ -861,6 +861,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock,Stock Invent
     Route::get('/products/images-zip-exports/latest' , [Stocks::class,'latestProductsImagesZipExport']);
     Route::get('/products/images-zip-exports/{export}' , [Stocks::class,'showProductsImagesZipExport'])->whereNumber('export');
     Route::get('/products/images-zip-exports/{export}/download' , [Stocks::class,'downloadProductsImagesZipExport'])->whereNumber('export');
+    Route::delete('/products/images-zip-exports/{export}' , [Stocks::class,'deleteProductsImagesZipExport'])->whereNumber('export');
     Route::post('/products/import-csv/preview' , [Stocks::class,'previewProductsCsvImport']);
     Route::post('/products/import-csv' , [Stocks::class,'importProductsCsv']);
     Route::get('/stock/size-option-presets' , [Stocks::class,'sizeOptionPresets']);

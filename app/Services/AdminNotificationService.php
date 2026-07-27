@@ -495,17 +495,19 @@ class AdminNotificationService
     {
         return $this->withArabicLocale(function () use ($export) {
             $downloadUrl = url('/api/products/images-zip-exports/'.$export->id.'/download');
+            $fileSize = $this->humanFileSize((int) ($export->file_size ?? 0));
+            $imagesAdded = number_format((int) ($export->images_added ?? 0));
 
             return $this->create(
                 self::TYPE_STOCK_IMAGES_EXPORT_READY,
-                'ملف صور المخزون جاهز',
-                'الملف تبع صور المخزون جاهز، روح حمّله من شاشة المخزون.',
+                'تصدير صور المخزون جاهز للتحميل',
+                "تم تجهيز ملف صور المخزون بنجاح ({$imagesAdded} صورة، الحجم {$fileSize}). يمكنك فتح شاشة عمليات صور المخزون وتحميل الملف الآن.",
                 [
                     'export_id' => (string) $export->id,
                     'download_url' => $downloadUrl,
                     'file_name' => (string) ($export->file_name ?? ''),
                     'file_size' => (string) ($export->file_size ?? 0),
-                    'file_size_human' => $this->humanFileSize((int) ($export->file_size ?? 0)),
+                    'file_size_human' => $fileSize,
                     'images_added' => (string) ($export->images_added ?? 0),
                     'completed_at' => optional($export->completed_at)->toIso8601String() ?? now()->toIso8601String(),
                 ],

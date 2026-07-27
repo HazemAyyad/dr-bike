@@ -8,6 +8,7 @@ use App\Models\Seller;
 use App\Support\ApiImageUrl;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class PersonProfileService
@@ -25,6 +26,7 @@ class PersonProfileService
             ->values()
             ->all();
         $debt = $this->debtSummary($personType, $personId);
+        $checks = $this->checkSummary($personType, $personId);
 
         return [
             'person' => $person,
@@ -40,7 +42,12 @@ class PersonProfileService
                 'average_invoice_total' => $invoices->isEmpty()
                     ? 0
                     : round((float) $invoices->avg('total'), 2),
+                'checks_from_person_count' => $checks['from_person']['count'],
+                'checks_from_person_open_count' => $checks['from_person']['open_count'],
+                'checks_to_person_count' => $checks['to_person']['count'],
+                'checks_to_person_open_count' => $checks['to_person']['open_count'],
             ],
+            'checks' => $checks,
             'recent_invoices' => $invoices->take(5)->values()->all(),
             'top_products' => $topProducts,
             'purchased_products' => $products->values()->all(),
@@ -118,6 +125,8 @@ class PersonProfileService
             'job_title' => (string) ($model->job_title ?? ''),
             'address' => (string) ($model->address ?? ''),
             'category' => (string) ($model->type ?? ''),
+            'created_at' => (string) ($model->created_at ?? ''),
+            'created_by_name' => $this->createdByName($model, $personType),
         ];
     }
 
@@ -376,6 +385,68 @@ class PersonProfileService
             'we_owe' => round($weOwe, 2),
             'balance' => round($owedToUs - $weOwe, 2),
         ];
+    }
+
+    private function checkSummary(string $personType, int $personId): array
+    {
+        $fromIncomingColumn = $personType === 'customer' ? 'from_customer' : 'from_seller';
+        $toIncomingColumn = $personType === 'customer' ? 'to_customer' : 'to_seller';
+        $outgoingColumn = $personType === 'customer' ? 'customer_id' : 'seller_id';
+
+        $fromQuery = DB::table('incoming_checks')->where($fromIncomingColumn, $personId);
+        $toIncomingQuery = DB::table('incoming_checks')->where($toIncomingColumn, $personId);
+        $outgoingQuery = DB::table('outgoing_checks')->where($outgoingColumn, $personId);
+
+        $fromRows = $fromQuery->get(['status', 'total', 'currency']);
+        $toRows = $toIncomingQuery
+            ->get(['status', 'total', 'currency'])
+            ->concat($outgoingQuery->get(['status', 'total', 'currency']));
+
+        return [
+            'from_person' => $this->checkRowsSummary($fromRows),
+            'to_person' => $this->checkRowsSummary($toRows),
+        ];
+    }
+
+    private function checkRowsSummary(Collection $rows): array
+    {
+        $openRows = $rows->filter(fn ($row) => ($row->status ?? 'not_cashed') === 'not_cashed');
+
+        return [
+            'count' => $rows->count(),
+            'open_count' => $openRows->count(),
+            'totals_by_currency' => $this->totalsByCurrency($rows),
+            'open_totals_by_currency' => $this->totalsByCurrency($openRows),
+        ];
+    }
+
+    private function totalsByCurrency(Collection $rows): array
+    {
+        return $rows
+            ->groupBy(fn ($row) => (string) ($row->currency ?? 'شيكل'))
+            ->map(fn (Collection $items) => round((float) $items->sum('total'), 2))
+            ->all();
+    }
+
+    private function createdByName($model, string $personType): ?string
+    {
+        $table = $personType === 'customer' ? 'customers' : 'sellers';
+        $columns = ['created_by', 'created_by_user_id', 'user_id'];
+
+        foreach ($columns as $column) {
+            if (! Schema::hasColumn($table, $column)) {
+                continue;
+            }
+
+            $userId = $model->{$column} ?? null;
+            if (! $userId) {
+                continue;
+            }
+
+            return DB::table('users')->where('id', $userId)->value('name');
+        }
+
+        return null;
     }
 
     private function applyInstantPersonFilter($query, string $personType, int $personId, string $table): void
