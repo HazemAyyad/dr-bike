@@ -51,6 +51,7 @@ use App\Http\Controllers\API\FollowupAPI;
 use App\Http\Controllers\API\Goals;
 use App\Http\Controllers\API\IncomingChecks;
 use App\Http\Controllers\API\InstantSales;
+use App\Http\Controllers\API\PersonProfileController;
 use App\Http\Controllers\API\PersonProductSettingsController;
 use App\Http\Controllers\API\SuspendedInstantSaleController;
 use App\Http\Controllers\API\SalesOrdersController;
@@ -805,9 +806,11 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales,Follow-up 
   });
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:General Data,Sales','refresh.token.expiry']], function () {
-    Route::get('/person-product-settings', [PersonProductSettingsController::class, 'index']);
-    Route::post('/person-product-settings', [PersonProductSettingsController::class, 'store']);
-    Route::post('/person-product-settings/delete', [PersonProductSettingsController::class, 'destroy']);
+      Route::get('/person-product-settings', [PersonProductSettingsController::class, 'index']);
+      Route::post('/person-product-settings', [PersonProductSettingsController::class, 'store']);
+      Route::post('/person-product-settings/delete', [PersonProductSettingsController::class, 'destroy']);
+      Route::get('/person/profile', [PersonProfileController::class, 'show']);
+      Route::get('/person/profile/product-history', [PersonProfileController::class, 'productHistory']);
 });
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:Boxes Section,Daily Boxes,Checks,Sales,Goal Creation','refresh.token.expiry']], function () {
