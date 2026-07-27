@@ -13,6 +13,7 @@ use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
 use App\Models\Store\StoreSalesOrder;
+use App\Models\StockImageExport;
 use App\Support\EmployeePendingTasksForToday;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\App;
@@ -81,6 +82,8 @@ class AdminNotificationService
     public const TYPE_NOTE_SHARED = 'note_shared';
 
     public const TYPE_NOTE_REMINDER = 'note_reminder';
+
+    public const TYPE_STOCK_IMAGES_EXPORT_READY = 'stock_images_export_ready';
 
     /**
      * @param  array<string, mixed>  $data
@@ -488,6 +491,32 @@ class AdminNotificationService
         });
     }
 
+    public function notifyStockImagesExportReady(StockImageExport $export): AdminNotification
+    {
+        return $this->withArabicLocale(function () use ($export) {
+            $downloadUrl = url('/api/products/images-zip-exports/'.$export->id.'/download');
+
+            return $this->create(
+                self::TYPE_STOCK_IMAGES_EXPORT_READY,
+                'ملف صور المخزون جاهز',
+                'الملف تبع صور المخزون جاهز، روح حمّله من شاشة المخزون.',
+                [
+                    'export_id' => (string) $export->id,
+                    'download_url' => $downloadUrl,
+                    'file_name' => (string) ($export->file_name ?? ''),
+                    'file_size' => (string) ($export->file_size ?? 0),
+                    'file_size_human' => $this->humanFileSize((int) ($export->file_size ?? 0)),
+                    'images_added' => (string) ($export->images_added ?? 0),
+                    'completed_at' => optional($export->completed_at)->toIso8601String() ?? now()->toIso8601String(),
+                ],
+                null,
+                'stock_image_export',
+                (int) $export->id,
+                true
+            );
+        });
+    }
+
     public function notifyTaskCompleted(EmployeeDetail $employee, EmployeeTask $task): AdminNotification
     {
         $employee->loadMissing('user');
@@ -798,6 +827,20 @@ class AdminNotificationService
             'auto' => __('messages.admin_notify_source_auto'),
             default => '',
         };
+    }
+
+    private function humanFileSize(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $size = (float) $bytes;
+        $unit = 0;
+
+        while ($size >= 1024 && $unit < count($units) - 1) {
+            $size /= 1024;
+            $unit++;
+        }
+
+        return number_format($size, $unit === 0 ? 0 : 1).' '.$units[$unit];
     }
 
     public function hasAbsentReminderForDate(string $workDate): bool

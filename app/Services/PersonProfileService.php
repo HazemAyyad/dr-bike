@@ -54,6 +54,7 @@ class PersonProfileService
         ?int $sizeColorId = null
     ): array {
         $this->person($personType, $personId);
+        $settings = $this->productSettings($personType, $personId);
 
         $entries = $this->purchaseLines($personType, $personId)
             ->filter(function (array $line) use ($productId, $sizeColorId) {
@@ -69,15 +70,25 @@ class PersonProfileService
             })
             ->sortByDesc('sold_at')
             ->values()
-            ->map(fn (array $line) => [
-                'cost' => round((float) $line['unit_price'], 2),
-                'quantity' => round((float) $line['quantity'], 2),
-                'line_total' => round((float) $line['line_total'], 2),
-                'invoice_id' => (int) $line['invoice_id'],
-                'invoice_number' => $line['invoice_number'],
-                'invoice_type' => $line['invoice_type'],
-                'sold_at' => $line['sold_at'],
-            ])
+            ->map(function (array $line) use ($settings) {
+                $tier = $this->matchedTier(
+                    $settings->get((int) $line['product_id']),
+                    (float) $line['quantity'],
+                    (float) $line['unit_price']
+                );
+
+                return [
+                    'cost' => round((float) $line['unit_price'], 2),
+                    'quantity' => round((float) $line['quantity'], 2),
+                    'line_total' => round((float) $line['line_total'], 2),
+                    'invoice_id' => (int) $line['invoice_id'],
+                    'invoice_number' => $line['invoice_number'],
+                    'invoice_type' => $line['invoice_type'],
+                    'price_rule_label' => $tier['label'] ?? null,
+                    'price_rule_price' => $tier['unit_price'] ?? null,
+                    'sold_at' => $line['sold_at'],
+                ];
+            })
             ->all();
 
         return [
@@ -252,6 +263,7 @@ class PersonProfileService
 
         return PersonProductSetting::query()
             ->where($column, $personId)
+            ->with('priceTiers')
             ->latest('id')
             ->get()
             ->keyBy('product_id');
@@ -268,6 +280,11 @@ class PersonProfileService
                 $wholesalePrice = (float) ($latest['wholesale_price'] ?? 0);
                 $customPrice = $settings->get((int) $latest['product_id'])?->custom_price;
                 $customPrice = $customPrice === null ? null : (float) $customPrice;
+                $tier = $this->matchedTier(
+                    $settings->get((int) $latest['product_id']),
+                    (float) $latest['quantity'],
+                    (float) $latest['unit_price']
+                );
 
                 return [
                     'product_id' => (int) $latest['product_id'],
@@ -283,12 +300,38 @@ class PersonProfileService
                     'retail_price' => round((float) ($latest['retail_price'] ?? 0), 2),
                     'wholesale_price' => round($wholesalePrice, 2),
                     'custom_price' => $customPrice === null ? null : round($customPrice, 2),
+                    'price_rule_label' => $tier['label'] ?? null,
+                    'price_rule_price' => $tier['unit_price'] ?? null,
                     'sold_below_wholesale' => $wholesalePrice > 0 && $minPrice < $wholesalePrice,
                     'sold_below_custom_price' => $customPrice !== null && $customPrice > 0 && $minPrice < $customPrice,
                     'last_purchase_at' => $latest['sold_at'],
                 ];
             })
             ->sortByDesc('last_purchase_at');
+    }
+
+    private function matchedTier(?PersonProductSetting $setting, float $quantity, float $unitPrice): ?array
+    {
+        if (! $setting || ! $setting->relationLoaded('priceTiers')) {
+            return null;
+        }
+
+        foreach ($setting->priceTiers as $tier) {
+            $min = (int) $tier->min_qty;
+            $max = $tier->max_qty === null ? null : (int) $tier->max_qty;
+            $tierPrice = (float) $tier->unit_price;
+            $matchesQty = $quantity >= $min && ($max === null || $quantity <= $max);
+            $matchesPrice = abs($unitPrice - $tierPrice) < 0.005;
+
+            if ($matchesQty && $matchesPrice) {
+                return [
+                    'label' => $max === null ? "سعر كمية {$min}+" : "سعر كمية {$min}-{$max}",
+                    'unit_price' => round($tierPrice, 2),
+                ];
+            }
+        }
+
+        return null;
     }
 
     private function recentInvoices(Collection $lines): Collection

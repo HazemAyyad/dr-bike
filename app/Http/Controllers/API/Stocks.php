@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\BuildStockImagesZipExportJob;
 use App\Models\AppSetting;
 use App\Models\Category;
 use App\Models\Closeout;
@@ -13,10 +14,12 @@ use App\Models\Project;
 use App\Models\PurchaseProduct;
 use App\Models\Size;
 use App\Models\SizeColor;
+use App\Models\StockImageExport;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\WholesaleProduct;
 use App\Services\ProductFormService;
+use App\Services\StockImagesZipExportService;
 use App\Services\ProductTagService;
 use App\Services\StoreManageItemService;
 use App\Support\ApiImageUrl;
@@ -470,6 +473,116 @@ class Stocks extends Controller
         }, $fileName, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
+    }
+
+    public function startProductsImagesZipExport(Request $request, StockImagesZipExportService $service)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $export = StockImageExport::create([
+            'user_id' => $request->user()?->id,
+            'status' => 'pending',
+            'filters' => $service->filtersFromRequest($request),
+        ]);
+
+        BuildStockImagesZipExportJob::dispatch($export->id)->onConnection('database')->onQueue('stock-images');
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم بدء تجهيز ملف صور المخزون',
+            'export' => $this->formatStockImageExport($export->fresh()),
+        ], 202);
+    }
+
+    public function latestProductsImagesZipExport(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $export = StockImageExport::query()
+            ->latest('id')
+            ->first();
+
+        return response()->json([
+            'status' => 'success',
+            'export' => $export ? $this->formatStockImageExport($export) : null,
+        ]);
+    }
+
+    public function showProductsImagesZipExport(Request $request, int $export)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $row = StockImageExport::query()->findOrFail($export);
+
+        return response()->json([
+            'status' => 'success',
+            'export' => $this->formatStockImageExport($row),
+        ]);
+    }
+
+    public function downloadProductsImagesZipExport(Request $request, int $export)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $row = StockImageExport::query()->findOrFail($export);
+
+        if ($row->status !== 'completed' || ! $row->file_path || ! is_file($row->file_path)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'ملف الصور غير جاهز للتحميل بعد',
+            ], 409);
+        }
+
+        return response()->download($row->file_path, $row->file_name ?: basename($row->file_path), [
+            'Content-Type' => 'application/zip',
+        ]);
+    }
+
+    private function formatStockImageExport(?StockImageExport $export): ?array
+    {
+        if ($export === null) {
+            return null;
+        }
+
+        return [
+            'id' => $export->id,
+            'status' => $export->status,
+            'total_products' => (int) $export->total_products,
+            'processed_products' => (int) $export->processed_products,
+            'images_added' => (int) $export->images_added,
+            'file_name' => $export->file_name,
+            'file_size' => (int) $export->file_size,
+            'file_size_human' => $this->humanFileSize((int) $export->file_size),
+            'error_message' => $export->error_message,
+            'created_at' => optional($export->created_at)->toDateTimeString(),
+            'started_at' => optional($export->started_at)->toDateTimeString(),
+            'completed_at' => optional($export->completed_at)->toDateTimeString(),
+            'download_url' => $export->status === 'completed'
+                ? url('/api/products/images-zip-exports/'.$export->id.'/download')
+                : null,
+        ];
+    }
+
+    private function humanFileSize(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $size = (float) $bytes;
+        $unit = 0;
+
+        while ($size >= 1024 && $unit < count($units) - 1) {
+            $size /= 1024;
+            $unit++;
+        }
+
+        return number_format($size, $unit === 0 ? 0 : 1).' '.$units[$unit];
     }
 
     private function styleProductsExportSheet(Worksheet $sheet, int $columnsCount): void

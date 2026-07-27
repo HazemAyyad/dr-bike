@@ -89,6 +89,12 @@ class Kernel extends ConsoleKernel
             ->timezone('Asia/Hebron')
             ->withoutOverlapping()
             ->runInBackground();
+
+        $schedule->command('stock-images:queue-work')
+            ->everyMinute()
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping(720)
+            ->runInBackground();
     }
 
     /**
