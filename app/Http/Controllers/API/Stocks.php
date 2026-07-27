@@ -29,6 +29,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
@@ -41,11 +42,42 @@ class Stocks extends Controller
 {
     private const PRODUCT_IMPORT_COLUMNS = [
         'product_id' => ['product_id', 'id', 'معرف المنتج', 'رقم المنتج'],
-        'product_name' => ['product_name', 'name', 'اسم المنتج', 'اسم المنتح'],
+        'product_code' => ['product_code', 'code', 'كود المنتج'],
+        'product_name' => ['product_name', 'name', 'اسم المنتج', 'اسم المنتح', 'اسم المنتج عربي'],
+        'product_name_en' => ['product_name_en', 'name_en', 'nameEng', 'اسم المنتج إنجليزي'],
+        'product_name_he' => ['product_name_he', 'name_he', 'nameAbree', 'اسم المنتج عبري'],
+        'description_ar' => ['description_ar', 'descriptionAr', 'وصف عربي'],
+        'description_en' => ['description_en', 'descriptionEng', 'وصف إنجليزي'],
+        'description_he' => ['description_he', 'descriptionAbree', 'وصف عبري'],
         'retail_price' => ['retail_price', 'normail_price', 'normal_price', 'سعر المفرق', 'سعر المفرف'],
         'wholesale_price' => ['wholesale_price', 'سعر الجملة'],
         'cost_price' => ['cost_price', 'purchase_price', 'سعر التكلفة'],
+        'price' => ['price', 'السعر'],
+        'min_sale_price' => ['min_sale_price', 'أقل سعر بيع'],
         'quantity' => ['quantity', 'stock', 'العدد', 'المخزون'],
+        'min_stock' => ['min_stock', 'الحد الأدنى للمخزون'],
+        'discount' => ['discount', 'الخصم'],
+        'is_show' => ['is_show', 'isShow', 'ظاهر بالمتجر'],
+        'is_new_item' => ['is_new_item', 'isNewItem', 'منتج جديد'],
+        'is_more_sales' => ['is_more_sales', 'isMoreSales', 'الأكثر مبيعاً'],
+        'is_sold_with_paper' => ['is_sold_with_paper', 'بيع مع ورقة'],
+        'rate' => ['rate', 'التقييم'],
+        'manufacture_year' => ['manufacture_year', 'manufactureYear', 'سنة الصنع'],
+        'model' => ['model', 'الموديل'],
+        'rotation_date' => ['rotation_date', 'تاريخ الدوران'],
+    ];
+
+    private const SIZE_IMPORT_COLUMNS = [
+        'product_id' => ['product_id', 'id', 'معرف المنتج', 'رقم المنتج'],
+        'product_code' => ['product_code', 'code', 'كود المنتج'],
+        'size' => ['size', 'المقاس'],
+        'color_ar' => ['color_ar', 'colorAr', 'اللون عربي'],
+        'color_en' => ['color_en', 'colorEn', 'اللون إنجليزي'],
+        'color_abbr' => ['color_abbr', 'colorAbbr', 'اختصار اللون'],
+        'retail_price' => ['retail_price', 'normail_price', 'normal_price', 'سعر المفرق'],
+        'wholesale_price' => ['wholesale_price', 'سعر الجملة'],
+        'discount' => ['discount', 'الخصم'],
+        'quantity' => ['quantity', 'stock', 'الكمية', 'العدد'],
     ];
 
     /**
@@ -846,10 +878,10 @@ class Stocks extends Controller
         }
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt', 'max:10240'],
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:20480'],
         ]);
 
-        $result = $this->readProductsCsvImport($request, false);
+        $result = $this->readProductsImport($request, false);
 
         return response()->json([
             'status' => 'success',
@@ -867,10 +899,10 @@ class Stocks extends Controller
         }
 
         $request->validate([
-            'file' => ['required', 'file', 'mimes:csv,txt', 'max:10240'],
+            'file' => ['required', 'file', 'mimes:csv,txt,xlsx,xls', 'max:20480'],
         ]);
 
-        $result = $this->readProductsCsvImport($request, true);
+        $result = $this->readProductsImport($request, true);
 
         return response()->json([
             'status' => 'success',
@@ -878,6 +910,75 @@ class Stocks extends Controller
             'updated' => $result['updated'],
             'errors' => $result['errors'],
         ]);
+    }
+
+    private function readProductsImport(Request $request, bool $apply): array
+    {
+        $extension = strtolower((string) $request->file('file')?->getClientOriginalExtension());
+        if (in_array($extension, ['xlsx', 'xls'], true)) {
+            return $this->readProductsXlsxImport($request, $apply);
+        }
+
+        return $this->readProductsCsvImport($request, $apply);
+    }
+
+    private function readProductsXlsxImport(Request $request, bool $apply): array
+    {
+        $spreadsheet = IOFactory::load($request->file('file')->getRealPath());
+        $productsSheet = $spreadsheet->getSheetByName('Products') ?? $spreadsheet->getSheet(0);
+        $rows = $productsSheet->toArray(null, true, true, false);
+
+        if ($rows === [] || $this->isEmptyCsvRow($rows[0] ?? [])) {
+            $spreadsheet->disconnectWorksheets();
+
+            throw ValidationException::withMessages(['file' => 'ملف المنتجات فارغ']);
+        }
+
+        $columns = $this->resolveProductImportColumns($rows[0]);
+        if (! array_key_exists('product_id', $columns) && ! array_key_exists('product_code', $columns)) {
+            $spreadsheet->disconnectWorksheets();
+
+            throw ValidationException::withMessages(['file' => 'عمود معرف المنتج أو كود المنتج مطلوب للاستيراد']);
+        }
+
+        $updated = 0;
+        $errors = [];
+        $changes = [];
+
+        foreach (array_slice($rows, 1) as $offset => $row) {
+            $rowNumber = $offset + 2;
+            if ($this->isEmptyCsvRow($row)) {
+                continue;
+            }
+
+            $result = $this->processProductImportRow($row, $columns, $rowNumber, $apply);
+            if ($result['error'] !== null) {
+                $errors[] = $result['error'];
+                continue;
+            }
+            if ($result['change'] !== null) {
+                $changes[] = $result['change'];
+                if ($apply) {
+                    $updated++;
+                }
+            }
+        }
+
+        $sizesSheet = $spreadsheet->getSheetByName('Sizes & Colors');
+        if ($sizesSheet !== null) {
+            $sizesResult = $this->readSizesXlsxImport($sizesSheet, $apply);
+            $updated += $sizesResult['updated'];
+            $changes = array_merge($changes, $sizesResult['changes']);
+            $errors = array_merge($errors, $sizesResult['errors']);
+        }
+
+        $spreadsheet->disconnectWorksheets();
+
+        return [
+            'updated' => $updated,
+            'changes' => $changes,
+            'errors' => $errors,
+        ];
     }
 
     private function readProductsCsvImport(Request $request, bool $apply): array
@@ -1054,6 +1155,259 @@ class Stocks extends Controller
         ];
     }
 
+    private function processProductImportRow(array $row, array $columns, int $rowNumber, bool $apply): array
+    {
+        $productId = trim((string) ($row[$columns['product_id'] ?? -1] ?? ''));
+        $productCode = $this->csvValue($row, $columns, 'product_code');
+        $isNewProduct = $productId === '' && ($productCode === null || $productCode === '');
+
+        if ($productId !== '' && ! ctype_digit($productId)) {
+            return ['error' => "السطر {$rowNumber}: معرف المنتج غير صحيح", 'change' => null];
+        }
+
+        $product = null;
+        if ($productId !== '') {
+            $product = Product::with(['purchasePrices' => fn ($q) => $q->latest('id')])->find($productId);
+        } elseif ($productCode !== null && $productCode !== '') {
+            $product = Product::with(['purchasePrices' => fn ($q) => $q->latest('id')])
+                ->where('product_code', $productCode)
+                ->first();
+        }
+
+        if (! $isNewProduct && ! $product) {
+            return ['error' => "السطر {$rowNumber}: المنتج غير موجود", 'change' => null];
+        }
+
+        $updates = [];
+        $rowChanges = [
+            'row' => $rowNumber,
+            'operation' => $isNewProduct ? 'create' : 'update',
+            'product_id' => $product?->id,
+            'product_name' => $product?->nameAr,
+            'fields' => [],
+        ];
+
+        $stringFields = [
+            'product_name' => ['field' => 'nameAr', 'label' => 'اسم المنتج'],
+            'product_name_en' => ['field' => 'nameEng', 'label' => 'اسم المنتج إنجليزي'],
+            'product_name_he' => ['field' => 'nameAbree', 'label' => 'اسم المنتج عبري'],
+            'description_ar' => ['field' => 'descriptionAr', 'label' => 'وصف عربي'],
+            'description_en' => ['field' => 'descriptionEng', 'label' => 'وصف إنجليزي'],
+            'description_he' => ['field' => 'descriptionAbree', 'label' => 'وصف عبري'],
+            'model' => ['field' => 'model', 'label' => 'الموديل'],
+            'rotation_date' => ['field' => 'rotation_date', 'label' => 'تاريخ الدوران'],
+        ];
+
+        foreach ($stringFields as $key => $config) {
+            $value = $this->csvValue($row, $columns, $key);
+            if ($key === 'product_name' && $isNewProduct && ($value === null || $value === '')) {
+                return ['error' => "السطر {$rowNumber}: اسم المنتج مطلوب للمنتج الجديد", 'change' => null];
+            }
+            if ($value === null || $value === '') {
+                continue;
+            }
+            if (in_array($key, ['product_name', 'product_name_en', 'product_name_he', 'model'], true) && mb_strlen($value) > 500) {
+                return ['error' => "السطر {$rowNumber}: {$config['label']} طويل جداً", 'change' => null];
+            }
+            $field = $config['field'];
+            $updates[$field] = $value;
+            $this->addProductImportChange($rowChanges, $config['label'], $product?->{$field} ?? '', $value);
+            if ($key === 'product_name' && $isNewProduct) {
+                $rowChanges['product_name'] = $value;
+            }
+        }
+
+        $numberFields = [
+            'retail_price' => ['field' => 'normailPrice', 'label' => 'سعر المفرق', 'required' => true],
+            'wholesale_price' => ['field' => 'wholesalePrice', 'label' => 'سعر الجملة', 'required' => true],
+            'price' => ['field' => 'price', 'label' => 'السعر', 'required' => false],
+            'min_sale_price' => ['field' => 'min_sale_price', 'label' => 'أقل سعر بيع', 'required' => false],
+            'quantity' => ['field' => 'stock', 'label' => 'العدد', 'required' => true, 'integer' => true],
+            'min_stock' => ['field' => 'min_stock', 'label' => 'الحد الأدنى للمخزون', 'required' => false],
+            'discount' => ['field' => 'discount', 'label' => 'الخصم', 'required' => false],
+            'rate' => ['field' => 'rate', 'label' => 'التقييم', 'required' => false],
+            'manufacture_year' => ['field' => 'manufactureYear', 'label' => 'سنة الصنع', 'required' => false, 'integer' => true],
+        ];
+
+        foreach ($numberFields as $key => $config) {
+            $value = $this->csvValue($row, $columns, $key);
+            if (($value === null || $value === '') && ($config['required'] ?? false) && $isNewProduct) {
+                return ['error' => "السطر {$rowNumber}: {$config['label']} مطلوب للمنتج الجديد", 'change' => null];
+            }
+            if ($value === null || $value === '') {
+                continue;
+            }
+            $number = $this->normalizeImportNumber($value);
+            if ($number === null || $number < 0 || (($config['integer'] ?? false) && floor($number) != $number)) {
+                return ['error' => "السطر {$rowNumber}: {$config['label']} غير صحيح", 'change' => null];
+            }
+            $field = $config['field'];
+            $updates[$field] = ($config['integer'] ?? false) ? (int) $number : $number;
+            $this->addProductImportChange($rowChanges, $config['label'], $product?->{$field} ?? 0, $updates[$field]);
+        }
+
+        foreach ([
+            'is_show' => ['field' => 'isShow', 'label' => 'ظاهر بالمتجر'],
+            'is_new_item' => ['field' => 'isNewItem', 'label' => 'منتج جديد'],
+            'is_more_sales' => ['field' => 'isMoreSales', 'label' => 'الأكثر مبيعاً'],
+            'is_sold_with_paper' => ['field' => 'is_sold_with_paper', 'label' => 'بيع مع ورقة'],
+        ] as $key => $config) {
+            $value = $this->csvValue($row, $columns, $key);
+            if ($value === null || $value === '') {
+                continue;
+            }
+            $bool = $this->normalizeImportBoolean($value);
+            if ($bool === null) {
+                return ['error' => "السطر {$rowNumber}: {$config['label']} غير صحيح", 'change' => null];
+            }
+            $field = $config['field'];
+            $updates[$field] = $bool ? 1 : 0;
+            $this->addProductImportChange($rowChanges, $config['label'], $this->formatCsvBoolean($product?->{$field}), $this->formatCsvBoolean($bool));
+        }
+
+        $cost = $this->csvValue($row, $columns, 'cost_price');
+        $costNumber = null;
+        if ($cost !== null && $cost !== '') {
+            $costNumber = $this->normalizeImportNumber($cost);
+            if ($costNumber === null || $costNumber < 0) {
+                return ['error' => "السطر {$rowNumber}: سعر التكلفة غير صحيح", 'change' => null];
+            }
+            $this->addProductImportChange($rowChanges, 'سعر التكلفة', $product?->purchasePrices->first()?->price ?? 0, $costNumber);
+        } elseif ($isNewProduct) {
+            return ['error' => "السطر {$rowNumber}: سعر التكلفة مطلوب للمنتج الجديد", 'change' => null];
+        }
+
+        if ($apply && $rowChanges['fields'] !== []) {
+            if ($isNewProduct) {
+                $product = $this->createImportedProduct($updates, $costNumber);
+                $rowChanges['product_id'] = $product->id;
+            } else {
+                if ($updates !== []) {
+                    $product->update($updates);
+                }
+                if ($costNumber !== null) {
+                    $purchasePrice = $product->purchasePrices->first();
+                    if ($purchasePrice) {
+                        $purchasePrice->update(['price' => $costNumber]);
+                    } else {
+                        PurchaseProduct::create([
+                            'product_id' => $product->id,
+                            'seller_id' => null,
+                            'price' => $costNumber,
+                        ]);
+                    }
+                }
+            }
+        }
+
+        return [
+            'error' => null,
+            'change' => $rowChanges['fields'] !== [] ? $rowChanges : null,
+        ];
+    }
+
+    private function readSizesXlsxImport(Worksheet $sheet, bool $apply): array
+    {
+        $rows = $sheet->toArray(null, true, true, false);
+        if ($rows === [] || $this->isEmptyCsvRow($rows[0] ?? [])) {
+            return ['updated' => 0, 'changes' => [], 'errors' => []];
+        }
+
+        $columns = $this->resolveImportColumns($rows[0], self::SIZE_IMPORT_COLUMNS);
+        if (! array_key_exists('size', $columns) || (! array_key_exists('product_id', $columns) && ! array_key_exists('product_code', $columns))) {
+            return ['updated' => 0, 'changes' => [], 'errors' => ['Sheet المقاسات: عمود المنتج وعمود المقاس مطلوبان']];
+        }
+
+        $updated = 0;
+        $changes = [];
+        $errors = [];
+
+        foreach (array_slice($rows, 1) as $offset => $row) {
+            $rowNumber = $offset + 2;
+            if ($this->isEmptyCsvRow($row)) {
+                continue;
+            }
+
+            $product = $this->findImportProduct($row, $columns);
+            if (! $product) {
+                $errors[] = "Sheet المقاسات - السطر {$rowNumber}: المنتج غير موجود";
+                continue;
+            }
+
+            $sizeName = $this->csvValue($row, $columns, 'size');
+            if ($sizeName === null || $sizeName === '') {
+                $errors[] = "Sheet المقاسات - السطر {$rowNumber}: المقاس مطلوب";
+                continue;
+            }
+
+            $colorAr = $this->csvValue($row, $columns, 'color_ar') ?? '';
+            $colorEn = $this->csvValue($row, $columns, 'color_en') ?? '';
+            $colorAbbr = $this->csvValue($row, $columns, 'color_abbr') ?? '';
+
+            $numbers = [];
+            foreach ([
+                'retail_price' => 'سعر المفرق',
+                'wholesale_price' => 'سعر الجملة',
+                'discount' => 'الخصم',
+                'quantity' => 'الكمية',
+            ] as $key => $label) {
+                $value = $this->csvValue($row, $columns, $key);
+                if ($value === null || $value === '') {
+                    $numbers[$key] = 0;
+                    continue;
+                }
+                $number = $this->normalizeImportNumber($value);
+                if ($number === null || $number < 0 || ($key === 'quantity' && floor($number) != $number)) {
+                    $errors[] = "Sheet المقاسات - السطر {$rowNumber}: {$label} غير صحيح";
+                    continue 2;
+                }
+                $numbers[$key] = $key === 'quantity' ? (int) $number : $number;
+            }
+
+            $change = [
+                'row' => $rowNumber,
+                'operation' => 'size_color',
+                'product_id' => $product->id,
+                'product_name' => $product->nameAr,
+                'fields' => [[
+                    'label' => 'مقاس/لون',
+                    'old' => '',
+                    'new' => "{$sizeName} / {$colorAr} / {$colorEn}",
+                ]],
+            ];
+
+            if ($apply) {
+                $size = Size::query()->firstOrCreate([
+                    'itemId' => $product->id,
+                    'size' => $sizeName,
+                ], [
+                    'discount' => 0,
+                    'description' => '',
+                ]);
+                if (empty($size->id)) {
+                    $size->id = DB::getPdo()->lastInsertId();
+                }
+
+                SizeColor::query()->updateOrCreate([
+                    'sizeId' => $size->id,
+                    'colorAr' => $colorAr,
+                    'colorEn' => $colorEn,
+                    'colorAbbr' => $colorAbbr,
+                ], [
+                    'normailPrice' => $numbers['retail_price'],
+                    'wholesalePrice' => $numbers['wholesale_price'],
+                    'discount' => $numbers['discount'],
+                    'stock' => $numbers['quantity'],
+                ]);
+                $updated++;
+            }
+
+            $changes[] = $change;
+        }
+
+        return ['updated' => $updated, 'changes' => $changes, 'errors' => $errors];
+    }
+
     private function createImportedProduct(array $fields, ?float $cost): Product
     {
         return DB::transaction(function () use ($fields, $cost) {
@@ -1062,22 +1416,26 @@ class Stocks extends Controller
             $product = Product::query()->create([
                 'id' => $newId,
                 'nameAr' => $fields['nameAr'],
-                'nameEng' => $fields['nameAr'],
-                'nameAbree' => $fields['nameAr'],
-                'descriptionAr' => '',
-                'descriptionEng' => '',
-                'descriptionAbree' => '',
+                'nameEng' => $fields['nameEng'] ?? $fields['nameAr'],
+                'nameAbree' => $fields['nameAbree'] ?? $fields['nameAr'],
+                'descriptionAr' => $fields['descriptionAr'] ?? '',
+                'descriptionEng' => $fields['descriptionEng'] ?? ($fields['descriptionAr'] ?? ''),
+                'descriptionAbree' => $fields['descriptionAbree'] ?? ($fields['descriptionAr'] ?? ''),
                 'normailPrice' => $fields['normailPrice'],
                 'wholesalePrice' => $fields['wholesalePrice'],
                 'stock' => $fields['stock'],
-                'discount' => 0,
-                'isShow' => true,
-                'isNewItem' => true,
-                'isMoreSales' => false,
-                'rate' => 4,
-                'manufactureYear' => 0,
-                'model' => '',
-                'min_stock' => 0,
+                'price' => $fields['price'] ?? null,
+                'min_sale_price' => $fields['min_sale_price'] ?? null,
+                'discount' => $fields['discount'] ?? 0,
+                'isShow' => $fields['isShow'] ?? true,
+                'isNewItem' => $fields['isNewItem'] ?? true,
+                'isMoreSales' => $fields['isMoreSales'] ?? false,
+                'is_sold_with_paper' => $fields['is_sold_with_paper'] ?? 0,
+                'rate' => $fields['rate'] ?? 4,
+                'manufactureYear' => $fields['manufactureYear'] ?? 0,
+                'model' => $fields['model'] ?? '',
+                'rotation_date' => $fields['rotation_date'] ?? null,
+                'min_stock' => $fields['min_stock'] ?? 0,
             ]);
 
             if ($cost !== null) {
@@ -1115,13 +1473,18 @@ class Stocks extends Controller
 
     private function resolveProductImportColumns(array $header): array
     {
+        return $this->resolveImportColumns($header, self::PRODUCT_IMPORT_COLUMNS);
+    }
+
+    private function resolveImportColumns(array $header, array $definitions): array
+    {
         $normalized = [];
         foreach ($header as $index => $value) {
             $normalized[$index] = $this->normalizeCsvHeader((string) $value);
         }
 
         $columns = [];
-        foreach (self::PRODUCT_IMPORT_COLUMNS as $key => $aliases) {
+        foreach ($definitions as $key => $aliases) {
             foreach ($aliases as $alias) {
                 $index = array_search($this->normalizeCsvHeader($alias), $normalized, true);
                 if ($index !== false) {
@@ -1132,6 +1495,21 @@ class Stocks extends Controller
         }
 
         return $columns;
+    }
+
+    private function findImportProduct(array $row, array $columns): ?Product
+    {
+        $productId = $this->csvValue($row, $columns, 'product_id');
+        if ($productId !== null && $productId !== '' && ctype_digit($productId)) {
+            return Product::query()->find((int) $productId);
+        }
+
+        $productCode = $this->csvValue($row, $columns, 'product_code');
+        if ($productCode !== null && $productCode !== '') {
+            return Product::query()->where('product_code', $productCode)->first();
+        }
+
+        return null;
     }
 
     private function detectCsvDelimiter(string $line): string
@@ -1165,6 +1543,19 @@ class Stocks extends Controller
         }
 
         return is_numeric($value) ? (float) $value : null;
+    }
+
+    private function normalizeImportBoolean(string $value): ?bool
+    {
+        $normalized = mb_strtolower(trim($value));
+        if (in_array($normalized, ['1', 'true', 'yes', 'y', 'نعم'], true)) {
+            return true;
+        }
+        if (in_array($normalized, ['0', 'false', 'no', 'n', 'لا'], true)) {
+            return false;
+        }
+
+        return null;
     }
 
     private function csvValue(array $row, array $columns, string $key): ?string
