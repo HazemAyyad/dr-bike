@@ -239,26 +239,114 @@ class Stocks extends Controller
 
             fputcsv($handle, [
                 'معرف المنتج',
-                'اسم المنتج',
+                'كود المنتج',
+                'اسم المنتج عربي',
+                'اسم المنتج إنجليزي',
+                'اسم المنتج عبري',
+                'وصف عربي',
+                'وصف إنجليزي',
+                'وصف عبري',
+                'التصنيف الرئيسي',
+                'التصنيفات الفرعية',
+                'مكان التخزين',
                 'سعر المفرق',
                 'سعر الجملة',
                 'سعر التكلفة',
+                'السعر',
+                'أقل سعر بيع',
                 'العدد',
+                'الحد الأدنى للمخزون',
+                'الخصم',
+                'ظاهر بالمتجر',
+                'منتج جديد',
+                'الأكثر مبيعاً',
+                'بيع مع ورقة',
+                'التقييم',
+                'سنة الصنع',
+                'الموديل',
+                'تاريخ الدوران',
+                'الشروة / المشروع',
+                'صور المنتج',
+                'المقاسات والألوان',
             ]);
 
             Product::query()
-                ->with(['purchasePrices' => fn ($q) => $q->latest('id')])
-                ->select('id', 'nameAr', 'normailPrice', 'wholesalePrice', 'stock')
+                ->with([
+                    'category:id,nameAr',
+                    'storeSection:id,name',
+                    'subCategories.subCategory:id,nameAr,mainCategoryId',
+                    'sizes' => fn ($q) => $q->select('id', 'size', 'itemId')->orderBy('id'),
+                    'sizes.colorSizes' => fn ($q) => $q
+                        ->select('id', 'sizeId', 'colorAr', 'colorEn', 'colorAbbr', 'normailPrice', 'wholesalePrice', 'discount', 'stock', 'image_url')
+                        ->orderBy('id'),
+                    'viewImages:id,itemId,imageUrl',
+                    'normalImages:id,itemId,imageUrl',
+                    'image3d:id,itemId,imageUrl',
+                    'purchase:id,name',
+                    'purchasePrices' => fn ($q) => $q->latest('id'),
+                ])
+                ->select([
+                    'id',
+                    'product_code',
+                    'category_id',
+                    'store_section_id',
+                    'project_id',
+                    'nameAr',
+                    'nameEng',
+                    'nameAbree',
+                    'descriptionAr',
+                    'descriptionEng',
+                    'descriptionAbree',
+                    'normailPrice',
+                    'wholesalePrice',
+                    'price',
+                    'min_sale_price',
+                    'stock',
+                    'min_stock',
+                    'discount',
+                    'isShow',
+                    'isNewItem',
+                    'isMoreSales',
+                    'is_sold_with_paper',
+                    'rate',
+                    'manufactureYear',
+                    'model',
+                    'rotation_date',
+                ])
                 ->orderBy('id')
                 ->chunk(500, function ($products) use ($handle) {
                     foreach ($products as $product) {
                         fputcsv($handle, [
                             $product->id,
+                            $product->product_code,
                             $product->nameAr,
+                            $product->nameEng,
+                            $product->nameAbree,
+                            $product->descriptionAr,
+                            $product->descriptionEng,
+                            $product->descriptionAbree,
+                            $product->category?->nameAr,
+                            $this->formatProductSubCategoriesForCsv($product),
+                            $product->storeSection?->name,
                             $product->normailPrice,
                             $product->wholesalePrice,
                             optional($product->purchasePrices->first())->price ?? 0,
+                            $product->price,
+                            $product->min_sale_price,
                             $product->stock,
+                            $product->min_stock,
+                            $product->discount,
+                            $this->formatCsvBoolean($product->isShow),
+                            $this->formatCsvBoolean($product->isNewItem),
+                            $this->formatCsvBoolean($product->isMoreSales),
+                            $this->formatCsvBoolean($product->is_sold_with_paper),
+                            $product->rate,
+                            $product->manufactureYear,
+                            $product->model,
+                            $product->rotation_date,
+                            $product->purchase?->name,
+                            $this->formatProductImagesForCsv($product),
+                            $this->formatProductSizesForCsv($product),
                         ]);
                     }
                 });
@@ -267,6 +355,70 @@ class Stocks extends Controller
         }, $fileName, [
             'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
+    }
+
+    private function formatCsvBoolean($value): string
+    {
+        return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? 'نعم' : 'لا';
+    }
+
+    private function formatProductSubCategoriesForCsv(Product $product): string
+    {
+        return $product->subCategories
+            ->map(fn ($pivot) => $pivot->subCategory?->nameAr)
+            ->filter()
+            ->unique()
+            ->values()
+            ->implode(' | ');
+    }
+
+    private function formatProductImagesForCsv(Product $product): string
+    {
+        $urls = [];
+
+        foreach ([$product->viewImages, $product->normalImages, $product->image3d] as $images) {
+            foreach ($images as $image) {
+                $url = ProductImageResolver::urlFromRecord($image);
+                if (! ProductImageResolver::isValidUrl($url)) {
+                    continue;
+                }
+
+                $urls[] = $this->publicImagePath($url);
+            }
+        }
+
+        return collect($urls)
+            ->unique()
+            ->values()
+            ->implode(' | ');
+    }
+
+    private function formatProductSizesForCsv(Product $product): string
+    {
+        $rows = [];
+
+        foreach ($product->sizes as $size) {
+            foreach ($size->colorSizes as $color) {
+                $parts = [
+                    trim((string) $size->size) !== '' ? (string) $size->size : '-',
+                    trim((string) $color->colorAr) !== '' ? (string) $color->colorAr : '-',
+                    trim((string) $color->colorEn) !== '' ? (string) $color->colorEn : '-',
+                    trim((string) $color->colorAbbr) !== '' ? (string) $color->colorAbbr : '-',
+                    'مفرق: '.($color->normailPrice ?? 0),
+                    'جملة: '.($color->wholesalePrice ?? 0),
+                    'خصم: '.($color->discount ?? 0),
+                    'كمية: '.($color->stock ?? 0),
+                ];
+
+                if (! empty($color->image_url)) {
+                    $parts[] = 'صورة: '.$this->publicImagePath($color->image_url);
+                }
+
+                $rows[] = implode(' / ', $parts);
+            }
+        }
+
+        return implode("\n", $rows);
     }
 
     public function previewProductsCsvImport(Request $request)
