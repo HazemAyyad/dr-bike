@@ -263,6 +263,7 @@ class DebtLedger extends Controller
                 'start_date' => 'nullable|date',
                 'end_date' => 'nullable|date',
                 'currency' => 'nullable|string|in:شيكل,دولار,دينار',
+                'balance_scope' => 'nullable|string|in:full,period',
             ]);
 
             if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
@@ -286,11 +287,18 @@ class DebtLedger extends Controller
                 ->get();
 
             $displayCurrency = $filterCurrency ?? 'شيكل';
+            $balanceStartDate = $request->balance_scope === 'period'
+                ? $request->start_date
+                : null;
+            $balanceEndDate = $request->balance_scope === 'period'
+                ? $request->end_date
+                : null;
+
             $totals = $this->ledger->calculateTotals(
                 $request->customer_id,
                 $request->seller_id,
-                $request->start_date,
-                $request->end_date,
+                $balanceStartDate,
+                $balanceEndDate,
                 $displayCurrency
             );
 
@@ -299,8 +307,8 @@ class DebtLedger extends Controller
                 $currencyTotals = $this->ledger->calculateTotals(
                     $request->customer_id,
                     $request->seller_id,
-                    $request->start_date,
-                    $request->end_date,
+                    $balanceStartDate,
+                    $balanceEndDate,
                     $currencyCode
                 );
                 $balancesByCurrency[$currencyCode] = [

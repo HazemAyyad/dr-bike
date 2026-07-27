@@ -3,7 +3,9 @@
 namespace App\Services;
 
 use App\Models\Customer;
+use App\Models\PersonProductSetting;
 use App\Models\Seller;
+use App\Support\ApiImageUrl;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -15,7 +17,8 @@ class PersonProfileService
         $person = $this->person($personType, $personId);
         $lines = $this->purchaseLines($personType, $personId);
         $invoices = $this->recentInvoices($lines);
-        $products = $this->purchasedProducts($lines);
+        $settings = $this->productSettings($personType, $personId);
+        $products = $this->purchasedProducts($lines, $settings);
         $topProducts = $products
             ->sortByDesc('quantity')
             ->take(5)
@@ -125,9 +128,16 @@ class PersonProfileService
 
     private function instantSaleLines(string $personType, int $personId): Collection
     {
+        $imageSubquery = DB::table('normal_image_products')
+            ->select('itemId', DB::raw('MIN(imageUrl) as image_url'))
+            ->groupBy('itemId');
+
         $query = DB::table('instant_sales')
             ->leftJoin('instant_sales as parent_sales', 'parent_sales.id', '=', 'instant_sales.parent_id')
             ->leftJoin('products', 'products.id', '=', 'instant_sales.product_id')
+            ->leftJoinSub($imageSubquery, 'product_images', function ($join) {
+                $join->on('product_images.itemId', '=', 'instant_sales.product_id');
+            })
             ->whereNotNull('instant_sales.product_id')
             ->whereNull('instant_sales.sales_order_id')
             ->where('instant_sales.cost', '>', 0)
@@ -159,6 +169,9 @@ class PersonProfileService
                 'parent_sales.serial_number as parent_serial_number',
                 'products.nameAr as product_name',
                 'products.product_code',
+                'products.normailPrice as retail_price',
+                'products.wholesalePrice as wholesale_price',
+                'product_images.image_url',
             ])
             ->get()
             ->map(fn ($row) => [
@@ -170,6 +183,9 @@ class PersonProfileService
                 'size_color_id' => $row->size_color_id === null ? null : (int) $row->size_color_id,
                 'product_name' => (string) ($row->product_name ?? ''),
                 'product_code' => (string) ($row->product_code ?? ''),
+                'image_url' => ApiImageUrl::normalize($row->image_url ?? null),
+                'retail_price' => (float) ($row->retail_price ?? 0),
+                'wholesale_price' => (float) ($row->wholesale_price ?? 0),
                 'quantity' => (float) ($row->quantity ?? 0),
                 'unit_price' => (float) ($row->cost ?? 0),
                 'line_total' => (float) (($row->total_cost ?? 0) ?: ((float) $row->cost * (float) $row->quantity)),
@@ -179,9 +195,16 @@ class PersonProfileService
 
     private function salesOrderLines(int $customerId): Collection
     {
+        $imageSubquery = DB::table('normal_image_products')
+            ->select('itemId', DB::raw('MIN(imageUrl) as image_url'))
+            ->groupBy('itemId');
+
         return DB::table('sales_order_items')
             ->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
             ->leftJoin('products', 'products.id', '=', 'sales_order_items.product_id')
+            ->leftJoinSub($imageSubquery, 'product_images', function ($join) {
+                $join->on('product_images.itemId', '=', 'sales_order_items.product_id');
+            })
             ->where('sales_orders.customer_id', $customerId)
             ->where('sales_orders.is_debt_collection', false)
             ->where('sales_orders.status', '!=', 'canceled')
@@ -199,6 +222,9 @@ class PersonProfileService
                 'sales_order_items.line_total',
                 'products.nameAr as product_name_ar',
                 'products.product_code',
+                'products.normailPrice as retail_price',
+                'products.wholesalePrice as wholesale_price',
+                'product_images.image_url',
             ])
             ->get()
             ->map(fn ($row) => [
@@ -210,6 +236,9 @@ class PersonProfileService
                 'size_color_id' => $row->size_color_id === null ? null : (int) $row->size_color_id,
                 'product_name' => (string) ($row->product_name ?: $row->product_name_ar ?: ''),
                 'product_code' => (string) ($row->product_code ?? ''),
+                'image_url' => ApiImageUrl::normalize($row->image_url ?? null),
+                'retail_price' => (float) ($row->retail_price ?? 0),
+                'wholesale_price' => (float) ($row->wholesale_price ?? 0),
                 'quantity' => (float) ($row->quantity ?? 0),
                 'unit_price' => (float) ($row->unit_price ?? 0),
                 'line_total' => (float) (($row->line_total ?? 0) ?: ((float) $row->unit_price * (float) $row->quantity)),
@@ -217,24 +246,45 @@ class PersonProfileService
             ]);
     }
 
-    private function purchasedProducts(Collection $lines): Collection
+    private function productSettings(string $personType, int $personId): Collection
+    {
+        $column = $personType === 'customer' ? 'customer_id' : 'seller_id';
+
+        return PersonProductSetting::query()
+            ->where($column, $personId)
+            ->latest('id')
+            ->get()
+            ->keyBy('product_id');
+    }
+
+    private function purchasedProducts(Collection $lines, Collection $settings): Collection
     {
         return $lines
             ->groupBy('product_id')
-            ->map(function (Collection $rows) {
+            ->map(function (Collection $rows) use ($settings) {
                 $prices = $rows->pluck('unit_price')->map(fn ($v) => (float) $v);
                 $latest = $rows->sortByDesc('sold_at')->first();
+                $minPrice = (float) $prices->min();
+                $wholesalePrice = (float) ($latest['wholesale_price'] ?? 0);
+                $customPrice = $settings->get((int) $latest['product_id'])?->custom_price;
+                $customPrice = $customPrice === null ? null : (float) $customPrice;
 
                 return [
                     'product_id' => (int) $latest['product_id'],
                     'product_name' => $latest['product_name'],
                     'product_code' => $latest['product_code'],
+                    'image_url' => $latest['image_url'] ?? 'no image',
                     'purchase_count' => $rows->count(),
                     'quantity' => round((float) $rows->sum('quantity'), 2),
                     'total_paid' => round((float) $rows->sum('line_total'), 2),
                     'last_price' => round((float) $latest['unit_price'], 2),
-                    'min_price' => round((float) $prices->min(), 2),
+                    'min_price' => round($minPrice, 2),
                     'max_price' => round((float) $prices->max(), 2),
+                    'retail_price' => round((float) ($latest['retail_price'] ?? 0), 2),
+                    'wholesale_price' => round($wholesalePrice, 2),
+                    'custom_price' => $customPrice === null ? null : round($customPrice, 2),
+                    'sold_below_wholesale' => $wholesalePrice > 0 && $minPrice < $wholesalePrice,
+                    'sold_below_custom_price' => $customPrice !== null && $customPrice > 0 && $minPrice < $customPrice,
                     'last_purchase_at' => $latest['sold_at'],
                 ];
             })
