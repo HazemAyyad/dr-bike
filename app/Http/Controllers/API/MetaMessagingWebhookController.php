@@ -15,6 +15,12 @@ class MetaMessagingWebhookController extends Controller
         $mode = $request->query('hub.mode', $request->query('hub_mode'));
         $token = $request->query('hub.verify_token', $request->query('hub_verify_token'));
         $challenge = $request->query('hub.challenge', $request->query('hub_challenge'));
+        Log::info('Meta messaging webhook verify request', [
+            'mode' => $mode,
+            'token_matches' => filled(config('meta_messaging.verify_token'))
+                && hash_equals((string) config('meta_messaging.verify_token'), (string) $token),
+            'has_challenge' => filled($challenge),
+        ]);
 
         if ($mode === 'subscribe'
             && filled(config('meta_messaging.verify_token'))
@@ -32,6 +38,12 @@ class MetaMessagingWebhookController extends Controller
     )
     {
         try {
+            Log::info('Meta messaging webhook received', [
+                'object' => data_get($request->all(), 'object'),
+                'entry_count' => count((array) data_get($request->all(), 'entry', [])),
+                'payload_keys' => array_keys($request->all()),
+            ]);
+
             $object = (string) data_get($request->all(), 'object');
             $channel = match ($object) {
                 'instagram' => 'instagram',
