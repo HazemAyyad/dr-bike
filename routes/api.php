@@ -100,6 +100,8 @@ use App\Http\Controllers\API\WhatsAppTemplateController;
 use App\Http\Controllers\API\WhatsAppSettingsController;
 use App\Http\Controllers\API\WhatsAppWebhookController;
 use App\Http\Controllers\API\MetaCatalogController;
+use App\Http\Controllers\API\MetaMessagingWebhookController;
+use App\Http\Controllers\API\SocialCenterController;
 
 /*
 |--------------------------------------------------------------------------
@@ -116,6 +118,8 @@ use App\Http\Controllers\API\MetaCatalogController;
 
     Route::get('/whatsapp/webhook', [WhatsAppWebhookController::class, 'verify']);
     Route::post('/whatsapp/webhook', [WhatsAppWebhookController::class, 'handle']);
+    Route::get('/meta/messaging/webhook', [MetaMessagingWebhookController::class, 'verify']);
+    Route::post('/meta/messaging/webhook', [MetaMessagingWebhookController::class, 'handle']);
 
     /** صور المتجر القديم (.NET) — بروكسي لـ Flutter Web (CORS) */
     Route::get('/legacy-store-image', [LegacyStoreImageController::class, 'show']);
@@ -591,7 +595,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::get('/maintenance/daily-session/current' , [MaintenanceAPI::class,'dailySessionCurrent']);
     Route::post('/maintenance/daily-session/open' , [MaintenanceAPI::class,'dailySessionOpen']);
     Route::post('/maintenance/daily-session/request-closing' , [MaintenanceAPI::class,'dailySessionRequestClosing']);
+    Route::get('/maintenance/daily-sessions/open' , [MaintenanceAPI::class,'dailySessionOpenSessions']);
     Route::get('/maintenance/daily-closing/pending' , [MaintenanceAPI::class,'dailySessionPendingClosing']);
+    Route::post('/maintenance/daily-closing/direct' , [MaintenanceAPI::class,'dailySessionDirectClose']);
     Route::post('/maintenance/daily-closing/approve' , [MaintenanceAPI::class,'dailySessionApproveClosing']);
     Route::post('/maintenance/daily-closing/reject' , [MaintenanceAPI::class,'dailySessionRejectClosing']);
 
@@ -980,7 +986,18 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
 });
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section','refresh.token.expiry']] , function() {
-    // WhatsApp Center — admins and employees with Messages Section permission.
+    // Social Center — unified inbox for WhatsApp, Facebook, and Instagram.
+    Route::get('/social/dashboard', [SocialCenterController::class, 'dashboard']);
+    Route::get('/social/conversations', [SocialCenterController::class, 'conversations']);
+    Route::get('/social/conversations/{channel}/{id}', [SocialCenterController::class, 'showConversation'])
+        ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
+        ->whereNumber('id');
+    Route::post('/social/conversations/{channel}/{id}/send', [SocialCenterController::class, 'sendToConversation'])
+        ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
+        ->whereNumber('id')
+        ->middleware('throttle:20,1');
+
+    // WhatsApp-specific tools kept for QR, templates, product sharing, media, and compatibility.
     Route::get('/whatsapp/dashboard', [WhatsAppController::class, 'dashboard']);
     Route::get('/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
     Route::get('/whatsapp/conversations/{id}', [WhatsAppController::class, 'showConversation'])->whereNumber('id');
