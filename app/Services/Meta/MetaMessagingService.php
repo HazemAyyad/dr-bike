@@ -266,15 +266,7 @@ class MetaMessagingService
 
     private function sendEndpoint(string $channel): string
     {
-        if ($channel === 'instagram') {
-            return sprintf(
-                'https://graph.instagram.com/%s/%s/messages',
-                trim(config('meta_messaging.api_version'), '/'),
-                $this->senderId($channel)
-            );
-        }
-
-        return $this->endpoint($this->senderId($channel).'/messages');
+        return $this->endpoint(config('meta_messaging.page_id').'/messages');
     }
 
     private function responseArray(Response $response): array
