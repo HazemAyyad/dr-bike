@@ -871,6 +871,71 @@ class MaintenanceAPI extends Controller
         }
     }
 
+    public function dailySessionOpenSessions(Request $request)
+    {
+        try {
+            return response()->json([
+                'status' => 'success',
+                'sessions' => $this->maintenanceDailyBoxService
+                    ->listOpenSessions($request->user()),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.unauthorized'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function dailySessionDirectClose(Request $request)
+    {
+        try {
+            if (! $this->maintenanceDailyBoxService->canReviewClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
+                'to_box_id' => 'nullable|integer|exists:boxes,id',
+                'review_note' => 'nullable|string|max:2000',
+            ]);
+
+            $closingRequest = $this->maintenanceDailyBoxService->directClose(
+                $request->user(),
+                (int) $data['session_id'],
+                isset($data['to_box_id']) ? (int) $data['to_box_id'] : null,
+                $data['review_note'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم إغلاق صندوق الصيانة مباشرة',
+                'closing_request' => $this->maintenanceDailyBoxService
+                    ->formatClosingRequest($closingRequest),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function dailySessionApproveClosing(Request $request)
     {
         try {

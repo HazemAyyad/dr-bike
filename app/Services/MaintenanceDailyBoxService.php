@@ -260,6 +260,109 @@ class MaintenanceDailyBoxService
             ->values();
     }
 
+    public function listOpenSessions(User $viewer)
+    {
+        if (! $this->canReviewClosing($viewer)) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.unauthorized')],
+            ]);
+        }
+
+        return MaintenanceDailySession::query()
+            ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequests'])
+            ->whereIn('status', [
+                config('maintenance_daily.session_status.open', 'open'),
+                config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+            ])
+            ->orderByDesc('business_date')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (MaintenanceDailySession $session) {
+                $pendingClosing = $session->closingRequests
+                    ->where('status', 'pending')
+                    ->sortByDesc('id')
+                    ->first();
+                $payload = $this->payload($session->business_date?->toDateString(), $session->user);
+
+                return [
+                    'id' => (int) $session->id,
+                    'session_id' => (int) $session->id,
+                    'employee_name' => $session->user?->name,
+                    'business_date' => $session->business_date?->toDateString(),
+                    'status' => $session->status,
+                    'box_id' => $session->box_id,
+                    'box_name' => $session->box?->name,
+                    'currency' => $session->box?->currency,
+                    'opening_balance' => round((float) $session->opening_balance, 2),
+                    'cash_total' => round((float) ($payload['cash_total'] ?? 0), 2),
+                    'visa_total' => round((float) ($payload['visa_total'] ?? 0), 2),
+                    'transfer_total' => round((float) ($payload['transfer_total'] ?? 0), 2),
+                    'expected_closing_balance' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
+                    'maintenances_count' => Maintenance::query()
+                        ->where('maintenance_daily_session_id', $session->id)
+                        ->count(),
+                    'can_close' => $session->isOpen() && ! $pendingClosing,
+                    'pending_closing_request_id' => $pendingClosing?->id,
+                ];
+            })
+            ->values();
+    }
+
+    public function directClose(User $reviewer, int $sessionId, ?int $toBoxId = null, ?string $note = null): MaintenanceDailyClosingRequest
+    {
+        if (! $this->canReviewClosing($reviewer)) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.unauthorized')],
+            ]);
+        }
+
+        return DB::transaction(function () use ($reviewer, $sessionId, $toBoxId, $note) {
+            $session = MaintenanceDailySession::query()
+                ->with(['user', 'closingRequests'])
+                ->lockForUpdate()
+                ->findOrFail($sessionId);
+
+            $pendingClosing = $session->closingRequests
+                ->where('status', 'pending')
+                ->sortByDesc('id')
+                ->first();
+
+            if ($pendingClosing) {
+                return $this->approveClosing($reviewer, (int) $pendingClosing->id, $toBoxId, $note);
+            }
+
+            if (! $session->isOpen()) {
+                throw ValidationException::withMessages([
+                    'session' => ['صندوق الصيانة ليس مفتوحاً للإغلاق المباشر.'],
+                ]);
+            }
+
+            $box = Box::lockForUpdate()->findOrFail($session->box_id);
+            $cashCounts = $this->buildClosingCashCounts($session, $box, $note);
+
+            $session->update([
+                'status' => config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+                'closing_balance' => round((float) $box->total, 2),
+                'closing_requested_at' => now(),
+                'closing_requested_by_user_id' => $reviewer->id,
+                'closing_request_note' => $note ? trim($note) : null,
+            ]);
+
+            $closingRequest = MaintenanceDailyClosingRequest::create([
+                'session_id' => $session->id,
+                'requested_by_user_id' => $reviewer->id,
+                'requested_at' => now(),
+                'status' => 'pending',
+                'maintenances_count' => Maintenance::query()
+                    ->where('maintenance_daily_session_id', $session->id)
+                    ->count(),
+                'cash_counts' => $cashCounts,
+            ]);
+
+            return $this->approveClosing($reviewer, (int) $closingRequest->id, $toBoxId, $note);
+        });
+    }
+
     public function approveClosing(User $reviewer, int $requestId, ?int $toBoxId = null, ?string $note = null): MaintenanceDailyClosingRequest
     {
         return DB::transaction(function () use ($reviewer, $requestId, $toBoxId, $note) {
@@ -384,6 +487,28 @@ class MaintenanceDailyBoxService
 
             return $closingRequest->fresh(['session.user', 'session.box', 'requestedBy', 'reviewedBy']);
         });
+    }
+
+    private function buildClosingCashCounts(
+        MaintenanceDailySession $session,
+        Box $box,
+        ?string $note = null
+    ): array {
+        $closingBalance = round((float) $box->total, 2);
+
+        return [[
+            'currency' => $box->currency,
+            'daily_box_id' => (int) $box->id,
+            'opening_float' => round((float) $session->opening_balance, 2),
+            'sales_collected' => round(max(0, $closingBalance - (float) $session->opening_balance), 2),
+            'system_balance' => $closingBalance,
+            'physical_count' => $closingBalance,
+            'variance' => 0,
+            'float_to_keep' => 0,
+            'amount_to_transfer' => $closingBalance,
+            'employee_note' => $note ? trim($note) : '',
+            'variance_alert' => false,
+        ]];
     }
 
     /**
