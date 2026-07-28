@@ -488,6 +488,9 @@ class Stocks extends Controller
                 'category:id,nameAr',
                 'storeSection:id,name',
                 'subCategories.subCategory:id,nameAr,mainCategoryId',
+                'viewImages:id,itemId,imageUrl',
+                'normalImages:id,itemId,imageUrl',
+                'image3d:id,itemId,imageUrl',
                 'purchase:id,name',
                 'purchasePrices' => fn ($q) => $q->latest('id'),
             ])
@@ -640,6 +643,9 @@ class Stocks extends Controller
                 'category:id,nameAr',
                 'storeSection:id,name',
                 'subCategories.subCategory:id,nameAr,mainCategoryId',
+                'viewImages:id,itemId,imageUrl',
+                'normalImages:id,itemId,imageUrl',
+                'image3d:id,itemId,imageUrl',
                 'purchase:id,name',
                 'purchasePrices' => fn ($q) => $q->latest('id'),
             ]);
@@ -673,6 +679,9 @@ class Stocks extends Controller
             'category:id,nameAr',
             'storeSection:id,name',
             'subCategories.subCategory:id,nameAr,mainCategoryId',
+            'viewImages:id,itemId,imageUrl',
+            'normalImages:id,itemId,imageUrl',
+            'image3d:id,itemId,imageUrl',
             'purchase:id,name',
             'purchasePrices' => fn ($q) => $q->latest('id'),
         ]);
@@ -1996,10 +2005,12 @@ class Stocks extends Controller
     private function formatQuickEditProduct(Product $product): array
     {
         $markedAt = $product->last_edit_marked_at;
+        $images = ProductImageResolver::formatForList($product);
 
         return [
             'product_id' => (int) $product->id,
             'product_code' => $product->product_code,
+            'product_image' => $images['product_image'],
             'nameAr' => $product->nameAr,
             'nameEng' => $product->nameEng,
             'nameAbree' => $product->nameAbree,
