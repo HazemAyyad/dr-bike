@@ -152,7 +152,16 @@ class SocialCenterController extends Controller
             }
 
             $failed = data_get($result, 'message.status') === 'failed';
-            return response()->json(['status' => $failed ? 'error' : 'success'] + $result, $failed ? 422 : 200);
+            if ($failed) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => $this->outboundFailureMessage($channel, (string) data_get($result, 'message.error_message')),
+                    'failed_message_id' => data_get($result, 'message.id'),
+                    'api_response' => data_get($result, 'api_response'),
+                ], 422);
+            }
+
+            return response()->json(['status' => 'success'] + $result);
         } catch (ValidationException $e) {
             throw $e;
         } catch (\Throwable $e) {
@@ -219,6 +228,19 @@ class SocialCenterController extends Controller
 
     private function ok($value, string $key) { return response()->json(['status' => 'success', $key => $value]); }
     private function perPage(Request $request, int $default = 20): int { return min(max((int) $request->input('per_page', $default), 1), 100); }
+
+    private function outboundFailureMessage(string $channel, string $error): string
+    {
+        $lower = strtolower($error);
+        if (str_contains($lower, 'error validating access token') || str_contains($lower, 'oauth')) {
+            return match ($channel) {
+                'facebook', 'instagram' => 'تعذر إرسال الرسالة لأن توكن Meta منتهي أو غير صالح. حدّث META_PAGE_ACCESS_TOKEN في ملف .env ثم امسح كاش الإعدادات.',
+                default => 'تعذر إرسال الرسالة لأن توكن واتساب منتهي أو غير صالح. حدّث التوكن في ملف .env ثم امسح كاش الإعدادات.',
+            };
+        }
+
+        return $error !== '' ? $error : 'تعذر إرسال الرسالة. تحقق من إعدادات الربط ثم حاول مرة أخرى.';
+    }
 
     private function ensureCustomerServiceWindow($conversation): void
     {
