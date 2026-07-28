@@ -475,6 +475,214 @@ class Stocks extends Controller
         ]);
     }
 
+    public function quickEditProducts(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $perPage = min(max((int) $request->input('per_page', 60), 1), 100);
+
+        $query = Product::query()
+            ->with([
+                'category:id,nameAr',
+                'storeSection:id,name',
+                'subCategories.subCategory:id,nameAr,mainCategoryId',
+                'purchase:id,name',
+                'purchasePrices' => fn ($q) => $q->latest('id'),
+            ])
+            ->select([
+                'id',
+                'product_code',
+                'category_id',
+                'store_section_id',
+                'project_id',
+                'nameAr',
+                'nameEng',
+                'nameAbree',
+                'descriptionAr',
+                'descriptionEng',
+                'descriptionAbree',
+                'normailPrice',
+                'wholesalePrice',
+                'price',
+                'min_sale_price',
+                'stock',
+                'min_stock',
+                'discount',
+                'isShow',
+                'isNewItem',
+                'isMoreSales',
+                'is_sold_with_paper',
+                'rate',
+                'manufactureYear',
+                'model',
+                'rotation_date',
+                'last_edit_marked_at',
+                'last_edit_marked_by_user_id',
+                'created_at',
+                'updated_at',
+            ]);
+
+        $this->applyProductExportFilters($query, $request);
+        [$sortColumn, $sortDirection] = $this->productExportSort($request);
+
+        $products = $query
+            ->orderBy($sortColumn, $sortDirection)
+            ->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'products' => $products->getCollection()
+                ->map(fn (Product $product) => $this->formatQuickEditProduct($product))
+                ->values(),
+            'pagination' => [
+                'current_page' => $products->currentPage(),
+                'last_page' => $products->lastPage(),
+                'per_page' => $products->perPage(),
+                'total' => $products->total(),
+            ],
+        ], 200);
+    }
+
+    public function updateQuickEditProduct(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'product_code' => ['nullable', 'string', 'max:100'],
+            'nameAr' => ['required', 'string', 'max:255'],
+            'nameEng' => ['nullable', 'string', 'max:255'],
+            'nameAbree' => ['nullable', 'string', 'max:255'],
+            'descriptionAr' => ['nullable', 'string'],
+            'descriptionEng' => ['nullable', 'string'],
+            'descriptionAbree' => ['nullable', 'string'],
+            'normailPrice' => ['nullable', 'numeric', 'min:0'],
+            'wholesalePrice' => ['nullable', 'numeric', 'min:0'],
+            'cost_price' => ['nullable', 'numeric', 'min:0'],
+            'price' => ['nullable', 'numeric', 'min:0'],
+            'min_sale_price' => ['nullable', 'numeric', 'min:0'],
+            'stock' => ['nullable', 'integer', 'min:0'],
+            'min_stock' => ['nullable', 'numeric', 'min:0'],
+            'discount' => ['nullable', 'numeric', 'min:0'],
+            'isShow' => ['nullable', 'boolean'],
+            'isNewItem' => ['nullable', 'boolean'],
+            'isMoreSales' => ['nullable', 'boolean'],
+            'is_sold_with_paper' => ['nullable', 'boolean'],
+            'rate' => ['nullable', 'numeric', 'min:0'],
+            'manufactureYear' => ['nullable', 'integer', 'min:0'],
+            'model' => ['nullable', 'string', 'max:255'],
+            'rotation_date' => ['nullable', 'date'],
+            'mark_today' => ['nullable', 'boolean'],
+        ]);
+
+        $product = DB::transaction(function () use ($data, $request) {
+            $product = Product::query()->findOrFail($data['product_id']);
+            $productData = collect($data)
+                ->only([
+                    'product_code',
+                    'nameAr',
+                    'nameEng',
+                    'nameAbree',
+                    'descriptionAr',
+                    'descriptionEng',
+                    'descriptionAbree',
+                    'normailPrice',
+                    'wholesalePrice',
+                    'price',
+                    'min_sale_price',
+                    'stock',
+                    'min_stock',
+                    'discount',
+                    'isShow',
+                    'isNewItem',
+                    'isMoreSales',
+                    'is_sold_with_paper',
+                    'rate',
+                    'manufactureYear',
+                    'model',
+                    'rotation_date',
+                ])
+                ->all();
+
+            $productData['userIdUpdate'] = $request->user()?->id;
+            $productData['dateUpdate'] = now();
+
+            if (($data['mark_today'] ?? false) === true) {
+                $productData['last_edit_marked_at'] = now();
+                $productData['last_edit_marked_by_user_id'] = $request->user()?->id;
+            }
+
+            $product->forceFill($productData)->save();
+
+            if (array_key_exists('cost_price', $data)) {
+                $price = (float) ($data['cost_price'] ?? 0);
+                $row = PurchaseProduct::query()
+                    ->where('product_id', $product->id)
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($row !== null) {
+                    $row->update(['price' => $price]);
+                } else {
+                    PurchaseProduct::create([
+                        'product_id' => $product->id,
+                        'seller_id' => null,
+                        'price' => $price,
+                    ]);
+                }
+            }
+
+            return $product->fresh([
+                'category:id,nameAr',
+                'storeSection:id,name',
+                'subCategories.subCategory:id,nameAr,mainCategoryId',
+                'purchase:id,name',
+                'purchasePrices' => fn ($q) => $q->latest('id'),
+            ]);
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تحديث المنتج',
+            'product' => $this->formatQuickEditProduct($product),
+        ], 200);
+    }
+
+    public function markQuickEditProduct(Request $request)
+    {
+        if (! $this->isAdminRequest($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'marked' => ['required', 'boolean'],
+        ]);
+
+        $product = Product::query()->findOrFail($data['product_id']);
+        $product->forceFill([
+            'last_edit_marked_at' => $data['marked'] ? now() : null,
+            'last_edit_marked_by_user_id' => $data['marked'] ? $request->user()?->id : null,
+        ])->save();
+
+        $product->load([
+            'category:id,nameAr',
+            'storeSection:id,name',
+            'subCategories.subCategory:id,nameAr,mainCategoryId',
+            'purchase:id,name',
+            'purchasePrices' => fn ($q) => $q->latest('id'),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'product' => $this->formatQuickEditProduct($product),
+        ], 200);
+    }
+
     public function startProductsImagesZipExport(Request $request, StockImagesZipExportService $service)
     {
         if (! $this->isAdminRequest($request)) {
@@ -1783,6 +1991,47 @@ class Stocks extends Controller
         }
 
         return $row;
+    }
+
+    private function formatQuickEditProduct(Product $product): array
+    {
+        $markedAt = $product->last_edit_marked_at;
+
+        return [
+            'product_id' => (int) $product->id,
+            'product_code' => $product->product_code,
+            'nameAr' => $product->nameAr,
+            'nameEng' => $product->nameEng,
+            'nameAbree' => $product->nameAbree,
+            'descriptionAr' => $product->descriptionAr,
+            'descriptionEng' => $product->descriptionEng,
+            'descriptionAbree' => $product->descriptionAbree,
+            'category_name' => $product->category?->nameAr,
+            'sub_categories' => $this->formatProductSubCategoriesForCsv($product),
+            'store_section_name' => $product->storeSection?->name,
+            'normailPrice' => $product->normailPrice,
+            'wholesalePrice' => $product->wholesalePrice,
+            'cost_price' => optional($product->purchasePrices->first())->price,
+            'price' => $product->price,
+            'min_sale_price' => $product->min_sale_price,
+            'stock' => $product->stock,
+            'min_stock' => $product->min_stock,
+            'discount' => $product->discount,
+            'isShow' => (bool) $product->isShow,
+            'isNewItem' => (bool) $product->isNewItem,
+            'isMoreSales' => (bool) $product->isMoreSales,
+            'is_sold_with_paper' => (bool) $product->is_sold_with_paper,
+            'rate' => $product->rate,
+            'manufactureYear' => $product->manufactureYear,
+            'model' => $product->model,
+            'rotation_date' => $product->rotation_date,
+            'project_name' => $product->purchase?->name,
+            'last_edit_marked_at' => $markedAt?->toIso8601String(),
+            'last_edit_marked_by_user_id' => $product->last_edit_marked_by_user_id !== null
+                ? (int) $product->last_edit_marked_by_user_id
+                : null,
+            'marked_today' => $markedAt !== null && $markedAt->isToday(),
+        ];
     }
 
     public function updateProductCostPrice(Request $request)

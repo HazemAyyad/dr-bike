@@ -54,6 +54,8 @@ class Product extends Model
         'min_sale_price', 'rotation_date', 'min_stock',
         'project_id', // اسم الشروة فقط
         'store_section_id',
+        'last_edit_marked_at',
+        'last_edit_marked_by_user_id',
         'meta_catalog_item_id',
         'meta_catalog_retailer_id',
         'meta_catalog_sync_status',
@@ -65,6 +67,7 @@ class Product extends Model
     protected $hidden = ['wholesalePrice'];
 
     protected $casts = [
+        'last_edit_marked_at' => 'datetime',
         'meta_catalog_last_synced_at' => 'datetime',
         'meta_catalog_payload' => 'array',
     ];

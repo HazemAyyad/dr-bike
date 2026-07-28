@@ -870,6 +870,9 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Stock,Sales','re
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Stock,Stock Inventory Settings','refresh.token.expiry']] , function() {
     Route::get('/products/export-csv' , [Stocks::class,'exportProductsCsv']);
+    Route::get('/products/quick-edit' , [Stocks::class,'quickEditProducts']);
+    Route::post('/products/quick-edit/update' , [Stocks::class,'updateQuickEditProduct']);
+    Route::post('/products/quick-edit/mark' , [Stocks::class,'markQuickEditProduct']);
     Route::post('/products/images-zip-exports' , [Stocks::class,'startProductsImagesZipExport']);
     Route::get('/products/images-zip-exports' , [Stocks::class,'listProductsImagesZipExports']);
     Route::get('/products/images-zip-exports/latest' , [Stocks::class,'latestProductsImagesZipExport']);
