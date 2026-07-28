@@ -49,7 +49,7 @@ class MetaMessagingService
         ]);
 
         try {
-            $response = $this->client()->post($this->endpoint('me/messages'), $payload);
+            $response = $this->client()->post($this->sendEndpoint($conversation->channel), $payload);
             $data = $this->responseArray($response);
             $localMessage->update([
                 'meta_message_id' => data_get($data, 'body.message_id'),
@@ -245,6 +245,11 @@ class MetaMessagingService
             trim(config('meta_messaging.api_version'), '/'),
             ltrim($path, '/')
         );
+    }
+
+    private function sendEndpoint(string $channel): string
+    {
+        return $this->endpoint($this->senderId($channel).'/messages');
     }
 
     private function responseArray(Response $response): array
