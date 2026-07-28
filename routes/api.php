@@ -590,6 +590,10 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::post('/maintenance/daily-box' , [MaintenanceAPI::class,'dailyBox']);
     Route::get('/maintenance/daily-session/current' , [MaintenanceAPI::class,'dailySessionCurrent']);
     Route::post('/maintenance/daily-session/open' , [MaintenanceAPI::class,'dailySessionOpen']);
+    Route::post('/maintenance/daily-session/request-closing' , [MaintenanceAPI::class,'dailySessionRequestClosing']);
+    Route::get('/maintenance/daily-closing/pending' , [MaintenanceAPI::class,'dailySessionPendingClosing']);
+    Route::post('/maintenance/daily-closing/approve' , [MaintenanceAPI::class,'dailySessionApproveClosing']);
+    Route::post('/maintenance/daily-closing/reject' , [MaintenanceAPI::class,'dailySessionRejectClosing']);
 
   
 

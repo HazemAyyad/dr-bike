@@ -8,6 +8,7 @@ return [
     'close_time' => '00:00',
     'session_status' => [
         'open' => 'open',
+        'closing_requested' => 'closing_requested',
         'closed' => 'closed',
     ],
 ];

@@ -785,7 +785,15 @@ class MaintenanceAPI extends Controller
     public function dailySessionOpen(Request $request)
     {
         try {
-            $session = $this->maintenanceDailyBoxService->openToday($request->user());
+            $data = $request->validate([
+                'opening_balance' => 'nullable|numeric|min:0',
+            ]);
+
+            $session = $this->maintenanceDailyBoxService->openToday(
+                $request->user(),
+                null,
+                (float) ($data['opening_balance'] ?? 0)
+            );
 
             return response()->json([
                 'status' => 'success',
@@ -805,6 +813,156 @@ class MaintenanceAPI extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    public function dailySessionRequestClosing(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'note' => 'nullable|string|max:2000',
+            ]);
+
+            $session = $this->maintenanceDailyBoxService->requestClosing(
+                $request->user(),
+                $data['note'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم إرسال طلب إغلاق صندوق الصيانة',
+                'daily_box' => $this->maintenanceDailyBoxService->payload(null, $request->user()),
+                'session_id' => $session->id,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function dailySessionPendingClosing(Request $request)
+    {
+        try {
+            if (! $this->canReviewDailyClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'closing_requests' => $this->maintenanceDailyBoxService->pendingClosingRequests(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function dailySessionApproveClosing(Request $request)
+    {
+        try {
+            if (! $this->canReviewDailyClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
+                'review_note' => 'nullable|string|max:2000',
+            ]);
+
+            $session = $this->maintenanceDailyBoxService->approveClosing(
+                $request->user(),
+                (int) $data['session_id'],
+                $data['review_note'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم اعتماد إغلاق صندوق الصيانة',
+                'closing_request' => $this->maintenanceDailyBoxService->formatClosingRequest($session),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function dailySessionRejectClosing(Request $request)
+    {
+        try {
+            if (! $this->canReviewDailyClosing($request->user())) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+
+            $data = $request->validate([
+                'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
+                'review_note' => 'nullable|string|max:2000',
+            ]);
+
+            $session = $this->maintenanceDailyBoxService->rejectClosing(
+                $request->user(),
+                (int) $data['session_id'],
+                $data['review_note'] ?? null
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم رفض طلب إغلاق صندوق الصيانة',
+                'closing_request' => $this->maintenanceDailyBoxService->formatClosingRequest($session),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    private function canReviewDailyClosing($user): bool
+    {
+        if ($user && $user->type === 'admin') {
+            return true;
+        }
+
+        $permission = config('sales_daily.permissions.daily_close_review');
+        if (! $user || $user->type !== 'employee' || ! $user->employee || ! $permission) {
+            return false;
+        }
+
+        return $user->employee->permissions()
+            ->whereHas('permission', fn ($q) => $q->where('name_en', $permission))
+            ->exists();
     }
 
 }

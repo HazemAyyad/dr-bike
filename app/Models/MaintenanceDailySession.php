@@ -19,6 +19,9 @@ class MaintenanceDailySession extends Model
         'opened_at',
         'closed_at',
         'opened_by_user_id',
+        'closing_requested_at',
+        'closing_requested_by_user_id',
+        'closing_request_note',
         'closed_by_user_id',
         'notes',
     ];
@@ -29,6 +32,7 @@ class MaintenanceDailySession extends Model
         'closing_balance' => 'float',
         'opened_at' => 'datetime',
         'closed_at' => 'datetime',
+        'closing_requested_at' => 'datetime',
     ];
 
     public function box(): BelongsTo
@@ -56,6 +60,11 @@ class MaintenanceDailySession extends Model
         return $this->belongsTo(User::class, 'closed_by_user_id');
     }
 
+    public function closingRequestedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'closing_requested_by_user_id');
+    }
+
     public function logs(): HasMany
     {
         return $this->hasMany(MaintenanceDailyBoxLog::class, 'session_id');
@@ -64,5 +73,10 @@ class MaintenanceDailySession extends Model
     public function isOpen(): bool
     {
         return $this->status === config('maintenance_daily.session_status.open', 'open');
+    }
+
+    public function isClosingRequested(): bool
+    {
+        return $this->status === config('maintenance_daily.session_status.closing_requested', 'closing_requested');
     }
 }
