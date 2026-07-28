@@ -10,6 +10,7 @@ use App\Models\Permission;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 
 class WhatsAppSettingsController extends Controller
 {
@@ -35,6 +36,7 @@ class WhatsAppSettingsController extends Controller
                 'phone_number_id' => $this->mask(config('whatsapp.phone_number_id')),
                 'business_account_id' => $this->mask(config('whatsapp.business_account_id')),
             ],
+            'channels' => $this->channels($service),
             'can_manage_employees' => $request->user()?->type === 'admin',
             'employees' => $request->user()?->type === 'admin'
                 ? $this->employeesWithAccess()
@@ -116,6 +118,85 @@ class WhatsAppSettingsController extends Controller
                     : false,
             ])
             ->all();
+    }
+
+    private function channels(WhatsAppCloudApiService $service): array
+    {
+        $whatsAppPhone = null;
+        try {
+            $whatsAppPhone = $service->businessPhoneNumber();
+        } catch (\Throwable) {
+            $whatsAppPhone = filled(config('whatsapp.display_phone_number'))
+                ? preg_replace('/\D+/', '', (string) config('whatsapp.display_phone_number'))
+                : null;
+        }
+
+        $meta = $this->metaPageProfile();
+        $instagram = data_get($meta, 'instagram_business_account') ?: [];
+        $instagramUsername = config('meta_messaging.instagram_username') ?: data_get($instagram, 'username');
+        $instagramUrl = config('meta_messaging.instagram_profile_url')
+            ?: ($instagramUsername ? 'https://www.instagram.com/'.ltrim((string) $instagramUsername, '@').'/' : null);
+
+        return [
+            [
+                'id' => 'whatsapp',
+                'name' => 'واتساب',
+                'display_name' => $whatsAppPhone ? '+'.$whatsAppPhone : 'واتساب دكتور بايك',
+                'identifier' => $whatsAppPhone,
+                'url' => $whatsAppPhone ? 'https://wa.me/'.$whatsAppPhone : null,
+                'configured' => filled(config('whatsapp.access_token')) && filled(config('whatsapp.phone_number_id')),
+                'details' => [
+                    'phone_number_id' => $this->mask(config('whatsapp.phone_number_id')),
+                    'business_account_id' => $this->mask(config('whatsapp.business_account_id')),
+                ],
+            ],
+            [
+                'id' => 'facebook',
+                'name' => 'فيسبوك',
+                'display_name' => data_get($meta, 'name') ?: config('meta_messaging.page_name') ?: 'صفحة فيسبوك',
+                'identifier' => config('meta_messaging.page_id'),
+                'url' => data_get($meta, 'link') ?: config('meta_messaging.page_url') ?: (config('meta_messaging.page_id') ? 'https://www.facebook.com/'.config('meta_messaging.page_id') : null),
+                'configured' => filled(config('meta_messaging.page_access_token')) && filled(config('meta_messaging.page_id')),
+                'details' => [
+                    'page_id' => config('meta_messaging.page_id'),
+                ],
+            ],
+            [
+                'id' => 'instagram',
+                'name' => 'إنستغرام',
+                'display_name' => $instagramUsername ? '@'.ltrim((string) $instagramUsername, '@') : (data_get($instagram, 'name') ?: 'حساب إنستغرام'),
+                'identifier' => config('meta_messaging.instagram_business_account_id'),
+                'url' => $instagramUrl,
+                'configured' => filled(config('meta_messaging.page_access_token')) && filled(config('meta_messaging.instagram_business_account_id')),
+                'details' => [
+                    'instagram_business_account_id' => config('meta_messaging.instagram_business_account_id'),
+                ],
+            ],
+        ];
+    }
+
+    private function metaPageProfile(): array
+    {
+        if (blank(config('meta_messaging.page_access_token')) || blank(config('meta_messaging.page_id'))) {
+            return [];
+        }
+
+        try {
+            $response = Http::withToken(config('meta_messaging.page_access_token'))
+                ->acceptJson()
+                ->timeout(config('meta_messaging.timeout', 20))
+                ->get(sprintf(
+                    'https://graph.facebook.com/%s/%s',
+                    trim(config('meta_messaging.api_version'), '/'),
+                    config('meta_messaging.page_id')
+                ), [
+                    'fields' => 'id,name,link,instagram_business_account{id,username,name,profile_picture_url}',
+                ]);
+
+            return $response->successful() ? ($response->json() ?: []) : [];
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     private function mask(?string $value): ?string
