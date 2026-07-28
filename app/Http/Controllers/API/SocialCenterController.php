@@ -188,6 +188,8 @@ class SocialCenterController extends Controller
                 'id' => $conversation->contact?->id,
                 'name' => $conversation->contact?->name,
                 'phone' => $conversation->contact?->external_id,
+                'external_id' => $conversation->contact?->external_id,
+                'profile_picture_url' => $conversation->contact?->profile_picture_url,
                 'customer_id' => $conversation->contact?->customer_id,
                 'supplier_id' => $conversation->contact?->supplier_id,
             ],

@@ -8,6 +8,7 @@ use App\Models\SocialMessage;
 use Carbon\Carbon;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class MetaMessagingService
@@ -116,6 +117,12 @@ class MetaMessagingService
                 : 'first_name,last_name,profile_pic';
             $response = $this->client()->get($this->endpoint($externalId), ['fields' => $fields]);
             if (! $response->successful()) {
+                Log::warning('Meta messaging profile lookup failed', [
+                    'channel' => $channel,
+                    'external_id' => $externalId,
+                    'status' => $response->status(),
+                    'error' => data_get($response->json() ?: [], 'error.message'),
+                ]);
                 return [];
             }
             $data = $response->json() ?: [];
@@ -123,7 +130,12 @@ class MetaMessagingService
                 $data['name'] = trim((string) data_get($data, 'first_name').' '.(string) data_get($data, 'last_name'));
             }
             return $data;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::warning('Meta messaging profile lookup exception', [
+                'channel' => $channel,
+                'external_id' => $externalId,
+                'message' => $e->getMessage(),
+            ]);
             return [];
         }
     }
