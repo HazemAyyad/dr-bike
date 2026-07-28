@@ -32,6 +32,23 @@ class MaintenanceDailyBoxService
         return ($at ?? now())->copy()->startOfDay();
     }
 
+    public function findBlockingSession(User $user, ?Carbon $at = null): ?MaintenanceDailySession
+    {
+        $owner = $this->resolveOwner($user);
+        $today = $this->businessDate($at)->toDateString();
+
+        return MaintenanceDailySession::query()
+            ->with(['box:id,name,total,currency,type', 'user:id,name'])
+            ->where('user_id', $owner['user_id'])
+            ->whereIn('status', [
+                config('maintenance_daily.session_status.open', 'open'),
+                config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+            ])
+            ->whereDate('business_date', '<', $today)
+            ->orderBy('business_date')
+            ->first();
+    }
+
     public function ensureBox(User $user): Box
     {
         $owner = $this->resolveOwner($user);
@@ -64,26 +81,15 @@ class MaintenanceDailyBoxService
         ]);
     }
 
-    public function assertWithinOpenWindow(?Carbon $at = null): void
-    {
-        $at = $at ?? now();
-        $openAt = $at->copy()->setTimeFromTimeString(config('maintenance_daily.open_time', '08:00'));
-        $closeAt = $at->copy()->addDay()->startOfDay();
-
-        if ($at->lt($openAt) || $at->gte($closeAt)) {
-            throw ValidationException::withMessages([
-                'maintenance_daily_box' => [
-                    'صندوق الصيانة اليومي يعمل من الساعة 08:00 صباحاً حتى منتصف الليل.',
-                ],
-            ]);
-        }
-    }
-
     public function currentSession(User $user, ?Carbon $at = null): ?MaintenanceDailySession
     {
         $at = $at ?? now();
         $owner = $this->resolveOwner($user);
         $date = $this->businessDate($at);
+
+        if ($blocking = $this->findBlockingSession($user, $at)) {
+            return $blocking;
+        }
 
         return MaintenanceDailySession::query()
             ->with(['box:id,name,total,currency,type'])
@@ -119,7 +125,6 @@ class MaintenanceDailyBoxService
     public function requireOpenSession(User $user, ?Carbon $at = null): MaintenanceDailySession
     {
         $at = $at ?? now();
-        $this->assertWithinOpenWindow($at);
 
         $session = $this->currentSession($user, $at);
 
@@ -135,7 +140,6 @@ class MaintenanceDailyBoxService
     public function openToday(?User $user = null, ?Carbon $at = null, float $openingBalance = 0): MaintenanceDailySession
     {
         $at = $at ?? now();
-        $this->assertWithinOpenWindow($at);
 
         if (! $user) {
             throw ValidationException::withMessages([
@@ -148,6 +152,12 @@ class MaintenanceDailyBoxService
 
     private function openSession(Carbon $date, User $user, float $openingBalance = 0): MaintenanceDailySession
     {
+        if ($this->findBlockingSession($user, $date)) {
+            throw ValidationException::withMessages([
+                'maintenance_daily_box' => ['يوجد صندوق صيانة سابق مفتوح، يجب إغلاقه قبل فتح صندوق يوم جديد.'],
+            ]);
+        }
+
         return DB::transaction(function () use ($user, $date, $openingBalance) {
             $owner = $this->resolveOwner($user);
             $box = Box::lockForUpdate()->find($this->ensureBox($user)->id);
@@ -640,31 +650,57 @@ class MaintenanceDailyBoxService
             ? Carbon::parse($date)->toDateString()
             : $this->businessDate()->toDateString();
 
-        $box = $user ? $this->ensureBox($user) : null;
-        $sessionQuery = MaintenanceDailySession::query()
-            ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequestedBy:id,name', 'closingRequests'])
-            ->whereDate('business_date', $businessDate);
-
-        if ($user) {
-            $sessionQuery->where('user_id', $this->resolveOwner($user)['user_id']);
-        }
+        $owner = $user ? $this->resolveOwner($user) : null;
+        $globalOpen = $user ? $this->findGlobalOpenSession() : null;
+        $blocking = $user && $date === null
+            ? $this->findBlockingSession($user)
+            : null;
 
         if ($date === null) {
-            $sessionQuery->whereIn('status', [
-                config('maintenance_daily.session_status.open', 'open'),
-                config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+            $session = $blocking
+                ?? ($user ? $this->currentSession($user) : null)
+                ?? $globalOpen;
+            $session?->loadMissing([
+                'box:id,name,total,currency,type',
+                'user:id,name',
+                'closingRequestedBy:id,name',
+                'closingRequests',
             ]);
+        } else {
+            $sessionQuery = MaintenanceDailySession::query()
+                ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequestedBy:id,name', 'closingRequests'])
+                ->whereDate('business_date', $businessDate);
+
+            if ($user) {
+                $sessionQuery->where('user_id', $owner['user_id']);
+            }
+
+            $session = $sessionQuery->orderByDesc('id')->first();
         }
 
-        $session = $sessionQuery->orderByDesc('id')->first();
+        $box = $session?->box ?: ($user ? $this->ensureBox($user) : null);
         $pendingClosing = $session
             ? $session->closingRequests->firstWhere('status', 'pending')
             : null;
-        $globalOpen = $user ? $this->findGlobalOpenSession() : null;
-        $owner = $user ? $this->resolveOwner($user) : null;
         $blockedByOther = $user
             && $globalOpen
             && (int) $globalOpen->user_id !== (int) $owner['user_id'];
+        $todaySessionExists = $user
+            ? MaintenanceDailySession::query()
+                ->where('user_id', $owner['user_id'])
+                ->whereDate('business_date', $this->businessDate())
+                ->whereIn('status', [
+                    config('maintenance_daily.session_status.open', 'open'),
+                    config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+                ])
+                ->exists()
+            : false;
+        $isPreviousDayOpen = $session
+            && $session->business_date->toDateString() < $this->businessDate()->toDateString()
+            && in_array($session->status, [
+                config('maintenance_daily.session_status.open', 'open'),
+                config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+            ], true);
 
         $logs = $session
             ? MaintenanceDailyBoxLog::query()
@@ -723,6 +759,14 @@ class MaintenanceDailyBoxService
                 'employee_name' => $session->user?->name,
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
+                'is_blocking_previous_day' => (bool) $isPreviousDayOpen,
+                'previous_day_warning' => (bool) $isPreviousDayOpen,
+                'previous_day_owner_name' => $isPreviousDayOpen
+                    ? ($session->user?->name ?? null)
+                    : null,
+                'previous_day_business_date' => $isPreviousDayOpen
+                    ? $session->business_date->toDateString()
+                    : null,
                 'opening_balance' => round((float) $session->opening_balance, 2),
                 'closing_balance' => $session->closing_balance !== null
                     ? round((float) $session->closing_balance, 2)
@@ -736,7 +780,10 @@ class MaintenanceDailyBoxService
                 'can_request_closing' => $session->isOpen() && ! $pendingClosing,
                 'allows_payments' => $session->isOpen() && ! $pendingClosing,
             ] : null,
-            'can_request_open' => $user && ! $session && ! $blockedByOther,
+            'can_request_open' => $user
+                && ! $blocking
+                && ! $blockedByOther
+                && ! $todaySessionExists,
             'blocked_by_other_session' => (bool) $blockedByOther,
             'blocked_by_employee_name' => $blockedByOther
                 ? ($globalOpen?->user?->name ?? null)

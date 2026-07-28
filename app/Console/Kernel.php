@@ -18,14 +18,6 @@ class Kernel extends ConsoleKernel
             ->dailyAt('00:00')
             ->timezone('Asia/Hebron');
 
-        $schedule->command('maintenance:close-daily-sessions')
-            ->dailyAt('00:01')
-            ->timezone('Asia/Hebron');
-
-        $schedule->command('maintenance:open-daily-session')
-            ->dailyAt('08:00')
-            ->timezone('Asia/Hebron');
-
         $schedule->command('checks:dispatch-sms-notifications')
             ->everyFiveMinutes()
             ->timezone('Asia/Hebron');
