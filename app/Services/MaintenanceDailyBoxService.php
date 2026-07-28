@@ -6,9 +6,11 @@ use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
 use App\Models\Maintenance;
 use App\Models\MaintenanceDailyBoxLog;
+use App\Models\MaintenanceDailyClosingRequest;
 use App\Models\MaintenanceDailySession;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -87,6 +89,29 @@ class MaintenanceDailyBoxService
             ->with(['box:id,name,total,currency,type'])
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $date)
+            ->whereIn('status', [
+                config('maintenance_daily.session_status.open', 'open'),
+                config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+            ])
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    public function findGlobalOpenSession(?int $exceptSessionId = null): ?MaintenanceDailySession
+    {
+        $query = MaintenanceDailySession::query()
+            ->with('user')
+            ->whereIn('status', [
+                config('maintenance_daily.session_status.open', 'open'),
+                config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+            ]);
+
+        if ($exceptSessionId) {
+            $query->where('id', '!=', $exceptSessionId);
+        }
+
+        return $query
+            ->orderBy('business_date')
             ->orderByDesc('id')
             ->first();
     }
@@ -129,6 +154,10 @@ class MaintenanceDailyBoxService
             $session = MaintenanceDailySession::query()
                 ->where('user_id', $owner['user_id'])
                 ->whereDate('business_date', $date)
+                ->whereIn('status', [
+                    config('maintenance_daily.session_status.open', 'open'),
+                    config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+                ])
                 ->lockForUpdate()
                 ->first();
 
@@ -140,6 +169,14 @@ class MaintenanceDailyBoxService
                 }
 
                 return $session;
+            }
+
+            if ($globalOpen = $this->findGlobalOpenSession()) {
+                $employeeName = $globalOpen->user?->name ?? 'موظف';
+
+                throw ValidationException::withMessages([
+                    'maintenance_daily_box' => ["يوجد صندوق صيانة يومي مفتوح عند {$employeeName}."],
+                ]);
             }
 
             $openingBalance = round(max(0, $openingBalance), 2);
@@ -159,13 +196,33 @@ class MaintenanceDailyBoxService
         });
     }
 
-    public function requestClosing(User $user, ?string $note = null, ?Carbon $at = null): MaintenanceDailySession
+    public function requestClosing(User $user, ?string $note = null, ?Carbon $at = null): MaintenanceDailyClosingRequest
     {
         $at = $at ?? now();
 
         return DB::transaction(function () use ($user, $note, $at) {
             $session = $this->requireOpenSession($user, $at);
             $box = Box::lockForUpdate()->findOrFail($session->box_id);
+            $pending = $session->closingRequests()->where('status', 'pending')->exists();
+            if ($pending) {
+                throw ValidationException::withMessages([
+                    'session' => ['يوجد طلب إغلاق معلق لصندوق الصيانة.'],
+                ]);
+            }
+
+            $cashCounts = [[
+                'currency' => $box->currency,
+                'daily_box_id' => (int) $box->id,
+                'opening_float' => round((float) $session->opening_balance, 2),
+                'sales_collected' => round(max(0, (float) $box->total - (float) $session->opening_balance), 2),
+                'system_balance' => round((float) $box->total, 2),
+                'physical_count' => round((float) $box->total, 2),
+                'variance' => 0,
+                'float_to_keep' => 0,
+                'amount_to_transfer' => round((float) $box->total, 2),
+                'employee_note' => $note ? trim($note) : '',
+                'variance_alert' => false,
+            ]];
 
             $session->update([
                 'status' => config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
@@ -175,29 +232,49 @@ class MaintenanceDailyBoxService
                 'closing_request_note' => $note ? trim($note) : null,
             ]);
 
-            return $session->fresh(['box', 'user', 'closingRequestedBy']);
+            $request = MaintenanceDailyClosingRequest::create([
+                'session_id' => $session->id,
+                'requested_by_user_id' => $user->id,
+                'requested_at' => now(),
+                'status' => 'pending',
+                'maintenances_count' => Maintenance::query()
+                    ->where('maintenance_daily_session_id', $session->id)
+                    ->count(),
+                'cash_counts' => $cashCounts,
+            ]);
+
+            $this->notifyClosingRequested($session->fresh(['user']), $request, $user);
+
+            return $request->fresh(['session.user', 'requestedBy']);
         });
     }
 
     public function pendingClosingRequests()
     {
-        return MaintenanceDailySession::query()
-            ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequestedBy:id,name'])
-            ->where('status', config('maintenance_daily.session_status.closing_requested', 'closing_requested'))
-            ->orderByDesc('closing_requested_at')
+        return MaintenanceDailyClosingRequest::query()
+            ->with(['session.box:id,name,total,currency,type', 'session.user:id,name', 'requestedBy:id,name'])
+            ->where('status', 'pending')
             ->orderByDesc('id')
             ->get()
-            ->map(fn (MaintenanceDailySession $session) => $this->formatClosingRequest($session))
+            ->map(fn (MaintenanceDailyClosingRequest $request) => $this->formatClosingRequest($request))
             ->values();
     }
 
-    public function approveClosing(User $reviewer, int $sessionId, ?int $toBoxId = null, ?string $note = null): MaintenanceDailySession
+    public function approveClosing(User $reviewer, int $requestId, ?int $toBoxId = null, ?string $note = null): MaintenanceDailyClosingRequest
     {
-        return DB::transaction(function () use ($reviewer, $sessionId, $toBoxId, $note) {
-            $session = MaintenanceDailySession::query()
-                ->whereKey($sessionId)
+        return DB::transaction(function () use ($reviewer, $requestId, $toBoxId, $note) {
+            $closingRequest = MaintenanceDailyClosingRequest::query()
+                ->with('session')
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->findOrFail($requestId);
+
+            if (! $closingRequest->isPending()) {
+                throw ValidationException::withMessages([
+                    'request' => ['طلب إغلاق صندوق الصيانة غير معلق.'],
+                ]);
+            }
+
+            $session = $closingRequest->session;
 
             if (! $session->isClosingRequested()) {
                 throw ValidationException::withMessages([
@@ -243,6 +320,14 @@ class MaintenanceDailyBoxService
                 ];
             }
 
+            $closingRequest->update([
+                'status' => 'approved',
+                'reviewed_by_user_id' => $reviewer->id,
+                'reviewed_at' => now(),
+                'review_notes' => $note,
+                'transfers' => $transfer ? [$transfer] : [],
+            ]);
+
             $session->update([
                 'status' => config('maintenance_daily.session_status.closed', 'closed'),
                 'closing_balance' => $closingBalance,
@@ -251,17 +336,27 @@ class MaintenanceDailyBoxService
                 'notes' => trim((string) $session->notes."\nاعتماد إغلاق الصندوق بواسطة: {$reviewer->name}".($note ? " | {$note}" : '').($transfer ? ' | ترحيل: '.json_encode($transfer, JSON_UNESCAPED_UNICODE) : '')),
             ]);
 
-            return $session->fresh(['box', 'user', 'closingRequestedBy', 'closedBy']);
+            $this->notifyClosingApproved($session->fresh(['employee.user']), $closingRequest);
+
+            return $closingRequest->fresh(['session.user', 'session.box', 'requestedBy', 'reviewedBy']);
         });
     }
 
-    public function rejectClosing(User $reviewer, int $sessionId, ?string $note = null): MaintenanceDailySession
+    public function rejectClosing(User $reviewer, int $requestId, ?string $note = null): MaintenanceDailyClosingRequest
     {
-        return DB::transaction(function () use ($reviewer, $sessionId, $note) {
-            $session = MaintenanceDailySession::query()
-                ->whereKey($sessionId)
+        return DB::transaction(function () use ($reviewer, $requestId, $note) {
+            $closingRequest = MaintenanceDailyClosingRequest::query()
+                ->with('session')
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->findOrFail($requestId);
+
+            if (! $closingRequest->isPending()) {
+                throw ValidationException::withMessages([
+                    'request' => ['طلب إغلاق صندوق الصيانة غير معلق.'],
+                ]);
+            }
+
+            $session = $closingRequest->session;
 
             if (! $session->isClosingRequested()) {
                 throw ValidationException::withMessages([
@@ -278,7 +373,16 @@ class MaintenanceDailyBoxService
                 'notes' => trim((string) $session->notes."\nرفض طلب الإغلاق بواسطة: {$reviewer->name}".($note ? " | {$note}" : '')),
             ]);
 
-            return $session->fresh(['box', 'user']);
+            $closingRequest->update([
+                'status' => 'rejected',
+                'reviewed_by_user_id' => $reviewer->id,
+                'reviewed_at' => now(),
+                'review_notes' => $note,
+            ]);
+
+            $this->notifyClosingRejected($session->fresh(['employee.user']), $closingRequest);
+
+            return $closingRequest->fresh(['session.user', 'session.box', 'requestedBy', 'reviewedBy']);
         });
     }
 
@@ -375,14 +479,29 @@ class MaintenanceDailyBoxService
 
         $box = $user ? $this->ensureBox($user) : null;
         $sessionQuery = MaintenanceDailySession::query()
-            ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequestedBy:id,name'])
+            ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequestedBy:id,name', 'closingRequests'])
             ->whereDate('business_date', $businessDate);
 
         if ($user) {
             $sessionQuery->where('user_id', $this->resolveOwner($user)['user_id']);
         }
 
+        if ($date === null) {
+            $sessionQuery->whereIn('status', [
+                config('maintenance_daily.session_status.open', 'open'),
+                config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
+            ]);
+        }
+
         $session = $sessionQuery->orderByDesc('id')->first();
+        $pendingClosing = $session
+            ? $session->closingRequests->firstWhere('status', 'pending')
+            : null;
+        $globalOpen = $user ? $this->findGlobalOpenSession() : null;
+        $owner = $user ? $this->resolveOwner($user) : null;
+        $blockedByOther = $user
+            && $globalOpen
+            && (int) $globalOpen->user_id !== (int) $owner['user_id'];
 
         $logs = $session
             ? MaintenanceDailyBoxLog::query()
@@ -441,7 +560,16 @@ class MaintenanceDailyBoxService
                 'closing_requested_by_name' => $session->closingRequestedBy?->name,
                 'closing_request_note' => $session->closing_request_note,
                 'closed_at' => optional($session->closed_at)->format('Y-m-d H:i:s'),
+                'can_request_closing' => $session->isOpen() && ! $pendingClosing,
+                'allows_payments' => $session->isOpen() && ! $pendingClosing,
             ] : null,
+            'can_request_open' => $user && ! $session && ! $blockedByOther,
+            'blocked_by_other_session' => (bool) $blockedByOther,
+            'blocked_by_employee_name' => $blockedByOther
+                ? ($globalOpen?->user?->name ?? null)
+                : null,
+            'can_finalize_closing' => $user ? $this->canReviewClosing($user) : false,
+            'pending_closing_request_id' => $pendingClosing?->id,
             'box' => $box ? [
                 'id' => $box->id,
                 'name' => $box->name,
@@ -473,31 +601,134 @@ class MaintenanceDailyBoxService
         };
     }
 
-    public function formatClosingRequest(MaintenanceDailySession $session): array
+    public function formatClosingRequest(MaintenanceDailyClosingRequest $request): array
     {
+        $request->loadMissing(['session.user', 'session.box', 'requestedBy', 'reviewedBy']);
+        $session = $request->session;
         $payload = $this->payload($session->business_date?->toDateString(), $session->user);
         $sessionPayload = $payload['session'] ?? [];
+        $cashCounts = $request->cash_counts ?? [];
+        $firstCount = $cashCounts[0] ?? [];
 
         return [
-            'id' => $session->id,
+            'id' => $request->id,
             'session_id' => $session->id,
             'employee_name' => $session->user?->name,
             'business_date' => $session->business_date?->toDateString(),
-            'status' => $session->status,
+            'status' => $request->status,
             'opening_balance' => round((float) $session->opening_balance, 2),
             'cash_total' => round((float) ($payload['cash_total'] ?? 0), 2),
             'visa_total' => round((float) ($payload['visa_total'] ?? 0), 2),
             'transfer_total' => round((float) ($payload['transfer_total'] ?? 0), 2),
             'expected_closing_balance' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
-            'amount_to_transfer' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
+            'amount_to_transfer' => round((float) ($firstCount['amount_to_transfer'] ?? $payload['expected_closing_balance'] ?? 0), 2),
+            'cash_counts' => $cashCounts,
+            'maintenances_count' => (int) $request->maintenances_count,
             'closing_balance' => $session->closing_balance !== null
                 ? round((float) $session->closing_balance, 2)
                 : ($sessionPayload['closing_balance'] ?? null),
-            'requested_at' => optional($session->closing_requested_at)->format('Y-m-d H:i:s'),
-            'requested_by_name' => $session->closingRequestedBy?->name,
-            'note' => $session->closing_request_note,
+            'requested_at' => optional($request->requested_at)->format('Y-m-d H:i:s'),
+            'requested_by_name' => $request->requestedBy?->name,
+            'note' => $firstCount['employee_note'] ?? $session->closing_request_note,
             'box_name' => $session->box?->name,
             'currency' => $session->box?->currency,
+            'reviewed_at' => optional($request->reviewed_at)->format('Y-m-d H:i:s'),
+            'reviewed_by_name' => $request->reviewedBy?->name,
+            'review_notes' => $request->review_notes,
+            'transfers' => $request->transfers ?? [],
         ];
+    }
+
+    public function canReviewClosing(User $user): bool
+    {
+        if ($user->type === 'admin') {
+            return true;
+        }
+
+        $permission = config('sales_daily.permissions.daily_close_review');
+        if ($user->type !== 'employee' || ! $user->employee || ! $permission) {
+            return false;
+        }
+
+        return $user->employee->permissions()
+            ->whereHas('permission', fn ($q) => $q->where('name_en', $permission))
+            ->exists();
+    }
+
+    private function notifyClosingRequested(
+        MaintenanceDailySession $session,
+        MaintenanceDailyClosingRequest $request,
+        User $actor
+    ): void {
+        $previous = App::getLocale();
+        App::setLocale('ar');
+
+        try {
+            $employeeName = $session->user?->name ?? 'موظف';
+            app(AdminNotificationService::class)->create(
+                AdminNotificationService::TYPE_MAINTENANCE_DAILY_CLOSING_REQUEST,
+                'طلب إغلاق صندوق صيانة',
+                "{$employeeName} أرسل طلب إغلاق صندوق الصيانة اليومي.",
+                [
+                    'closing_request_id' => (string) $request->id,
+                    'session_id' => (string) $session->id,
+                    'business_date' => $session->business_date?->toDateString() ?? '',
+                    'actor_user_id' => (string) $actor->id,
+                ],
+                $session->employee_id,
+                'maintenance_daily_closing_request',
+                (int) $request->id
+            );
+        } finally {
+            App::setLocale($previous);
+        }
+    }
+
+    private function notifyClosingApproved(
+        MaintenanceDailySession $session,
+        MaintenanceDailyClosingRequest $request
+    ): void {
+        $employee = $session->employee;
+        if (! $employee) {
+            return;
+        }
+
+        app(EmployeeNotificationService::class)->create(
+            $employee,
+            EmployeeNotificationService::TYPE_MAINTENANCE_DAILY_CLOSING_APPROVED,
+            'تم اعتماد إغلاق صندوق الصيانة',
+            'تم اعتماد طلب إغلاق صندوق الصيانة اليومي.',
+            [
+                'closing_request_id' => (string) $request->id,
+                'session_id' => (string) $session->id,
+                'business_date' => $session->business_date?->toDateString() ?? '',
+            ],
+            'maintenance_daily_closing_request',
+            (int) $request->id
+        );
+    }
+
+    private function notifyClosingRejected(
+        MaintenanceDailySession $session,
+        MaintenanceDailyClosingRequest $request
+    ): void {
+        $employee = $session->employee;
+        if (! $employee) {
+            return;
+        }
+
+        app(EmployeeNotificationService::class)->create(
+            $employee,
+            EmployeeNotificationService::TYPE_MAINTENANCE_DAILY_CLOSING_REJECTED,
+            'تم رفض إغلاق صندوق الصيانة',
+            'تم رفض طلب إغلاق صندوق الصيانة اليومي. يمكنك متابعة العمل على الصندوق.',
+            [
+                'closing_request_id' => (string) $request->id,
+                'session_id' => (string) $session->id,
+                'business_date' => $session->business_date?->toDateString() ?? '',
+            ],
+            'maintenance_daily_closing_request',
+            (int) $request->id
+        );
     }
 }

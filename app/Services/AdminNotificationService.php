@@ -53,6 +53,8 @@ class AdminNotificationService
 
     public const TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN = 'sales_daily_previous_day_open';
 
+    public const TYPE_MAINTENANCE_DAILY_CLOSING_REQUEST = 'maintenance_daily_closing_request';
+
     public const TYPE_SUSPENDED_INSTANT_SALE_CREATED = 'suspended_instant_sale_created';
 
     public const TYPE_SUSPENDED_INSTANT_SALE_COMPLETED = 'suspended_instant_sale_completed';

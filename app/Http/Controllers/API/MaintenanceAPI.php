@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Maintenance;
+use App\Models\MaintenanceDailyClosingRequest;
 use App\Services\MaintenanceActivityLogger;
 use App\Services\MaintenanceDailyBoxService;
 use App\Services\MaintenanceDeliveryService;
@@ -822,7 +823,7 @@ class MaintenanceAPI extends Controller
                 'note' => 'nullable|string|max:2000',
             ]);
 
-            $session = $this->maintenanceDailyBoxService->requestClosing(
+            $closingRequest = $this->maintenanceDailyBoxService->requestClosing(
                 $request->user(),
                 $data['note'] ?? null
             );
@@ -831,7 +832,8 @@ class MaintenanceAPI extends Controller
                 'status' => 'success',
                 'message' => 'تم إرسال طلب إغلاق صندوق الصيانة',
                 'daily_box' => $this->maintenanceDailyBoxService->payload(null, $request->user()),
-                'session_id' => $session->id,
+                'closing_request_id' => $closingRequest->id,
+                'session_id' => $closingRequest->session_id,
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -850,7 +852,7 @@ class MaintenanceAPI extends Controller
     public function dailySessionPendingClosing(Request $request)
     {
         try {
-            if (! $this->canReviewDailyClosing($request->user())) {
+            if (! $this->maintenanceDailyBoxService->canReviewClosing($request->user())) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),
@@ -872,7 +874,7 @@ class MaintenanceAPI extends Controller
     public function dailySessionApproveClosing(Request $request)
     {
         try {
-            if (! $this->canReviewDailyClosing($request->user())) {
+            if (! $this->maintenanceDailyBoxService->canReviewClosing($request->user())) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),
@@ -880,14 +882,16 @@ class MaintenanceAPI extends Controller
             }
 
             $data = $request->validate([
-                'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
+                'closing_request_id' => 'nullable|integer|exists:maintenance_daily_closing_requests,id',
+                'session_id' => 'nullable|integer|exists:maintenance_daily_sessions,id',
                 'to_box_id' => 'nullable|integer|exists:boxes,id',
                 'review_note' => 'nullable|string|max:2000',
             ]);
+            $requestId = $this->resolveMaintenanceClosingRequestId($data);
 
-            $session = $this->maintenanceDailyBoxService->approveClosing(
+            $closingRequest = $this->maintenanceDailyBoxService->approveClosing(
                 $request->user(),
-                (int) $data['session_id'],
+                $requestId,
                 isset($data['to_box_id']) ? (int) $data['to_box_id'] : null,
                 $data['review_note'] ?? null
             );
@@ -895,7 +899,7 @@ class MaintenanceAPI extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'تم اعتماد إغلاق صندوق الصيانة',
-                'closing_request' => $this->maintenanceDailyBoxService->formatClosingRequest($session),
+                'closing_request' => $this->maintenanceDailyBoxService->formatClosingRequest($closingRequest),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -914,7 +918,7 @@ class MaintenanceAPI extends Controller
     public function dailySessionRejectClosing(Request $request)
     {
         try {
-            if (! $this->canReviewDailyClosing($request->user())) {
+            if (! $this->maintenanceDailyBoxService->canReviewClosing($request->user())) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),
@@ -922,20 +926,22 @@ class MaintenanceAPI extends Controller
             }
 
             $data = $request->validate([
-                'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
+                'closing_request_id' => 'nullable|integer|exists:maintenance_daily_closing_requests,id',
+                'session_id' => 'nullable|integer|exists:maintenance_daily_sessions,id',
                 'review_note' => 'nullable|string|max:2000',
             ]);
+            $requestId = $this->resolveMaintenanceClosingRequestId($data);
 
-            $session = $this->maintenanceDailyBoxService->rejectClosing(
+            $closingRequest = $this->maintenanceDailyBoxService->rejectClosing(
                 $request->user(),
-                (int) $data['session_id'],
+                $requestId,
                 $data['review_note'] ?? null
             );
 
             return response()->json([
                 'status' => 'success',
                 'message' => 'تم رفض طلب إغلاق صندوق الصيانة',
-                'closing_request' => $this->maintenanceDailyBoxService->formatClosingRequest($session),
+                'closing_request' => $this->maintenanceDailyBoxService->formatClosingRequest($closingRequest),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -951,20 +957,27 @@ class MaintenanceAPI extends Controller
         }
     }
 
-    private function canReviewDailyClosing($user): bool
+    private function resolveMaintenanceClosingRequestId(array $data): int
     {
-        if ($user && $user->type === 'admin') {
-            return true;
+        if (! empty($data['closing_request_id'])) {
+            return (int) $data['closing_request_id'];
         }
 
-        $permission = config('sales_daily.permissions.daily_close_review');
-        if (! $user || $user->type !== 'employee' || ! $user->employee || ! $permission) {
-            return false;
+        if (! empty($data['session_id'])) {
+            $request = MaintenanceDailyClosingRequest::query()
+                ->where('session_id', (int) $data['session_id'])
+                ->where('status', 'pending')
+                ->latest('id')
+                ->first();
+
+            if ($request) {
+                return (int) $request->id;
+            }
         }
 
-        return $user->employee->permissions()
-            ->whereHas('permission', fn ($q) => $q->where('name_en', $permission))
-            ->exists();
+        throw ValidationException::withMessages([
+            'closing_request_id' => ['طلب إغلاق صندوق الصيانة مطلوب.'],
+        ]);
     }
 
 }

@@ -70,6 +70,16 @@ class MaintenanceDailySession extends Model
         return $this->hasMany(MaintenanceDailyBoxLog::class, 'session_id');
     }
 
+    public function closingRequests(): HasMany
+    {
+        return $this->hasMany(MaintenanceDailyClosingRequest::class, 'session_id');
+    }
+
+    public function latestClosingRequest()
+    {
+        return $this->hasOne(MaintenanceDailyClosingRequest::class, 'session_id')->latestOfMany();
+    }
+
     public function isOpen(): bool
     {
         return $this->status === config('maintenance_daily.session_status.open', 'open');
