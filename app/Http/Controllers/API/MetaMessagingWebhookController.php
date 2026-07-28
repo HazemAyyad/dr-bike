@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Services\Meta\MetaMessagingService;
+use App\Services\Meta\SocialIncomingNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -24,7 +25,11 @@ class MetaMessagingWebhookController extends Controller
         return response('Invalid verification token', 403);
     }
 
-    public function handle(Request $request, MetaMessagingService $service)
+    public function handle(
+        Request $request,
+        MetaMessagingService $service,
+        SocialIncomingNotificationService $notificationService
+    )
     {
         try {
             $object = (string) data_get($request->all(), 'object');
@@ -40,7 +45,10 @@ class MetaMessagingWebhookController extends Controller
 
             foreach ((array) data_get($request->all(), 'entry', []) as $entry) {
                 foreach ((array) data_get($entry, 'messaging', []) as $event) {
-                    $service->saveIncoming($channel, $event);
+                    $message = $service->saveIncoming($channel, $event);
+                    if ($message) {
+                        $notificationService->notify($message);
+                    }
                 }
             }
         } catch (\Throwable $e) {
