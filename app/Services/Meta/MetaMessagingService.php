@@ -49,8 +49,25 @@ class MetaMessagingService
         ]);
 
         try {
-            $response = $this->client()->post($this->sendEndpoint($conversation->channel), $payload);
+            $endpoint = $this->sendEndpoint($conversation->channel);
+            $response = $this->client()->post($endpoint, $payload);
             $data = $this->responseArray($response);
+            if (! $response->successful()) {
+                Log::warning('Meta messaging send failed', [
+                    'channel' => $conversation->channel,
+                    'conversation_id' => $conversation->id,
+                    'social_contact_id' => $conversation->social_contact_id,
+                    'sender_id' => $this->senderId($conversation->channel),
+                    'recipient_id' => $conversation->contact->external_id,
+                    'endpoint' => $endpoint,
+                    'status' => $response->status(),
+                    'error_message' => data_get($data, 'body.error.message'),
+                    'error_type' => data_get($data, 'body.error.type'),
+                    'error_code' => data_get($data, 'body.error.code'),
+                    'error_subcode' => data_get($data, 'body.error.error_subcode'),
+                    'fbtrace_id' => data_get($data, 'body.error.fbtrace_id') ?: $response->header('x-fb-trace-id'),
+                ]);
+            }
             $localMessage->update([
                 'meta_message_id' => data_get($data, 'body.message_id'),
                 'meta_status' => $response->successful() ? 'accepted' : 'failed',

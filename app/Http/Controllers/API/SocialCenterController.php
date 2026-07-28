@@ -239,6 +239,10 @@ class SocialCenterController extends Controller
             };
         }
 
+        if (str_contains($lower, 'unknown error')) {
+            return 'Meta رفضت إرسال الرسالة بخطأ عام. تحقق من صلاحيات التوكن ونشر التطبيق، ثم راجع Laravel log لتفاصيل fbtrace.';
+        }
+
         return $error !== '' ? $error : 'تعذر إرسال الرسالة. تحقق من إعدادات الربط ثم حاول مرة أخرى.';
     }
 
