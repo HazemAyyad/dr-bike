@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
 use App\Models\Maintenance;
 use App\Models\MaintenanceDailyBoxLog;
@@ -190,9 +191,9 @@ class MaintenanceDailyBoxService
             ->values();
     }
 
-    public function approveClosing(User $reviewer, int $sessionId, ?string $note = null): MaintenanceDailySession
+    public function approveClosing(User $reviewer, int $sessionId, ?int $toBoxId = null, ?string $note = null): MaintenanceDailySession
     {
-        return DB::transaction(function () use ($reviewer, $sessionId, $note) {
+        return DB::transaction(function () use ($reviewer, $sessionId, $toBoxId, $note) {
             $session = MaintenanceDailySession::query()
                 ->whereKey($sessionId)
                 ->lockForUpdate()
@@ -206,13 +207,48 @@ class MaintenanceDailyBoxService
 
             $box = Box::lockForUpdate()->find($session->box_id);
             $closingBalance = round((float) ($box?->total ?? $session->closing_balance ?? 0), 2);
+            $transfer = null;
+
+            if ($closingBalance > 0) {
+                if (! $box || ! $toBoxId) {
+                    throw ValidationException::withMessages([
+                        'to_box_id' => ['يجب اختيار صندوق لترحيل صندوق الصيانة.'],
+                    ]);
+                }
+
+                if ((int) $box->id === (int) $toBoxId) {
+                    throw ValidationException::withMessages([
+                        'to_box_id' => ['لا يمكن ترحيل الصندوق إلى نفس صندوق الصيانة اليومي.'],
+                    ]);
+                }
+
+                $toBox = Box::lockForUpdate()->findOrFail($toBoxId);
+                if ($toBox->currency !== $box->currency) {
+                    throw ValidationException::withMessages([
+                        'to_box_id' => [__('messages.must_be_same_currency')],
+                    ]);
+                }
+
+                $box->update(['total' => 0]);
+                $toBox->update(['total' => round((float) $toBox->total + $closingBalance, 2)]);
+
+                $transferNote = trim('جلسة صيانة #'.$session->id.' | بواسطة: '.$reviewer->name.($note ? ' | '.$note : ''));
+                BoxLogs::createTransferLog($box, $toBox, 'ترحيل صندوق صيانة يومي', $closingBalance, $transferNote);
+                $transfer = [
+                    'from_box_id' => $box->id,
+                    'to_box_id' => $toBox->id,
+                    'to_box_name' => $toBox->name,
+                    'amount' => $closingBalance,
+                    'currency' => $box->currency,
+                ];
+            }
 
             $session->update([
                 'status' => config('maintenance_daily.session_status.closed', 'closed'),
                 'closing_balance' => $closingBalance,
                 'closed_at' => now(),
                 'closed_by_user_id' => $reviewer->id,
-                'notes' => trim((string) $session->notes."\nاعتماد إغلاق الصندوق بواسطة: {$reviewer->name}".($note ? " | {$note}" : '')),
+                'notes' => trim((string) $session->notes."\nاعتماد إغلاق الصندوق بواسطة: {$reviewer->name}".($note ? " | {$note}" : '').($transfer ? ' | ترحيل: '.json_encode($transfer, JSON_UNESCAPED_UNICODE) : '')),
             ]);
 
             return $session->fresh(['box', 'user', 'closingRequestedBy', 'closedBy']);
@@ -453,6 +489,7 @@ class MaintenanceDailyBoxService
             'visa_total' => round((float) ($payload['visa_total'] ?? 0), 2),
             'transfer_total' => round((float) ($payload['transfer_total'] ?? 0), 2),
             'expected_closing_balance' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
+            'amount_to_transfer' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
             'closing_balance' => $session->closing_balance !== null
                 ? round((float) $session->closing_balance, 2)
                 : ($sessionPayload['closing_balance'] ?? null),

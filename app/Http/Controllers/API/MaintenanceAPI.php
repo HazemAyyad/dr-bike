@@ -881,12 +881,14 @@ class MaintenanceAPI extends Controller
 
             $data = $request->validate([
                 'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
+                'to_box_id' => 'nullable|integer|exists:boxes,id',
                 'review_note' => 'nullable|string|max:2000',
             ]);
 
             $session = $this->maintenanceDailyBoxService->approveClosing(
                 $request->user(),
                 (int) $data['session_id'],
+                isset($data['to_box_id']) ? (int) $data['to_box_id'] : null,
                 $data['review_note'] ?? null
             );
 
