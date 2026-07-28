@@ -717,4 +717,5 @@ return [
     'sales_order_status_partial_return' => 'Partial return',
     'sales_order_status_alternative_return' => 'Alternative return',
     'sales_order_status_canceled' => 'Canceled',
+    'employee_password_updated_successfully' => 'Employee password updated successfully',
 ];

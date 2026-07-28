@@ -166,6 +166,7 @@ class EmployeeDetails extends Controller
             'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings' => 'stock',
             'Employees Section', 'Employee Impersonation',
             'Employees View', 'Employees Create', 'Employees Edit Basic', 'Employees Delete',
+            'Employees Password Manage',
             'Employees Permissions View', 'Employees Permissions Manage',
             'Employees Financial View', 'Employees Salary Pay',
             'Employees Points View', 'Employees Points Manage',
@@ -1244,6 +1245,56 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
              'message' => __('messages.update_data_error')], 200);
         } catch (\Exception $e) {
             return response(['status' => 'error', 'message' => __('messages.failed_to_update_employee')], 200);
+        }
+    }
+
+    public function changeEmployeePassword(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'employee_id' => ['required', 'integer', 'exists:employee_details,id'],
+                'password' => ['required', 'string', 'min:8', 'confirmed'],
+            ]);
+
+            $employee = EmployeeDetail::with('user')->findOrFail($data['employee_id']);
+
+            if (! $employee->user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.employee_not_found'),
+                ], 200);
+            }
+
+            $employee->user->forceFill([
+                'password' => Hash::make($data['password']),
+            ])->save();
+
+            Logs::createLog(
+                'تغيير كلمة سر موظف',
+                'تم تغيير كلمة سر الموظف '.$employee->user->name,
+                'employees',
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.employee_password_updated_successfully'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.employee_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_update_employee'),
+            ], 200);
         }
     }
 

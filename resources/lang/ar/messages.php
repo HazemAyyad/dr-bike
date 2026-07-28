@@ -729,4 +729,5 @@ return [
     'sales_order_status_partial_return' => 'راجع جزئي',
     'sales_order_status_alternative_return' => 'راجع بديل',
     'sales_order_status_canceled' => 'ملغاة',
+    'employee_password_updated_successfully' => 'تم تغيير كلمة سر الموظف بنجاح',
 ];

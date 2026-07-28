@@ -229,6 +229,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->middleware('check.permission:Employees Financial View');
     Route::post('/edit/employee' , [EmployeeDetails::class,'editEmployee'])
         ->middleware('check.permission:Employees Edit Basic');
+    Route::post('/employee/change-password' , [EmployeeDetails::class,'changeEmployeePassword'])
+        ->middleware('check.permission:Employees Password Manage');
     Route::post('/delete/employee' , [EmployeeDetails::class,'deleteEmployee'])
         ->middleware('check.permission:Employees Delete');
     Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions'])
@@ -839,7 +841,7 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales','refresh.
    Route::post('/add/deposit' , [Deposits::class,'store']);
   });
 
-Route::group(['middleware' => ['auth:sanctum','check.permission:Employees View,Employees Edit Basic,Employees Delete,Employees Section,Employee Tasks,Goal Creation','refresh.token.expiry']], function () {
+Route::group(['middleware' => ['auth:sanctum','check.permission:Employees View,Employees Edit Basic,Employees Delete,Employees Password Manage,Employees Section,Employee Tasks,Goal Creation','refresh.token.expiry']], function () {
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
 
   });

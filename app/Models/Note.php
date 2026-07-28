@@ -28,6 +28,7 @@ class Note extends Model
         'body_json',
         'plain_text',
         'color',
+        'labels',
         'visibility',
         'is_pinned',
         'is_archived',
@@ -38,6 +39,7 @@ class Note extends Model
 
     protected $casts = [
         'body_json' => 'array',
+        'labels' => 'array',
         'is_pinned' => 'boolean',
         'is_archived' => 'boolean',
         'reminder_at' => 'datetime',

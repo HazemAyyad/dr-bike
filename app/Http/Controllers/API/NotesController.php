@@ -107,6 +107,7 @@ class NotesController extends Controller
                 'body_json' => $validated['body_json'] ?? [],
                 'plain_text' => $this->plainText($validated['body_json'] ?? [], $validated['title'] ?? null),
                 'color' => $validated['color'] ?? null,
+                'labels' => $this->cleanLabels($validated['labels'] ?? []),
                 'visibility' => $validated['visibility'] ?? Note::VISIBILITY_PRIVATE,
                 'is_pinned' => (bool) ($validated['is_pinned'] ?? false),
                 'is_archived' => (bool) ($validated['is_archived'] ?? false),
@@ -155,6 +156,9 @@ class NotesController extends Controller
                 if (array_key_exists($field, $validated)) {
                     $payload[$field] = $validated[$field];
                 }
+            }
+            if (array_key_exists('labels', $validated)) {
+                $payload['labels'] = $this->cleanLabels($validated['labels'] ?? []);
             }
 
             if (array_key_exists('reminder_at', $payload)) {
@@ -288,6 +292,8 @@ class NotesController extends Controller
             'title' => [$presence, 'nullable', 'string', 'max:255'],
             'body_json' => [$presence, 'nullable', 'array'],
             'color' => [$presence, 'nullable', 'string', 'max:32'],
+            'labels' => [$presence, 'nullable', 'array', 'max:20'],
+            'labels.*' => ['nullable', 'string', 'max:40'],
             'visibility' => [$presence, 'nullable', 'string', Rule::in(Note::VISIBILITIES)],
             'is_pinned' => [$presence, 'boolean'],
             'is_archived' => [$presence, 'boolean'],
@@ -405,6 +411,7 @@ class NotesController extends Controller
             'title' => $note->title,
             'plain_text' => $note->plain_text,
             'color' => $note->color,
+            'labels' => $this->cleanLabels($note->labels ?? []),
             'visibility' => $note->visibility,
             'is_pinned' => (bool) $note->is_pinned,
             'is_archived' => (bool) $note->is_archived,
@@ -479,6 +486,17 @@ class NotesController extends Controller
             str_starts_with($mime, 'video/') => NoteAttachment::TYPE_VIDEO,
             default => NoteAttachment::TYPE_FILE,
         };
+    }
+
+    private function cleanLabels(array $labels): array
+    {
+        return collect($labels)
+            ->map(fn ($label) => trim((string) $label))
+            ->filter()
+            ->unique()
+            ->take(20)
+            ->values()
+            ->all();
     }
 
     private function plainText(array $bodyJson, ?string $title): string
