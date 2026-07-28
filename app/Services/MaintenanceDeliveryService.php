@@ -222,7 +222,7 @@ class MaintenanceDeliveryService
             $payments = $this->normalizePayments($payload, $invoiceTotal);
             $paidAmount = min($invoiceTotal, round(collect($payments)->sum('amount'), 2));
 
-            $maintenanceSession = $paidAmount > 0
+            $maintenanceSession = $invoiceTotal > 0
                 ? $this->maintenanceDailyBoxService->requireOpenSession($user)
                 : null;
             $paymentBox = $maintenanceSession?->box
@@ -275,6 +275,16 @@ class MaintenanceDeliveryService
                 $maintenanceBoxMovement = $movement;
             }
 
+            $remainingAmount = max(0, round($invoiceTotal - $paidAmount, 2));
+            if ($remainingAmount > 0) {
+                $this->maintenanceDailyBoxService->recordDebt(
+                    $maintenance,
+                    $user,
+                    $remainingAmount,
+                    $instantSale->id
+                );
+            }
+
             $maintenance->update([
                 'status' => 'delivered',
                 'paid_amount' => $paidAmount,
@@ -295,7 +305,7 @@ class MaintenanceDeliveryService
                 [
                     'invoice_total' => $invoiceTotal,
                     'paid_amount' => $paidAmount,
-                    'remaining_amount' => max(0, round($invoiceTotal - $paidAmount, 2)),
+                    'remaining_amount' => $remainingAmount,
                     'payments' => $payments,
                     'instant_sale_id' => $instantSale->id,
                     'serial_number' => $instantSale->serial_number,

@@ -1718,6 +1718,7 @@ public function store(Request $request)
 
             $query = InstantSale::query()
                 ->whereNull('parent_id')
+                ->whereNull('maintenance_id')
             ->with([
                 'product:id,nameAr',
                     'offerPackage:id,name',

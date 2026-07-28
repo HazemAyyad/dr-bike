@@ -284,22 +284,23 @@ class MaintenanceDailyBoxService
                     ->first();
                 $payload = $this->payload($session->business_date?->toDateString(), $session->user);
 
-                return [
-                    'id' => (int) $session->id,
-                    'session_id' => (int) $session->id,
-                    'employee_name' => $session->user?->name,
+            return [
+                'id' => (int) $session->id,
+                'session_id' => (int) $session->id,
+                'employee_name' => $session->user?->name,
                     'business_date' => $session->business_date?->toDateString(),
                     'status' => $session->status,
                     'box_id' => $session->box_id,
                     'box_name' => $session->box?->name,
                     'currency' => $session->box?->currency,
                     'opening_balance' => round((float) $session->opening_balance, 2),
-                    'cash_total' => round((float) ($payload['cash_total'] ?? 0), 2),
-                    'visa_total' => round((float) ($payload['visa_total'] ?? 0), 2),
-                    'transfer_total' => round((float) ($payload['transfer_total'] ?? 0), 2),
-                    'expected_closing_balance' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
-                    'maintenances_count' => Maintenance::query()
-                        ->where('maintenance_daily_session_id', $session->id)
+                'cash_total' => round((float) ($payload['cash_total'] ?? 0), 2),
+                'visa_total' => round((float) ($payload['visa_total'] ?? 0), 2),
+                'transfer_total' => round((float) ($payload['transfer_total'] ?? 0), 2),
+                'debt_total' => round((float) ($payload['debt_total'] ?? 0), 2),
+                'expected_closing_balance' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
+                'maintenances_count' => Maintenance::query()
+                    ->where('maintenance_daily_session_id', $session->id)
                         ->count(),
                     'can_close' => $session->isOpen() && ! $pendingClosing,
                     'pending_closing_request_id' => $pendingClosing?->id,
@@ -565,6 +566,43 @@ class MaintenanceDailyBoxService
         });
     }
 
+    public function recordDebt(
+        Maintenance $maintenance,
+        User $user,
+        float $amount,
+        ?int $instantSaleId = null,
+        ?string $note = null
+    ): MaintenanceDailyBoxLog {
+        if ($amount <= 0) {
+            throw ValidationException::withMessages([
+                'remaining_amount' => ['قيمة دين الصيانة يجب أن تكون أكبر من صفر.'],
+            ]);
+        }
+
+        return DB::transaction(function () use ($maintenance, $user, $amount, $instantSaleId, $note) {
+            $session = $this->requireOpenSession($user);
+            $box = Box::lockForUpdate()->findOrFail($session->box_id);
+            $balance = round((float) $box->total, 2);
+
+            return MaintenanceDailyBoxLog::create([
+                'session_id' => $session->id,
+                'box_id' => $box->id,
+                'maintenance_id' => $maintenance->id,
+                'instant_sale_id' => $instantSaleId,
+                'user_id' => $user->id,
+                'actor_name' => $user->name,
+                'type' => 'debt',
+                'payment_method' => 'debt',
+                'affects_cash_balance' => false,
+                'amount' => round($amount, 2),
+                'box_balance_before' => $balance,
+                'box_balance_after' => $balance,
+                'description' => 'دين متبقي صيانة #'.$maintenance->id,
+                'note' => trim('صيانة #'.$maintenance->id.' | المستخدم: '.$user->name.($note ? ' | '.$note : '')),
+            ]);
+        });
+    }
+
     public function closeExpiredSessions(?Carbon $at = null): int
     {
         $at = $at ?? now();
@@ -666,6 +704,16 @@ class MaintenanceDailyBoxService
         $transferTotal = round((float) $logs
             ->where('payment_method', 'bank_transfer')
             ->sum('amount'), 2);
+        $debtTotal = round((float) ($session
+            ? Maintenance::query()
+                ->where('maintenance_daily_session_id', $session->id)
+                ->where('status', 'delivered')
+                ->get(['invoice_total', 'paid_amount'])
+                ->sum(fn (Maintenance $maintenance) => max(
+                    0,
+                    round((float) $maintenance->invoice_total - (float) $maintenance->paid_amount, 2)
+                ))
+            : 0), 2);
         $expectedClosingBalance = round((float) ($session?->opening_balance ?? 0) + $cashTotal, 2);
 
         return [
@@ -706,6 +754,7 @@ class MaintenanceDailyBoxService
             'cash_total' => $cashTotal,
             'visa_total' => $visaTotal,
             'transfer_total' => $transferTotal,
+            'debt_total' => $debtTotal,
             'non_cash_total' => round((float) $logs
                 ->where('affects_cash_balance', false)
                 ->sum('amount'), 2),
@@ -745,6 +794,7 @@ class MaintenanceDailyBoxService
             'cash_total' => round((float) ($payload['cash_total'] ?? 0), 2),
             'visa_total' => round((float) ($payload['visa_total'] ?? 0), 2),
             'transfer_total' => round((float) ($payload['transfer_total'] ?? 0), 2),
+            'debt_total' => round((float) ($payload['debt_total'] ?? 0), 2),
             'expected_closing_balance' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
             'amount_to_transfer' => round((float) ($firstCount['amount_to_transfer'] ?? $payload['expected_closing_balance'] ?? 0), 2),
             'cash_counts' => $cashCounts,

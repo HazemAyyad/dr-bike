@@ -38,7 +38,7 @@ class Reports extends Controller
         $totalDebtsOwedToUs = Debt::where('type','owed to us')
         ->where('status','unpaid')
         ->sum('total'); // ديون لنا
-        $totalSales = InstantSale::sum('total_cost'); // اجمالي المبيعات
+        $totalSales = InstantSale::whereNull('maintenance_id')->sum('total_cost'); // اجمالي المبيعات
         $totalBoxes = Box::totalAmount(); // مجموع الصناديق
         $numberOfPeople = Customer::count() + Seller::count(); // عدد الاشخاص
         $numberOfEmployees = EmployeeDetail::count(); // عدد الموظفين
