@@ -14,7 +14,7 @@ class AppUpdateController extends Controller
         try {
             $data = $request->validate([
                 'app' => 'nullable|string|in:admin',
-                'platform' => 'required|string|in:android,ios',
+                'platform' => 'required|string|in:android,ios,windows',
                 'current_version' => 'nullable|string|max:40',
                 'current_build' => 'required|integer|min:0|max:999999',
             ]);

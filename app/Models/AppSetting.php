@@ -30,6 +30,15 @@ class AppSetting extends Model
     public const KEY_APP_UPDATE_ADMIN_IOS_TITLE = 'app_update_admin_ios_title';
     public const KEY_APP_UPDATE_ADMIN_IOS_MESSAGE = 'app_update_admin_ios_message';
 
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_ACTIVE = 'app_update_admin_windows_active';
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_VERSION = 'app_update_admin_windows_latest_version';
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_BUILD = 'app_update_admin_windows_latest_build';
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_MINIMUM_BUILD = 'app_update_admin_windows_minimum_build';
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_FORCE = 'app_update_admin_windows_force';
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_URL = 'app_update_admin_windows_url';
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_TITLE = 'app_update_admin_windows_title';
+    public const KEY_APP_UPDATE_ADMIN_WINDOWS_MESSAGE = 'app_update_admin_windows_message';
+
     /** JSON array of preset size labels for product add/edit dropdown. */
     public const KEY_PRODUCT_SIZE_OPTIONS = 'product_size_options';
 

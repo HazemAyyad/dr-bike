@@ -15,7 +15,7 @@ class AppVersionController extends Controller
         try {
             $data = $request->validate([
                 'app' => 'nullable|string|in:admin',
-                'platform' => 'required|string|in:android,ios',
+                'platform' => 'required|string|in:android,ios,windows',
                 'device_key' => 'required|string|max:120',
                 'device_name' => 'nullable|string|max:255',
                 'version' => 'nullable|string|max:40',

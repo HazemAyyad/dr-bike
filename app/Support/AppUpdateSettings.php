@@ -6,7 +6,7 @@ use App\Models\AppSetting;
 
 class AppUpdateSettings
 {
-    private const PLATFORMS = ['android', 'ios'];
+    private const PLATFORMS = ['android', 'ios', 'windows'];
 
     private const KEY_MAP = [
         'android' => [
@@ -29,6 +29,16 @@ class AppUpdateSettings
             'title' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_TITLE,
             'message' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_MESSAGE,
         ],
+        'windows' => [
+            'is_active' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_ACTIVE,
+            'latest_version' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_VERSION,
+            'latest_build' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_BUILD,
+            'minimum_build' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_MINIMUM_BUILD,
+            'force_update' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_FORCE,
+            'url' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_URL,
+            'title' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_TITLE,
+            'message' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_MESSAGE,
+        ],
     ];
 
     public static function all(): array
@@ -37,6 +47,7 @@ class AppUpdateSettings
             'admin' => [
                 'android' => self::platform('android'),
                 'ios' => self::platform('ios'),
+                'windows' => self::platform('windows'),
             ],
         ];
     }
