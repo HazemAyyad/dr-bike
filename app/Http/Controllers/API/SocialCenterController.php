@@ -29,6 +29,11 @@ class SocialCenterController extends Controller
                 + SocialMessage::query()->whereDate('created_at', today())->count(),
             'failed_messages_today' => WhatsAppMessage::query()->where('status', 'failed')->whereDate('created_at', today())->count()
                 + SocialMessage::query()->where('status', 'failed')->whereDate('created_at', today())->count(),
+            'channel_stats' => [
+                $this->channelStats('whatsapp'),
+                $this->channelStats('facebook'),
+                $this->channelStats('instagram'),
+            ],
         ], 'dashboard');
     }
 
@@ -40,12 +45,15 @@ class SocialCenterController extends Controller
         }
         $channel = $request->input('channel', 'all');
         $request->validate(['channel' => 'nullable|in:all,whatsapp,facebook,instagram']);
+        $quickFilter = $request->input('quick_filter', 'all');
+        $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked']);
         $search = trim((string) $request->input('search'));
 
         $items = collect();
         if (in_array($channel, ['all', 'whatsapp'], true)) {
             $query = WhatsAppConversation::query()->with('contact');
             if (filled($status)) $query->where('status', $status);
+            $this->applyQuickFilter($query, $quickFilter);
             if ($search !== '') {
                 $query->where(function ($q) use ($search) {
                     $q->where('phone', 'like', "%{$search}%")
@@ -60,6 +68,7 @@ class SocialCenterController extends Controller
             $query = SocialConversation::query()->with('contact');
             if ($channel !== 'all') $query->where('channel', $channel);
             if (filled($status)) $query->where('status', $status);
+            $this->applyQuickFilter($query, $quickFilter);
             if ($search !== '') {
                 $query->where(function ($q) use ($search) {
                     $q->where('last_message', 'like', "%{$search}%")
@@ -244,6 +253,8 @@ class SocialCenterController extends Controller
             'last_message' => $conversation->last_message,
             'last_message_at' => $conversation->last_message_at,
             'unread_count' => $conversation->unread_count,
+            'failed_count' => $conversation->messages()->where('status', 'failed')->count(),
+            'last_message_type' => $conversation->messages()->latest('created_at')->value('message_type'),
             'contact' => $conversation->contact,
         ];
     }
@@ -258,6 +269,8 @@ class SocialCenterController extends Controller
             'last_message' => $conversation->last_message,
             'last_message_at' => $conversation->last_message_at,
             'unread_count' => $conversation->unread_count,
+            'failed_count' => $conversation->messages()->where('status', 'failed')->count(),
+            'last_message_type' => $conversation->messages()->latest('created_at')->value('message_type'),
             'contact' => [
                 'id' => $conversation->contact?->id,
                 'name' => $conversation->contact?->name,
@@ -293,6 +306,43 @@ class SocialCenterController extends Controller
 
     private function ok($value, string $key) { return response()->json(['status' => 'success', $key => $value]); }
     private function perPage(Request $request, int $default = 20): int { return min(max((int) $request->input('per_page', $default), 1), 100); }
+
+    private function channelStats(string $channel): array
+    {
+        if ($channel === 'whatsapp') {
+            return [
+                'channel' => 'whatsapp',
+                'contacts' => DB::table('whatsapp_contacts')->count(),
+                'conversations' => WhatsAppConversation::query()->count(),
+                'open' => WhatsAppConversation::query()->where('status', 'open')->count(),
+                'unread' => WhatsAppConversation::query()->where('unread_count', '>', 0)->count(),
+                'messages_today' => WhatsAppMessage::query()->whereDate('created_at', today())->count(),
+                'failed_today' => WhatsAppMessage::query()->where('status', 'failed')->whereDate('created_at', today())->count(),
+            ];
+        }
+
+        return [
+            'channel' => $channel,
+            'contacts' => DB::table('social_contacts')->where('channel', $channel)->count(),
+            'conversations' => SocialConversation::query()->where('channel', $channel)->count(),
+            'open' => SocialConversation::query()->where('channel', $channel)->where('status', 'open')->count(),
+            'unread' => SocialConversation::query()->where('channel', $channel)->where('unread_count', '>', 0)->count(),
+            'messages_today' => SocialMessage::query()->where('channel', $channel)->whereDate('created_at', today())->count(),
+            'failed_today' => SocialMessage::query()->where('channel', $channel)->where('status', 'failed')->whereDate('created_at', today())->count(),
+        ];
+    }
+
+    private function applyQuickFilter($query, string $quickFilter): void
+    {
+        match ($quickFilter) {
+            'unread' => $query->where('unread_count', '>', 0),
+            'failed' => $query->whereHas('messages', fn ($messages) => $messages->where('status', 'failed')),
+            'linked' => $query->whereHas('contact', fn ($contact) => $contact
+                ->whereNotNull('customer_id')
+                ->orWhereNotNull('supplier_id')),
+            default => null,
+        };
+    }
 
     private function sendResult(string $channel, array $result)
     {

@@ -145,6 +145,12 @@ class WhatsAppSettingsController extends Controller
                 'identifier' => $whatsAppPhone,
                 'url' => $whatsAppPhone ? 'https://wa.me/'.$whatsAppPhone : null,
                 'configured' => filled(config('whatsapp.access_token')) && filled(config('whatsapp.phone_number_id')),
+                'health' => [
+                    'token' => filled(config('whatsapp.access_token')),
+                    'identity' => filled(config('whatsapp.phone_number_id')) && filled(config('whatsapp.business_account_id')),
+                    'webhook' => filled(config('whatsapp.verify_token')),
+                    'public_url' => filled(config('app.url')),
+                ],
                 'details' => [
                     'phone_number_id' => $this->mask(config('whatsapp.phone_number_id')),
                     'business_account_id' => $this->mask(config('whatsapp.business_account_id')),
@@ -157,6 +163,12 @@ class WhatsAppSettingsController extends Controller
                 'identifier' => config('meta_messaging.page_id'),
                 'url' => data_get($meta, 'link') ?: config('meta_messaging.page_url') ?: (config('meta_messaging.page_id') ? 'https://www.facebook.com/'.config('meta_messaging.page_id') : null),
                 'configured' => filled(config('meta_messaging.page_access_token')) && filled(config('meta_messaging.page_id')),
+                'health' => [
+                    'token' => filled(config('meta_messaging.page_access_token')),
+                    'identity' => filled(config('meta_messaging.page_id')),
+                    'webhook' => filled(config('meta_messaging.verify_token')),
+                    'profile' => filled(data_get($meta, 'id')),
+                ],
                 'details' => [
                     'page_id' => config('meta_messaging.page_id'),
                 ],
@@ -168,6 +180,12 @@ class WhatsAppSettingsController extends Controller
                 'identifier' => config('meta_messaging.instagram_business_account_id'),
                 'url' => $instagramUrl,
                 'configured' => filled(config('meta_messaging.page_access_token')) && filled(config('meta_messaging.instagram_business_account_id')),
+                'health' => [
+                    'token' => filled(config('meta_messaging.page_access_token')),
+                    'identity' => filled(config('meta_messaging.instagram_business_account_id')),
+                    'webhook' => filled(config('meta_messaging.verify_token')),
+                    'profile' => filled(data_get($instagram, 'id')),
+                ],
                 'details' => [
                     'instagram_business_account_id' => config('meta_messaging.instagram_business_account_id'),
                 ],
