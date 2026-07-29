@@ -7,8 +7,10 @@ use App\Models\SocialConversation;
 use App\Models\SocialMessage;
 use Carbon\Carbon;
 use Illuminate\Http\Client\Response;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 
 class MetaMessagingService
@@ -53,20 +55,7 @@ class MetaMessagingService
             $response = $this->client()->post($endpoint, $payload);
             $data = $this->responseArray($response);
             if (! $response->successful()) {
-                Log::warning('Meta messaging send failed', [
-                    'channel' => $conversation->channel,
-                    'conversation_id' => $conversation->id,
-                    'social_contact_id' => $conversation->social_contact_id,
-                    'sender_id' => $this->senderId($conversation->channel),
-                    'recipient_id' => $conversation->contact->external_id,
-                    'endpoint' => $endpoint,
-                    'status' => $response->status(),
-                    'error_message' => data_get($data, 'body.error.message'),
-                    'error_type' => data_get($data, 'body.error.type'),
-                    'error_code' => data_get($data, 'body.error.code'),
-                    'error_subcode' => data_get($data, 'body.error.error_subcode'),
-                    'fbtrace_id' => data_get($data, 'body.error.fbtrace_id') ?: $response->header('x-fb-trace-id'),
-                ]);
+                $this->logSendFailure($conversation, $endpoint, $data, $response);
             }
             $localMessage->update([
                 'meta_message_id' => data_get($data, 'body.message_id'),
@@ -79,6 +68,81 @@ class MetaMessagingService
             if ($response->successful()) {
                 $conversation->update([
                     'last_message' => $message,
+                    'last_message_at' => now(),
+                ]);
+                $conversation->contact->update(['last_message_at' => now()]);
+            }
+
+            return ['message' => $localMessage->fresh(), 'api_response' => $data];
+        } catch (\Throwable $e) {
+            $localMessage->update([
+                'status' => 'failed',
+                'meta_status' => 'failed',
+                'error_message' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    public function sendMedia(
+        SocialConversation $conversation,
+        UploadedFile $file,
+        ?string $caption = null,
+        ?int $adminId = null,
+        ?string $forcedType = null
+    ): array {
+        $this->validateConfig();
+
+        $type = $forcedType ?: $this->mediaType($file->getMimeType(), $file->getClientOriginalExtension());
+        if ($conversation->channel === 'instagram' && $type === 'file') {
+            throw new RuntimeException('إنستغرام لا يدعم إرسال المستندات من مركز التواصل. استخدم صورة أو فيديو أو رسالة صوتية.');
+        }
+
+        $url = $this->storePublicMedia($file);
+        $payload = [
+            'recipient' => ['id' => $conversation->contact->external_id],
+            'messaging_type' => 'RESPONSE',
+            'message' => [
+                'attachment' => [
+                    'type' => $type,
+                    'payload' => ['url' => $url],
+                ],
+            ],
+        ];
+
+        $localMessage = SocialMessage::query()->create([
+            'social_conversation_id' => $conversation->id,
+            'social_contact_id' => $conversation->social_contact_id,
+            'channel' => $conversation->channel,
+            'external_sender_id' => $this->senderId($conversation->channel),
+            'external_recipient_id' => $conversation->contact->external_id,
+            'direction' => 'outbound',
+            'message_type' => $type === 'file' ? 'document' : $type,
+            'body' => $caption ?: $file->getClientOriginalName(),
+            'media_url' => $url,
+            'status' => 'pending',
+            'sent_by' => $adminId,
+        ]);
+
+        try {
+            $endpoint = $this->sendEndpoint($conversation->channel);
+            $response = $this->client()->post($endpoint, $payload);
+            $data = $this->responseArray($response);
+            if (! $response->successful()) {
+                $this->logSendFailure($conversation, $endpoint, $data, $response);
+            }
+
+            $localMessage->update([
+                'meta_message_id' => data_get($data, 'body.message_id'),
+                'meta_status' => $response->successful() ? 'accepted' : 'failed',
+                'status' => $response->successful() ? 'sent' : 'failed',
+                'response_payload' => $data['body'],
+                'error_message' => $response->successful() ? null : (data_get($data, 'body.error.message') ?: 'Meta API request failed'),
+            ]);
+
+            if ($response->successful()) {
+                $conversation->update([
+                    'last_message' => $localMessage->body,
                     'last_message_at' => now(),
                 ]);
                 $conversation->contact->update(['last_message_at' => now()]);
@@ -267,6 +331,50 @@ class MetaMessagingService
     private function sendEndpoint(string $channel): string
     {
         return $this->endpoint(config('meta_messaging.page_id').'/messages');
+    }
+
+    private function mediaType(?string $mime, ?string $extension): string
+    {
+        $extension = strtolower((string) $extension);
+        return match (true) {
+            str_starts_with((string) $mime, 'image/') => 'image',
+            str_starts_with((string) $mime, 'audio/'), in_array($extension, ['m4a', 'mp3', 'ogg', 'wav'], true) => 'audio',
+            str_starts_with((string) $mime, 'video/'), in_array($extension, ['mp4', 'mov'], true) => 'video',
+            default => 'file',
+        };
+    }
+
+    private function storePublicMedia(UploadedFile $file): string
+    {
+        $directory = public_path('social-messages');
+        if (! is_dir($directory)) {
+            mkdir($directory, 0755, true);
+        }
+
+        $extension = $file->getClientOriginalExtension() ?: $file->guessExtension() ?: 'bin';
+        $filename = now()->format('YmdHis').'-'.Str::random(16).'.'.strtolower($extension);
+        $file->move($directory, $filename);
+
+        $base = rtrim((string) (config('meta_commerce.public_url') ?: config('app.url')), '/');
+        return $base.'/social-messages/'.$filename;
+    }
+
+    private function logSendFailure(SocialConversation $conversation, string $endpoint, array $data, Response $response): void
+    {
+        Log::warning('Meta messaging send failed', [
+            'channel' => $conversation->channel,
+            'conversation_id' => $conversation->id,
+            'social_contact_id' => $conversation->social_contact_id,
+            'sender_id' => $this->senderId($conversation->channel),
+            'recipient_id' => $conversation->contact->external_id,
+            'endpoint' => $endpoint,
+            'status' => $response->status(),
+            'error_message' => data_get($data, 'body.error.message'),
+            'error_type' => data_get($data, 'body.error.type'),
+            'error_code' => data_get($data, 'body.error.code'),
+            'error_subcode' => data_get($data, 'body.error.error_subcode'),
+            'fbtrace_id' => data_get($data, 'body.error.fbtrace_id') ?: $response->header('x-fb-trace-id'),
+        ]);
     }
 
     private function responseArray(Response $response): array

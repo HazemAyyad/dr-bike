@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Product;
 use App\Models\SocialConversation;
 use App\Models\SocialMessage;
 use App\Models\WhatsAppConversation;
@@ -151,17 +152,81 @@ class SocialCenterController extends Controller
                 $result = $meta->sendText($conversation, $data['message'], $request->user()->id);
             }
 
-            $failed = data_get($result, 'message.status') === 'failed';
-            if ($failed) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => $this->outboundFailureMessage($channel, (string) data_get($result, 'message.error_message')),
-                    'failed_message_id' => data_get($result, 'message.id'),
-                    'api_response' => data_get($result, 'api_response'),
-                ], 422);
+            return $this->sendResult($channel, $result);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function sendMediaToConversation(
+        Request $request,
+        string $channel,
+        int $id,
+        WhatsAppCloudApiService $whatsApp,
+        MetaMessagingService $meta
+    ) {
+        abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $data = $request->validate([
+            'file' => 'required|file|max:16384|mimes:jpg,jpeg,png,webp,gif,pdf,doc,docx,xls,xlsx,mp3,m4a,ogg,wav,mp4,mov',
+            'caption' => 'nullable|string|max:1024',
+            'media_kind' => 'nullable|in:image,audio,video,document',
+        ]);
+
+        try {
+            if ($channel === 'whatsapp') {
+                $conversation = WhatsAppConversation::query()->findOrFail($id);
+                $this->ensureCustomerServiceWindow($conversation);
+                $result = $whatsApp->sendMedia(
+                    $conversation->phone,
+                    $data['file'],
+                    $data['caption'] ?? null,
+                    $request->user()->id,
+                    $data['media_kind'] ?? null
+                );
+            } else {
+                $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
+                $this->ensureCustomerServiceWindow($conversation);
+                $result = $meta->sendMedia(
+                    $conversation,
+                    $data['file'],
+                    $data['caption'] ?? null,
+                    $request->user()->id,
+                    $data['media_kind'] ?? null
+                );
             }
 
-            return response()->json(['status' => 'success'] + $result);
+            return $this->sendResult($channel, $result);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function sendProductsToConversation(
+        Request $request,
+        string $channel,
+        int $id,
+        WhatsAppCloudApiService $whatsApp,
+        MetaMessagingService $meta
+    ) {
+        abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $data = $request->validate([
+            'product_ids' => 'required|array|min:1|max:30',
+            'product_ids.*' => 'required|string',
+        ]);
+
+        if ($channel === 'whatsapp') {
+            return app(WhatsAppController::class)->sendProducts($request, $id, $whatsApp);
+        }
+
+        try {
+            $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
+            $this->ensureCustomerServiceWindow($conversation);
+            $result = $meta->sendText($conversation, $this->socialProductsMessage($data['product_ids']), $request->user()->id);
+            return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
         } catch (\Throwable $e) {
@@ -228,6 +293,48 @@ class SocialCenterController extends Controller
 
     private function ok($value, string $key) { return response()->json(['status' => 'success', $key => $value]); }
     private function perPage(Request $request, int $default = 20): int { return min(max((int) $request->input('per_page', $default), 1), 100); }
+
+    private function sendResult(string $channel, array $result)
+    {
+        $failed = data_get($result, 'message.status') === 'failed';
+        if ($failed) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $this->outboundFailureMessage($channel, (string) data_get($result, 'message.error_message')),
+                'failed_message_id' => data_get($result, 'message.id'),
+                'api_response' => data_get($result, 'api_response'),
+            ], 422);
+        }
+
+        return response()->json(['status' => 'success'] + $result);
+    }
+
+    private function socialProductsMessage(array $productIds): string
+    {
+        $products = Product::query()
+            ->whereIn('id', $productIds)
+            ->get();
+        abort_if($products->count() !== count(array_unique($productIds)), 422, 'Some products were not found.');
+
+        $order = array_flip(array_map('strval', $productIds));
+        $base = rtrim((string) (config('meta_commerce.public_url') ?: config('app.url')), '/');
+        $lines = ['منتجات دكتور بايك:'];
+
+        foreach ($products->sortBy(fn (Product $product) => $order[(string) $product->id] ?? PHP_INT_MAX) as $product) {
+            $name = $product->nameAr ?: $product->nameEng ?: 'منتج';
+            $line = '- '.$name;
+            if ($product->normailPrice !== null) {
+                $line .= ' | '.$product->normailPrice.' ₪';
+            }
+            if ($product->product_code) {
+                $line .= ' | كود: '.$product->product_code;
+            }
+            $line .= "\n".$base.'/product/'.$product->id;
+            $lines[] = $line;
+        }
+
+        return implode("\n\n", $lines);
+    }
 
     private function outboundFailureMessage(string $channel, string $error): string
     {
