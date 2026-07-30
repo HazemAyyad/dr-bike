@@ -41,10 +41,8 @@ class DashboardSectionBadges
         }
 
         $salesQuery = SuspendedInstantSale::query()
-            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED);
-        if ($user->type !== 'admin') {
-            $salesQuery->where('created_by_user_id', $user->id);
-        }
+            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED)
+            ->where('created_by_user_id', $user->id);
 
         return [
             'technical_support' => (int) $supportQuery->count(),

@@ -26,8 +26,7 @@ class SuspendedInstantSaleService
 
     public function canView(User $user, SuspendedInstantSale $suspended): bool
     {
-        return $this->isAdmin($user)
-            || (int) $suspended->created_by_user_id === (int) $user->id;
+        return (int) $suspended->created_by_user_id === (int) $user->id;
     }
 
     public function canMutate(User $user, SuspendedInstantSale $suspended): bool
@@ -234,11 +233,7 @@ class SuspendedInstantSaleService
             ->orderByDesc('suspended_at')
             ->orderByDesc('id');
 
-        if (! $this->isAdmin($user)) {
-            $query->where('created_by_user_id', $user->id);
-        } elseif (! empty($filters['created_by_user_id'])) {
-            $query->where('created_by_user_id', (int) $filters['created_by_user_id']);
-        }
+        $query->where('created_by_user_id', $user->id);
 
         if (! empty($filters['search'])) {
             $term = '%'.trim((string) $filters['search']).'%';
@@ -552,9 +547,7 @@ class SuspendedInstantSaleService
         $query = SuspendedInstantSale::query()
             ->where('status', SuspendedInstantSale::STATUS_SUSPENDED);
 
-        if (! $this->isAdmin($user)) {
-            $query->where('created_by_user_id', $user->id);
-        }
+        $query->where('created_by_user_id', $user->id);
 
         return $query->count();
     }
