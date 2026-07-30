@@ -33,6 +33,9 @@ Route::get('/', function () {
     return view('welcome');
 });
 
+Route::view('/privacy-policy', 'legal.privacy-policy')->name('privacy-policy');
+Route::view('/data-deletion', 'legal.data-deletion')->name('data-deletion');
+
 /** ZKTeco ADMS / Push (no CSRF — called by fingerprint device) */
 Route::match(['GET', 'POST'], '/iclock/cdata', [FingerprintPushController::class, 'iclockCdata']);
 Route::match(['GET', 'POST'], '/iclock/getrequest', [FingerprintPushController::class, 'iclockGetRequest']);
