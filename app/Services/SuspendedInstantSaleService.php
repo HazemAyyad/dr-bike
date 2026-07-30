@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class SuspendedInstantSaleService
@@ -24,9 +25,30 @@ class SuspendedInstantSaleService
         return $user->type === 'admin';
     }
 
+    public function canViewAllSuspendedSales(User $user): bool
+    {
+        if ($this->isAdmin($user)) {
+            return true;
+        }
+
+        if (! $user->employee) {
+            return false;
+        }
+
+        return $user->employee->permissions()
+            ->whereHas('permission', function ($query) {
+                $query->whereIn('name', ['المبيعات', 'Sales', 'Sales Section']);
+                if (Schema::hasColumn('permissions', 'name_en')) {
+                    $query->orWhereIn('name_en', ['Sales', 'Sales Section']);
+                }
+            })
+            ->exists();
+    }
+
     public function canView(User $user, SuspendedInstantSale $suspended): bool
     {
-        return (int) $suspended->created_by_user_id === (int) $user->id;
+        return $this->canViewAllSuspendedSales($user)
+            || (int) $suspended->created_by_user_id === (int) $user->id;
     }
 
     public function canMutate(User $user, SuspendedInstantSale $suspended): bool
@@ -233,7 +255,11 @@ class SuspendedInstantSaleService
             ->orderByDesc('suspended_at')
             ->orderByDesc('id');
 
-        $query->where('created_by_user_id', $user->id);
+        if (! $this->canViewAllSuspendedSales($user)) {
+            $query->where('created_by_user_id', $user->id);
+        } elseif (! empty($filters['created_by_user_id'])) {
+            $query->where('created_by_user_id', (int) $filters['created_by_user_id']);
+        }
 
         if (! empty($filters['search'])) {
             $term = '%'.trim((string) $filters['search']).'%';
@@ -547,7 +573,9 @@ class SuspendedInstantSaleService
         $query = SuspendedInstantSale::query()
             ->where('status', SuspendedInstantSale::STATUS_SUSPENDED);
 
-        $query->where('created_by_user_id', $user->id);
+        if (! $this->canViewAllSuspendedSales($user)) {
+            $query->where('created_by_user_id', $user->id);
+        }
 
         return $query->count();
     }

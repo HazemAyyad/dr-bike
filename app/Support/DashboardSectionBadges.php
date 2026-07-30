@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Services\AttendanceSalaryService;
 use App\Services\EmployeeTasks\EmployeeTaskListService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class DashboardSectionBadges
 {
@@ -41,8 +42,10 @@ class DashboardSectionBadges
         }
 
         $salesQuery = SuspendedInstantSale::query()
-            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED)
-            ->where('created_by_user_id', $user->id);
+            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED);
+        if (! self::canViewAllSuspendedSales($user)) {
+            $salesQuery->where('created_by_user_id', $user->id);
+        }
 
         return [
             'technical_support' => (int) $supportQuery->count(),
@@ -80,6 +83,26 @@ class DashboardSectionBadges
                     && ! EmployeeAttendanceToday::hasCheckedInToday((int) $employee->id);
             })
             ->count();
+    }
+
+    private static function canViewAllSuspendedSales(User $user): bool
+    {
+        if ($user->type === 'admin') {
+            return true;
+        }
+
+        if (! $user->employee) {
+            return false;
+        }
+
+        return $user->employee->permissions()
+            ->whereHas('permission', function ($query) {
+                $query->whereIn('name', ['المبيعات', 'Sales', 'Sales Section']);
+                if (Schema::hasColumn('permissions', 'name_en')) {
+                    $query->orWhereIn('name_en', ['Sales', 'Sales Section']);
+                }
+            })
+            ->exists();
     }
 
     private static function employeeTasksTodayPending(User $user): int
