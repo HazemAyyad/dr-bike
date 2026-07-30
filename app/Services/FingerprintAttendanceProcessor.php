@@ -11,7 +11,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeDeviceMapping;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
-use App\Support\AttendanceSettings;
+use App\Support\AttendanceWorkDateResolver;
 use App\Services\EmployeeAttendanceOvertimeService;
 use App\Support\FingerprintAttendanceLogFilter;
 use Carbon\Carbon;
@@ -63,7 +63,7 @@ class FingerprintAttendanceProcessor
             }
 
             $scanAt = Carbon::parse($rawLog->scan_time);
-            $workDate = $scanAt->toDateString();
+            $workDate = AttendanceWorkDateResolver::defaultWorkDate($scanAt);
 
             if ($this->isDuplicateScan($employee, $scanAt)) {
                 $this->mark($rawLog, 'ignored', 'deduplicated');
@@ -186,14 +186,9 @@ class FingerprintAttendanceProcessor
     ): ?string {
         $employeeId = (int) $employee->id;
 
-        // If device reports an explicit check-out just after midnight (grace window),
-        // attribute it to yesterday if yesterday has an open "in" scan.
-        $dirFromDevice = FingerprintAttendanceLogFilter::directionFromDeviceStatus($rawLog->status);
-        if ($dirFromDevice === 'out' && $this->isAfterMidnightGraceCheckout($scanAt)) {
-            $prevWorkDate = $scanAt->copy()->subDay()->toDateString();
-            if ($this->hasOpenShift($employeeId, $prevWorkDate)) {
-                $workDate = $prevWorkDate;
-            }
+        // After midnight and before 05:00, a scan may still be the check-out for yesterday.
+        if (AttendanceWorkDateResolver::isBeforeCheckoutCutoff($scanAt)) {
+            $workDate = AttendanceWorkDateResolver::workDateForPossibleCheckout($employeeId, $scanAt);
         }
 
         $scans = EmployeeAttendanceScan::query()
@@ -207,9 +202,20 @@ class FingerprintAttendanceProcessor
             return 'invalid_direction';
         }
 
+        $isReverseCheckout = false;
+
+        if (
+            $direction === 'in'
+            && $workDate !== AttendanceWorkDateResolver::defaultWorkDate($scanAt)
+            && $scans->isNotEmpty()
+            && $scans->last()?->direction === 'in'
+        ) {
+            $direction = 'out';
+            $isReverseCheckout = true;
+        }
+
         // Reverse checkout: if the device/user records an "IN" scan near the scheduled end time while still inside,
         // treat it as an "OUT" scan (common mistake on some devices).
-        $isReverseCheckout = false;
         if (
             $direction === 'in'
             && $scans->isNotEmpty()
@@ -319,24 +325,6 @@ class FingerprintAttendanceProcessor
         return abs($scheduledEnd->diffInMinutes($scanAt, false)) <= $window;
     }
 
-    protected function isAfterMidnightGraceCheckout(Carbon $scanAt): bool
-    {
-        $h = (int) $scanAt->format('G'); // 0..23
-
-        return $h >= 0 && $h < AttendanceSettings::afterMidnightGraceHour();
-    }
-
-    protected function hasOpenShift(int $employeeId, string $workDate): bool
-    {
-        $last = EmployeeAttendanceScan::query()
-            ->where('employee_id', $employeeId)
-            ->whereDate('work_date', $workDate)
-            ->orderByDesc('id')
-            ->first();
-
-        return $last !== null && $last->direction === 'in';
-    }
-
     /**
      * Prefer ZKTeco device status (0=in, 1=out); fall back to alternating toggle when missing.
      *
@@ -373,6 +361,10 @@ class FingerprintAttendanceProcessor
 
         if ($direction === 'out' && $last && $last->direction === 'out') {
             return 'duplicate_checkout';
+        }
+
+        if ($direction === 'out' && ! $last) {
+            return 'must_check_in_first';
         }
 
         return null;

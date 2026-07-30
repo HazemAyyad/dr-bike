@@ -8,6 +8,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceScan;
 use App\Services\AttendanceSalaryService;
+use App\Support\AttendanceWorkDateResolver;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -134,7 +135,8 @@ class AttendanceController extends Controller
             $user = $request->user();
             $employee_id = $user->employee->id;
             $employee = EmployeeDetail::findOrFail($employee_id);
-            $today = now()->toDateString();
+            $scanAt = now();
+            $today = AttendanceWorkDateResolver::workDateForPossibleCheckout((int) $employee_id, $scanAt);
             $salaryService = app(AttendanceSalaryService::class);
 
             $scans = EmployeeAttendanceScan::query()
@@ -154,14 +156,14 @@ class AttendanceController extends Controller
                 EmployeeAttendanceScan::create([
                     'employee_id' => $employee_id,
                     'work_date' => $today,
-                    'scanned_at' => now(),
+                    'scanned_at' => $scanAt,
                     'direction' => 'in',
                     'source' => 'qr',
-                    'server_received_at' => now(),
+                    'server_received_at' => $scanAt,
                 ]);
 
                 if (! $attendance->exists || $attendance->arrived_at === null) {
-                    $attendance->arrived_at = now()->toTimeString();
+                    $attendance->arrived_at = $scanAt->toTimeString();
                 }
                 $attendance->left_at = null;
                 $attendance->worked_minutes = EmployeeAttendanceScan::computeWorkedMinutes(
@@ -183,7 +185,7 @@ class AttendanceController extends Controller
                         $employee,
                         (int) $attendance->id,
                         'qr',
-                        now()->toIso8601String()
+                        $scanAt->toIso8601String()
                     );
                 } catch (\Throwable $e) {
                     \Illuminate\Support\Facades\Log::error('Admin notification (employee login): '.$e->getMessage());
@@ -220,15 +222,15 @@ class AttendanceController extends Controller
             }
 
             $lastIn = $scans->last();
-            $segmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes(now()));
+            $segmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes($scanAt));
 
             EmployeeAttendanceScan::create([
                 'employee_id' => $employee_id,
                 'work_date' => $today,
-                'scanned_at' => now(),
+                'scanned_at' => $scanAt,
                 'direction' => 'out',
                 'source' => 'qr',
-                'server_received_at' => now(),
+                'server_received_at' => $scanAt,
             ]);
 
             $allScans = EmployeeAttendanceScan::query()
@@ -239,7 +241,7 @@ class AttendanceController extends Controller
 
             $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
             $attendance->worked_minutes = $totalWorked;
-            $attendance->left_at = now()->toTimeString();
+            $attendance->left_at = $scanAt->toTimeString();
             $daily = $salaryService->calculateDailyOvertime($employee, (int) $totalWorked);
             $attendance->required_minutes = $daily['required_minutes'];
             $attendance->normal_minutes = $daily['normal_minutes'];
@@ -259,7 +261,7 @@ class AttendanceController extends Controller
 
             try {
                 $notifier = app(\App\Services\AdminNotificationService::class);
-                $logoutTime = now()->toIso8601String();
+                $logoutTime = $scanAt->toIso8601String();
                 $notifier->notifyEmployeeLogout(
                     $employee,
                     (int) $attendance->id,
