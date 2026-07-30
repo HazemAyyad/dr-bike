@@ -57,9 +57,20 @@ class MetaMessagingWebhookController extends Controller
 
             foreach ((array) data_get($request->all(), 'entry', []) as $entry) {
                 foreach ((array) data_get($entry, 'messaging', []) as $event) {
-                    $message = $service->saveIncoming($channel, $event);
-                    if ($message) {
-                        $notificationService->notify($message);
+                    try {
+                        $message = $service->saveIncoming($channel, $event);
+                        if ($message) {
+                            $notificationService->notify($message);
+                        }
+                    } catch (\Throwable $e) {
+                        Log::warning('Meta messaging webhook event failed', [
+                            'channel' => $channel,
+                            'sender_id' => data_get($event, 'sender.id'),
+                            'recipient_id' => data_get($event, 'recipient.id'),
+                            'message_id' => data_get($event, 'message.mid'),
+                            'event_keys' => array_keys((array) $event),
+                            'error' => $e->getMessage(),
+                        ]);
                     }
                 }
             }

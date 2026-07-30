@@ -196,7 +196,7 @@ class MetaMessagingService
             $fields = $channel === 'instagram'
                 ? 'name,username,profile_pic'
                 : 'first_name,last_name,profile_pic';
-            $response = $this->client()->get($this->endpoint($externalId), ['fields' => $fields]);
+            $response = $this->profileClient()->get($this->endpoint($externalId), ['fields' => $fields]);
             if (! $response->successful()) {
                 Log::warning('Meta messaging profile lookup failed', [
                     'channel' => $channel,
@@ -225,11 +225,23 @@ class MetaMessagingService
     {
         $message = data_get($event, 'message');
         if (! is_array($message)) {
+            Log::info('Meta messaging webhook event ignored without message', [
+                'channel' => $channel,
+                'sender_id' => data_get($event, 'sender.id'),
+                'recipient_id' => data_get($event, 'recipient.id'),
+                'event_keys' => array_keys($event),
+            ]);
             return null;
         }
 
         $metaId = data_get($message, 'mid');
         if (! $metaId || SocialMessage::query()->where('meta_message_id', $metaId)->exists()) {
+            Log::info('Meta messaging webhook message ignored', [
+                'channel' => $channel,
+                'sender_id' => data_get($event, 'sender.id'),
+                'message_id' => $metaId,
+                'reason' => $metaId ? 'duplicate' : 'missing_mid',
+            ]);
             return null;
         }
 
@@ -317,6 +329,13 @@ class MetaMessagingService
             ->acceptJson()
             ->asJson()
             ->timeout(config('meta_messaging.timeout', 20));
+    }
+
+    private function profileClient()
+    {
+        return Http::withToken(config('meta_messaging.page_access_token'))
+            ->acceptJson()
+            ->timeout(min((int) config('meta_messaging.timeout', 20), 4));
     }
 
     private function endpoint(string $path): string
