@@ -146,6 +146,8 @@ class AdminUsersController extends Controller
                 'message' => __('messages.admin_not_found'),
             ], 200);
         } catch (\Throwable $e) {
+            report($e);
+
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),

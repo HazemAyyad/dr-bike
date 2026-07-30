@@ -6,6 +6,7 @@ use App\Models\AdminDeviceToken;
 use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\PersonalAccessToken;
 
 class UserSessionManager
@@ -94,9 +95,11 @@ class UserSessionManager
         $count = $user->tokens()->count();
         $user->tokens()->delete();
 
-        $user->forceFill(['fcm_token' => null])->save();
+        if (Schema::hasColumn('users', 'fcm_token')) {
+            $user->forceFill(['fcm_token' => null])->save();
+        }
 
-        if ($user->type === 'admin') {
+        if ($user->type === 'admin' && Schema::hasTable('admin_device_tokens')) {
             AdminDeviceToken::query()->where('user_id', $user->id)->delete();
         }
 
