@@ -12,5 +12,7 @@ return [
     'instagram_profile_url' => env('INSTAGRAM_PROFILE_URL'),
     'page_access_token' => env('META_PAGE_ACCESS_TOKEN'),
     'verify_token' => env('META_WEBHOOK_VERIFY_TOKEN', env('WHATSAPP_VERIFY_TOKEN')),
+    'app_mode' => env('META_APP_MODE', env('META_APP_PUBLISHED', false) ? 'live' : 'development'),
+    'app_published' => filter_var(env('META_APP_PUBLISHED', false), FILTER_VALIDATE_BOOLEAN),
     'timeout' => (int) env('META_HTTP_TIMEOUT', env('WHATSAPP_HTTP_TIMEOUT', 20)),
 ];

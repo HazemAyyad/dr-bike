@@ -37,6 +37,7 @@ class WhatsAppSettingsController extends Controller
                 'business_account_id' => $this->mask(config('whatsapp.business_account_id')),
             ],
             'channels' => $this->channels($service),
+            'meta_app_status' => $this->metaAppStatus(),
             'can_manage_employees' => $request->user()?->type === 'admin',
             'employees' => $request->user()?->type === 'admin'
                 ? $this->employeesWithAccess()
@@ -221,5 +222,19 @@ class WhatsAppSettingsController extends Controller
     {
         if (! $value) return null;
         return strlen($value) <= 6 ? str_repeat('*', strlen($value)) : substr($value, 0, 3).str_repeat('*', max(strlen($value) - 6, 3)).substr($value, -3);
+    }
+
+    private function metaAppStatus(): array
+    {
+        $published = (bool) config('meta_messaging.app_published', false);
+        $mode = (string) config('meta_messaging.app_mode', $published ? 'live' : 'development');
+
+        return [
+            'published' => $published,
+            'mode' => $mode,
+            'message' => $published
+                ? 'تطبيق Meta منشور ويستقبل رسائل الحسابات الحقيقية حسب الصلاحيات.'
+                : 'تطبيق Meta غير منشور. الرسائل الحقيقية قد تصل فقط من admins/developers/testers إلى أن يتم نشر التطبيق.',
+        ];
     }
 }

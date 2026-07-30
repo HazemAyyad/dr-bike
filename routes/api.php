@@ -1007,6 +1007,16 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section',
         ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
         ->whereNumber('id')
         ->middleware('throttle:10,1');
+    Route::post('/social/conversations/{channel}/{id}/messages/{messageId}/resend', [SocialCenterController::class, 'resendMessage'])
+        ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
+        ->whereNumber(['id', 'messageId'])
+        ->middleware('throttle:20,1');
+    Route::post('/social/conversations/{channel}/{id}/assign', [SocialCenterController::class, 'assignConversation'])
+        ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
+        ->whereNumber('id');
+    Route::post('/social/conversations/{channel}/{id}/tags', [SocialCenterController::class, 'updateTags'])
+        ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
+        ->whereNumber('id');
 
     // WhatsApp-specific tools kept for QR, templates, product sharing, media, and compatibility.
     Route::get('/whatsapp/dashboard', [WhatsAppController::class, 'dashboard']);

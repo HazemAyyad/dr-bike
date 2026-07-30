@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\EmployeeDetail;
+use App\Models\Permission;
 use App\Models\Product;
 use App\Models\SocialConversation;
 use App\Models\SocialMessage;
@@ -46,7 +48,7 @@ class SocialCenterController extends Controller
         $channel = $request->input('channel', 'all');
         $request->validate(['channel' => 'nullable|in:all,whatsapp,facebook,instagram']);
         $quickFilter = $request->input('quick_filter', 'all');
-        $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked']);
+        $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked,needs_reply']);
         $search = trim((string) $request->input('search'));
 
         $items = collect();
@@ -137,6 +139,110 @@ class SocialCenterController extends Controller
                 'last_inbound_at' => $lastInboundAt,
                 'expires_at' => $windowExpiresAt?->toIso8601String(),
             ],
+            'assignees' => $this->messageAssignees(),
+            'available_tags' => $this->availableTags(),
+            'meta_app_status' => $this->metaAppStatus(),
+        ]);
+    }
+
+    public function resendMessage(
+        Request $request,
+        string $channel,
+        int $id,
+        int $messageId,
+        WhatsAppCloudApiService $whatsApp,
+        MetaMessagingService $meta
+    ) {
+        abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+
+        try {
+            if ($channel === 'whatsapp') {
+                $conversation = WhatsAppConversation::query()->findOrFail($id);
+                $message = WhatsAppMessage::query()
+                    ->where('whatsapp_conversation_id', $conversation->id)
+                    ->where('id', $messageId)
+                    ->firstOrFail();
+                $this->ensureResendableText($message->direction, $message->status, $message->message_type, $message->body);
+                $this->ensureCustomerServiceWindow($conversation);
+                $result = $whatsApp->sendText($conversation->phone, (string) $message->body, $request->user()->id);
+            } else {
+                $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
+                $message = SocialMessage::query()
+                    ->where('social_conversation_id', $conversation->id)
+                    ->where('id', $messageId)
+                    ->firstOrFail();
+                $this->ensureResendableText($message->direction, $message->status, $message->message_type, $message->body);
+                $this->ensureCustomerServiceWindow($conversation);
+                $result = $meta->sendText($conversation, (string) $message->body, $request->user()->id);
+            }
+
+            return $this->sendResult($channel, $result);
+        } catch (ValidationException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function assignConversation(Request $request, string $channel, int $id)
+    {
+        abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $data = $request->validate([
+            'employee_id' => 'nullable|integer|exists:employee_details,id',
+        ]);
+
+        $conversation = $this->conversationForChannel($channel, $id);
+        $employee = filled($data['employee_id'] ?? null)
+            ? EmployeeDetail::query()->with('user:id,name')->findOrFail($data['employee_id'])
+            : null;
+
+        $conversation->update(['assigned_admin_id' => $employee?->user_id]);
+
+        return response()->json([
+            'status' => 'success',
+            'conversation' => $this->serializeConversationForChannel($channel, $conversation->fresh(['contact', 'assignedAdmin'])),
+        ]);
+    }
+
+    public function updateTags(Request $request, string $channel, int $id)
+    {
+        abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $data = $request->validate([
+            'tags' => 'present|array|max:10',
+            'tags.*' => 'nullable|string|max:40',
+        ]);
+
+        $conversation = $this->conversationForChannel($channel, $id);
+        $tagIds = collect($data['tags'])
+            ->map(fn ($tag) => trim((string) $tag))
+            ->filter()
+            ->unique(fn ($tag) => mb_strtolower($tag))
+            ->take(10)
+            ->map(fn ($tag) => $this->findOrCreateTagId($tag))
+            ->filter()
+            ->values();
+
+        DB::transaction(function () use ($channel, $conversation, $tagIds) {
+            DB::table('conversation_taggables')
+                ->where('channel', $channel)
+                ->where('conversation_id', $conversation->id)
+                ->delete();
+
+            foreach ($tagIds as $tagId) {
+                DB::table('conversation_taggables')->insert([
+                    'tag_id' => $tagId,
+                    'channel' => $channel,
+                    'conversation_id' => $conversation->id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'conversation' => $this->serializeConversationForChannel($channel, $conversation->fresh(['contact', 'assignedAdmin'])),
+            'available_tags' => $this->availableTags(),
         ]);
     }
 
@@ -255,6 +361,9 @@ class SocialCenterController extends Controller
             'unread_count' => $conversation->unread_count,
             'failed_count' => $conversation->messages()->where('status', 'failed')->count(),
             'last_message_type' => $conversation->messages()->latest('created_at')->value('message_type'),
+            'needs_reply' => $this->needsReply($conversation, 'whatsapp'),
+            'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
+            'tags' => $this->conversationTags('whatsapp', $conversation->id),
             'contact' => $conversation->contact,
         ];
     }
@@ -271,6 +380,9 @@ class SocialCenterController extends Controller
             'unread_count' => $conversation->unread_count,
             'failed_count' => $conversation->messages()->where('status', 'failed')->count(),
             'last_message_type' => $conversation->messages()->latest('created_at')->value('message_type'),
+            'needs_reply' => $this->needsReply($conversation, $conversation->channel),
+            'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
+            'tags' => $this->conversationTags($conversation->channel, $conversation->id),
             'contact' => [
                 'id' => $conversation->contact?->id,
                 'name' => $conversation->contact?->name,
@@ -279,6 +391,7 @@ class SocialCenterController extends Controller
                 'profile_picture_url' => $conversation->contact?->profile_picture_url,
                 'customer_id' => $conversation->contact?->customer_id,
                 'supplier_id' => $conversation->contact?->supplier_id,
+                'raw_profile' => $conversation->contact?->raw_profile,
             ],
         ];
     }
@@ -297,9 +410,13 @@ class SocialCenterController extends Controller
             'message_type' => $message->message_type,
             'body' => $message->body,
             'media_url' => $message->media_url,
+            'meta_message_id' => $message->meta_message_id,
+            'meta_status' => $message->meta_status,
             'status' => $message->status,
             'error_message' => $message->error_message,
             'sender' => $message->sender,
+            'raw_payload' => $message->raw_payload,
+            'response_payload' => $message->response_payload,
             'created_at' => $message->created_at,
         ];
     }
@@ -340,8 +457,22 @@ class SocialCenterController extends Controller
             'linked' => $query->whereHas('contact', fn ($contact) => $contact
                 ->whereNotNull('customer_id')
                 ->orWhereNotNull('supplier_id')),
+            'needs_reply' => $this->applyNeedsReplyFilter($query),
             default => null,
         };
+    }
+
+    private function applyNeedsReplyFilter($query): void
+    {
+        $model = $query->getModel();
+        $conversationTable = $model->getTable();
+        $messageTable = $model instanceof WhatsAppConversation ? 'whatsapp_messages' : 'social_messages';
+        $conversationKey = $model instanceof WhatsAppConversation ? 'whatsapp_conversation_id' : 'social_conversation_id';
+
+        $query->whereRaw(
+            "(SELECT MAX(created_at) FROM {$messageTable} WHERE {$messageTable}.{$conversationKey} = {$conversationTable}.id AND direction = ?) > COALESCE((SELECT MAX(created_at) FROM {$messageTable} WHERE {$messageTable}.{$conversationKey} = {$conversationTable}.id AND direction = ?), '1000-01-01')",
+            ['inbound', 'outbound']
+        );
     }
 
     private function sendResult(string $channel, array $result)
@@ -414,5 +545,133 @@ class SocialCenterController extends Controller
                 'conversation' => 'انتهت نافذة خدمة العملاء (24 ساعة). يجب أن يرسل الزبون رسالة جديدة.',
             ]);
         }
+    }
+
+    private function ensureResendableText(string $direction, string $status, string $type, ?string $body): void
+    {
+        if ($direction !== 'outbound' || $status !== 'failed') {
+            throw ValidationException::withMessages(['message' => 'إعادة الإرسال متاحة فقط للرسائل الصادرة الفاشلة.']);
+        }
+        if ($type !== 'text' || blank($body)) {
+            throw ValidationException::withMessages(['message' => 'إعادة الإرسال حالياً متاحة للرسائل النصية فقط.']);
+        }
+    }
+
+    private function conversationForChannel(string $channel, int $id)
+    {
+        if ($channel === 'whatsapp') {
+            return WhatsAppConversation::query()->with(['contact', 'assignedAdmin'])->findOrFail($id);
+        }
+
+        return SocialConversation::query()->with(['contact', 'assignedAdmin'])->where('channel', $channel)->findOrFail($id);
+    }
+
+    private function serializeConversationForChannel(string $channel, $conversation): array
+    {
+        return $channel === 'whatsapp'
+            ? $this->serializeWhatsAppConversation($conversation)
+            : $this->serializeSocialConversation($conversation);
+    }
+
+    private function needsReply($conversation, string $channel): bool
+    {
+        $lastInbound = $conversation->messages()->where('direction', 'inbound')->max('created_at');
+        if (! $lastInbound) return false;
+        $lastOutbound = $conversation->messages()->where('direction', 'outbound')->max('created_at');
+        return ! $lastOutbound || \Carbon\Carbon::parse($lastInbound)->gt(\Carbon\Carbon::parse($lastOutbound));
+    }
+
+    private function conversationTags(string $channel, int $conversationId): array
+    {
+        if (! DB::getSchemaBuilder()->hasTable('conversation_taggables')) {
+            return [];
+        }
+
+        return DB::table('conversation_taggables')
+            ->join('conversation_tags', 'conversation_tags.id', '=', 'conversation_taggables.tag_id')
+            ->where('conversation_taggables.channel', $channel)
+            ->where('conversation_taggables.conversation_id', $conversationId)
+            ->orderBy('conversation_tags.name')
+            ->get(['conversation_tags.id', 'conversation_tags.name', 'conversation_tags.color'])
+            ->map(fn ($tag) => ['id' => $tag->id, 'name' => $tag->name, 'color' => $tag->color])
+            ->all();
+    }
+
+    private function availableTags(): array
+    {
+        if (! DB::getSchemaBuilder()->hasTable('conversation_tags')) {
+            return [];
+        }
+
+        return DB::table('conversation_tags')
+            ->orderBy('name')
+            ->get(['id', 'name', 'color'])
+            ->map(fn ($tag) => ['id' => $tag->id, 'name' => $tag->name, 'color' => $tag->color])
+            ->all();
+    }
+
+    private function tagColor(string $name): string
+    {
+        $palette = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#64748b'];
+        return $palette[abs(crc32($name)) % count($palette)];
+    }
+
+    private function findOrCreateTagId(string $name): int
+    {
+        $existing = DB::table('conversation_tags')->where('name', $name)->value('id');
+        if ($existing) return (int) $existing;
+
+        return (int) DB::table('conversation_tags')->insertGetId([
+            'name' => $name,
+            'color' => $this->tagColor($name),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function assignedEmployee($user): ?array
+    {
+        if (! $user) return null;
+        $employee = EmployeeDetail::query()->where('user_id', $user->id)->first(['id', 'user_id', 'job_title']);
+        return [
+            'id' => $employee?->id,
+            'user_id' => $user->id,
+            'name' => $user->name,
+            'job_title' => $employee?->job_title,
+        ];
+    }
+
+    private function messageAssignees(): array
+    {
+        $permissionId = Permission::query()->where('name_en', 'Messages Section')->value('id');
+
+        return EmployeeDetail::query()
+            ->with('user:id,name,phone')
+            ->whereHas('user', fn ($query) => $query->where('type', 'employee'))
+            ->when($permissionId, fn ($query) => $query->whereHas('permissions', fn ($permission) => $permission->where('permission_id', $permissionId)))
+            ->orderBy('id')
+            ->get(['id', 'user_id', 'job_title'])
+            ->map(fn (EmployeeDetail $employee) => [
+                'id' => $employee->id,
+                'user_id' => $employee->user_id,
+                'name' => $employee->user?->name ?: 'موظف #'.$employee->id,
+                'phone' => $employee->user?->phone,
+                'job_title' => $employee->job_title,
+            ])
+            ->all();
+    }
+
+    private function metaAppStatus(): array
+    {
+        $published = (bool) config('meta_messaging.app_published', false);
+        $mode = (string) config('meta_messaging.app_mode', $published ? 'live' : 'development');
+
+        return [
+            'published' => $published,
+            'mode' => $mode,
+            'message' => $published
+                ? 'تطبيق Meta منشور ويستقبل رسائل الحسابات الحقيقية حسب الصلاحيات.'
+                : 'تطبيق Meta غير منشور. الرسائل الحقيقية قد تصل فقط من admins/developers/testers إلى أن يتم نشر التطبيق.',
+        ];
     }
 }
