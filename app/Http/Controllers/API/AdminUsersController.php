@@ -118,7 +118,12 @@ class AdminUsersController extends Controller
 
             if (! empty($data['password'])) {
                 $payload['password'] = Hash::make($data['password']);
-                $this->sessions->revokeAllSessions($user);
+                $currentToken = $request->user()?->currentAccessToken();
+                $exceptTokenId = (int) auth()->id() === (int) $user->id
+                    ? $currentToken?->id
+                    : null;
+
+                $this->sessions->revokeAllSessions($user, $exceptTokenId);
             }
 
             $user->update($payload);

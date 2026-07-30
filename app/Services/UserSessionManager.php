@@ -90,16 +90,21 @@ class UserSessionManager
         ];
     }
 
-    public function revokeAllSessions(User $user): int
+    public function revokeAllSessions(User $user, ?int $exceptTokenId = null): int
     {
-        $count = $user->tokens()->count();
-        $user->tokens()->delete();
+        $tokens = $user->tokens();
+        if ($exceptTokenId !== null) {
+            $tokens->whereKeyNot($exceptTokenId);
+        }
 
-        if (Schema::hasColumn('users', 'fcm_token')) {
+        $count = (clone $tokens)->count();
+        $tokens->delete();
+
+        if ($exceptTokenId === null && Schema::hasColumn('users', 'fcm_token')) {
             $user->forceFill(['fcm_token' => null])->save();
         }
 
-        if ($user->type === 'admin' && Schema::hasTable('admin_device_tokens')) {
+        if ($exceptTokenId === null && $user->type === 'admin' && Schema::hasTable('admin_device_tokens')) {
             AdminDeviceToken::query()->where('user_id', $user->id)->delete();
         }
 
