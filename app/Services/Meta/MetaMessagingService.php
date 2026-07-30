@@ -159,6 +159,74 @@ class MetaMessagingService
         }
     }
 
+    public function sendImageUrl(
+        SocialConversation $conversation,
+        string $url,
+        ?string $label = null,
+        ?int $adminId = null
+    ): array {
+        $this->validateConfig();
+
+        $payload = [
+            'recipient' => ['id' => $conversation->contact->external_id],
+            'messaging_type' => 'RESPONSE',
+            'message' => [
+                'attachment' => [
+                    'type' => 'image',
+                    'payload' => ['url' => $url],
+                ],
+            ],
+        ];
+
+        $localMessage = SocialMessage::query()->create([
+            'social_conversation_id' => $conversation->id,
+            'social_contact_id' => $conversation->social_contact_id,
+            'channel' => $conversation->channel,
+            'external_sender_id' => $this->senderId($conversation->channel),
+            'external_recipient_id' => $conversation->contact->external_id,
+            'direction' => 'outbound',
+            'message_type' => 'image',
+            'body' => $label ?: '[image]',
+            'media_url' => $url,
+            'status' => 'pending',
+            'sent_by' => $adminId,
+        ]);
+
+        try {
+            $endpoint = $this->sendEndpoint($conversation->channel);
+            $response = $this->client()->post($endpoint, $payload);
+            $data = $this->responseArray($response);
+            if (! $response->successful()) {
+                $this->logSendFailure($conversation, $endpoint, $data, $response);
+            }
+
+            $localMessage->update([
+                'meta_message_id' => data_get($data, 'body.message_id'),
+                'meta_status' => $response->successful() ? 'accepted' : 'failed',
+                'status' => $response->successful() ? 'sent' : 'failed',
+                'response_payload' => $data['body'],
+                'error_message' => $response->successful() ? null : (data_get($data, 'body.error.message') ?: 'Meta API request failed'),
+            ]);
+
+            if ($response->successful()) {
+                $conversation->update([
+                    'last_message' => $localMessage->body,
+                    'last_message_at' => now(),
+                ]);
+                $conversation->contact->update(['last_message_at' => now()]);
+            }
+
+            return ['message' => $localMessage->fresh(), 'api_response' => $data];
+        } catch (\Throwable $e) {
+            $localMessage->update([
+                'status' => 'failed',
+                'meta_status' => 'failed',
+                'error_message' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
     public function findOrCreateContact(string $channel, string $externalId, ?string $name = null, array $profile = []): SocialContact
     {
         $contact = SocialContact::query()->firstOrNew([

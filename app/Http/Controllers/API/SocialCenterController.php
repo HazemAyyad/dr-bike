@@ -340,7 +340,7 @@ class SocialCenterController extends Controller
         try {
             $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
             $this->ensureCustomerServiceWindow($conversation);
-            $result = $meta->sendText($conversation, $this->socialProductsMessage($data['product_ids']), $request->user()->id);
+            $result = $this->sendSocialProducts($meta, $conversation, $data['product_ids'], $request->user()->id);
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -492,29 +492,88 @@ class SocialCenterController extends Controller
 
     private function socialProductsMessage(array $productIds): string
     {
-        $products = Product::query()
-            ->whereIn('id', $productIds)
-            ->get();
+        $products = $this->socialProducts($productIds);
         abort_if($products->count() !== count(array_unique($productIds)), 422, 'Some products were not found.');
 
         $order = array_flip(array_map('strval', $productIds));
-        $base = rtrim((string) (config('meta_commerce.public_url') ?: config('app.url')), '/');
-        $lines = ['منتجات دكتور بايك:'];
+        $lines = $products->count() === 1
+            ? ['تفاصيل المنتج من دكتور بايك:']
+            : ['منتجات دكتور بايك:'];
 
         foreach ($products->sortBy(fn (Product $product) => $order[(string) $product->id] ?? PHP_INT_MAX) as $product) {
-            $name = $product->nameAr ?: $product->nameEng ?: 'منتج';
-            $line = '- '.$name;
-            if ($product->normailPrice !== null) {
-                $line .= ' | '.$product->normailPrice.' ₪';
-            }
-            if ($product->product_code) {
-                $line .= ' | كود: '.$product->product_code;
-            }
-            $line .= "\n".$base.'/product/'.$product->id;
-            $lines[] = $line;
+            $lines[] = $this->socialProductLine($product);
         }
 
         return implode("\n\n", $lines);
+    }
+
+    private function sendSocialProducts(MetaMessagingService $meta, SocialConversation $conversation, array $productIds, ?int $adminId): array
+    {
+        $products = $this->socialProducts($productIds);
+        abort_if($products->count() !== count(array_unique($productIds)), 422, 'Some products were not found.');
+
+        if ($products->count() === 1) {
+            $product = $products->first();
+            $imageUrl = $this->publicProductImageUrl($product);
+            if ($imageUrl) {
+                $imageResult = $meta->sendImageUrl(
+                    $conversation,
+                    $imageUrl,
+                    $product->nameAr ?: $product->nameEng ?: 'صورة منتج',
+                    $adminId
+                );
+                if (data_get($imageResult, 'message.status') === 'failed') {
+                    return $imageResult;
+                }
+            }
+        }
+
+        return $meta->sendText($conversation, $this->socialProductsMessage($productIds), $adminId);
+    }
+
+    private function socialProducts(array $productIds)
+    {
+        return Product::query()
+            ->with(['normalImages' => fn ($query) => $query->select('id', 'itemId', 'imageUrl')])
+            ->whereIn('id', $productIds)
+            ->get();
+    }
+
+    private function socialProductLine(Product $product): string
+    {
+        $name = $product->nameAr ?: $product->nameEng ?: 'منتج';
+        $lines = ['- '.$name];
+        if ($product->normailPrice !== null) {
+            $lines[] = 'السعر: '.$product->normailPrice.' ₪';
+        }
+        if ($product->product_code) {
+            $lines[] = 'الكود: '.$product->product_code;
+        }
+        if ($product->stock !== null) {
+            $lines[] = 'المتوفر: '.$product->stock;
+        }
+        if ($product->model) {
+            $lines[] = 'الموديل: '.$product->model;
+        }
+        $lines[] = 'الرابط: '.$this->productPublicUrl($product);
+
+        return implode("\n", $lines);
+    }
+
+    private function productPublicUrl(Product $product): string
+    {
+        return rtrim((string) (config('meta_commerce.public_url') ?: config('app.url')), '/').'/product/'.$product->id;
+    }
+
+    private function publicProductImageUrl(Product $product): ?string
+    {
+        $image = trim((string) $product->normalImages->first()?->imageUrl);
+        if ($image === '') return null;
+        if (str_starts_with($image, 'http://') || str_starts_with($image, 'https://')) {
+            return $image;
+        }
+
+        return rtrim((string) (config('meta_commerce.public_url') ?: config('app.url')), '/').'/'.ltrim($image, '/');
     }
 
     private function outboundFailureMessage(string $channel, string $error): string
