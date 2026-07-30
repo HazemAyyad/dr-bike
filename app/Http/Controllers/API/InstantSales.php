@@ -206,10 +206,17 @@ class InstantSales extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function resolvePaymentBoxForStorage(Request $request): array
+    private function resolvePaymentBoxForStorage(Request $request, bool $allowValueWithoutBox = false): array
     {
-        if (! $request->filled('payment_box_id')) {
-            return ['status' => 'active'];
+        $payload = ['status' => 'active'];
+        $hasPaymentBoxId = $request->filled('payment_box_id');
+
+        if ($request->has('payment_box_value') && ($hasPaymentBoxId || $allowValueWithoutBox)) {
+            $payload['payment_box_value'] = max(0, (float) $request->input('payment_box_value'));
+        }
+
+        if (! $hasPaymentBoxId) {
+            return $payload;
         }
 
         $box = Box::find($request->input('payment_box_id'));
@@ -218,17 +225,10 @@ class InstantSales extends Controller
             $name = (string) ($box->name ?? '');
         }
 
-        $payload = [
+        return array_merge($payload, [
             'payment_box_id' => (int) $request->input('payment_box_id'),
             'payment_box_name' => $name !== '' ? $name : null,
-            'status' => 'active',
-        ];
-
-        if ($request->has('payment_box_value')) {
-            $payload['payment_box_value'] = max(0, (float) $request->input('payment_box_value'));
-        }
-
-        return $payload;
+        ]);
     }
 
     /**
@@ -638,7 +638,7 @@ class InstantSales extends Controller
     /**
      * Reverse stock/box for an existing instant sale before replacing its lines.
      */
-    private function prepareInstantSaleReplacement(int $mainSaleId): void
+    private function prepareInstantSaleReplacement(int $mainSaleId, bool $reverseBox = true): void
     {
         $existing = InstantSale::query()
             ->whereNull('parent_id')
@@ -652,7 +652,9 @@ class InstantSales extends Controller
             ]);
         }
 
-        $this->reverseBoxForCancelledSale($existing);
+        if ($reverseBox) {
+            $this->reverseBoxForCancelledSale($existing);
+        }
 
         foreach ($this->stockLinesForSale($existing) as $line) {
             $this->restoreStockForSaleLine($line, force: true);
@@ -669,6 +671,96 @@ class InstantSales extends Controller
         }
 
         $existing->subProducts()->delete();
+    }
+
+    private function isClosedDailySessionSale(?InstantSale $sale): bool
+    {
+        if (! $sale || ! $sale->sales_daily_session_id) {
+            return false;
+        }
+
+        $session = $sale->relationLoaded('salesDailySession')
+            ? $sale->salesDailySession
+            : $sale->salesDailySession()->first();
+
+        return $session?->isClosed() ?? false;
+    }
+
+    private function closedDayEditMode(Request $request, ?InstantSale $existing): ?string
+    {
+        if (! $this->isClosedDailySessionSale($existing)) {
+            return null;
+        }
+
+        $mode = trim((string) $request->input('closed_day_edit_mode', ''));
+        if ($mode === '') {
+            throw ValidationException::withMessages([
+                'closed_day_edit_mode' => [
+                    'الفاتورة من صندوق مغلق. اختر نوع التعديل: تصحيح إداري أو تسوية مالية اليوم.',
+                ],
+            ]);
+        }
+
+        if (! in_array($mode, ['administrative_correction', 'today_financial_settlement'], true)) {
+            throw ValidationException::withMessages([
+                'closed_day_edit_mode' => ['نوع تعديل الفاتورة المغلقة غير صالح.'],
+            ]);
+        }
+
+        $reason = trim((string) $request->input('closed_day_edit_reason', ''));
+        if ($reason === '') {
+            throw ValidationException::withMessages([
+                'closed_day_edit_reason' => ['سبب تعديل فاتورة من صندوق مغلق مطلوب.'],
+            ]);
+        }
+
+        return $mode;
+    }
+
+    private function applyClosedDayPaymentDelta(
+        Request $request,
+        InstantSale $existing,
+        InstantSale $updated
+    ): void {
+        if (! $request->has('payment_box_value')) {
+            return;
+        }
+
+        $oldPaid = round((float) ($existing->payment_box_value ?? 0), 2);
+        $newPaid = round((float) ($updated->payment_box_value ?? 0), 2);
+        $delta = round($newPaid - $oldPaid, 2);
+
+        if (abs($delta) <= 0.0001) {
+            return;
+        }
+
+        $boxId = (int) $request->input('payment_box_id', 0);
+        if ($boxId <= 0) {
+            throw ValidationException::withMessages([
+                'payment_box_id' => ['حدد صندوق اليوم لتسجيل فرق الدفع.'],
+            ]);
+        }
+
+        $box = Box::lockForUpdate()->findOrFail($boxId);
+        app(SalesDailySessionService::class)->assertDailyBoxOwnedByUser($request->user(), $box);
+
+        $box->total = round((float) $box->total + $delta, 2);
+        $box->save();
+
+        BoxLogs::createBoxLog(
+            $box,
+            $delta >= 0
+                ? 'إضافة — تسوية دفع فاتورة مغلقة'
+                : 'سحب — تسوية دفع فاتورة مغلقة',
+            $delta >= 0 ? 'add' : 'minus',
+            abs($delta),
+            sprintf(
+                'تسوية مالية اليوم لفاتورة بيع فوري #%d — فرق الدفع: %s — السبب: %s',
+                $updated->id,
+                number_format($delta, 2, '.', ''),
+                trim((string) $request->input('closed_day_edit_reason', ''))
+            )
+        );
     }
 
     private function reverseBoxForCancelledSale(InstantSale $sale): void
@@ -914,11 +1006,15 @@ public function store(Request $request)
 
     try{
     $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
+    $existingReplaceSale = $replaceId > 0
+        ? InstantSale::query()
+            ->whereNull('parent_id')
+            ->with('salesDailySession')
+            ->findOrFail($replaceId)
+        : null;
     $saleKind = $this->resolveSaleKind($request);
     if ($replaceId > 0 && ! $request->has('sale_kind')) {
-        $existingKind = InstantSale::query()
-            ->whereKey($replaceId)
-            ->value('sale_kind');
+        $existingKind = $existingReplaceSale?->sale_kind;
         if ($existingKind === self::SALE_KIND_ADJUSTMENT) {
             $saleKind = self::SALE_KIND_ADJUSTMENT;
         }
@@ -971,8 +1067,14 @@ public function store(Request $request)
         'payment_box_name' => 'nullable|string|max:255',
         'payment_box_value' => 'nullable|numeric|min:0',
         'seller_id' => 'nullable|integer|exists:sellers,id',
+        'closed_day_edit_mode' => 'nullable|string|in:administrative_correction,today_financial_settlement',
+        'closed_day_edit_reason' => 'nullable|string|max:500',
 
     ]);
+
+        $closedDayEditMode = $this->closedDayEditMode($request, $existingReplaceSale);
+        $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
+        $isClosedDayFinancialSettlement = $closedDayEditMode === 'today_financial_settlement';
 
         $otherNames = [];
 
@@ -983,7 +1085,10 @@ public function store(Request $request)
             $projectId,
             $data['type'] ?? null
         );
-        $paymentBoxPayload = $this->resolvePaymentBoxForStorage($request);
+        $paymentBoxPayload = $this->resolvePaymentBoxForStorage(
+            $request,
+            $isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement
+        );
         if ($isAdjustmentSale) {
             $paymentBoxPayload = [
                 'payment_box_id' => null,
@@ -993,6 +1098,13 @@ public function store(Request $request)
             ];
         } else {
             $this->assertDailySalesPaymentBox($request, $paymentBoxPayload);
+        }
+        if (($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement) && $existingReplaceSale) {
+            $paymentBoxPayload['payment_box_id'] = $existingReplaceSale->payment_box_id;
+            $paymentBoxPayload['payment_box_name'] = $existingReplaceSale->payment_box_name;
+            if (! array_key_exists('payment_box_value', $paymentBoxPayload)) {
+                $paymentBoxPayload['payment_box_value'] = $existingReplaceSale->payment_box_value;
+            }
         }
         $additionalNotes = $this->normalizeInstantSaleNotes($request->input('additional_notes', []));
         $additionalNotesTotal = $this->instantSaleNotesTotal($additionalNotes);
@@ -1013,7 +1125,9 @@ public function store(Request $request)
                 $data,
                 $buyerPayload,
                 $paymentBoxPayload,
-                $dailySession
+                $dailySession,
+                $existingReplaceSale,
+                $closedDayEditMode
             );
         }
 
@@ -1075,7 +1189,10 @@ public function store(Request $request)
 
         if ($replaceId > 0) {
             DB::beginTransaction();
-            $this->prepareInstantSaleReplacement($replaceId);
+            $this->prepareInstantSaleReplacement(
+                $replaceId,
+                reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement)
+            );
             $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
         }
 
@@ -1153,9 +1270,15 @@ public function store(Request $request)
             );
         }
 
-        $this->linkPaymentBoxLogToInstantSale(
-            $mainInstantSale->fresh(['product', 'subProducts.product'])
-        );
+        if ($isClosedDayFinancialSettlement && $existingReplaceSale) {
+            $this->applyClosedDayPaymentDelta($request, $existingReplaceSale, $mainInstantSale->fresh());
+        }
+
+        if (! $isClosedDayAdministrativeCorrection && ! $isClosedDayFinancialSettlement) {
+            $this->linkPaymentBoxLogToInstantSale(
+                $mainInstantSale->fresh(['product', 'subProducts.product'])
+            );
+        }
 
         app(DebtLedgerService::class)->syncInstantSaleToLedger(
             $mainInstantSale->fresh(['product', 'offerPackage', 'paymentBox'])
@@ -1250,7 +1373,9 @@ public function store(Request $request)
             $isAdjustmentSale
                 ? ($replaceId > 0 ? 'تعديل فاتورة تعويض' : 'اضافة فاتورة تعويض')
                 : ($replaceId > 0 ? 'تعديل بيع فوري' : 'اضافة بيع فوري جديد'),
-        $logDescription,
+        $logDescription.($closedDayEditMode
+            ? ' — نوع تعديل فاتورة مغلقة: '.$closedDayEditMode.' — السبب: '.trim((string) $request->input('closed_day_edit_reason', ''))
+            : ''),
         'instant_sales');
 
         if ($replaceId <= 0 && ! $isAdjustmentSale) {
@@ -1333,15 +1458,22 @@ public function store(Request $request)
         array $data,
         array $buyerPayload,
         array $paymentBoxPayload,
-        \App\Models\SalesDailySession $dailySession
+        ?\App\Models\SalesDailySession $dailySession,
+        ?InstantSale $existingReplaceSale = null,
+        ?string $closedDayEditMode = null
     ) {
         $offerPackageService = app(OfferPackageService::class);
 
-        return DB::transaction(function () use ($request, $data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession) {
+        return DB::transaction(function () use ($request, $data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession, $existingReplaceSale, $closedDayEditMode) {
             $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
+            $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
+            $isClosedDayFinancialSettlement = $closedDayEditMode === 'today_financial_settlement';
 
             if ($replaceId > 0) {
-                $this->prepareInstantSaleReplacement($replaceId);
+                $this->prepareInstantSaleReplacement(
+                    $replaceId,
+                    reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement)
+                );
             }
 
             $package = OfferPackage::query()
@@ -1427,9 +1559,15 @@ public function store(Request $request)
                 );
             }
 
-            $this->linkPaymentBoxLogToInstantSale(
-                $mainInstantSale->fresh(['offerPackage', 'subProducts.product'])
-            );
+            if ($isClosedDayFinancialSettlement && $existingReplaceSale) {
+                $this->applyClosedDayPaymentDelta($request, $existingReplaceSale, $mainInstantSale->fresh());
+            }
+
+            if (! $isClosedDayAdministrativeCorrection && ! $isClosedDayFinancialSettlement) {
+                $this->linkPaymentBoxLogToInstantSale(
+                    $mainInstantSale->fresh(['offerPackage', 'subProducts.product'])
+                );
+            }
 
             app(DebtLedgerService::class)->syncInstantSaleToLedger(
                 $mainInstantSale->fresh(['product', 'offerPackage', 'paymentBox'])
@@ -1947,14 +2085,23 @@ public function edit(Request $request)
             'additional_notes.*.text' => 'nullable|string|max:500',
             'additional_notes.*.amount' => 'nullable|numeric|min:0',
             'payment_box_value' => 'nullable|numeric|min:0',
+            'payment_box_id' => 'nullable|integer|exists:boxes,id',
+            'closed_day_edit_mode' => 'nullable|string|in:administrative_correction,today_financial_settlement',
+            'closed_day_edit_reason' => 'nullable|string|max:500',
         ]);
 
             DB::transaction(function () use ($request, $data) {
                 $instantSale = InstantSale::query()
                     ->whereNull('parent_id')
-                    ->with(['product', 'subProducts.product'])
+                    ->with(['product', 'subProducts.product', 'salesDailySession'])
                     ->lockForUpdate()
                     ->findOrFail($request->instant_sale_id);
+                $existingSnapshot = $instantSale->replicate();
+                $existingSnapshot->setAttribute('id', $instantSale->id);
+                $existingSnapshot->setRelation('salesDailySession', $instantSale->salesDailySession);
+                $closedDayEditMode = $this->closedDayEditMode($request, $instantSale);
+                $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
+                $isClosedDayFinancialSettlement = $closedDayEditMode === 'today_financial_settlement';
 
                 if ($instantSale->isCancelled()) {
                     throw ValidationException::withMessages([
@@ -2012,7 +2159,11 @@ public function edit(Request $request)
                 }
 
                 $paidDelta = $newPaid - $oldPaid;
-                if (! $isAdjustmentSale && abs($paidDelta) > 0.0001 && $instantSale->payment_box_id) {
+                if (! $isAdjustmentSale
+                    && ! $isClosedDayAdministrativeCorrection
+                    && ! $isClosedDayFinancialSettlement
+                    && abs($paidDelta) > 0.0001
+                    && $instantSale->payment_box_id) {
                     $box = Box::lockForUpdate()->findOrFail($instantSale->payment_box_id);
 
                     if ($paidDelta < 0 && (float) $box->total < abs($paidDelta)) {
@@ -2037,10 +2188,19 @@ public function edit(Request $request)
                     $data['payment_box_value'] = $newPaid;
                 }
 
+                $excludedUpdateFields = ['instant_sale_id', 'closed_day_edit_mode', 'closed_day_edit_reason'];
+                if ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement) {
+                    $excludedUpdateFields[] = 'payment_box_id';
+                }
+
                 $instantSale->update(array_merge(
-                    collect($data)->except(['instant_sale_id'])->toArray(),
+                    collect($data)->except($excludedUpdateFields)->toArray(),
                     $this->auditFieldsForUpdate()
                 ));
+
+                if ($isClosedDayFinancialSettlement) {
+                    $this->applyClosedDayPaymentDelta($request, $existingSnapshot, $instantSale->fresh());
+                }
 
                 if (! $instantSale->parent_id) {
                     app(DebtLedgerService::class)->syncInstantSaleToLedger(
@@ -2263,6 +2423,7 @@ public function edit(Request $request)
                     'subProducts.sizeColor.size',
                     'project.partnership.customer',
                     'paymentBox:id,name',
+                    'salesDailySession:id,business_date,status',
                     'createdByUser:id,name',
                     'updatedByUser:id,name',
                 ])
@@ -2303,6 +2464,10 @@ public function edit(Request $request)
                 'invoice_number' => (string) ($sale->serial_number ?: 'SAL-'.str_pad((string) $sale->id, 7, '0', STR_PAD_LEFT)),
                 'serial_number' => $sale->serial_number,
                 'invoice_date' => optional($sale->created_at)->format('Y-m-d H:i:s'),
+                'sales_daily_session_id' => $sale->sales_daily_session_id,
+                'sales_daily_business_date' => $sale->salesDailySession?->business_date?->toDateString(),
+                'sales_daily_session_status' => $sale->salesDailySession?->status,
+                'is_sales_daily_session_closed' => $sale->salesDailySession?->isClosed() ?? false,
                 'sale_kind' => $sale->sale_kind ?? self::SALE_KIND_REGULAR,
                 'sale_kind_label_ar' => ($sale->sale_kind ?? self::SALE_KIND_REGULAR) === self::SALE_KIND_ADJUSTMENT
                     ? 'فاتورة تعويض / تعديل'
