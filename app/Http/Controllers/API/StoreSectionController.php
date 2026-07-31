@@ -211,7 +211,13 @@ class StoreSectionController extends Controller
                 : StoreSection::query()->findOrFail($sectionId);
 
             $productsQuery = Product::query()
-                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name'])
+                ->with([
+                    'viewImages',
+                    'normalImages',
+                    'image3d',
+                    'storeSection:id,name',
+                    'purchasePrices' => fn ($q) => $q->latest('id'),
+                ])
                 ->select(
                     'id',
                     'nameAr',
@@ -223,6 +229,7 @@ class StoreSectionController extends Controller
                     'wholesalePrice',
                     'price',
                     'min_sale_price',
+                    'discount',
                     'rotation_date'
                 )
                 ->orderBy('nameAr');
@@ -252,7 +259,10 @@ class StoreSectionController extends Controller
                     'product_min_stock' => $product->min_stock,
                     'product_normail_price' => $product->normailPrice,
                     'product_wholesale_price' => $product->wholesalePrice,
+                    'cost_price' => optional($product->purchasePrices->first())->price,
+                    'has_cost_price' => optional($product->purchasePrices->first())->price !== null,
                     'product_price' => $product->price,
+                    'discount' => $product->discount,
                     'rotation_date' => $product->rotation_date,
                     'product_code' => $product->product_code,
                     'product_image' => $images['product_image'],

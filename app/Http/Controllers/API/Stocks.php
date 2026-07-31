@@ -674,27 +674,58 @@ class Stocks extends Controller
 
         $data = $request->validate([
             'product_id' => ['required', 'integer', 'exists:products,id'],
-            'field' => ['required', 'string', 'in:normailPrice,wholesalePrice,price,min_sale_price'],
-            'value' => ['required', 'numeric', 'min:0'],
+            'field' => ['required', 'string', 'in:product_code,nameAr,normailPrice,wholesalePrice,cost_price,price,min_sale_price,stock,min_stock,discount,rotation_date'],
+            'value' => ['nullable'],
         ]);
 
         $product = DB::transaction(function () use ($data, $request) {
             $product = Product::query()->findOrFail($data['product_id']);
             $field = $data['field'];
-            $old = $product->{$field};
             $new = $data['value'];
+            $isCostPrice = $field === 'cost_price';
+            $old = $isCostPrice
+                ? optional($product->purchasePrices()->latest('id')->first())->price
+                : $product->{$field};
 
-            $product->forceFill([
-                $field => $new,
-                'userIdUpdate' => $request->user()?->id,
-                'dateUpdate' => now(),
-            ])->save();
+            if (in_array($field, ['normailPrice', 'wholesalePrice', 'cost_price', 'price', 'min_sale_price', 'stock', 'min_stock', 'discount'], true)) {
+                validator(['value' => $new], ['value' => ['required', 'numeric', 'min:0']])->validate();
+            }
+            if (in_array($field, ['product_code', 'nameAr'], true)) {
+                validator(['value' => $new], ['value' => ['required', 'string', 'max:255']])->validate();
+            }
+            if ($field === 'rotation_date') {
+                validator(['value' => $new], ['value' => ['nullable', 'date']])->validate();
+            }
+
+            if ($isCostPrice) {
+                $price = (float) ($new ?? 0);
+                $row = PurchaseProduct::query()
+                    ->where('product_id', $product->id)
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($row !== null) {
+                    $row->update(['price' => $price]);
+                } else {
+                    PurchaseProduct::create([
+                        'product_id' => $product->id,
+                        'seller_id' => null,
+                        'price' => $price,
+                    ]);
+                }
+            } else {
+                $product->forceFill([
+                    $field => $new,
+                    'userIdUpdate' => $request->user()?->id,
+                    'dateUpdate' => now(),
+                ])->save();
+            }
 
             $this->recordProductPriceUpdateMovement(
                 $product,
                 [[
                     'field' => $field,
-                    'label' => $this->productPriceFieldLabel($field),
+                    'label' => $this->productQuickEditFieldLabel($field),
                     'old' => $old,
                     'new' => $new,
                 ]],
@@ -1995,9 +2026,23 @@ class Stocks extends Controller
         return match ($field) {
             'normailPrice' => 'سعر المفرق',
             'wholesalePrice' => 'سعر الجملة',
+            'cost_price' => 'سعر التكلفة',
             'price' => 'السعر',
             'min_sale_price' => 'أقل سعر بيع',
             default => $field,
+        };
+    }
+
+    private function productQuickEditFieldLabel(string $field): string
+    {
+        return match ($field) {
+            'product_code' => 'كود المنتج',
+            'nameAr' => 'اسم المنتج',
+            'stock' => 'المخزون',
+            'min_stock' => 'الحد الأدنى للمخزون',
+            'discount' => 'الخصم',
+            'rotation_date' => 'تاريخ الدوران',
+            default => $this->productPriceFieldLabel($field),
         };
     }
 
@@ -2018,7 +2063,9 @@ class Stocks extends Controller
 
         ProductStockMovement::query()->create([
             'product_id' => $product->id,
-            'type' => ProductStockMovement::TYPE_PRICE_UPDATE,
+            'type' => collect($changes)->every(fn ($change) => in_array($change['field'] ?? '', ['normailPrice', 'wholesalePrice', 'cost_price', 'price', 'min_sale_price'], true))
+                ? ProductStockMovement::TYPE_PRICE_UPDATE
+                : ProductStockMovement::TYPE_PRODUCT_UPDATE,
             'quantity' => 0,
             'stock_before' => (int) ($product->stock ?? 0),
             'stock_after' => (int) ($product->stock ?? 0),

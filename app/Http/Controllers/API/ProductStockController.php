@@ -109,6 +109,7 @@ class ProductStockController extends Controller
                     ProductStockMovement::TYPE_DISASSEMBLY_COMPONENT,
                     ProductStockMovement::TYPE_DISASSEMBLY_OUTPUT,
                     ProductStockMovement::TYPE_PRICE_UPDATE,
+                    ProductStockMovement::TYPE_PRODUCT_UPDATE,
                 ])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);
