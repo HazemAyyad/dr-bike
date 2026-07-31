@@ -163,7 +163,7 @@ class EmployeeDetails extends Controller
     {
         return match ($nameEn) {
             'Sales', 'Sales Daily Close Review', 'Sales Cancel Closed Review' => 'sales',
-            'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings' => 'stock',
+            'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings', 'Product Quick Edit' => 'stock',
             'Employees Section', 'Employee Impersonation',
             'Employees View', 'Employees Create', 'Employees Edit Basic', 'Employees Delete',
             'Employees Password Manage',
