@@ -35,6 +35,8 @@ class ProductStockMovement extends Model
 
     public const TYPE_DISASSEMBLY_OUTPUT = 'disassembly_output';
 
+    public const TYPE_PRICE_UPDATE = 'price_update';
+
     protected $fillable = [
         'product_id',
         'size_id',

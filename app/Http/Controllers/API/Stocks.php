@@ -9,6 +9,7 @@ use App\Models\Category;
 use App\Models\Closeout;
 use App\Models\Combination;
 use App\Models\Product;
+use App\Models\ProductStockMovement;
 use App\Models\ProductAssemblyRecipe;
 use App\Models\Project;
 use App\Models\PurchaseProduct;
@@ -477,7 +478,7 @@ class Stocks extends Controller
 
     public function quickEditProducts(Request $request)
     {
-        if (! $this->isAdminRequest($request)) {
+        if (! $this->canQuickEditProducts($request)) {
             return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
         }
 
@@ -550,7 +551,7 @@ class Stocks extends Controller
 
     public function updateQuickEditProduct(Request $request)
     {
-        if (! $this->isAdminRequest($request)) {
+        if (! $this->canQuickEditProducts($request)) {
             return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
         }
 
@@ -584,6 +585,7 @@ class Stocks extends Controller
 
         $product = DB::transaction(function () use ($data, $request) {
             $product = Product::query()->findOrFail($data['product_id']);
+            $priceChanges = $this->collectProductPriceChanges($product, $data);
             $productData = collect($data)
                 ->only([
                     'product_code',
@@ -639,6 +641,12 @@ class Stocks extends Controller
                 }
             }
 
+            $this->recordProductPriceUpdateMovement(
+                $product,
+                $priceChanges,
+                $request->user()?->id,
+            );
+
             return $product->fresh([
                 'category:id,nameAr',
                 'storeSection:id,name',
@@ -658,9 +666,63 @@ class Stocks extends Controller
         ], 200);
     }
 
+    public function updateQuickEditProductPrice(Request $request)
+    {
+        if (! $this->canQuickEditProducts($request)) {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'field' => ['required', 'string', 'in:normailPrice,wholesalePrice,price,min_sale_price'],
+            'value' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        $product = DB::transaction(function () use ($data, $request) {
+            $product = Product::query()->findOrFail($data['product_id']);
+            $field = $data['field'];
+            $old = $product->{$field};
+            $new = $data['value'];
+
+            $product->forceFill([
+                $field => $new,
+                'userIdUpdate' => $request->user()?->id,
+                'dateUpdate' => now(),
+            ])->save();
+
+            $this->recordProductPriceUpdateMovement(
+                $product,
+                [[
+                    'field' => $field,
+                    'label' => $this->productPriceFieldLabel($field),
+                    'old' => $old,
+                    'new' => $new,
+                ]],
+                $request->user()?->id,
+            );
+
+            return $product->fresh([
+                'viewImages:id,itemId,imageUrl',
+                'normalImages:id,itemId,imageUrl',
+                'image3d:id,itemId,imageUrl',
+                'storeSection:id,name',
+                'purchasePrices' => fn ($q) => $q->latest('id'),
+                'tags' => function ($q) {
+                    $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
+                },
+            ]);
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'message' => __('messages.product_updated'),
+            'product' => $this->formatProductListItem($product, true),
+        ], 200);
+    }
+
     public function markQuickEditProduct(Request $request)
     {
-        if (! $this->isAdminRequest($request)) {
+        if (! $this->canQuickEditProducts($request)) {
             return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
         }
 
@@ -1872,6 +1934,98 @@ class Stocks extends Controller
     private function isAdminRequest(Request $request): bool
     {
         return strtolower((string) $request->user()?->type) === 'admin';
+    }
+
+    private function canQuickEditProducts(Request $request): bool
+    {
+        $user = $request->user();
+        if (! $user) {
+            return false;
+        }
+        if (strtolower((string) $user->type) === 'admin') {
+            return true;
+        }
+        if (strtolower((string) $user->type) !== 'employee' || ! $user->employee) {
+            return false;
+        }
+
+        return $user->employee->permissions()
+            ->whereHas('permission', function ($q) {
+                $q->where('name_en', 'Product Quick Edit');
+            })
+            ->exists();
+    }
+
+    private function collectProductPriceChanges(Product $product, array $data): array
+    {
+        $changes = [];
+        foreach (['normailPrice', 'wholesalePrice', 'price', 'min_sale_price'] as $field) {
+            if (! array_key_exists($field, $data)) {
+                continue;
+            }
+
+            $old = $product->{$field};
+            $new = $data[$field];
+            if ($this->normalizePriceForCompare($old) === $this->normalizePriceForCompare($new)) {
+                continue;
+            }
+
+            $changes[] = [
+                'field' => $field,
+                'label' => $this->productPriceFieldLabel($field),
+                'old' => $old,
+                'new' => $new,
+            ];
+        }
+
+        return $changes;
+    }
+
+    private function normalizePriceForCompare($value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+
+        return number_format((float) $value, 4, '.', '');
+    }
+
+    private function productPriceFieldLabel(string $field): string
+    {
+        return match ($field) {
+            'normailPrice' => 'سعر المفرق',
+            'wholesalePrice' => 'سعر الجملة',
+            'price' => 'السعر',
+            'min_sale_price' => 'أقل سعر بيع',
+            default => $field,
+        };
+    }
+
+    private function recordProductPriceUpdateMovement(Product $product, array $changes, ?int $userId): void
+    {
+        if ($changes === [] || ! Schema::hasTable('product_stock_movements')) {
+            return;
+        }
+
+        $note = collect($changes)
+            ->map(fn ($change) => sprintf(
+                '%s: %s -> %s',
+                $change['label'],
+                $change['old'] ?? '',
+                $change['new'] ?? ''
+            ))
+            ->implode(' | ');
+
+        ProductStockMovement::query()->create([
+            'product_id' => $product->id,
+            'type' => ProductStockMovement::TYPE_PRICE_UPDATE,
+            'quantity' => 0,
+            'stock_before' => (int) ($product->stock ?? 0),
+            'stock_after' => (int) ($product->stock ?? 0),
+            'reference_type' => 'product_quick_edit',
+            'note' => $note,
+            'created_by' => $userId,
+        ]);
     }
 
     private function resolveProductImportColumns(array $header): array

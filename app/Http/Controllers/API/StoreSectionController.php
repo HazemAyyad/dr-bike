@@ -5,7 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use App\Models\StoreSection;
-use App\Support\ApiImageUrl;
+use App\Support\ProductImageResolver;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -193,6 +193,7 @@ class StoreSectionController extends Controller
             $request->validate([
                 'section_id' => ['required'],
                 'page' => ['nullable', 'integer', 'min:1'],
+                'per_page' => ['nullable', 'integer', 'min:1', 'max:40'],
             ]);
 
             $sectionIdRaw = $request->input('section_id');
@@ -210,8 +211,20 @@ class StoreSectionController extends Controller
                 : StoreSection::query()->findOrFail($sectionId);
 
             $productsQuery = Product::query()
-                ->with(['viewImages', 'normalImages', 'storeSection:id,name'])
-                ->select('id', 'nameAr', 'stock', 'product_code', 'store_section_id')
+                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name'])
+                ->select(
+                    'id',
+                    'nameAr',
+                    'stock',
+                    'min_stock',
+                    'product_code',
+                    'store_section_id',
+                    'normailPrice',
+                    'wholesalePrice',
+                    'price',
+                    'min_sale_price',
+                    'rotation_date'
+                )
                 ->orderBy('nameAr');
 
             if ($withoutLocation) {
@@ -221,19 +234,31 @@ class StoreSectionController extends Controller
             }
 
             $products = $productsQuery
-                ->paginate(15, ['*'], 'page', (int) $request->input('page', 1));
+                ->paginate(
+                    min(max((int) $request->input('per_page', 15), 1), 40),
+                    ['*'],
+                    'page',
+                    (int) $request->input('page', 1)
+                );
 
             $formatted = $products->getCollection()->map(function (Product $product) {
-                $image = $product->viewImages->first() ?? $product->normalImages->first();
+                $images = ProductImageResolver::formatForList($product);
 
                 return [
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
                     'product_stock' => $product->stock,
+                    'product_min_sale_price' => $product->min_sale_price,
+                    'product_min_stock' => $product->min_stock,
+                    'product_normail_price' => $product->normailPrice,
+                    'product_wholesale_price' => $product->wholesalePrice,
+                    'product_price' => $product->price,
+                    'rotation_date' => $product->rotation_date,
                     'product_code' => $product->product_code,
-                    'product_image' => $image
-                        ? ApiImageUrl::normalize((string) $image->imageUrl)
-                        : 'no image',
+                    'product_image' => $images['product_image'],
+                    'product_viewImages' => $images['product_viewImages'],
+                    'product_normalImages' => $images['product_normalImages'],
+                    'product_image3d' => $images['product_image3d'],
                     'store_section_id' => $product->store_section_id,
                     'store_section_name' => $product->storeSection?->name,
                 ];

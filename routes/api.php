@@ -893,6 +893,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock,Stock Invent
 Route::group(['middleware'=>['auth:sanctum','check.permission:Stock,Product Quick Edit','refresh.token.expiry']] , function() {
     Route::get('/products/quick-edit' , [Stocks::class,'quickEditProducts']);
     Route::post('/products/quick-edit/update' , [Stocks::class,'updateQuickEditProduct']);
+    Route::post('/products/quick-edit/price' , [Stocks::class,'updateQuickEditProductPrice']);
     Route::post('/products/quick-edit/mark' , [Stocks::class,'markQuickEditProduct']);
 });
 
