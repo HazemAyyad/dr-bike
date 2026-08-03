@@ -28,6 +28,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -149,7 +152,7 @@ class EmployeeTasks extends Controller
             ->get()
             ->map(fn ($employee) => $employee->user?->name ?? ('#'.$employee->id))
             ->filter()
-            ->implode(', ');
+            ->implode("\n");
     }
 
     private function assigneeIdsForOccurrence(EmployeeTaskOccurrence $occurrence): array
@@ -251,9 +254,9 @@ class EmployeeTasks extends Controller
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Future Tasks');
+        $sheet->setRightToLeft(true);
 
         $headers = [
-            'رقم المهمة',
             'اسم المهمة',
             'تفاصيل المهمة',
             'ملاحظات المهمة',
@@ -275,7 +278,6 @@ class EmployeeTasks extends Controller
             $end = $task->end_time ? Carbon::parse($task->end_time) : null;
 
             $groupedRows[$key] ??= [
-                'id' => (string) $task->id,
                 'name' => $task->name,
                 'description' => $task->description,
                 'notes' => $task->notes,
@@ -304,7 +306,6 @@ class EmployeeTasks extends Controller
             $key = $this->employeeTaskExportKey((string) $occurrence->name, $assigneeIds);
 
             $groupedRows[$key] ??= [
-                'id' => 'occ-'.$occurrence->id,
                 'name' => $occurrence->name,
                 'description' => $occurrence->description,
                 'notes' => $occurrence->notes,
@@ -331,7 +332,6 @@ class EmployeeTasks extends Controller
         $row = 2;
         foreach (collect($groupedRows)->sortBy('start') as $data) {
             $sheet->fromArray([
-                $data['id'],
                 $data['name'],
                 $data['description'],
                 $data['notes'],
@@ -342,12 +342,68 @@ class EmployeeTasks extends Controller
                 $data['count'],
                 $data['subtasks'],
             ], null, 'A'.$row);
-            $sheet->getStyle('J'.$row)->getAlignment()->setWrapText(true);
             $row++;
         }
 
-        foreach (range('A', 'J') as $column) {
-            $sheet->getColumnDimension($column)->setAutoSize(true);
+        $lastRow = max(1, $row - 1);
+        $sheet->freezePane('A2');
+        $sheet->setAutoFilter('A1:I'.$lastRow);
+        $sheet->getRowDimension(1)->setRowHeight(28);
+
+        $sheet->getStyle('A1:I1')->applyFromArray([
+            'font' => [
+                'bold' => true,
+                'color' => ['rgb' => 'FFFFFF'],
+                'size' => 12,
+            ],
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'startColor' => ['rgb' => '4F46E5'],
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                'vertical' => Alignment::VERTICAL_CENTER,
+            ],
+        ]);
+
+        $sheet->getStyle('A1:I'.$lastRow)->applyFromArray([
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => 'D9E2EC'],
+                ],
+            ],
+            'alignment' => [
+                'vertical' => Alignment::VERTICAL_TOP,
+                'wrapText' => true,
+            ],
+        ]);
+
+        if ($lastRow >= 2) {
+            $sheet->getStyle('A2:A'.$lastRow)->getFont()->setBold(true);
+            $sheet->getStyle('E2:H'.$lastRow)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        }
+
+        $widths = [
+            'A' => 28,
+            'B' => 38,
+            'C' => 32,
+            'D' => 28,
+            'E' => 20,
+            'F' => 20,
+            'G' => 16,
+            'H' => 14,
+            'I' => 55,
+        ];
+
+        foreach ($widths as $column => $width) {
+            $sheet->getColumnDimension($column)->setWidth($width);
+        }
+
+        if ($lastRow >= 2) {
+            for ($i = 2; $i <= $lastRow; $i++) {
+                $sheet->getRowDimension($i)->setRowHeight(72);
+            }
         }
 
         $fileName = 'future_employee_tasks_with_subtasks_'.now()->format('Y-m-d').'.xlsx';
