@@ -167,17 +167,49 @@ class EmployeeTasks extends Controller
 
     public function exportFutureEmployeeTasks()
     {
+        $futureCutoff = now()->startOfDay();
+        $legacyTaskIdsWithFutureOccurrences = EmployeeTaskOccurrence::query()
+            ->where('is_canceled', 0)
+            ->where('end_time', '>=', $futureCutoff)
+            ->whereNotNull('legacy_task_id')
+            ->pluck('legacy_task_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $parentTaskIdsWithFutureChildren = EmployeeTask::query()
+            ->where('is_canceled', 0)
+            ->where('end_time', '>=', $futureCutoff)
+            ->whereNotNull('parent_id')
+            ->pluck('parent_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $legacyTaskIdsToSkip = array_values(array_unique(array_merge(
+            $legacyTaskIdsWithFutureOccurrences,
+            $parentTaskIdsWithFutureChildren
+        )));
+
         $tasks = EmployeeTask::query()
             ->with(['employee.user', 'subTasks'])
             ->where('is_canceled', 0)
-            ->where('end_time', '>=', now()->startOfDay())
+            ->where('end_time', '>=', $futureCutoff)
+            ->when(
+                $legacyTaskIdsToSkip !== [],
+                fn ($query) => $query->whereNotIn('id', $legacyTaskIdsToSkip)
+            )
             ->orderBy('start_time')
             ->get();
 
         $occurrences = EmployeeTaskOccurrence::query()
             ->with(['employee.user', 'subtasks'])
             ->where('is_canceled', 0)
-            ->where('end_time', '>=', now()->startOfDay())
+            ->where('end_time', '>=', $futureCutoff)
             ->orderBy('start_time')
             ->get();
 
