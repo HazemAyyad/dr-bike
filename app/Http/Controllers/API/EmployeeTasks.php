@@ -331,6 +331,9 @@ class EmployeeTasks extends Controller
 
         $row = 2;
         foreach (collect($groupedRows)->sortBy('start') as $data) {
+            $subtaskLineCount = max(1, substr_count((string) $data['subtasks'], "\n") + 1);
+            $assigneeLineCount = max(1, substr_count((string) $data['assignees'], "\n") + 1);
+            $rowLineCount = max($subtaskLineCount, $assigneeLineCount);
             $sheet->fromArray([
                 $data['name'],
                 $data['description'],
@@ -342,6 +345,7 @@ class EmployeeTasks extends Controller
                 $data['count'],
                 $data['subtasks'],
             ], null, 'A'.$row);
+            $sheet->getRowDimension($row)->setRowHeight(max(36, min(360, $rowLineCount * 22)));
             $row++;
         }
 
@@ -398,12 +402,6 @@ class EmployeeTasks extends Controller
 
         foreach ($widths as $column => $width) {
             $sheet->getColumnDimension($column)->setWidth($width);
-        }
-
-        if ($lastRow >= 2) {
-            for ($i = 2; $i <= $lastRow; $i++) {
-                $sheet->getRowDimension($i)->setRowHeight(72);
-            }
         }
 
         $fileName = 'future_employee_tasks_with_subtasks_'.now()->format('Y-m-d').'.xlsx';
