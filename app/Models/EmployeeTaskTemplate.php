@@ -5,10 +5,12 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Schema;
 
 class EmployeeTaskTemplate extends Model
 {
     protected $fillable = [
+        'display_number',
         'employee_id',
         'name',
         'description',
@@ -30,6 +32,7 @@ class EmployeeTaskTemplate extends Model
     ];
 
     protected $casts = [
+        'display_number' => 'integer',
         'admin_img' => 'array',
         'recurrence_config' => 'array',
         'is_forced_to_upload_img' => 'boolean',
@@ -37,6 +40,18 @@ class EmployeeTaskTemplate extends Model
         'not_shown_for_employee' => 'boolean',
         'is_active' => 'boolean',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (EmployeeTaskTemplate $template) {
+            if (
+                ! $template->display_number
+                && Schema::hasColumn($template->getTable(), 'display_number')
+            ) {
+                $template->display_number = EmployeeTask::nextDisplayNumber();
+            }
+        });
+    }
 
     public function employee(): BelongsTo
     {

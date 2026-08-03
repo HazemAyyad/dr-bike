@@ -378,6 +378,7 @@ class EmployeeTaskOperationsController extends Controller
             $legacyAnchor = null;
             if (count($assigneeIds) > 1) {
                 $legacyAnchor = EmployeeTask::create([
+                    'display_number' => $template->display_number,
                     'name' => $data['name'],
                     'description' => $data['description'] ?? null,
                     'notes' => $data['notes'] ?? null,
@@ -594,6 +595,7 @@ class EmployeeTaskOperationsController extends Controller
 
                 if (count($assigneeIds) > 1 && ! $legacy) {
                     $legacy = EmployeeTask::create([
+                        'display_number' => $template->display_number,
                         'name' => $data['name'],
                         'description' => $data['description'] ?? null,
                         'notes' => $data['notes'] ?? null,

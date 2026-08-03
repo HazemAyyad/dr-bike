@@ -20,6 +20,7 @@ class EmployeeTaskListService
 
         $payload = [
             'task_id' => $task->id,
+            'display_number' => $task->display_number,
             'occurrence_id' => null,
             'task_name' => $task->name,
             'employee_id' => $task->employee_id,
@@ -62,8 +63,13 @@ class EmployeeTaskListService
             ?? $task->subtasks()->where('status', 'completed')->count());
         $progress = $this->calcProgressPercent($task, $subTotal, $subDone);
 
+        $legacyTask = $task->relationLoaded('legacyTask')
+            ? $task->legacyTask
+            : ($task->legacy_task_id ? EmployeeTask::find($task->legacy_task_id) : null);
+
         $payload = [
             'task_id' => $task->legacy_task_id ?? $task->id,
+            'display_number' => $legacyTask?->display_number ?? $task->template?->display_number,
             'occurrence_id' => $task->id,
             'task_name' => $task->name,
             'employee_id' => $task->employee_id,
@@ -96,10 +102,6 @@ class EmployeeTaskListService
             'source' => 'occurrence',
             'subtask_names' => $this->occurrenceSubtaskNames($task),
         ];
-
-        $legacyTask = $task->relationLoaded('legacyTask')
-            ? $task->legacyTask
-            : ($task->legacy_task_id ? EmployeeTask::find($task->legacy_task_id) : null);
 
         return $this->appendAssigneeFields($payload, $legacyTask, $photoResolver);
     }

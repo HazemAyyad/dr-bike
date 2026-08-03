@@ -88,6 +88,7 @@ class EmployeeLegacyDayInstanceService
         $data['reviewed_at'] = null;
         $data['started_at'] = null;
         $data['employee_img'] = null;
+        unset($data['display_number']);
 
         /** @var EmployeeTask $child */
         $child = EmployeeTask::create($data);

@@ -752,6 +752,7 @@ private function getTasks($status)
         $formatted = $filtered->map(function ($task) {
             return [
                 'task_id' => $task->id,
+                'display_number' => $task->display_number,
                 'task_name' => $task->name,
                 'employee_id' => $task->employee_id,
                 'employee_name' => $task->employee->user->name ?? 'unknown',
@@ -1209,7 +1210,7 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
     $data['parent_id'] = $task->id;
     $data['start_time'] = $newStart->format('Y-m-d H:i:s');
     $data['end_time'] = $mainEnd->format('Y-m-d H:i:s'); // always same as main
-    unset($data['occurrence_id'], $data['template_id']);
+    unset($data['display_number'], $data['occurrence_id'], $data['template_id']);
     $newTask= $task::create($data);
 
     if ($task instanceof EmployeeTask && $newTask instanceof EmployeeTask) {

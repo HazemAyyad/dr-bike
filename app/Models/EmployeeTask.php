@@ -14,6 +14,7 @@ class EmployeeTask extends Model
     protected $table = 'employee_tasks';
 
     protected $fillable = [
+        'display_number',
         'name',
         'description',
         'notes',
@@ -46,12 +47,38 @@ class EmployeeTask extends Model
     ];
 
     protected $casts = [
+        'display_number' => 'integer',
         'task_recurrence_time'=>'array',
         'employee_img'=>'array',
         'admin_img'=>'array',
         'requires_admin_review' => 'boolean',
 
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (EmployeeTask $task) {
+            if (
+                ! $task->display_number
+                && Schema::hasColumn($task->getTable(), 'display_number')
+            ) {
+                $task->display_number = self::nextDisplayNumber();
+            }
+        });
+    }
+
+    public static function nextDisplayNumber(): int
+    {
+        $taskMax = Schema::hasColumn('employee_tasks', 'display_number')
+            ? (int) static::query()->max('display_number')
+            : 0;
+        $templateMax = Schema::hasTable('employee_task_templates')
+            && Schema::hasColumn('employee_task_templates', 'display_number')
+            ? (int) EmployeeTaskTemplate::query()->max('display_number')
+            : 0;
+
+        return max($taskMax, $templateMax) + 1;
+    }
 
     /**
      * Anchor for orphan subtask filtering when employee_tasks lacks created_at.
