@@ -138,6 +138,11 @@ class EmployeeTasks extends Controller
     {
         $ids = app(EmployeeTaskAssigneeService::class)->idsForTask($task);
 
+        return $this->assigneeNamesFromIds($ids);
+    }
+
+    private function assigneeNamesFromIds(array $ids): string
+    {
         return \App\Models\EmployeeDetail::query()
             ->with('user')
             ->whereIn('id', $ids)
@@ -147,22 +152,52 @@ class EmployeeTasks extends Controller
             ->implode(', ');
     }
 
-    private function assigneeNamesForOccurrence(EmployeeTaskOccurrence $occurrence): string
+    private function assigneeIdsForOccurrence(EmployeeTaskOccurrence $occurrence): array
     {
         if ($occurrence->legacy_task_id) {
             $legacy = EmployeeTask::find($occurrence->legacy_task_id);
             if ($legacy) {
-                return $this->assigneeNamesForTask($legacy);
+                return app(EmployeeTaskAssigneeService::class)->idsForTask($legacy);
             }
         }
 
-        return \App\Models\EmployeeDetail::query()
-            ->with('user')
-            ->where('id', (int) $occurrence->employee_id)
-            ->get()
-            ->map(fn ($employee) => $employee->user?->name ?? ('#'.$employee->id))
-            ->filter()
-            ->implode(', ');
+        return [(int) $occurrence->employee_id];
+    }
+
+    private function assigneeNamesForOccurrence(EmployeeTaskOccurrence $occurrence): string
+    {
+        return $this->assigneeNamesFromIds($this->assigneeIdsForOccurrence($occurrence));
+    }
+
+    private function employeeTaskExportKey(string $name, array $assigneeIds): string
+    {
+        $ids = collect($assigneeIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->sort()
+            ->values()
+            ->implode(',');
+
+        return mb_strtolower(trim($name)).'|'.$ids;
+    }
+
+    private function formatSubtasksForExport($subtasks): string
+    {
+        return collect($subtasks)
+            ->values()
+            ->map(function ($subtask, int $index) {
+                $parts = array_filter([
+                    trim((string) ($subtask?->name ?? '')),
+                    trim((string) ($subtask?->description ?? '')),
+                    trim((string) ($subtask?->status ?? '')),
+                ]);
+
+                return ($index + 1).'. '.implode(' - ', $parts);
+            })
+            ->filter(fn ($line) => trim($line) !== '')
+            ->unique()
+            ->implode("\n");
     }
 
     public function exportFutureEmployeeTasks()
@@ -223,65 +258,95 @@ class EmployeeTasks extends Controller
             'تفاصيل المهمة',
             'ملاحظات المهمة',
             'الأشخاص المسؤولين',
-            'تاريخ البداية',
-            'تاريخ النهاية',
+            'أقرب تاريخ بداية',
+            'آخر تاريخ نهاية',
             'حالة المهمة',
-            'اسم المهمة الفرعية',
-            'تفاصيل المهمة الفرعية',
-            'حالة المهمة الفرعية',
+            'عدد النسخ المستقبلية',
+            'المهام الفرعية',
         ];
         $sheet->fromArray($headers, null, 'A1');
 
-        $row = 2;
-        foreach ($tasks as $task) {
-            $subtasks = $task->subTasks;
-            if ($subtasks->isEmpty()) {
-                $subtasks = collect([null]);
-            }
+        $groupedRows = [];
 
-            foreach ($subtasks as $subtask) {
-                $sheet->fromArray([
-                    $task->id,
-                    $task->name,
-                    $task->description,
-                    $task->notes,
-                    $this->assigneeNamesForTask($task),
-                    $task->start_time ? Carbon::parse($task->start_time)->toDateTimeString() : null,
-                    $task->end_time ? Carbon::parse($task->end_time)->toDateTimeString() : null,
-                    $task->status,
-                    $subtask?->name,
-                    $subtask?->description,
-                    $subtask?->status,
-                ], null, 'A'.$row);
-                $row++;
+        foreach ($tasks as $task) {
+            $assigneeIds = app(EmployeeTaskAssigneeService::class)->idsForTask($task);
+            $key = $this->employeeTaskExportKey((string) $task->name, $assigneeIds);
+            $start = $task->start_time ? Carbon::parse($task->start_time) : null;
+            $end = $task->end_time ? Carbon::parse($task->end_time) : null;
+
+            $groupedRows[$key] ??= [
+                'id' => (string) $task->id,
+                'name' => $task->name,
+                'description' => $task->description,
+                'notes' => $task->notes,
+                'assignees' => $this->assigneeNamesFromIds($assigneeIds),
+                'start' => $start,
+                'end' => $end,
+                'status' => $task->status,
+                'count' => 0,
+                'subtasks' => '',
+            ];
+            $groupedRows[$key]['count']++;
+            if ($start && (! $groupedRows[$key]['start'] || $start->lt($groupedRows[$key]['start']))) {
+                $groupedRows[$key]['start'] = $start;
+            }
+            if ($end && (! $groupedRows[$key]['end'] || $end->gt($groupedRows[$key]['end']))) {
+                $groupedRows[$key]['end'] = $end;
+            }
+            $subtasks = $this->formatSubtasksForExport($task->subTasks);
+            if ($subtasks !== '') {
+                $groupedRows[$key]['subtasks'] = $subtasks;
             }
         }
 
         foreach ($occurrences as $occurrence) {
-            $subtasks = $occurrence->subtasks;
-            if ($subtasks->isEmpty()) {
-                $subtasks = collect([null]);
-            }
+            $assigneeIds = $this->assigneeIdsForOccurrence($occurrence);
+            $key = $this->employeeTaskExportKey((string) $occurrence->name, $assigneeIds);
 
-            foreach ($subtasks as $subtask) {
-                $sheet->fromArray([
-                    'occ-'.$occurrence->id,
-                    $occurrence->name,
-                    $occurrence->description,
-                    $occurrence->notes,
-                    $this->assigneeNamesForOccurrence($occurrence),
-                    $occurrence->start_time?->toDateTimeString(),
-                    $occurrence->end_time?->toDateTimeString(),
-                    $occurrence->status,
-                    $subtask?->name,
-                    $subtask?->description,
-                    $subtask?->status,
-                ], null, 'A'.$row);
-                $row++;
+            $groupedRows[$key] ??= [
+                'id' => 'occ-'.$occurrence->id,
+                'name' => $occurrence->name,
+                'description' => $occurrence->description,
+                'notes' => $occurrence->notes,
+                'assignees' => $this->assigneeNamesFromIds($assigneeIds),
+                'start' => $occurrence->start_time,
+                'end' => $occurrence->end_time,
+                'status' => $occurrence->status,
+                'count' => 0,
+                'subtasks' => '',
+            ];
+            $groupedRows[$key]['count']++;
+            if ($occurrence->start_time && (! $groupedRows[$key]['start'] || $occurrence->start_time->lt($groupedRows[$key]['start']))) {
+                $groupedRows[$key]['start'] = $occurrence->start_time;
+            }
+            if ($occurrence->end_time && (! $groupedRows[$key]['end'] || $occurrence->end_time->gt($groupedRows[$key]['end']))) {
+                $groupedRows[$key]['end'] = $occurrence->end_time;
+            }
+            $subtasks = $this->formatSubtasksForExport($occurrence->subtasks);
+            if ($subtasks !== '') {
+                $groupedRows[$key]['subtasks'] = $subtasks;
             }
         }
 
-        foreach (range('A', 'K') as $column) {
+        $row = 2;
+        foreach (collect($groupedRows)->sortBy('start') as $data) {
+            $sheet->fromArray([
+                $data['id'],
+                $data['name'],
+                $data['description'],
+                $data['notes'],
+                $data['assignees'],
+                $data['start'] ? $data['start']->toDateTimeString() : null,
+                $data['end'] ? $data['end']->toDateTimeString() : null,
+                $data['status'],
+                $data['count'],
+                $data['subtasks'],
+            ], null, 'A'.$row);
+            $sheet->getStyle('J'.$row)->getAlignment()->setWrapText(true);
+            $row++;
+        }
+
+        foreach (range('A', 'J') as $column) {
             $sheet->getColumnDimension($column)->setAutoSize(true);
         }
 
