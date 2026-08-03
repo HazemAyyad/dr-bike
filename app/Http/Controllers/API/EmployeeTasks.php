@@ -24,8 +24,12 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class EmployeeTasks extends Controller
 {
@@ -89,6 +93,317 @@ class EmployeeTasks extends Controller
         }
 
         $task->subTasks()->update($payload);
+    }
+
+    private function requireAdminUser(Request $request)
+    {
+        $user = $request->user();
+
+        if (! $user || $user->type !== 'admin') {
+            abort(response()->json([
+                'status' => 'error',
+                'message' => __('messages.unauthorized'),
+            ], 200));
+        }
+
+        return $user;
+    }
+
+    private function employeeTaskPurgePreview(): array
+    {
+        $legacy = EmployeeTask::query();
+        $occurrences = EmployeeTaskOccurrence::query();
+
+        return [
+            'employee_tasks_count' => (clone $legacy)->count(),
+            'sub_tasks_count' => EmployeeSubTask::query()->count(),
+            'occurrences_count' => Schema::hasTable('employee_task_occurrences')
+                ? (clone $occurrences)->count()
+                : 0,
+            'occurrence_subtasks_count' => Schema::hasTable('employee_task_occurrence_subtasks')
+                ? DB::table('employee_task_occurrence_subtasks')->count()
+                : 0,
+            'templates_count' => Schema::hasTable('employee_task_templates')
+                ? DB::table('employee_task_templates')->count()
+                : 0,
+            'future_tasks_count' => (clone $legacy)->where('end_time', '>=', now())->count(),
+            'completed_tasks_count' => (clone $legacy)->where('status', EmployeeTaskStatus::Completed->value)->count(),
+            'canceled_tasks_count' => (clone $legacy)->where('is_canceled', 1)->count(),
+            'oldest_start_time' => (clone $legacy)->min('start_time'),
+            'latest_end_time' => (clone $legacy)->max('end_time'),
+        ];
+    }
+
+    private function assigneeNamesForTask(EmployeeTask $task): string
+    {
+        $ids = app(EmployeeTaskAssigneeService::class)->idsForTask($task);
+
+        return \App\Models\EmployeeDetail::query()
+            ->with('user')
+            ->whereIn('id', $ids)
+            ->get()
+            ->map(fn ($employee) => $employee->user?->name ?? ('#'.$employee->id))
+            ->filter()
+            ->implode(', ');
+    }
+
+    private function assigneeNamesForOccurrence(EmployeeTaskOccurrence $occurrence): string
+    {
+        if ($occurrence->legacy_task_id) {
+            $legacy = EmployeeTask::find($occurrence->legacy_task_id);
+            if ($legacy) {
+                return $this->assigneeNamesForTask($legacy);
+            }
+        }
+
+        return \App\Models\EmployeeDetail::query()
+            ->with('user')
+            ->where('id', (int) $occurrence->employee_id)
+            ->get()
+            ->map(fn ($employee) => $employee->user?->name ?? ('#'.$employee->id))
+            ->filter()
+            ->implode(', ');
+    }
+
+    public function exportFutureEmployeeTasks()
+    {
+        $tasks = EmployeeTask::query()
+            ->with(['employee.user', 'subTasks'])
+            ->where('is_canceled', 0)
+            ->where('end_time', '>=', now()->startOfDay())
+            ->orderBy('start_time')
+            ->get();
+
+        $occurrences = EmployeeTaskOccurrence::query()
+            ->with(['employee.user', 'subtasks'])
+            ->where('is_canceled', 0)
+            ->where('end_time', '>=', now()->startOfDay())
+            ->orderBy('start_time')
+            ->get();
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Future Tasks');
+
+        $headers = [
+            'رقم المهمة',
+            'اسم المهمة',
+            'تفاصيل المهمة',
+            'ملاحظات المهمة',
+            'الأشخاص المسؤولين',
+            'تاريخ البداية',
+            'تاريخ النهاية',
+            'حالة المهمة',
+            'اسم المهمة الفرعية',
+            'تفاصيل المهمة الفرعية',
+            'حالة المهمة الفرعية',
+        ];
+        $sheet->fromArray($headers, null, 'A1');
+
+        $row = 2;
+        foreach ($tasks as $task) {
+            $subtasks = $task->subTasks;
+            if ($subtasks->isEmpty()) {
+                $subtasks = collect([null]);
+            }
+
+            foreach ($subtasks as $subtask) {
+                $sheet->fromArray([
+                    $task->id,
+                    $task->name,
+                    $task->description,
+                    $task->notes,
+                    $this->assigneeNamesForTask($task),
+                    $task->start_time ? Carbon::parse($task->start_time)->toDateTimeString() : null,
+                    $task->end_time ? Carbon::parse($task->end_time)->toDateTimeString() : null,
+                    $task->status,
+                    $subtask?->name,
+                    $subtask?->description,
+                    $subtask?->status,
+                ], null, 'A'.$row);
+                $row++;
+            }
+        }
+
+        foreach ($occurrences as $occurrence) {
+            $subtasks = $occurrence->subtasks;
+            if ($subtasks->isEmpty()) {
+                $subtasks = collect([null]);
+            }
+
+            foreach ($subtasks as $subtask) {
+                $sheet->fromArray([
+                    'occ-'.$occurrence->id,
+                    $occurrence->name,
+                    $occurrence->description,
+                    $occurrence->notes,
+                    $this->assigneeNamesForOccurrence($occurrence),
+                    $occurrence->start_time?->toDateTimeString(),
+                    $occurrence->end_time?->toDateTimeString(),
+                    $occurrence->status,
+                    $subtask?->name,
+                    $subtask?->description,
+                    $subtask?->status,
+                ], null, 'A'.$row);
+                $row++;
+            }
+        }
+
+        foreach (range('A', 'K') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+
+        $fileName = 'future_employee_tasks_with_subtasks_'.now()->format('Y-m-d').'.xlsx';
+        $tempPath = tempnam(sys_get_temp_dir(), 'employee_tasks_export_');
+        (new Xlsx($spreadsheet))->save($tempPath);
+
+        return response()->download($tempPath, $fileName, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
+    public function clearEmployeeTasksPreview(Request $request)
+    {
+        $this->requireAdminUser($request);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->employeeTaskPurgePreview(),
+        ], 200);
+    }
+
+    public function clearEmployeeTasks(Request $request)
+    {
+        $user = $this->requireAdminUser($request);
+        $request->validate([
+            'password' => 'required|string',
+            'confirmation' => 'nullable|string',
+        ]);
+
+        if (! Hash::check($request->password, $user->password)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'كلمة المرور غير صحيحة',
+            ], 200);
+        }
+
+        $preview = $this->employeeTaskPurgePreview();
+
+        DB::transaction(function () {
+            if (Schema::hasTable('employee_task_timeline')) {
+                DB::table('employee_task_timeline')->delete();
+            }
+            if (Schema::hasTable('employee_task_assignees')) {
+                DB::table('employee_task_assignees')->delete();
+            }
+            if (Schema::hasTable('employee_task_occurrence_subtasks')) {
+                DB::table('employee_task_occurrence_subtasks')->delete();
+            }
+            if (Schema::hasTable('employee_task_occurrences')) {
+                DB::table('employee_task_occurrences')->delete();
+            }
+            EmployeeSubTask::query()->delete();
+            EmployeeTask::query()->delete();
+            if (Schema::hasTable('employee_task_template_subtasks')) {
+                DB::table('employee_task_template_subtasks')->delete();
+            }
+            if (Schema::hasTable('employee_task_templates')) {
+                DB::table('employee_task_templates')->delete();
+            }
+        });
+
+        Logs::createLog(
+            'تفريغ مهام الموظفين',
+            'قام الأدمن '.$user->name.' بتفريغ كل مهام الموظفين. العدد: '.json_encode($preview, JSON_UNESCAPED_UNICODE),
+            'employee_tasks'
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تفريغ مهام الموظفين بنجاح',
+            'data' => $preview,
+        ], 200);
+    }
+
+    public function sendEmployeeTaskReminder(Request $request)
+    {
+        $this->requireAdminUser($request);
+        $request->validate([
+            'employee_task_id' => 'required_without:occurrence_id|nullable|exists:employee_tasks,id',
+            'occurrence_id' => 'required_without:employee_task_id|nullable|exists:employee_task_occurrences,id',
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        $note = trim((string) $request->input('note', ''));
+        $notificationService = app(\App\Services\EmployeeNotificationService::class);
+        $assigneeService = app(EmployeeTaskAssigneeService::class);
+        $sent = 0;
+        $recipients = [];
+
+        if ($request->filled('occurrence_id')) {
+            $occurrence = EmployeeTaskOccurrence::with('employee.user')->findOrFail($request->occurrence_id);
+            $ids = [];
+            if ($occurrence->legacy_task_id) {
+                $legacy = EmployeeTask::find($occurrence->legacy_task_id);
+                if ($legacy) {
+                    $ids = $assigneeService->idsForTask($legacy);
+                }
+            }
+            if ($ids === []) {
+                $ids = [(int) $occurrence->employee_id];
+            }
+
+            foreach (array_unique($ids) as $employeeId) {
+                $employee = \App\Models\EmployeeDetail::with('user')->find($employeeId);
+                if (! $employee) {
+                    continue;
+                }
+                $body = 'يرجى تنفيذ المهمة: '.$occurrence->name;
+                if ($occurrence->description) {
+                    $body .= "\n".$occurrence->description;
+                }
+                if ($note !== '') {
+                    $body .= "\nملاحظة الأدمن: ".$note;
+                }
+                $notificationService->create($employee, 'employee_task_manual_reminder', 'تذكير بتنفيذ مهمة', $body, [
+                    'task_id' => (string) ($occurrence->legacy_task_id ?? ''),
+                    'occurrence_id' => (string) $occurrence->id,
+                    'task_name' => $occurrence->name,
+                    'admin_note' => $note,
+                ], 'employee_task_occurrence', (int) $occurrence->id, true);
+                $sent++;
+                $recipients[] = $employee->user?->name ?? ('#'.$employee->id);
+            }
+        } else {
+            $task = EmployeeTask::with('employee.user')->findOrFail($request->employee_task_id);
+            foreach ($assigneeService->idsForTask($task) as $employeeId) {
+                $employee = \App\Models\EmployeeDetail::with('user')->find($employeeId);
+                if (! $employee) {
+                    continue;
+                }
+                $body = 'يرجى تنفيذ المهمة: '.$task->name;
+                if ($task->description) {
+                    $body .= "\n".$task->description;
+                }
+                if ($note !== '') {
+                    $body .= "\nملاحظة الأدمن: ".$note;
+                }
+                $notificationService->create($employee, 'employee_task_manual_reminder', 'تذكير بتنفيذ مهمة', $body, [
+                    'task_id' => (string) $task->id,
+                    'task_name' => $task->name,
+                    'admin_note' => $note,
+                ], 'employee_task', (int) $task->id, true);
+                $sent++;
+                $recipients[] = $employee->user?->name ?? ('#'.$employee->id);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم إرسال التذكير إلى '.$sent.' موظف',
+            'sent_count' => $sent,
+            'recipients' => $recipients,
+        ], 200);
     }
 
     private function resetEmployeeTaskCompletion(EmployeeTask $task): void

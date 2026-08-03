@@ -387,6 +387,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
     Route::get('/employee/completed/tasks' , [EmployeeTasks::class,'completedTasks']);
     Route::get('/employee/ongoing/tasks' , [EmployeeTasks::class,'ongoingTasks']);
     Route::get('/employee/canceled/tasks' , [EmployeeTasks::class,'canceledTasks']);
+    Route::get('/employee/tasks/export/future' , [EmployeeTasks::class,'exportFutureEmployeeTasks']);
+    Route::get('/employee/tasks/clear/preview' , [EmployeeTasks::class,'clearEmployeeTasksPreview'])
+        ->middleware('admin');
+    Route::post('/employee/tasks/clear' , [EmployeeTasks::class,'clearEmployeeTasks'])
+        ->middleware('admin');
+    Route::post('/employee/task/send-reminder' , [EmployeeTasks::class,'sendEmployeeTaskReminder'])
+        ->middleware('admin');
     Route::post('/cancel/employee/task' , [EmployeeTasks::class,'cancelEmployeeTask']);
     Route::post('/restore/employee/task' , [EmployeeTasks::class,'restoreEmployeeTask']);
     Route::post('/cancel/employee/task/with/repetition' , [EmployeeTasks::class,'cancelEmployeeTaskWithRepetition']);
