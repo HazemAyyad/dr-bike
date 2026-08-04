@@ -35,6 +35,7 @@ class User extends Authenticatable
         'type',
         'development_role',
         'is_blocked',
+        'ui_preferences',
     ];
 
     /**
@@ -55,6 +56,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'is_blocked' => 'boolean',
+        'ui_preferences' => 'array',
     ];
 
     public const DEVELOPMENT_ROLE_NONE = 'none';

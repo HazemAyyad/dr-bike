@@ -17,4 +17,8 @@ class StoreUser extends Authenticatable
         'password',
         'remember_token',
     ];
+
+    protected $casts = [
+        'ui_preferences' => 'array',
+    ];
 }

@@ -7,6 +7,7 @@ use App\Http\Controllers\API\Assets;
 use App\Http\Controllers\API\AttendanceController;
 use App\Http\Controllers\API\AdminNotificationCenterController;
 use App\Http\Controllers\API\AdminPasswordResetCodeController;
+use App\Http\Controllers\API\AdminUiPreferencesController;
 use App\Http\Controllers\API\AppSettingsController;
 use App\Http\Controllers\API\AppDevelopmentTaskController;
 use App\Http\Controllers\API\AppUpdateController;
@@ -163,6 +164,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::post('/change/password' , [Authentication::class,'changePassword']);
     Route::post('/update/profile' , [Profile::class,'updatePersonalInformation']);
     Route::post('/me' , [Authentication::class,'me']);
+    Route::get('/admin/ui-preferences' , [AdminUiPreferencesController::class,'show']);
+    Route::put('/admin/ui-preferences' , [AdminUiPreferencesController::class,'update']);
     Route::post('/update/fcm-token' , [Authentication::class,'updateFcmToken']);
     Route::post('/app/version-seen', [AppVersionController::class, 'seen']);
 
