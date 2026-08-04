@@ -93,7 +93,9 @@ class EmployeeTaskDetailsService
             ->all();
 
         $subTotal = count($subTasks);
-        $subDone = collect($subTasks)->where('status', 'completed')->count();
+        $subDone = collect($subTasks)
+            ->whereIn('status', ['completed', 'rejected'])
+            ->count();
 
         $taskData = [
             'id' => $occurrence->id,
@@ -290,7 +292,9 @@ class EmployeeTaskDetailsService
             return $this->statusProgressFallback($status);
         }
 
-        $subDone = $subTasks->where('status', 'completed')->count();
+        $subDone = $subTasks
+            ->whereIn('status', ['completed', 'rejected'])
+            ->count();
 
         return (int) round(($subDone / $subTotal) * 100);
     }

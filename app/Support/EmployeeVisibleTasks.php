@@ -241,7 +241,7 @@ class EmployeeVisibleTasks
 
         return match (EmployeeTaskStatus::normalize($status)->value) {
             'completed' => 100,
-            'waiting_review' => 90,
+            'waiting_review' => 100,
             'in_progress', 'started' => 50,
             default => 0,
         };
@@ -252,7 +252,9 @@ class EmployeeVisibleTasks
         $task->loadMissing(['completedByEmployee.user']);
         $base = EmployeeSubTask::query()->forLegacyTask($task);
         $subCount = (int) (clone $base)->count();
-        $subDone = (int) (clone $base)->where('status', 'completed')->count();
+        $subDone = (int) (clone $base)
+            ->whereIn('status', ['completed', 'rejected'])
+            ->count();
         $completedByName = $task->completedByEmployee?->user?->name;
         $assigneeService = app(EmployeeTaskAssigneeService::class);
 
@@ -289,7 +291,9 @@ class EmployeeVisibleTasks
     {
         $task->loadMissing(['template', 'subtasks', 'employee.user']);
         $subCount = $task->subtasks->count();
-        $subDone = $task->subtasks->where('status', 'completed')->count();
+        $subDone = $task->subtasks
+            ->whereIn('status', ['completed', 'rejected'])
+            ->count();
         $completedByName = null;
         if (Schema::hasColumn('employee_task_occurrences', 'completed_by_employee_id') && $task->completed_by_employee_id) {
             $completedBy = \App\Models\EmployeeDetail::with('user')->find($task->completed_by_employee_id);

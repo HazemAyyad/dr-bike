@@ -59,8 +59,8 @@ class EmployeeTaskListService
     public function formatOccurrence(EmployeeTaskOccurrence $task, callable $photoResolver): array
     {
         $subTotal = (int) ($task->subtasks_count ?? $task->subtasks()->count());
-        $subDone = (int) ($task->subtasks_completed_count
-            ?? $task->subtasks()->where('status', 'completed')->count());
+        $subDone = (int) ($task->subtasks_resolved_count
+            ?? $task->subtasks()->whereIn('status', ['completed', 'rejected'])->count());
         $progress = $this->calcProgressPercent($task, $subTotal, $subDone);
 
         $legacyTask = $task->relationLoaded('legacyTask')
@@ -111,13 +111,13 @@ class EmployeeTaskListService
      */
     private function legacySubtaskProgress(EmployeeTask $task): array
     {
-        if (isset($task->subTasks_count, $task->subtasks_completed_count)) {
+        if (isset($task->subTasks_count, $task->subtasks_resolved_count)) {
             $subTotal = (int) $task->subTasks_count;
-            $subDone = (int) $task->subtasks_completed_count;
+            $subDone = (int) $task->subtasks_resolved_count;
         } else {
             $base = EmployeeSubTask::query()->forLegacyTask($task);
             $subTotal = (int) (clone $base)->count();
-            $subDone = (int) (clone $base)->where('status', 'completed')->count();
+            $subDone = (int) (clone $base)->whereIn('status', ['completed', 'rejected'])->count();
         }
 
         return [$subTotal, $subDone, $this->calcProgressPercent($task, $subTotal, $subDone)];
@@ -155,7 +155,7 @@ class EmployeeTaskListService
         $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
             ->withCount([
                 'subTasks',
-                'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
+                'subTasks as subtasks_resolved_count' => fn ($q) => $q->whereIn('status', ['completed', 'rejected']),
             ])
             ->whereIn('status', $statuses)
             ->where('is_canceled', 0)
@@ -177,7 +177,7 @@ class EmployeeTaskListService
         ])
             ->withCount([
                 'subtasks',
-                'subtasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
+                'subtasks as subtasks_resolved_count' => fn ($q) => $q->whereIn('status', ['completed', 'rejected']),
             ])
             ->whereIn('status', $statuses)
             ->where('is_canceled', 0)
@@ -192,7 +192,7 @@ class EmployeeTaskListService
         $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
             ->withCount([
                 'subTasks',
-                'subTasks as subtasks_completed_count' => fn ($q) => $q->where('status', 'completed'),
+                'subTasks as subtasks_resolved_count' => fn ($q) => $q->whereIn('status', ['completed', 'rejected']),
             ])
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
