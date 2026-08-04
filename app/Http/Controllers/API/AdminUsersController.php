@@ -74,7 +74,7 @@ class AdminUsersController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.admin_created_successfully'),
-                'admin' => $this->formatAdmin($user->fresh()),
+                'admin' => $this->formatAdmin($this->adminForResponse($user->id)),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -137,7 +137,7 @@ class AdminUsersController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.admin_updated_successfully'),
-                'admin' => $this->formatAdmin($user->fresh()),
+                'admin' => $this->formatAdmin($this->adminForResponse($user->id)),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -189,7 +189,7 @@ class AdminUsersController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.admin_updated_successfully'),
-                'admin' => $this->formatAdmin($user->fresh()),
+                'admin' => $this->formatAdmin($this->adminForResponse($user->id)),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -272,7 +272,7 @@ class AdminUsersController extends Controller
                 'message' => $blocked
                     ? __('messages.admin_blocked_successfully')
                     : __('messages.admin_unblocked_successfully'),
-                'admin' => $this->formatAdmin($user->fresh()),
+                'admin' => $this->formatAdmin($this->adminForResponse($user->id)),
             ], 200);
         } catch (ModelNotFoundException $e) {
             return response()->json([
@@ -316,12 +316,32 @@ class AdminUsersController extends Controller
         return $ignoreUserId !== null ? $rule->ignore($ignoreUserId) : $rule;
     }
 
+    private function adminForResponse(int $id): User
+    {
+        $query = User::query()->whereKey($id);
+
+        $counts = [];
+        if (Schema::hasTable('personal_access_tokens')) {
+            $counts[] = 'activeSanctumTokens as active_sessions_count';
+            $query->withMax('tokens as latest_token_at', 'created_at');
+        }
+
+        if (Schema::hasTable('admin_device_tokens')) {
+            $counts[] = 'adminDeviceTokens as admin_fcm_devices_count';
+        }
+
+        if ($counts !== []) {
+            $query->withCount($counts);
+        }
+
+        return $query->firstOrFail();
+    }
+
     private function formatAdmin(User $user): array
     {
-        $user->loadCount([
-            'activeSanctumTokens as active_sessions_count',
-            'adminDeviceTokens as admin_fcm_devices_count',
-        ]);
+        if (! Schema::hasTable('admin_device_tokens') && ! array_key_exists('admin_fcm_devices_count', $user->getAttributes())) {
+            $user->setAttribute('admin_fcm_devices_count', 0);
+        }
 
         $fcm = $this->sessions->fcmStatusForUser($user);
         $activeSessions = (int) ($user->active_sessions_count ?? 0);
