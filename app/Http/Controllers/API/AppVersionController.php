@@ -63,7 +63,7 @@ class AppVersionController extends Controller
         try {
             $app = $request->input('app', 'admin');
 
-            $summary = UserAppVersion::query()
+            $summaryRows = UserAppVersion::query()
                 ->select([
                     'app',
                     'platform',
@@ -78,11 +78,47 @@ class AppVersionController extends Controller
                 ->orderByDesc('build')
                 ->get();
 
-            $devices = UserAppVersion::query()
+            $summary = $summaryRows
+                ->groupBy('platform')
+                ->flatMap(function ($rows) {
+                    return $rows
+                        ->sortByDesc('build')
+                        ->take(3)
+                        ->values();
+                })
+                ->values();
+
+            $versionKeys = $summary->map(function ($row) {
+                return [
+                    'platform' => $row->platform,
+                    'version' => $row->version,
+                    'build' => (int) $row->build,
+                ];
+            });
+
+            $devicesQuery = UserAppVersion::query()
                 ->with(['user:id,name,email,type'])
-                ->where('app', $app)
+                ->where('app', $app);
+
+            if ($versionKeys->isEmpty()) {
+                $devicesQuery->whereRaw('1 = 0');
+            } else {
+                $devicesQuery->where(function ($query) use ($versionKeys) {
+                    foreach ($versionKeys as $key) {
+                        $query->orWhere(function ($subQuery) use ($key) {
+                            $subQuery
+                                ->where('platform', $key['platform'])
+                                ->where('version', $key['version'])
+                                ->where('build', $key['build']);
+                        });
+                    }
+                });
+            }
+
+            $devices = $devicesQuery
+                ->orderBy('platform')
+                ->orderByDesc('build')
                 ->orderByDesc('last_seen_at')
-                ->limit(500)
                 ->get()
                 ->map(function (UserAppVersion $row) {
                     return [

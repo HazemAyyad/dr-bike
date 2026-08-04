@@ -309,8 +309,8 @@ class EmployeeTaskDetailsService
     private function statusProgressFallback(?string $status): int
     {
         return match (EmployeeTaskStatus::normalize($status)) {
-            EmployeeTaskStatus::Completed => 100,
-            EmployeeTaskStatus::WaitingReview => 90,
+            EmployeeTaskStatus::Completed,
+            EmployeeTaskStatus::WaitingReview => 100,
             EmployeeTaskStatus::InProgress => 50,
             default => 0,
         };

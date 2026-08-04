@@ -136,7 +136,10 @@ class EmployeeTaskListService
             return (int) round(($subDone / $subTotal) * 100);
         }
 
-        return EmployeeTaskStatus::normalize($task->status) === EmployeeTaskStatus::Completed
+        return in_array(EmployeeTaskStatus::normalize($task->status), [
+            EmployeeTaskStatus::Completed,
+            EmployeeTaskStatus::WaitingReview,
+        ], true)
             ? 100
             : 0;
     }
