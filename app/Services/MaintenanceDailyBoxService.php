@@ -158,7 +158,7 @@ class MaintenanceDailyBoxService
             ]);
         }
 
-        return DB::transaction(function () use ($user, $date, $openingBalance) {
+        $session = DB::transaction(function () use ($user, $date, $openingBalance) {
             $owner = $this->resolveOwner($user);
             $box = Box::lockForUpdate()->find($this->ensureBox($user)->id);
             $session = MaintenanceDailySession::query()
@@ -204,6 +204,17 @@ class MaintenanceDailyBoxService
                 'opened_by_user_id' => $user?->id,
             ]);
         });
+
+        $this->logSessionActivity(
+            $session,
+            $user,
+            'maintenance_daily_session_opened',
+            'فتح صندوق الصيانة',
+            'تم فتح صندوق الصيانة اليومي',
+            ['opening_balance' => $openingBalance]
+        );
+
+        return $session;
     }
 
     public function requestClosing(User $user, ?string $note = null, ?Carbon $at = null): MaintenanceDailyClosingRequest
@@ -254,6 +265,19 @@ class MaintenanceDailyBoxService
             ]);
 
             $this->notifyClosingRequested($session->fresh(['user']), $request, $user);
+            $this->logSessionActivity(
+                $session,
+                $user,
+                'maintenance_daily_closing_requested',
+                'طلب إغلاق صندوق الصيانة',
+                'تم طلب إغلاق صندوق الصيانة اليومي',
+                [
+                    'closing_request_id' => (int) $request->id,
+                    'note' => $note ? trim($note) : null,
+                ],
+                'maintenance_daily_closing_request',
+                (int) $request->id
+            );
 
             return $request->fresh(['session.user', 'requestedBy']);
         });
@@ -451,6 +475,21 @@ class MaintenanceDailyBoxService
             ]);
 
             $this->notifyClosingApproved($session->fresh(['employee.user']), $closingRequest);
+            $this->logSessionActivity(
+                $session,
+                $reviewer,
+                'maintenance_daily_closing_approved',
+                'اعتماد إغلاق صندوق الصيانة',
+                'تم اعتماد إغلاق صندوق الصيانة اليومي',
+                [
+                    'closing_request_id' => (int) $closingRequest->id,
+                    'closing_balance' => $closingBalance,
+                    'transfer' => $transfer,
+                    'note' => $note,
+                ],
+                'maintenance_daily_closing_request',
+                (int) $closingRequest->id
+            );
 
             return $closingRequest->fresh(['session.user', 'session.box', 'requestedBy', 'reviewedBy']);
         });
@@ -495,9 +534,56 @@ class MaintenanceDailyBoxService
             ]);
 
             $this->notifyClosingRejected($session->fresh(['employee.user']), $closingRequest);
+            $this->logSessionActivity(
+                $session,
+                $reviewer,
+                'maintenance_daily_closing_rejected',
+                'رفض إغلاق صندوق الصيانة',
+                'تم رفض طلب إغلاق صندوق الصيانة اليومي',
+                [
+                    'closing_request_id' => (int) $closingRequest->id,
+                    'note' => $note,
+                ],
+                'maintenance_daily_closing_request',
+                (int) $closingRequest->id
+            );
 
             return $closingRequest->fresh(['session.user', 'session.box', 'requestedBy', 'reviewedBy']);
         });
+    }
+
+    private function logSessionActivity(
+        MaintenanceDailySession $session,
+        User $actor,
+        string $action,
+        string $title,
+        ?string $description = null,
+        array $metadata = [],
+        ?string $subjectType = null,
+        ?int $subjectId = null
+    ): void {
+        $businessDate = $session->business_date instanceof Carbon
+            ? $session->business_date->toDateString()
+            : (string) $session->business_date;
+
+        app(EmployeeActivityLogger::class)->log(
+            $session->employee_id ? (int) $session->employee_id : null,
+            $actor,
+            'maintenance_daily_session',
+            $action,
+            $title,
+            $description,
+            $session,
+            null,
+            array_filter(array_merge([
+                'session_id' => (int) $session->id,
+                'business_date' => $businessDate,
+                'status' => $session->status,
+                'box_id' => $session->box_id ? (int) $session->box_id : null,
+            ], $metadata), fn ($value) => $value !== null),
+            $subjectType ?? 'maintenance_daily_session',
+            $subjectId ?? (int) $session->id
+        );
     }
 
     private function buildClosingCashCounts(

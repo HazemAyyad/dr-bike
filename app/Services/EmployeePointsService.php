@@ -76,7 +76,7 @@ class EmployeePointsService
             $createdBy = (int) Auth::id();
         }
 
-        return EmployeePointsLog::create([
+        $log = EmployeePointsLog::create([
             'employee_id' => $employeeId,
             'points' => $points,
             'operation_type' => $operationType,
@@ -88,6 +88,30 @@ class EmployeePointsService
             'points_date' => $pointsDate,
             'created_by' => $createdBy,
         ]);
+
+        app(EmployeeActivityLogger::class)->log(
+            $employeeId,
+            $createdBy ? \App\Models\User::query()->find((int) $createdBy) : null,
+            'employee_points',
+            $operationType === EmployeePointsLog::OPERATION_ADD ? 'points_added' : 'points_deducted',
+            $operationType === EmployeePointsLog::OPERATION_ADD ? 'إضافة نقاط' : 'خصم نقاط',
+            ($operationType === EmployeePointsLog::OPERATION_ADD ? 'تمت إضافة ' : 'تم خصم ').$points.' نقطة',
+            $log,
+            null,
+            [
+                'points' => $points,
+                'category' => $category,
+                'category_id' => $categoryId,
+                'source' => $source,
+                'reason' => $log->reason,
+                'notes' => $log->notes,
+                'points_date' => $pointsDate,
+            ],
+            'employee_points_log',
+            (int) $log->id
+        );
+
+        return $log;
     }
 
     /**

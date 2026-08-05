@@ -216,6 +216,15 @@ class SuspendedInstantSaleService
                 $this->appendNote($existing, $user, $noteText);
             }
 
+            $this->logSuspendedActivity(
+                $existing->fresh(),
+                $user,
+                'suspended_sale_updated',
+                'تحديث فاتورة معلقة',
+                'تم تحديث الفاتورة المعلقة '.($existing->reference_code ?? '#'.$existing->id),
+                ['note' => $noteText !== '' ? $noteText : null]
+            );
+
             return $existing->fresh(['createdByUser:id,name', 'employee.user']);
         }
 
@@ -240,6 +249,14 @@ class SuspendedInstantSaleService
         $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
 
         $this->notifyAdminSuspendedCreated($record);
+        $this->logSuspendedActivity(
+            $record,
+            $user,
+            'suspended_sale_created',
+            'تعليق فاتورة',
+            'تم تعليق فاتورة '.$record->reference_code,
+            ['summary_label' => $record->summary_label]
+        );
 
         return $record;
     }
@@ -312,6 +329,14 @@ class SuspendedInstantSaleService
             'cancelled_at' => now(),
         ]);
 
+        $this->logSuspendedActivity(
+            $record->fresh(),
+            $user,
+            'suspended_sale_cancelled',
+            'إلغاء فاتورة معلقة',
+            'تم إلغاء الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id)
+        );
+
         return $record->fresh(['createdByUser:id,name', 'employee.user']);
     }
 
@@ -332,6 +357,15 @@ class SuspendedInstantSaleService
         }
 
         $this->appendNote($record, $user, $note);
+
+        $this->logSuspendedActivity(
+            $record,
+            $user,
+            'suspended_sale_note_added',
+            'تعليق على فاتورة معلقة',
+            'تمت إضافة ملاحظة على الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id),
+            ['note' => trim($note)]
+        );
 
         return $record->fresh(['createdByUser:id,name', 'employee.user']);
     }
@@ -414,6 +448,16 @@ class SuspendedInstantSaleService
 
             $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
             $this->notifyAdminSuspendedCompleted($record, $user);
+            $this->logSuspendedActivity(
+                $record,
+                $user,
+                'suspended_sale_completed',
+                'إتمام فاتورة معلقة',
+                'تم إتمام الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id),
+                ['instant_sale_id' => $instantSaleId],
+                $instantSaleId ? 'instant_sale' : 'suspended_instant_sale',
+                $instantSaleId ?: (int) $record->id
+            );
 
             return [
                 'response' => response()->json([
@@ -630,6 +674,35 @@ class SuspendedInstantSaleService
         $log = is_array($record->note_log) ? $record->note_log : [];
         $log[] = $this->makeNoteEntry($user, $text);
         $record->forceFill(['note_log' => array_values($log)])->save();
+    }
+
+    private function logSuspendedActivity(
+        SuspendedInstantSale $record,
+        User $actor,
+        string $action,
+        string $title,
+        ?string $description = null,
+        array $metadata = [],
+        ?string $subjectType = null,
+        ?int $subjectId = null
+    ): void {
+        app(EmployeeActivityLogger::class)->log(
+            $record->employee_id ? (int) $record->employee_id : null,
+            $actor,
+            'suspended_sales',
+            $action,
+            $title,
+            $description,
+            $record,
+            (float) ($record->total_cost ?? 0),
+            array_filter(array_merge([
+                'reference_code' => $record->reference_code,
+                'summary_label' => $record->summary_label,
+                'status' => $record->status,
+            ], $metadata), fn ($value) => $value !== null),
+            $subjectType ?? 'suspended_instant_sale',
+            $subjectId ?? (int) $record->id
+        );
     }
 
     /**

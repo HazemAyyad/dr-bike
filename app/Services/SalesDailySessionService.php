@@ -224,7 +224,7 @@ class SalesDailySessionService
             ]);
         }
 
-        return DB::transaction(function () use ($user, $owner, $date, $openingBalances, $expectedOpeningCounts) {
+        $session = DB::transaction(function () use ($user, $owner, $date, $openingBalances, $expectedOpeningCounts) {
             $this->syncOpeningDailyBoxBalances($user, $openingBalances, $expectedOpeningCounts);
 
             return SalesDailySession::create([
@@ -237,6 +237,17 @@ class SalesDailySessionService
                 'opened_by_user_id' => $owner['user_id'],
             ]);
         });
+
+        $this->logSessionActivity(
+            $session,
+            $user,
+            'sales_daily_session_opened',
+            'فتح صندوق المبيعات',
+            'تم فتح صندوق المبيعات اليومي',
+            ['opening_balances' => $openingBalances]
+        );
+
+        return $session;
     }
 
     /**
@@ -1093,6 +1104,20 @@ class SalesDailySessionService
             return $request->fresh(['session.user', 'session.employee.user']);
         });
 
+        $this->logSessionActivity(
+            $request->session,
+            $user,
+            'sales_daily_closing_requested',
+            'طلب إغلاق صندوق المبيعات',
+            'تم طلب إغلاق صندوق المبيعات اليومي',
+            [
+                'closing_request_id' => (int) $request->id,
+                'late_close_reason' => $lateCloseReason !== '' ? $lateCloseReason : null,
+            ],
+            'sales_daily_closing_request',
+            (int) $request->id
+        );
+
         if ($this->canReviewAllSessions($user) && is_array($transfers)) {
             return $this->approveClosing($user, $request->id, $transfers, $reviewNotes);
         }
@@ -1417,6 +1442,20 @@ class SalesDailySessionService
         ]);
 
         $this->notifyEmployeeClosingApproved($session);
+        $this->logSessionActivity(
+            $session,
+            $reviewer,
+            'sales_daily_closing_approved',
+            'اعتماد إغلاق صندوق المبيعات',
+            'تم اعتماد إغلاق صندوق المبيعات اليومي',
+            [
+                'closing_request_id' => (int) $closingRequest->id,
+                'transfers' => $executedTransfers,
+                'review_notes' => $reviewNotes,
+            ],
+            'sales_daily_closing_request',
+            (int) $closingRequest->id
+        );
 
         return $closingRequest->fresh(['session.user', 'session.employee.user']);
     }
@@ -1447,9 +1486,55 @@ class SalesDailySessionService
             ]);
 
             $this->notifyEmployeeClosingRejected($closingRequest->session);
+            $this->logSessionActivity(
+                $closingRequest->session,
+                $reviewer,
+                'sales_daily_closing_rejected',
+                'رفض إغلاق صندوق المبيعات',
+                'تم رفض طلب إغلاق صندوق المبيعات اليومي',
+                [
+                    'closing_request_id' => (int) $closingRequest->id,
+                    'review_notes' => $reviewNotes,
+                ],
+                'sales_daily_closing_request',
+                (int) $closingRequest->id
+            );
 
             return $closingRequest->fresh(['session.user', 'session.employee.user']);
         });
+    }
+
+    private function logSessionActivity(
+        SalesDailySession $session,
+        User $actor,
+        string $action,
+        string $title,
+        ?string $description = null,
+        array $metadata = [],
+        ?string $subjectType = null,
+        ?int $subjectId = null
+    ): void {
+        $businessDate = $session->business_date instanceof Carbon
+            ? $session->business_date->toDateString()
+            : (string) $session->business_date;
+
+        app(EmployeeActivityLogger::class)->log(
+            $session->employee_id ? (int) $session->employee_id : null,
+            $actor,
+            'sales_daily_session',
+            $action,
+            $title,
+            $description,
+            $session,
+            null,
+            array_filter(array_merge([
+                'session_id' => (int) $session->id,
+                'business_date' => $businessDate,
+                'status' => $session->status,
+            ], $metadata), fn ($value) => $value !== null),
+            $subjectType ?? 'sales_daily_session',
+            $subjectId ?? (int) $session->id
+        );
     }
 
     private function notifyEmployeeClosingApproved(SalesDailySession $session): void
