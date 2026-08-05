@@ -9,6 +9,7 @@ use App\Services\SalesDailySessionService;
 use App\Models\Customer;
 use App\Models\Debt;
 use App\Models\Seller;
+use App\Services\EmployeeActivityLogger;
 
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
@@ -305,6 +306,23 @@ class PaymentAndRecieve extends Controller
                         ? "تم اضافة دين علينا بعد الدفع بقيمة {$debt->total}"
                         : "تم اضافة دين لنا بعد القبض بقيمة {$debt->total}"),
                     'debts'
+                );
+                app(EmployeeActivityLogger::class)->log(
+                    null,
+                    $request->user(),
+                    'debts',
+                    'created_debt_from_transaction',
+                    $type === 'payment' ? 'إضافة دين بعد الدفع' : 'إضافة دين بعد القبض',
+                    $type === 'payment'
+                        ? "تمت إضافة دين علينا بعد الدفع بقيمة {$debt->total}"
+                        : "تمت إضافة دين لنا بعد القبض بقيمة {$debt->total}",
+                    $debt,
+                    (float) $debt->total,
+                    [
+                        'person_type' => $debt->customer_id ? 'customer' : 'seller',
+                        'person_id' => (int) ($debt->customer_id ?: $debt->seller_id),
+                        'debt_type' => $debt->type,
+                    ]
                 );
             }
         }

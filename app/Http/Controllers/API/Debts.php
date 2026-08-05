@@ -12,6 +12,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use ArPHP\I18N\Arabic;
 
 use App\Models\Log;
+use App\Services\EmployeeActivityLogger;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -95,6 +96,17 @@ class Debts extends Controller
         Logs::createLog('اضافة دين جديد',' اضافة'.' '.$debtTypeInArabic.' '.' للزبون'.' '
     .$debt->customer->name.' '.'بقيمة'.' '. $debt->total
     ,'debts');
+        app(EmployeeActivityLogger::class)->log(
+            null,
+            $request->user(),
+            'debts',
+            'created_debt',
+            'إضافة دين جديد',
+            'تمت إضافة '.$debtTypeInArabic.' للزبون '.$debt->customer->name.' بقيمة '.$debt->total,
+            $debt,
+            (float) $debt->total,
+            ['person_type' => 'customer', 'person_id' => (int) $debt->customer_id, 'debt_type' => $debt->type]
+        );
 }
 
     elseif($request->filled('seller_id')){
@@ -111,6 +123,17 @@ class Debts extends Controller
         Logs::createLog('اضافة دين جديد',' اضافة'.' '.$debtTypeInArabic.' '.' للتاجر'.' '
     .$debt->seller->name.' '.'بقيمة'.' '. $debt->total
     ,'debts');
+        app(EmployeeActivityLogger::class)->log(
+            null,
+            $request->user(),
+            'debts',
+            'created_debt',
+            'إضافة دين جديد',
+            'تمت إضافة '.$debtTypeInArabic.' للتاجر '.$debt->seller->name.' بقيمة '.$debt->total,
+            $debt,
+            (float) $debt->total,
+            ['person_type' => 'seller', 'person_id' => (int) $debt->seller_id, 'debt_type' => $debt->type]
+        );
    }
 
     if($debt->type==='we owe'){

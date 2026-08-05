@@ -14,6 +14,7 @@ use App\Services\EmployeeTasks\EmployeeTaskPerformanceService;
 use App\Services\EmployeeTasks\EmployeeTaskRecurrenceService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
+use App\Services\EmployeeActivityLogger;
 use App\Services\AdminNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
@@ -862,6 +863,18 @@ class EmployeeTaskOperationsController extends Controller
 
                 $this->workflow->submitOccurrenceForReview($occurrence);
             }
+
+            app(EmployeeActivityLogger::class)->log(
+                (int) $actorId,
+                auth()->user(),
+                'tasks',
+                'completed_employee_occurrence_subtask',
+                'إكمال مهمة فرعية',
+                'تم إكمال مهمة فرعية باسم '.$sub->name.' ضمن '.$occurrence->name,
+                $occurrence,
+                null,
+                ['sub_task_id' => (int) $sub->id, 'sub_task_name' => $sub->name]
+            );
 
             return response()->json(['status' => 'success', 'message' => __('messages.task_completed')], 200);
         } catch (\Throwable $e) {

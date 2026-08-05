@@ -34,6 +34,7 @@ use App\Http\Controllers\API\Draws;
 use App\Http\Controllers\API\EmployeeAttendanceReportController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeOrders;
+use App\Http\Controllers\API\EmployeeActivityLogController;
 use App\Http\Controllers\API\EmployeePointCategoryController;
 use App\Http\Controllers\API\EmployeePointsController;
 use App\Http\Controllers\API\EmployeeRewardRuleController;
@@ -261,6 +262,9 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
 
     Route::get('/employee/logs' , [Logs::class,'getEmployeesLogs'])
         ->middleware('check.permission:Employees Logs View');
+    Route::get('/employees/{employee}/activity-logs', [EmployeeActivityLogController::class, 'index'])
+        ->whereNumber('employee')
+        ->middleware('check.permission:Employees Logs View,Employees View');
     Route::get('/employee/attendance/history', [EmployeeDetails::class, 'employeeAttendanceHistory'])
         ->middleware('check.permission:Employees Attendance View');
     Route::get('/employee/attendance/weekly-off-import-candidates', [EmployeeDetails::class, 'weeklyOffAttendanceImportCandidates'])

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Services\SalesOrderFulfillmentService;
+use App\Services\EmployeeActivityLogger;
 use App\Services\SalesOrderPartialService;
 use App\Services\SalesOrderService;
 use App\Services\SalesOrderStatementService;
@@ -85,6 +86,7 @@ class SalesOrdersController extends Controller
     {
         try {
             $order = $this->service->store($request->user(), $request);
+            $this->logSalesOrderActivity($request, $order, 'created_sales_order', 'إنشاء طلبية مبيعات');
 
             return response()->json([
                 'status' => 'success',
@@ -179,6 +181,7 @@ class SalesOrdersController extends Controller
                 (int) $data['sales_order_id'],
                 $request
             );
+            $this->logSalesOrderActivity($request, $order, 'updated_sales_order', 'تعديل طلبية مبيعات');
 
             return response()->json([
                 'status' => 'success',
@@ -309,6 +312,7 @@ class SalesOrdersController extends Controller
                 (int) $data['sales_order_id'],
                 $data['note'] ?? null
             );
+            $this->logSalesOrderActivity($request, $order, 'canceled_sales_order', 'إلغاء طلبية مبيعات');
 
             $message = $order->status === 'returned'
                 ? __('messages.sales_order_returned')
@@ -346,6 +350,7 @@ class SalesOrdersController extends Controller
                 (int) $data['sales_order_id'],
                 $data['note'] ?? null
             );
+            $this->logSalesOrderActivity($request, $order, 'reverted_sales_order', 'إرجاع حالة طلبية');
 
             return response()->json([
                 'status' => 'success',
@@ -381,6 +386,7 @@ class SalesOrdersController extends Controller
                 $data['postponed_until'],
                 $data['reason'] ?? null
             );
+            $this->logSalesOrderActivity($request, $order, 'postponed_sales_order', 'تأجيل طلبية مبيعات');
 
             return response()->json([
                 'status' => 'success',
@@ -558,6 +564,7 @@ class SalesOrdersController extends Controller
                 (int) $data['sales_order_id'],
                 $data['reason'] ?? null
             );
+            $this->logSalesOrderActivity($request, $order, 'marked_sales_order_stuck', 'تعليم طلبية عالقة');
 
             return response()->json([
                 'status' => 'success',
@@ -625,6 +632,7 @@ class SalesOrdersController extends Controller
                 'ready' => $this->service->markReady($request->user(), (int) $data['sales_order_id']),
                 default => throw new \InvalidArgumentException('Unknown action'),
             };
+            $this->logSalesOrderActivity($request, $order, $action.'_sales_order', $message);
 
             return response()->json([
                 'status' => 'success',
@@ -681,6 +689,7 @@ class SalesOrdersController extends Controller
                 'archive' => $this->fulfillmentService->archive($user, $orderId),
                 default => throw new \InvalidArgumentException('Unknown action'),
             };
+            $this->logSalesOrderActivity($request, $order, $action.'_sales_order', $message);
 
             return response()->json([
                 'status' => 'success',
@@ -707,5 +716,26 @@ class SalesOrdersController extends Controller
                     : __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    private function logSalesOrderActivity(Request $request, $order, string $action, string $title): void
+    {
+        app(EmployeeActivityLogger::class)->log(
+            null,
+            $request->user(),
+            'sales',
+            $action,
+            $title,
+            $title.' رقم '.($order->serial_number ?? $order->id).' بقيمة '.number_format((float) ($order->total ?? 0), 2, '.', ''),
+            $order,
+            (float) ($order->total ?? 0),
+            [
+                'order_number' => $order->serial_number ?? null,
+                'status' => $order->status ?? null,
+                'customer_name' => $order->customer_name ?? null,
+            ],
+            'sales_order',
+            (int) $order->id
+        );
     }
 }

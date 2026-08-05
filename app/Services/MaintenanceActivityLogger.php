@@ -21,7 +21,7 @@ class MaintenanceActivityLogger
         ?string $newStatus = null,
         array $metadata = []
     ): MaintenanceActivityLog {
-        return MaintenanceActivityLog::create([
+        $log = MaintenanceActivityLog::create([
             'maintenance_id' => $maintenance->id,
             'user_id' => $actor?->id,
             'actor_name' => $actor?->name,
@@ -33,6 +33,20 @@ class MaintenanceActivityLogger
             'new_status' => $newStatus,
             'metadata' => $metadata === [] ? null : $metadata,
         ]);
+
+        app(EmployeeActivityLogger::class)->log(
+            null,
+            $actor,
+            'maintenance',
+            $action,
+            $title,
+            $description,
+            $maintenance,
+            isset($metadata['amount']) ? (float) $metadata['amount'] : (float) ($maintenance->invoice_total ?? 0),
+            $metadata
+        );
+
+        return $log;
     }
 
     /**

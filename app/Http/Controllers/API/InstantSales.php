@@ -18,6 +18,7 @@ use App\Services\AdminNotificationService;
 use App\Services\CustomerProductPriceHistoryService;
 use App\Services\DebtLedgerService;
 use App\Services\DocumentSerialService;
+use App\Services\EmployeeActivityLogger;
 use App\Services\OfferPackageService;
 use App\Services\ProductStockService;
 use App\Services\SalesDailySessionService;
@@ -1378,6 +1379,22 @@ public function store(Request $request)
             : ''),
         'instant_sales');
 
+        app(EmployeeActivityLogger::class)->log(
+            null,
+            $request->user(),
+            'sales',
+            $replaceId > 0 ? 'updated_instant_sale' : 'created_instant_sale',
+            $replaceId > 0 ? 'تعديل بيع فوري' : 'إنشاء بيع فوري',
+            $logDescription,
+            $mainInstantSale,
+            (float) ($mainInstantSale->total_cost ?? 0),
+            [
+                'invoice_number' => $mainInstantSale->serial_number,
+                'buyer_name' => $mainInstantSale->buyer_name,
+                'payment_box_value' => $mainInstantSale->payment_box_value,
+            ]
+        );
+
         if ($replaceId <= 0 && ! $isAdjustmentSale) {
             app(SalesDailySessionService::class)->notifyExternalSaleMovement(
                 $request->user(),
@@ -1668,6 +1685,22 @@ public function store(Request $request)
                 $replaceId > 0 ? 'تعديل بيع فوري' : 'اضافة بيع فوري جديد',
                 $logDescription,
                 'instant_sales'
+            );
+
+            app(EmployeeActivityLogger::class)->log(
+                null,
+                $request->user(),
+                'sales',
+                $replaceId > 0 ? 'updated_instant_sale' : 'created_instant_sale',
+                $replaceId > 0 ? 'تعديل بيع فوري' : 'إنشاء بيع فوري',
+                $logDescription,
+                $mainInstantSale,
+                (float) ($mainInstantSale->total_cost ?? 0),
+                [
+                    'invoice_number' => $mainInstantSale->serial_number,
+                    'buyer_name' => $mainInstantSale->buyer_name,
+                    'offer_package_id' => $package->id,
+                ]
             );
 
             if ($replaceId <= 0) {

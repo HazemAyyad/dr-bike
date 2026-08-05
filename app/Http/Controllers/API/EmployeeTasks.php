@@ -12,6 +12,7 @@ use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
+use App\Services\EmployeeActivityLogger;
 use App\Support\SubtaskAdminMediaStorage;
 use App\Support\TaskProofMediaType;
 use Illuminate\Support\Facades\Schema;
@@ -2011,6 +2012,17 @@ public function updateEmployeeTask(Request $request)
                 $legacyDay->keepParentTemplateActive($parentTemplate, $task);
             }
             Logs::createLog('تسليم مهمة للمراجعة', 'تسليم مهمة باسم '.$task->name, 'employee_tasks');
+            app(EmployeeActivityLogger::class)->log(
+                (int) $actorEmployeeId,
+                $user,
+                'tasks',
+                'submitted_employee_task',
+                'تسليم مهمة للمراجعة',
+                'تم تسليم مهمة باسم '.$task->name.' للمراجعة',
+                $task,
+                null,
+                ['task_name' => $task->name, 'task_date' => $taskDate?->format('Y-m-d')]
+            );
 
             return response()->json([
                 'status' => 'success',
@@ -2022,6 +2034,17 @@ public function updateEmployeeTask(Request $request)
         Logs::createLog('اكمال مهمة موظف','اكمال مهمة موظف باسم'.' '.$task->name
         .' '.'التابعة للموظف'.' '.$task->employee->user->name,
         'employee_tasks');
+        app(EmployeeActivityLogger::class)->log(
+            (int) $task->employee_id,
+            $user,
+            'tasks',
+            'completed_employee_task',
+            'إكمال مهمة موظف',
+            'تم إكمال مهمة باسم '.$task->name,
+            $task,
+            null,
+            ['task_name' => $task->name]
+        );
 
         try {
             app(\App\Services\AdminNotificationService::class)->notifyTaskCompleted($task->employee, $task);
@@ -2138,6 +2161,17 @@ public function updateEmployeeTask(Request $request)
         .' '.'التابعة للمهمة الرئيسية باسم'.' '.$subTask->employeeTask->name
         
         ,'employee_tasks');
+        app(EmployeeActivityLogger::class)->log(
+            (int) $actorId,
+            auth()->user(),
+            'tasks',
+            'completed_employee_subtask',
+            'إكمال مهمة فرعية',
+            'تم إكمال مهمة فرعية باسم '.$subTask->name.' ضمن '.$subTask->employeeTask->name,
+            $subTask->employeeTask,
+            null,
+            ['sub_task_id' => (int) $subTask->id, 'sub_task_name' => $subTask->name]
+        );
 
             return response()->json([
             'status' => 'success',

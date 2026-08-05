@@ -11,6 +11,7 @@ use App\Models\Store\StoreShiplyVillage;
 use App\Models\SalesOrderStatusLog;
 use App\Services\AdminNotificationService;
 use App\Services\DocumentSerialService;
+use App\Services\EmployeeActivityLogger;
 use App\Services\ShiplyService;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
@@ -115,6 +116,21 @@ class StoreOrdersController extends StoreBaseController
         });
 
         app(AdminNotificationService::class)->notifyStoreOrderCreated($order);
+        app(EmployeeActivityLogger::class)->logForUserId(
+            is_numeric($order->created_by) ? (int) $order->created_by : (int) ($request->user()?->id ?? 0),
+            'sales',
+            'created_sales_order',
+            'إنشاء طلبية مبيعات',
+            'تم إنشاء طلبية رقم '.($order->serial_number ?? $order->id).' بقيمة '.number_format((float) ($order->total ?? 0), 2, '.', ''),
+            $order,
+            (float) ($order->total ?? 0),
+            [
+                'order_number' => $order->serial_number,
+                'customer_name' => $order->customer_name,
+                'customer_phone' => $order->customer_phone,
+                'items_count' => $order->details->count(),
+            ]
+        );
 
         return response()->json($this->orderPayload($order, $request->all()));
     }
@@ -180,6 +196,20 @@ class StoreOrdersController extends StoreBaseController
         ]);
 
         app(AdminNotificationService::class)->notifyStoreOrderCanceled($order);
+        app(EmployeeActivityLogger::class)->logForUserId(
+            is_numeric($userId) ? (int) $userId : (int) ($request->user()?->id ?? 0),
+            'sales',
+            'canceled_sales_order',
+            'إلغاء طلبية مبيعات',
+            'تم إلغاء طلبية رقم '.($order->serial_number ?? $order->id),
+            $order,
+            (float) ($order->total ?? 0),
+            [
+                'order_number' => $order->serial_number,
+                'from_status' => $fromStatus,
+                'to_status' => 'canceled',
+            ]
+        );
 
         return response()->json($this->orderPayload($order->fresh($this->orderRelations())));
     }
