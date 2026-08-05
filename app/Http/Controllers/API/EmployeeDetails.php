@@ -6,15 +6,16 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\EmployeeDetailResource;
 use App\Mail\NewEmployeeAccountMail;
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceAdjustment;
 use App\Models\EmployeeAttendanceScan;
 use App\Support\AttendanceScanPresenter;
 use App\Support\EmployeeAttendanceToday;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
 use App\Models\EmployeePermission;
+use App\Models\EmployeePointsLog;
 use App\Models\FingerprintRawLog;
 use App\Models\Permission;
-use App\Models\Reward;
 use App\Models\User;
 use App\Services\AttendanceSalaryService;
 use App\Services\EmployeePointsService;
@@ -453,7 +454,7 @@ class EmployeeDetails extends Controller
         $overtimeMinutes = 0;
 
         // Prefer persisted snapshots when present; otherwise synthesize split from scans/totals live.
-        if ($legacyAttendance && $legacyAttendance->normal_minutes !== null && $legacyAttendance->overtime_minutes !== null) {
+        if ($legacyAttendance && $overriddenWorkedMinutes === null && $legacyAttendance->normal_minutes !== null && $legacyAttendance->overtime_minutes !== null) {
             if ($legacyAttendance->required_minutes !== null && $legacyAttendance->required_minutes > 0) {
                 $requiredMinutes = (int) $legacyAttendance->required_minutes;
             }
@@ -470,6 +471,11 @@ class EmployeeDetails extends Controller
 
         return [
             'worked_hours' => $salaryService->formatHours((int) $workedMinutes),
+            'worked_duration' => $salaryService->formatDuration((int) $workedMinutes),
+            'worked_minutes_value' => (int) $workedMinutes,
+            'required_minutes_value' => (int) $requiredMinutes,
+            'normal_minutes_value' => (int) $normalMinutes,
+            'overtime_minutes_value' => (int) $overtimeMinutes,
             'required_hours' => $salaryService->formatHours((int) $requiredMinutes),
             'normal_hours' => $salaryService->formatHours((int) $normalMinutes),
             'overtime_hours' => $salaryService->formatHours((int) $overtimeMinutes),
@@ -487,7 +493,7 @@ class EmployeeDetails extends Controller
         try {
             $employees = EmployeeDetail::with('user:id,name')
                 ->orderBy('created_at', 'desc')
-                ->get(['id', 'hour_work_price', 'points', 'user_id','employee_img', 'start_work_time']);
+                ->get(['id', 'hour_work_price', 'user_id','employee_img', 'start_work_time']);
 
             $now = Carbon::now();
             $pointsService = app(EmployeePointsService::class);
@@ -513,7 +519,7 @@ class EmployeeDetails extends Controller
                     'id' => $employee->id,
                     'employee_name' => $employee->user?->name,
                     'hour_work_price' => $employee->hour_work_price,
-                    'points' => $employee->points,
+                    'points' => (string) $summary['net_points'],
                     'points_summary' => [
                         'earned_points' => (int) $summary['earned_points'],
                         'deducted_points' => (int) $summary['deducted_points'],
@@ -665,19 +671,18 @@ class EmployeeDetails extends Controller
 private function getEmployeeFinancialData($employeeId)
 {
     $employee = EmployeeDetail::with('user:id,name')->findOrFail($employeeId);
-    $pointsRevenue = ($employee->points / 50) * $employee->hour_work_price;
 
     return [
         'employee_id' => $employee->id,
         'employee_name' => $employee->user->name,
         'salary' => $employee->salary,
         'debts' => $employee->debts,
-        'points' => $employee->points,
+        'points' => app(EmployeePointsService::class)->getTotalNetPoints((int) $employee->id),
         'hour_work_price' => $employee->hour_work_price,
         'total_work_hours' => $employee->total_work_hours,
         'number_of_work_hours' => $employee->number_of_work_hours,
-        'points_revenue' => $pointsRevenue,
-        'total' => round(($employee->salary + $pointsRevenue) - $employee->debts),
+        'points_revenue' => 0,
+        'total' => round(((float) $employee->salary) - ((float) $employee->debts)),
     ];
 }
 
@@ -905,8 +910,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $employee->update([
                 'total_work_hours' => 0,
                 'salary' => 0 ,
-                'points' => 0,
-                'debts' => ($data['debts'] - ($data['salary'] + $data['pointsRevenue'])) + $request->salary_to_pay,
+                'debts' => ($data['debts'] - $data['salary']) + $request->salary_to_pay,
             ]);
 
             return response()->json([
@@ -919,7 +923,6 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'debts'=> 0 ,
                 'total_work_hours' => 0,
                 'salary' => 0 ,
-                'points' => 0,
             ]); 
             $employee->debts -= ($data['total'] - $salary_to_pay);
             $employee->save();
@@ -1417,11 +1420,16 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             })
                 : collect();
 
-            $employeeRewardsAndPunishments = $employee->rewards->map(function($reward){
+            $employeeRewardsAndPunishments = $employee->pointsLogs()
+                ->orderByDesc('points_date')
+                ->orderByDesc('id')
+                ->limit(200)
+                ->get()
+                ->map(function(EmployeePointsLog $reward){
                 return [
                     'points'=> $reward->points??0,
-                    'notes' => $reward->notes?? 'no notes',
-                    'type' => $reward->type??'unknown',
+                    'notes' => $reward->reason ?: ($reward->notes ?? 'no notes'),
+                    'type' => $reward->operation_type === EmployeePointsLog::OPERATION_DEDUCT ? 'minus' : 'add',
                 ];
             });
 
@@ -1450,73 +1458,6 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
 
     }
-
-
-    
-
-
-
-    // add points (reward)
-    private function changePoints(Request $request,String $type){
-        try{
-            $request->validate([
-                'employee_id' => ['required', 'exists:employee_details,id'],
-                'points' =>'required|numeric|min:1',
-                'notes' => 'nullable|string',
-        ]);
-        $employee = EmployeeDetail::findOrFail($request->employee_id);
-        if($type==='add'){
-            $employee->points += $request->points;
-
-            Logs::createLog('اضافة نقاط','تم اضافة نقاط بعدد'
-            .' '.$request->points.' '.'للموظف'.' '.$employee->user->name,'employees');
-         }
-
-        elseif($type==='minus'){
-            $employee->points -= $request->points;
-
-            Logs::createLog('خصم نقاط','تم خصم نقاط بعدد'
-            .' '.$request->points.' '.'للموظف'.' '.$employee->user->name,'employees');
-         }
-
-         $employee->save();
-
-         Reward::create([
-            'employee_id' => $request->employee_id,
-            'points' => $request->points,
-            'notes' => $request->notes,
-            'type' => $type,
-         ]);
-         return response()->json([
-            'status'=>'success',
-            'message' => __('messages.points_updated'),
-         ]);
-
-    }
-
-       catch (ValidationException $e) {
-            return response(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
-        } catch (ModelNotFoundException $e) {
-            return response(['status' => 'error', 'message' => __('messages.employee_not_found')], 200);
-        } catch (QueryException $e) {
-            return response(['status' => 'error',
-             'message' => __('messages.update_data_error')], 200);
-        } catch (\Exception $e) {
-            return response(['status' => 'error', 'message' => __('messages.failed_to_update_employee')], 200);
-        }
-
-
-    }
-
-
-    public function addPoints(Request $request){
-        return $this->changePoints($request,'add');
-    }
-
-    public function minusPoints(Request $request){
-        return $this->changePoints($request,'minus');
-    }
-
     public function updatePermissionGrantPolicy(Request $request)
     {
         try {
@@ -1606,19 +1547,12 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     Carbon::parse($request->to_date)->toDateString(),
                 ])
                 ->get();
-        $rewards = $employee->rewards()
-            ->whereBetween('created_at', [
-                Carbon::parse($request->from_date)->startOfDay(),
-                Carbon::parse($request->to_date)->endOfDay(),
-            ])
-            ->get();
             $financialData = $this->getEmployeeMonthlyFinancialData($employee->id, $month->format('Y-m'));
             $advancesData = $this->getEmployeeAdvancesData($employee, $month);
        // 🔹 First render HTML from the Blade
         $reportHtml = view('pdf.employee-report', [
             'attendances' => $attendances,
             'financialData' => $financialData,
-            'rewards'=>$rewards,
             'advancesData' => $advancesData,
             'month' => $month->format('F Y'),
 
@@ -1680,7 +1614,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 $from,
                 $to,
                 true,
-                $request->boolean('include_empty_days')
+                $request->boolean('include_empty_days', true)
             );
 
             return response()->json(array_merge(['status' => 'success'], $payload), 200);
@@ -1752,7 +1686,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             return response()->json([
                 'status' => 'success',
-                'days' => array_values($days),
+                'days' => [],
+                'message' => 'weekly_off_import_deprecated',
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -1776,54 +1711,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'date' => 'required|date',
             ]);
 
-            $employee = EmployeeDetail::findOrFail($request->employee_id);
+            EmployeeDetail::findOrFail($request->employee_id);
             $date = Carbon::parse($request->date)->toDateString();
-
-            if (EmployeeAttendanceScan::query()
-                ->where('employee_id', $employee->id)
-                ->whereDate('work_date', $date)
-                ->exists()) {
-                return response()->json([
-                    'status' => 'success',
-                    'message' => 'day_already_registered',
-                    'imported_count' => 0,
-                    'date' => $date,
-                ], 200);
-            }
-
-            $logs = FingerprintRawLog::query()
-                ->where('processing_status', 'ignored')
-                ->where('processing_error', 'weekly_off')
-                ->whereDate('scan_time', $date)
-                ->orderBy('scan_time')
-                ->get()
-                ->filter(fn (FingerprintRawLog $log) => (int) ($processor->employeeForRawLog($log)?->id ?? 0) === (int) $employee->id)
-                ->values();
-
-            if ($logs->isEmpty()) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.something_wrong'),
-                ], 200);
-            }
-
-            $processed = 0;
-            DB::transaction(function () use ($logs, $processor, &$processed) {
-                foreach ($logs as $log) {
-                    $log->update([
-                        'processing_status' => 'pending',
-                        'processing_error' => null,
-                        'processed_at' => null,
-                    ]);
-
-                    $processor->processRawLog($log->fresh());
-                    $processed++;
-                }
-            });
 
             return response()->json([
                 'status' => 'success',
-                'imported_count' => $processed,
+                'message' => 'weekly_off_import_deprecated',
+                'imported_count' => 0,
                 'date' => $date,
             ], 200);
         } catch (ValidationException $e) {
@@ -1941,6 +1835,15 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             }
         }
 
+        $adjustmentsByDate = $forAdmin
+            ? EmployeeAttendanceAdjustment::query()
+                ->where('employee_id', $employee->id)
+                ->whereBetween('work_date', [$fromStr, $toStr])
+                ->orderBy('id')
+                ->get()
+                ->groupBy(fn (EmployeeAttendanceAdjustment $adjustment) => $adjustment->work_date?->toDateString())
+            : collect();
+
         /** @var AttendanceSalaryService $salaryService */
         $salaryService = app(AttendanceSalaryService::class);
         $expectedMinutes = (int) (($salaryService->calculateDailyOvertime($employee, 0))['required_minutes']);
@@ -1996,8 +1899,15 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     'overtime_approved_minutes' => null,
                     'can_edit_day' => $forAdmin,
                     'attendance_status' => $isWeeklyDayOff ? 'weekly_day_off' : 'absent',
-                    'attendance_status_label' => $isWeeklyDayOff ? 'عطلة رسمية' : 'عدم حضور',
+                    'is_weekly_off' => $isWeeklyDayOff,
+                    'weekly_off_worked' => false,
+                    'attendance_status_label' => $isWeeklyDayOff ? 'إجازة أسبوعية' : 'عدم حضور',
                     'worked_hours' => $salaryService->formatHours(0),
+                    'worked_duration' => $salaryService->formatDuration(0),
+                    'worked_minutes_value' => 0,
+                    'required_minutes_value' => $emptyExpectedMinutes,
+                    'normal_minutes_value' => 0,
+                    'overtime_minutes_value' => 0,
                     'required_hours' => $salaryService->formatHours($emptyExpectedMinutes),
                     'normal_hours' => $salaryService->formatHours(0),
                     'overtime_hours' => $salaryService->formatHours(0),
@@ -2087,10 +1997,30 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 }
             }
 
+            $actualWorkedMinutes = $workedMinutes;
+            $actualLastCheckOut = $lastCheckOut ? Carbon::parse($lastCheckOut) : null;
+            $calculatedLastCheckOut = $actualLastCheckOut
+                ? $salaryService->countedCheckoutAt($employee, $dateStr, $actualLastCheckOut)
+                : null;
+            $overtimeGraceMinutes = $salaryService->overtimeGraceMinutesForDate($dateStr);
+            if ($actualLastCheckOut && $calculatedLastCheckOut && ! $calculatedLastCheckOut->equalTo($actualLastCheckOut)) {
+                $workedMinutes = max(0, $workedMinutes - $calculatedLastCheckOut->diffInMinutes($actualLastCheckOut));
+            }
+
             $onTime = null;
             if ($employee->start_work_time && $firstCheckIn) {
                 $scheduledStart = Carbon::parse($dateStr.' '.$employee->start_work_time);
                 $onTime = $firstCheckIn->lte($scheduledStart);
+            }
+
+            $actualWorkedMinutes = $workedMinutes;
+            $actualLastCheckOut = $lastCheckOut ? Carbon::parse($lastCheckOut) : null;
+            $calculatedLastCheckOut = $actualLastCheckOut
+                ? $salaryService->countedCheckoutAt($employee, $dateStr, $actualLastCheckOut)
+                : null;
+            $overtimeGraceMinutes = $salaryService->overtimeGraceMinutesForDate($dateStr);
+            if ($actualLastCheckOut && $calculatedLastCheckOut && ! $calculatedLastCheckOut->equalTo($actualLastCheckOut)) {
+                $workedMinutes = max(0, $workedMinutes - $calculatedLastCheckOut->diffInMinutes($actualLastCheckOut));
             }
 
             $financialBaseAttendance = $legacy;
@@ -2134,6 +2064,11 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'first_check_in_server' => $firstCheckInApi['server_at'] ?? null,
                 'first_check_in_source' => $firstInScan?->source,
                 'last_check_out' => $lastCheckOut?->toIso8601String(),
+                'actual_check_out' => $actualLastCheckOut?->toIso8601String(),
+                'calculated_check_out' => $calculatedLastCheckOut?->toIso8601String(),
+                'actual_worked_minutes' => $actualWorkedMinutes,
+                'calculated_worked_minutes' => $workedMinutes,
+                'overtime_grace_minutes' => $overtimeGraceMinutes,
                 'last_check_out_server' => $lastCheckOutApi['server_at'] ?? null,
                 'last_check_out_source' => $lastOutScan?->source,
                 // Auto-checkout mark (employee forgot to check out; system closed the day).
@@ -2146,7 +2081,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'on_time' => $onTime,
                 // Back-compat: old meaning (after scheduled end). New contract-based overtime is in *_hours fields.
                 'overtime_minutes' => $scheduleOvertimeMinutes,
-                'contract_overtime_minutes' => (int) round(((float) ($financial['overtime_hours'] ?? 0)) * 60),
+                'contract_overtime_minutes' => (int) ($financial['overtime_minutes_value'] ?? 0),
                 'segments' => $segments,
                 'scans' => $scansOut,
                 'overtime_request_id' => $overtimeRequest ? (int) $overtimeRequest->id : null,
@@ -2158,8 +2093,22 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     ? (int) $overtimeRequest->approved_minutes
                     : null,
                 'can_edit_day' => $forAdmin && ! $currentlyIn,
+                'is_weekly_off' => $isWeeklyDayOff,
+                'weekly_off_worked' => $isWeeklyDayOff,
                 'attendance_status' => $isWeeklyDayOff ? 'present_on_weekly_day_off' : 'present',
                 'attendance_status_label' => $isWeeklyDayOff ? 'حضور في يوم عطلة رسمية' : 'حضور',
+                'adjustments' => ($adjustmentsByDate->get($dateStr) ?? collect())
+                    ->map(fn (EmployeeAttendanceAdjustment $adjustment) => [
+                        'id' => (int) $adjustment->id,
+                        'before_values' => $adjustment->before_values ?? [],
+                        'after_values' => $adjustment->after_values ?? [],
+                        'edited_by' => $adjustment->edited_by ? (int) $adjustment->edited_by : null,
+                        'source' => (string) $adjustment->source,
+                        'note' => $adjustment->note,
+                        'created_at' => $adjustment->created_at?->toIso8601String(),
+                    ])
+                    ->values()
+                    ->all(),
             ], $financial);
         }
 

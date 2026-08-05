@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Box;
+use App\Models\BoxLog;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
 use App\Services\EmployeeNotificationService;
@@ -10,6 +12,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -44,6 +47,8 @@ class EmployeeOrders extends Controller
                         ? null
                         : $order->updated_at?->format('Y-m-d h:i A'),
                     'rejection_reason' => $order->rejection_reason,
+                    'approved_box_id' => $order->approved_box_id ? (int) $order->approved_box_id : null,
+                    'box_log_id' => $order->box_log_id ? (int) $order->box_log_id : null,
                     'day' => $created->format('l'),
                     'date' => $created->toDateString(),
                     'time' => $created->format('h:i A'),
@@ -111,6 +116,7 @@ class EmployeeOrders extends Controller
                         ? null
                         : $order->updated_at?->format('Y-m-d h:i A'),
                     'rejection_reason' => $order->rejection_reason,
+                    'approved_box_id' => $order->approved_box_id ? (int) $order->approved_box_id : null,
 
                 ];
           
@@ -269,6 +275,7 @@ class EmployeeOrders extends Controller
             $request->validate([
                 'employee_order_id'=>'required|exists:employee_orders,id',
                 'loan_value' =>'required|numeric|min:1',
+                'box_id' => 'nullable|integer|exists:boxes,id',
             ]);
 
             $order = EmployeeOrder::findOrFail($request->employee_order_id);
@@ -280,15 +287,43 @@ class EmployeeOrders extends Controller
             }
 
             $approvedLoanValue = (float) $request->loan_value;
-            $order->update([
-                'status'=>'approved',
-                'loan_value'=>$approvedLoanValue,
-                'rejection_reason' => null,
-            ]);
+            $employee = null;
+            DB::transaction(function () use ($request, $order, $approvedLoanValue, &$employee) {
+                $employee = $order->employee;
+                $boxId = null;
+                $boxLogId = null;
 
-            $employee = $order->employee;
-            $employee->debts += $approvedLoanValue;
-            $employee->save();
+                if ($request->filled('box_id')) {
+                    $box = Box::lockForUpdate()->findOrFail((int) $request->box_id);
+                    if ((float) ($box->total ?? 0) < $approvedLoanValue) {
+                        throw new \InvalidArgumentException(__('messages.box_out_of_money'));
+                    }
+
+                    $box->total = (float) ($box->total ?? 0) - $approvedLoanValue;
+                    $box->save();
+
+                    $boxLog = BoxLog::create([
+                        'box_id' => $box->id,
+                        'value' => -$approvedLoanValue,
+                        'type' => 'payment',
+                        'description' => 'صرف سلفة موظف',
+                        'note' => 'صرف سلفة للموظف '.$employee?->user?->name.' بقيمة '.number_format($approvedLoanValue, 2, '.', ''),
+                    ]);
+                    $boxId = $box->id;
+                    $boxLogId = $boxLog->id;
+                }
+
+                $order->update([
+                    'status'=>'approved',
+                    'loan_value'=>$approvedLoanValue,
+                    'rejection_reason' => null,
+                    'approved_box_id' => $boxId,
+                    'box_log_id' => $boxLogId,
+                ]);
+
+                $employee->debts += $approvedLoanValue;
+                $employee->save();
+            });
 
             try {
                 app(EmployeeNotificationService::class)->notifyLoanApproved($order->fresh());
@@ -312,19 +347,104 @@ class EmployeeOrders extends Controller
             'message' => __('messages.something_wrong')
            ],200);
         }
-
-            catch (QueryException $e) {
+        catch(\InvalidArgumentException $e){
+           return response()->json([
+            'status'=>'error',
+            'message' => $e->getMessage()
+           ],200);
+        }
+        catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong')], 200);
-        }    
-       catch (\Exception $e) {
+        }
+        catch (\Exception $e) {
              return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong')
-            ], 200);        }  
-        
+            ], 200);
         }
+    }
+
+    public function createEmployeeAdvance(Request $request, EmployeeDetail $employee)
+    {
+        try {
+            $request->validate([
+                'loan_value' => 'required|numeric|min:1',
+                'box_id' => 'required|integer|exists:boxes,id',
+                'order' => 'nullable|string|max:500',
+            ]);
+
+            $amount = (float) $request->loan_value;
+            $box = null;
+            $boxLog = null;
+            $order = null;
+            DB::transaction(function () use ($request, $employee, $amount, &$box, &$boxLog, &$order) {
+                $box = Box::lockForUpdate()->findOrFail((int) $request->box_id);
+                if ((float) ($box->total ?? 0) < $amount) {
+                    throw new \InvalidArgumentException(__('messages.box_out_of_money'));
+                }
+
+                $box->total = (float) ($box->total ?? 0) - $amount;
+                $box->save();
+
+                $boxLog = BoxLog::create([
+                    'box_id' => $box->id,
+                    'value' => -$amount,
+                    'type' => 'payment',
+                    'description' => 'صرف سلفة موظف',
+                    'note' => 'صرف سلفة مباشرة للموظف '.$employee->user?->name.' بقيمة '.number_format($amount, 2, '.', ''),
+                ]);
+
+                $order = EmployeeOrder::create([
+                    'employee_id' => $employee->id,
+                    'order' => $request->input('order', 'سلفة مباشرة من الإدارة'),
+                    'status' => 'approved',
+                    'type' => 'loan',
+                    'loan_value' => $amount,
+                    'approved_box_id' => $box->id,
+                    'box_log_id' => $boxLog->id,
+                ]);
+
+                $employee->debts = (float) ($employee->debts ?? 0) + $amount;
+                $employee->save();
+            });
+
+            Logs::createLog(
+                'اضافة سلفة موظف',
+                'تمت إضافة سلفة مباشرة للموظف '.$employee->user?->name.' بقيمة '.$amount,
+                'employees'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.status_upated'),
+                'advance' => [
+                    'id' => (int) $order->id,
+                    'status' => $order->status,
+                    'amount' => $amount,
+                    'approved_box_id' => (int) $box->id,
+                    'box_log_id' => (int) $boxLog->id,
+                ],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
 
 
     public function approveOvertimeRequest(Request $request){

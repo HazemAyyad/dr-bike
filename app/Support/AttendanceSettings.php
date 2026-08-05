@@ -3,6 +3,8 @@
 namespace App\Support;
 
 use App\Models\AppSetting;
+use App\Models\AttendanceOvertimeRule;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -35,6 +37,8 @@ class AttendanceSettings
         $reverseWindow = AppSetting::getInt(AppSetting::KEY_FINGERPRINT_REVERSE_CHECKOUT_WINDOW_MINUTES, 60);
         $reverseWindow = max(0, min(180, $reverseWindow));
         $graceHour = self::afterMidnightGraceHour();
+        $currentOvertimeRule = AttendanceOvertimeRule::currentRule();
+        $todayGrace = AttendanceOvertimeRule::graceMinutesForDate(now());
 
         return [
             'attendance_qr_enabled' => $qrEnabled,
@@ -47,6 +51,25 @@ class AttendanceSettings
             'fingerprint_push_token' => trim((string) AppSetting::get(AppSetting::KEY_FINGERPRINT_PUSH_TOKEN, '')),
             'fingerprint_reverse_checkout_window_minutes' => $reverseWindow,
             'attendance_after_midnight_grace_hour' => $graceHour,
+            'overtime_grace_minutes' => $todayGrace,
+            'overtime_grace_rule' => [
+                'id' => $currentOvertimeRule?->id,
+                'grace_minutes' => $todayGrace,
+                'effective_from' => $currentOvertimeRule?->effective_from?->toDateString(),
+            ],
+            'overtime_grace_rules' => AttendanceOvertimeRule::query()
+                ->orderByDesc('effective_from')
+                ->orderByDesc('id')
+                ->limit(12)
+                ->get()
+                ->map(fn (AttendanceOvertimeRule $rule) => [
+                    'id' => (int) $rule->id,
+                    'grace_minutes' => (int) $rule->grace_minutes,
+                    'effective_from' => $rule->effective_from?->toDateString(),
+                    'created_by' => $rule->created_by ? (int) $rule->created_by : null,
+                ])
+                ->values()
+                ->all(),
         ];
     }
 
@@ -89,6 +112,8 @@ class AttendanceSettings
             'fingerprint_push_token' => ['nullable', 'string', 'max:100'],
             'fingerprint_reverse_checkout_window_minutes' => ['required', 'integer', 'min:0', 'max:180'],
             'attendance_after_midnight_grace_hour' => ['required', 'integer', 'min:1', 'max:6'],
+            'overtime_grace_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
+            'overtime_grace_effective_from' => ['nullable', 'date'],
         ])->validate();
 
         AppSetting::set(AppSetting::KEY_ATTENDANCE_QR_ENABLED, $validated['attendance_qr_enabled'] ? '1' : '0');
@@ -110,6 +135,25 @@ class AttendanceSettings
             AppSetting::KEY_ATTENDANCE_AFTER_MIDNIGHT_GRACE_HOUR,
             (string) ((int) $validated['attendance_after_midnight_grace_hour'])
         );
+
+        if (array_key_exists('overtime_grace_minutes', $validated) && $validated['overtime_grace_minutes'] !== null) {
+            $effectiveFrom = ! empty($validated['overtime_grace_effective_from'])
+                ? Carbon::parse($validated['overtime_grace_effective_from'])->toDateString()
+                : now()->addDay()->toDateString();
+            if (Carbon::parse($effectiveFrom)->lt(now()->startOfDay())) {
+                throw ValidationException::withMessages([
+                    'overtime_grace_effective_from' => ['لا يمكن تطبيق قاعدة الأوفر تايم على أيام سابقة.'],
+                ]);
+            }
+
+            AttendanceOvertimeRule::updateOrCreate(
+                ['effective_from' => $effectiveFrom],
+                [
+                    'grace_minutes' => (int) $validated['overtime_grace_minutes'],
+                    'created_by' => auth()->id(),
+                ]
+            );
+        }
 
         return self::toArray();
     }

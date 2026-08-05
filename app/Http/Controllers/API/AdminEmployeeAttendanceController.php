@@ -100,7 +100,8 @@ class AdminEmployeeAttendanceController extends Controller
                 $employee,
                 $workDate,
                 $checkInAt,
-                $checkOutAt
+                $checkOutAt,
+                (int) ($request->user()?->id ?? 0)
             );
 
             $attendance = $result['attendance'];

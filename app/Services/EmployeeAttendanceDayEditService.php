@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceAdjustment;
 use App\Models\EmployeeAttendanceOvertimeRequest;
 use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeeDetail;
@@ -26,7 +27,8 @@ class EmployeeAttendanceDayEditService
         EmployeeDetail $employee,
         string $workDate,
         Carbon $checkInAt,
-        ?Carbon $checkOutAt = null
+        ?Carbon $checkOutAt = null,
+        ?int $editedBy = null
     ): array {
         $tz = EmployeePendingTasksForToday::TIMEZONE;
 
@@ -45,6 +47,16 @@ class EmployeeAttendanceDayEditService
 
         return DB::transaction(function () use ($employee, $workDate, $checkInAt, $checkOutAt) {
             $employeeId = (int) $employee->id;
+            $beforeAttendance = EmployeeAttendance::query()
+                ->where('employee_id', $employeeId)
+                ->whereDate('date', $workDate)
+                ->first();
+            $beforeScans = EmployeeAttendanceScan::query()
+                ->where('employee_id', $employeeId)
+                ->whereDate('work_date', $workDate)
+                ->orderBy('id')
+                ->get();
+            $beforeValues = $this->snapshot($beforeAttendance, $beforeScans);
 
             EmployeeAttendanceScan::query()
                 ->where('employee_id', $employeeId)
@@ -78,6 +90,10 @@ class EmployeeAttendanceDayEditService
                 ->get();
 
             $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
+            $countedCheckOutAt = $this->salaryService->countedCheckoutAt($employee, $workDate, $checkOutAt);
+            if ($checkOutAt !== null && $countedCheckOutAt !== null && ! $countedCheckOutAt->equalTo($checkOutAt)) {
+                $totalWorked = max(0, $checkInAt->diffInMinutes($countedCheckOutAt));
+            }
 
             $attendance = EmployeeAttendance::firstOrNew([
                 'employee_id' => $employeeId,
@@ -90,12 +106,23 @@ class EmployeeAttendanceDayEditService
             $attendance->worked_minutes = $totalWorked;
             $attendance->missing_checkout = $checkOutAt === null;
 
-            $daily = $this->salaryService->calculateDailyOvertime($employee, (int) $totalWorked);
+            $daily = $this->salaryService->calculateDailyOvertimeForDate($employee, (int) $totalWorked, $workDate);
             $attendance->required_minutes = $daily['required_minutes'];
             $attendance->normal_minutes = $daily['normal_minutes'];
             $calculatedOvertime = (int) ($daily['overtime_minutes'] ?? 0);
             $attendance->overtime_minutes = $calculatedOvertime;
             $attendance->save();
+            $afterValues = $this->snapshot($attendance->fresh(), $allScans);
+
+            EmployeeAttendanceAdjustment::create([
+                'employee_attendance_id' => $attendance->id,
+                'employee_id' => $employeeId,
+                'work_date' => $workDate,
+                'before_values' => $beforeValues,
+                'after_values' => $afterValues,
+                'edited_by' => $editedBy,
+                'source' => 'admin_edit',
+            ]);
 
             if ($checkOutAt !== null && $calculatedOvertime > 0) {
                 $attendance = $this->overtimeService->applyCheckoutOvertimePolicy(
@@ -116,5 +143,23 @@ class EmployeeAttendanceDayEditService
                 'calculated_overtime_minutes' => $calculatedOvertime,
             ];
         });
+    }
+
+    private function snapshot(?EmployeeAttendance $attendance, $scans): array
+    {
+        return [
+            'attendance_id' => $attendance?->id,
+            'arrived_at' => $attendance?->arrived_at,
+            'left_at' => $attendance?->left_at,
+            'worked_minutes' => (int) ($attendance?->worked_minutes ?? 0),
+            'required_minutes' => (int) ($attendance?->required_minutes ?? 0),
+            'normal_minutes' => (int) ($attendance?->normal_minutes ?? 0),
+            'overtime_minutes' => (int) ($attendance?->overtime_minutes ?? 0),
+            'scans' => collect($scans)->map(fn ($scan) => [
+                'scanned_at' => $scan->scanned_at?->toIso8601String(),
+                'direction' => $scan->direction,
+                'source' => $scan->source,
+            ])->values()->all(),
+        ];
     }
 }

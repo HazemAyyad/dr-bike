@@ -72,6 +72,11 @@ class EmployeeAttendanceCheckoutService
             ->get();
 
         $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
+        $countedCheckoutAt = $this->salaryService->countedCheckoutAt($employee, $workDate, $checkoutAt);
+        $countedSegmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes($countedCheckoutAt));
+        if (! $countedCheckoutAt->equalTo($checkoutAt)) {
+            $totalWorked = max(0, $totalWorked - ($segmentMinutes - $countedSegmentMinutes));
+        }
 
         $attendance = EmployeeAttendance::firstOrNew([
             'employee_id' => $employeeId,
@@ -89,7 +94,7 @@ class EmployeeAttendanceCheckoutService
             $attendance->arrived_at = Carbon::parse($firstIn->scanned_at)->format('H:i:s');
         }
 
-        $daily = $this->salaryService->calculateDailyOvertime($employee, (int) $totalWorked);
+        $daily = $this->salaryService->calculateDailyOvertimeForDate($employee, (int) $totalWorked, $workDate);
 
         $attendance->required_minutes = $daily['required_minutes'];
         $attendance->normal_minutes = $daily['normal_minutes'];
@@ -125,8 +130,8 @@ class EmployeeAttendanceCheckoutService
 
         return [
             'attendance' => $attendance->fresh(),
-            'segment_minutes' => $segmentMinutes,
-            'day_worked_minutes' => $totalWorked,
+                'segment_minutes' => $countedSegmentMinutes,
+                'day_worked_minutes' => $totalWorked,
         ];
     }
 

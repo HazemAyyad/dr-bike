@@ -248,11 +248,6 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::post('/permissions/grant-policy' , [EmployeeDetails::class,'updatePermissionGrantPolicy'])
         ->middleware('admin');
 
-    Route::post('/add/points/to/employee' , [EmployeeDetails::class,'addPoints'])
-        ->middleware('check.permission:Employees Points Manage');
-    Route::post('/minus/points/from/employee' , [EmployeeDetails::class,'minusPoints'])
-        ->middleware('check.permission:Employees Points Manage');
-
     Route::post('/show/employee/financial/details' , [EmployeeDetails::class,'showFinancialDetails'])
         ->middleware('check.permission:Employees Financial View');
     Route::post('/pay/employee/salary' , [EmployeeDetails::class,'paySalary'])
@@ -355,6 +350,9 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
       Route::get('/employees/{employee}/advances' , [EmployeeOrders::class,'employeeAdvancesByMonth'])
           ->whereNumber('employee')
           ->middleware('check.permission:Employees Financial View,Employees Orders Manage');
+      Route::post('/employees/{employee}/advances' , [EmployeeOrders::class,'createEmployeeAdvance'])
+          ->whereNumber('employee')
+          ->middleware('check.permission:Employees Orders Manage');
 
       Route::post('/approve/employee/loan/order' , [EmployeeOrders::class,'approveLoanRequest'])
           ->middleware('check.permission:Employees Orders Manage');

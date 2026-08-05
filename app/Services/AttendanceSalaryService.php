@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceScan;
+use App\Models\AttendanceOvertimeRule;
 use App\Models\EmployeeDetail;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
@@ -287,6 +288,18 @@ class AttendanceSalaryService
      */
     public function calculateDailyOvertime(?EmployeeDetail $employeeDetail, int $workedMinutes): array
     {
+        return $this->calculateDailyOvertimeForDate($employeeDetail, $workedMinutes, null);
+    }
+
+    /**
+     * @return array{required_minutes:int, normal_minutes:int, overtime_minutes:int}
+     */
+    public function calculateDailyOvertimeForDate(
+        ?EmployeeDetail $employeeDetail,
+        int $workedMinutes,
+        string|Carbon|null $workDate = null
+    ): array
+    {
         $requiredMinutes = 0;
         if ($employeeDetail && $employeeDetail->number_of_work_hours !== null) {
             $requiredMinutes = (int) round(((float) $employeeDetail->number_of_work_hours) * 60);
@@ -365,6 +378,51 @@ class AttendanceSalaryService
 
     public function formatHours(int $minutes): string
     {
+        return $this->formatDuration($minutes);
+    }
+
+    public function formatDuration(int $minutes): string
+    {
+        $minutes = max(0, $minutes);
+        $hours = intdiv($minutes, 60);
+        $mins = $minutes % 60;
+
+        if ($hours > 0 && $mins > 0) {
+            return $hours.' ساعة و '.$mins.' دقيقة';
+        }
+        if ($hours > 0) {
+            return $hours.' ساعة';
+        }
+
+        return $mins.' دقيقة';
+    }
+
+    public function formatHoursDecimal(int $minutes): string
+    {
         return number_format(max(0, $minutes) / 60, 2, '.', '');
+    }
+
+    public function overtimeGraceMinutesForDate(string|Carbon|null $workDate = null): int
+    {
+        return AttendanceOvertimeRule::graceMinutesForDate($workDate);
+    }
+
+    public function countedCheckoutAt(EmployeeDetail $employee, string $workDate, ?Carbon $actualCheckoutAt): ?Carbon
+    {
+        if (! $actualCheckoutAt || ! $employee->end_work_time) {
+            return $actualCheckoutAt;
+        }
+
+        $scheduledEnd = Carbon::parse($workDate.' '.$employee->end_work_time);
+        if ($actualCheckoutAt->lte($scheduledEnd)) {
+            return $actualCheckoutAt;
+        }
+
+        $lateMinutes = $scheduledEnd->diffInMinutes($actualCheckoutAt);
+        $graceMinutes = $this->overtimeGraceMinutesForDate($workDate);
+
+        return $lateMinutes <= $graceMinutes
+            ? $scheduledEnd
+            : $actualCheckoutAt;
     }
 }
