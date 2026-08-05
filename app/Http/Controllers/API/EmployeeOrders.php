@@ -371,7 +371,7 @@ class EmployeeOrders extends Controller
         try {
             $request->validate([
                 'loan_value' => 'required|numeric|min:1',
-                'box_id' => 'required|integer|exists:boxes,id',
+                'box_id' => 'nullable|integer|exists:boxes,id',
                 'order' => 'nullable|string|max:500',
             ]);
 
@@ -380,21 +380,29 @@ class EmployeeOrders extends Controller
             $boxLog = null;
             $order = null;
             DB::transaction(function () use ($request, $employee, $amount, &$box, &$boxLog, &$order) {
-                $box = Box::lockForUpdate()->findOrFail((int) $request->box_id);
-                if ((float) ($box->total ?? 0) < $amount) {
-                    throw new \InvalidArgumentException(__('messages.box_out_of_money'));
+                $boxId = null;
+                $boxLogId = null;
+
+                if ($request->filled('box_id')) {
+                    $box = Box::lockForUpdate()->findOrFail((int) $request->box_id);
+                    if ((float) ($box->total ?? 0) < $amount) {
+                        throw new \InvalidArgumentException(__('messages.box_out_of_money'));
+                    }
+
+                    $box->total = (float) ($box->total ?? 0) - $amount;
+                    $box->save();
+
+                    $boxLog = BoxLog::create([
+                        'box_id' => $box->id,
+                        'value' => -$amount,
+                        'type' => 'payment',
+                        'description' => 'صرف سلفة موظف',
+                        'note' => 'صرف سلفة مباشرة للموظف '.$employee->user?->name.' بقيمة '.number_format($amount, 2, '.', ''),
+                    ]);
+
+                    $boxId = $box->id;
+                    $boxLogId = $boxLog->id;
                 }
-
-                $box->total = (float) ($box->total ?? 0) - $amount;
-                $box->save();
-
-                $boxLog = BoxLog::create([
-                    'box_id' => $box->id,
-                    'value' => -$amount,
-                    'type' => 'payment',
-                    'description' => 'صرف سلفة موظف',
-                    'note' => 'صرف سلفة مباشرة للموظف '.$employee->user?->name.' بقيمة '.number_format($amount, 2, '.', ''),
-                ]);
 
                 $order = EmployeeOrder::create([
                     'employee_id' => $employee->id,
@@ -402,8 +410,8 @@ class EmployeeOrders extends Controller
                     'status' => 'approved',
                     'type' => 'loan',
                     'loan_value' => $amount,
-                    'approved_box_id' => $box->id,
-                    'box_log_id' => $boxLog->id,
+                    'approved_box_id' => $boxId,
+                    'box_log_id' => $boxLogId,
                 ]);
 
                 $employee->debts = (float) ($employee->debts ?? 0) + $amount;
@@ -423,8 +431,8 @@ class EmployeeOrders extends Controller
                     'id' => (int) $order->id,
                     'status' => $order->status,
                     'amount' => $amount,
-                    'approved_box_id' => (int) $box->id,
-                    'box_log_id' => (int) $boxLog->id,
+                    'approved_box_id' => $box ? (int) $box->id : null,
+                    'box_log_id' => $boxLog ? (int) $boxLog->id : null,
                 ],
             ], 200);
         } catch (ValidationException $e) {
