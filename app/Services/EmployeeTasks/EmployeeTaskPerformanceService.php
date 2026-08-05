@@ -6,8 +6,8 @@ use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
+use App\Services\EmployeePointsService;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 
 class EmployeeTaskPerformanceService
 {
@@ -25,7 +25,7 @@ class EmployeeTaskPerformanceService
         return [
             'employee_id' => $employeeId,
             'employee_name' => $employee->user->name ?? '',
-            'total_points' => (int) $employee->points,
+            'total_points' => app(EmployeePointsService::class)->getTotalNetPoints($employeeId),
             'streak_days' => $this->calculateStreak($employeeId),
             'completion_rate' => $total > 0 ? round(($completed / $total) * 100, 1) : 0,
             'overdue_count' => $overdue,
@@ -146,16 +146,24 @@ class EmployeeTaskPerformanceService
 
     private function leaderboard(int $limit): array
     {
-        return EmployeeDetail::query()
+        $employees = EmployeeDetail::query()
             ->with('user')
-            ->orderByDesc('points')
-            ->limit($limit)
             ->get()
+            ->values();
+
+        $totals = app(EmployeePointsService::class)->getTotalNetPointsMany(
+            $employees->pluck('id')->map(fn ($id) => (int) $id)->all()
+        );
+
+        return $employees
+            ->sortByDesc(fn ($employee) => $totals[(int) $employee->id] ?? 0)
+            ->take($limit)
+            ->values()
             ->map(fn ($e, $i) => [
                 'rank' => $i + 1,
                 'employee_id' => $e->id,
                 'employee_name' => $e->user->name ?? '',
-                'points' => (int) $e->points,
+                'points' => (int) ($totals[(int) $e->id] ?? 0),
             ])
             ->all();
     }

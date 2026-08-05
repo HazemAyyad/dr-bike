@@ -13,7 +13,6 @@ use App\Support\EmployeeAttendanceToday;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
 use App\Models\EmployeePermission;
-use App\Models\EmployeePointsLog;
 use App\Models\FingerprintRawLog;
 use App\Models\Permission;
 use App\Models\User;
@@ -681,7 +680,6 @@ private function getEmployeeFinancialData($employeeId)
         'hour_work_price' => $employee->hour_work_price,
         'total_work_hours' => $employee->total_work_hours,
         'number_of_work_hours' => $employee->number_of_work_hours,
-        'points_revenue' => 0,
         'total' => round(((float) $employee->salary) - ((float) $employee->debts)),
     ];
 }
@@ -1420,25 +1418,11 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             })
                 : collect();
 
-            $employeeRewardsAndPunishments = $employee->pointsLogs()
-                ->orderByDesc('points_date')
-                ->orderByDesc('id')
-                ->limit(200)
-                ->get()
-                ->map(function(EmployeePointsLog $reward){
-                return [
-                    'points'=> $reward->points??0,
-                    'notes' => $reward->reason ?: ($reward->notes ?? 'no notes'),
-                    'type' => $reward->operation_type === EmployeePointsLog::OPERATION_DEDUCT ? 'minus' : 'add',
-                ];
-            });
-
             return response()->json(['status'=>'success',
             'employee_details' => (new EmployeeDetailResource($employee))->resolve($request),
 
 
             'permissions'=>$employeePermissions,
-            'rewards_and_punishments' => $employeeRewardsAndPunishments,
         
         ],200);
         

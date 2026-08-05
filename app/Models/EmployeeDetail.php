@@ -15,7 +15,6 @@ class EmployeeDetail extends Model
         'user_id',
         'device_user_id',
         'fingerprint_enabled',
-        'points',
         'hour_work_price',
         'overtime_work_price',
         'number_of_work_hours',
@@ -74,14 +73,6 @@ class EmployeeDetail extends Model
 
     public function permissions(){
         return $this->hasMany(EmployeePermission::class,'employee_id');
-    }
-
-    public function punishments(){
-        return $this->hasMany(Punishment::class,'employee_id');
-    }
-
-    public function rewards(){
-        return $this->hasMany(Reward::class,'employee_id');
     }
 
     public function orders(){

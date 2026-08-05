@@ -392,11 +392,6 @@ class EmployeeTaskWorkflowService
             return;
         }
 
-        $recipient->refresh();
-        $recipient->update([
-            'points' => max(0, (int) $recipient->points - $total),
-        ]);
-
         try {
             app(EmployeePointsService::class)->deductPoints($recipient->id, [
                 'points' => $total,
@@ -780,9 +775,6 @@ class EmployeeTaskWorkflowService
         if ($total < 1) {
             return;
         }
-
-        $recipient->refresh();
-        $recipient->update(['points' => (int) $recipient->points + $total]);
 
         try {
             $category = EmployeePointCategory::query()

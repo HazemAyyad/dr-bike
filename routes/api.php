@@ -84,8 +84,6 @@ use App\Http\Controllers\API\StoreSectionController;
 use App\Http\Controllers\API\Profile;
 use App\Http\Controllers\API\ProfitSales;
 use App\Http\Controllers\API\Projects;
-use App\Http\Controllers\API\PunishmentsApi;
-use App\Http\Controllers\API\RewardsApi;
 use App\Http\Controllers\API\SpecialTasks;
 use App\Http\Controllers\API\TaskConversionController;
 use App\Models\EmployeeOrder;
@@ -1113,16 +1111,6 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
    // draws
    Route::post('/add/draw' , [Draws::class,'store']);
-
-
-
-
-    // punishments
-  //  Route::post('/add/punishment' , [PunishmentsApi::class,'store']);
-
-  //  // rewards
-  //  Route::post('/add/reward' , [RewardsApi::class,'store']);
-
    //logs
       Route::get('/all/logs' , [Logs::class,'getAllLogs']);
       Route::get('/activity/summary' , [Logs::class,'activitySummary']);

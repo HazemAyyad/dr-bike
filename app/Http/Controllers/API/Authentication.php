@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Models\UserSession;
 use App\Models\VerifyToken;
 use App\Services\AdminNotificationService;
+use App\Services\EmployeePointsService;
 use App\Support\EmployeePendingTasksForToday;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -274,6 +275,10 @@ class Authentication extends Controller
                 $employee->document_img = $employee->document_img
                     ? 'public/EmployeeDocumetImages/'.$employee->document_img[0]
                     : null;
+                $employee->setAttribute(
+                    'points',
+                    app(EmployeePointsService::class)->getTotalNetPoints((int) $employee->id)
+                );
 
                 $response['employee_permissions'] = $this->permissions($user->employee);
 
@@ -677,6 +682,10 @@ class Authentication extends Controller
                 $employee->document_img = $employee->document_img
                     ? 'public/EmployeeDocumetImages/'.$employee->document_img[0]
                     : null;
+                $employee->setAttribute(
+                    'points',
+                    app(EmployeePointsService::class)->getTotalNetPoints((int) $employee->id)
+                );
 
                 $response['employee_permissions'] = $this->permissions($user->employee);
 

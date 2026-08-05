@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\EmployeeDetail;
 use App\Models\User;
+use App\Services\EmployeePointsService;
 use Illuminate\Support\Facades\Log;
 
 class ImpersonationService
@@ -101,7 +102,7 @@ class ImpersonationService
             'employee' => [
                 'id' => $employee->id,
                 'user_id' => (string) $employee->user_id,
-                'points' => (string) ($employee->points ?? '0'),
+                'points' => (string) app(EmployeePointsService::class)->getTotalNetPoints((int) $employee->id),
                 'hour_work_price' => (string) ($employee->hour_work_price ?? '0'),
                 'overtime_work_price' => (string) ($employee->overtime_work_price ?? '0'),
                 'number_of_work_hours' => (string) ($employee->number_of_work_hours ?? '0'),

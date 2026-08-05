@@ -257,6 +257,56 @@ class EmployeePointsService
     }
 
     /**
+     * Lifetime net points from the logs table. This replaces the legacy
+     * employee_details.points counter for performance and compatibility payloads.
+     */
+    public function getTotalNetPoints(int $employeeId): int
+    {
+        $rows = EmployeePointsLog::query()
+            ->forEmployee($employeeId)
+            ->selectRaw('operation_type, COALESCE(SUM(points), 0) as total_points')
+            ->groupBy('operation_type')
+            ->pluck('total_points', 'operation_type');
+
+        return (int) ($rows[EmployeePointsLog::OPERATION_ADD] ?? 0)
+            - (int) ($rows[EmployeePointsLog::OPERATION_DEDUCT] ?? 0);
+    }
+
+    /**
+     * @param  array<int>  $employeeIds
+     * @return array<int,int>
+     */
+    public function getTotalNetPointsMany(array $employeeIds): array
+    {
+        if (empty($employeeIds)) {
+            return [];
+        }
+
+        $rows = EmployeePointsLog::query()
+            ->whereIn('employee_id', $employeeIds)
+            ->selectRaw('employee_id, operation_type, COALESCE(SUM(points), 0) as total_points')
+            ->groupBy('employee_id', 'operation_type')
+            ->get();
+
+        $result = [];
+        foreach ($employeeIds as $employeeId) {
+            $result[(int) $employeeId] = 0;
+        }
+
+        foreach ($rows as $row) {
+            $employeeId = (int) $row->employee_id;
+            $points = (int) $row->total_points;
+            if ($row->operation_type === EmployeePointsLog::OPERATION_ADD) {
+                $result[$employeeId] = ($result[$employeeId] ?? 0) + $points;
+            } elseif ($row->operation_type === EmployeePointsLog::OPERATION_DEDUCT) {
+                $result[$employeeId] = ($result[$employeeId] ?? 0) - $points;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Pick the most specific active reward rule for a given net points value.
      * Rules with a non-null max_points are preferred; ties break on min_points.
      */
