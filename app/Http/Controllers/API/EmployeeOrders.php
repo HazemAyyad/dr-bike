@@ -7,6 +7,7 @@ use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
+use App\Services\EmployeeActivityLogger;
 use App\Services\EmployeeNotificationService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -244,6 +245,22 @@ class EmployeeOrders extends Controller
                         'employee_order_id' => $order->id,
                     ]);
                 }
+
+                app(EmployeeActivityLogger::class)->log(
+                    (int) $order->employee_id,
+                    $request->user(),
+                    'advances',
+                    'employee_advance_rejected',
+                    'رفض طلب سلفة',
+                    'تم رفض طلب سلفة بقيمة '.number_format((float) ($order->loan_value ?? 0), 2, '.', ''),
+                    $order->fresh(),
+                    (float) ($order->loan_value ?? 0),
+                    [
+                        'order_id' => (int) $order->id,
+                        'amount' => (float) ($order->loan_value ?? 0),
+                        'reason' => $reason !== '' ? $reason : null,
+                    ]
+                );
             }
 
             return response()->json([
@@ -332,6 +349,24 @@ class EmployeeOrders extends Controller
                     'employee_order_id' => $order->id,
                 ]);
             }
+
+            $freshOrder = $order->fresh();
+            app(EmployeeActivityLogger::class)->log(
+                (int) $freshOrder->employee_id,
+                $request->user(),
+                'advances',
+                'employee_advance_approved',
+                'قبول طلب سلفة',
+                'تم قبول طلب سلفة بقيمة '.number_format($approvedLoanValue, 2, '.', ''),
+                $freshOrder,
+                $approvedLoanValue,
+                [
+                    'order_id' => (int) $freshOrder->id,
+                    'amount' => $approvedLoanValue,
+                    'approved_box_id' => $freshOrder->approved_box_id ? (int) $freshOrder->approved_box_id : null,
+                    'box_log_id' => $freshOrder->box_log_id ? (int) $freshOrder->box_log_id : null,
+                ]
+            );
 
         Logs::createLog('قبول طلب سلفة ',' تم قبول طلب سلفة  لموظف باسم'.' '.$employee->user->name
         .' '.'بقيمة '.' '.$request->loan_value
@@ -422,6 +457,23 @@ class EmployeeOrders extends Controller
                 'اضافة سلفة موظف',
                 'تمت إضافة سلفة مباشرة للموظف '.$employee->user?->name.' بقيمة '.$amount,
                 'employees'
+            );
+
+            app(EmployeeActivityLogger::class)->log(
+                (int) $employee->id,
+                $request->user(),
+                'advances',
+                'employee_advance_created',
+                'إضافة سلفة مباشرة',
+                'تمت إضافة سلفة مباشرة بقيمة '.number_format($amount, 2, '.', ''),
+                $order,
+                $amount,
+                [
+                    'order_id' => (int) $order->id,
+                    'amount' => $amount,
+                    'approved_box_id' => $box ? (int) $box->id : null,
+                    'box_log_id' => $boxLog ? (int) $boxLog->id : null,
+                ]
             );
 
             return response()->json([

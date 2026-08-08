@@ -6,6 +6,7 @@ use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeOrder;
 use App\Services\AdminNotificationService;
+use App\Services\EmployeeActivityLogger;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -89,6 +90,23 @@ public function createLoanOrder(Request $request){
         Logs::createLog('انشاء طلب سلفة ',' انشاء طلب سلفة  لموظف باسم'.' '.$user->name
         .' '.'بقيمة '.' '.$request->loan_value
         ,'employees');
+
+        app(EmployeeActivityLogger::class)->log(
+            (int) $user->employee->id,
+            $user,
+            'advances',
+            'employee_advance_requested',
+            'طلب سلفة',
+            'طلب الموظف سلفة بقيمة '.number_format((float) $request->loan_value, 2, '.', ''),
+            $order,
+            (float) $request->loan_value,
+            [
+                'order_id' => (int) $order->id,
+                'amount' => (float) $request->loan_value,
+                'status' => 'pending',
+            ]
+        );
+
         return response()->json([
                     'status' => 'success',
                     'message' => __('messages.employee_order_created')],200);
