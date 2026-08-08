@@ -9,6 +9,7 @@ use App\Models\WhatsAppMessage;
 use App\Models\Customer;
 use App\Models\Seller;
 use App\Models\Product;
+use App\Models\WhatsAppAccount;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -320,6 +321,8 @@ class WhatsAppController extends Controller
 
     public function qr(WhatsAppCloudApiService $service)
     {
+        $account = $this->accountFromRequest(request());
+        if ($account) $service = $service->forAccount($account);
         $phone = $service->businessPhoneNumber();
         $svg = QrCode::format('svg')->size(700)->margin(2)->generate('https://wa.me/'.$phone);
         return response($svg, 200, ['Content-Type' => 'image/svg+xml', 'Cache-Control' => 'private, max-age=3600']);
@@ -327,6 +330,8 @@ class WhatsAppController extends Controller
 
     public function qrA4(WhatsAppCloudApiService $service)
     {
+        $account = $this->accountFromRequest(request());
+        if ($account) $service = $service->forAccount($account);
         $phone = $service->businessPhoneNumber();
         $svg = QrCode::format('svg')->size(900)->margin(2)->generate('https://wa.me/'.$phone);
         $html = view('whatsapp.qr-a4', [
@@ -350,7 +355,13 @@ class WhatsAppController extends Controller
 
     public function sendText(Request $request, WhatsAppCloudApiService $service)
     {
-        $data = $request->validate(['phone' => 'required|string|max:32', 'message' => 'required|string|max:4096']);
+        $data = $request->validate([
+            'phone' => 'required|string|max:32',
+            'message' => 'required|string|max:4096',
+            'whatsapp_account_id' => 'nullable|integer|exists:whatsapp_accounts,id',
+        ]);
+        $account = $this->accountFromRequest($request);
+        if ($account) $service = $service->forAccount($account);
         return $this->sendSafely(fn () => $service->sendText($data['phone'], $data['message'], $request->user()->id));
     }
 
@@ -359,7 +370,10 @@ class WhatsAppController extends Controller
         $data = $request->validate([
             'phone' => 'required|string|max:32', 'template_name' => 'required|string|max:255',
             'language' => 'nullable|string|max:16', 'components' => 'nullable|array',
+            'whatsapp_account_id' => 'nullable|integer|exists:whatsapp_accounts,id',
         ]);
+        $account = $this->accountFromRequest($request);
+        if ($account) $service = $service->forAccount($account);
         return $this->sendSafely(fn () => $service->sendTemplate(
             $data['phone'], $data['template_name'], $data['language'] ?? 'ar', $data['components'] ?? [], $request->user()->id
         ));
@@ -461,5 +475,11 @@ class WhatsAppController extends Controller
         return $conversation->whatsappAccount
             ? $service->forAccount($conversation->whatsappAccount)
             : $service;
+    }
+
+    private function accountFromRequest(Request $request): ?WhatsAppAccount
+    {
+        $id = $request->input('whatsapp_account_id');
+        return $id ? WhatsAppAccount::query()->findOrFail((int) $id) : null;
     }
 }
