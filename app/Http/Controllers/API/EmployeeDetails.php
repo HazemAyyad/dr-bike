@@ -1777,6 +1777,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         bool $forAdmin = false,
         bool $includeEmptyDays = false
     ): array {
+        $nowTz = Carbon::now(EmployeeAttendanceToday::TIMEZONE);
+        $todayStr = EmployeeAttendanceToday::todayDateString();
+
+        if ($includeEmptyDays && $to->gt($nowTz)) {
+            $to = $nowTz->copy()->endOfDay();
+        }
+
         $fromStr = $from->toDateString();
         $toStr = $to->toDateString();
 
@@ -1835,8 +1842,6 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         $weeklyDaysOff = $salaryService->effectiveWeeklyDaysOff($employee);
 
         $days = [];
-        $todayStr = EmployeeAttendanceToday::todayDateString();
-        $nowTz = Carbon::now(EmployeeAttendanceToday::TIMEZONE);
 
         foreach ($allDates as $dateStr) {
             $dayScans = EmployeeAttendanceScan::query()
@@ -1928,7 +1933,15 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 $lastCheckOut = $lastOutScan?->scanned_at;
 
                 $lastScan = $dayScans->last();
-                $currentlyIn = $lastScan && $lastScan->direction === 'in';
+                $currentlyIn = $lastScan && $lastScan->direction === 'in' && $dateStr === $todayStr;
+
+                if ($legacy?->left_at) {
+                    $legacyCheckOut = Carbon::parse($dateStr.' '.$legacy->left_at);
+                    if (! $lastCheckOut || $legacyCheckOut->gt(Carbon::parse($lastCheckOut))) {
+                        $lastCheckOut = $legacyCheckOut;
+                    }
+                    $currentlyIn = false;
+                }
 
                 $useLiveMinutes = $dateStr === $todayStr && $currentlyIn;
                 $workedMinutes = $useLiveMinutes
