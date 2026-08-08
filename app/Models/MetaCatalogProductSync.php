@@ -4,16 +4,17 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class MetaCatalogSyncLog extends Model
+class MetaCatalogProductSync extends Model
 {
     protected $fillable = [
-        'whatsapp_account_id', 'catalog_id', 'product_id', 'variant_id', 'action', 'status', 'meta_catalog_item_id',
-        'retailer_id', 'request_payload', 'response_payload', 'error_message',
+        'whatsapp_account_id', 'catalog_id', 'product_id', 'variant_id',
+        'meta_catalog_item_id', 'meta_catalog_retailer_id', 'sync_status',
+        'last_synced_at', 'last_error', 'payload',
     ];
 
     protected $casts = [
-        'request_payload' => 'array',
-        'response_payload' => 'array',
+        'last_synced_at' => 'datetime',
+        'payload' => 'array',
     ];
 
     public function product()

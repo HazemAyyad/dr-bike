@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\MetaCatalogSyncLog;
 use App\Models\Product;
+use App\Models\WhatsAppAccount;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
@@ -22,6 +23,9 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
     public function __construct(
         public bool $onlyMembershipChanges = false,
         public bool $finalizeHierarchy = false,
+        public ?int $whatsappAccountId = null,
+        public string $sourceType = 'all',
+        public ?int $sourceId = null,
     )
     {
         $this->afterCommit();
@@ -29,7 +33,12 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
 
     public function uniqueId(): string
     {
-        return $this->onlyMembershipChanges ? 'meta-catalog-membership-bulk' : 'meta-catalog-full-bulk';
+        return implode(':', [
+            $this->onlyMembershipChanges ? 'meta-catalog-membership-bulk' : 'meta-catalog-full-bulk',
+            $this->whatsappAccountId ?: 'default',
+            $this->sourceType,
+            $this->sourceId ?: 'all',
+        ]);
     }
 
     public function handle(): void
@@ -39,11 +48,18 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
         $skipped = 0;
         Log::info('[MetaCatalogBulk] started', [
             'only_membership_changes' => $this->onlyMembershipChanges,
+            'whatsapp_account_id' => $this->whatsappAccountId,
+            'source_type' => $this->sourceType,
+            'source_id' => $this->sourceId,
         ]);
-        Product::query()
+        $account = $this->whatsappAccountId
+            ? WhatsAppAccount::query()->find($this->whatsappAccountId)
+            : null;
+        $query = Product::query()
             ->where('isShow', true)
-            ->with(['sizes.colorSizes', 'subCategories'])
-            ->chunkById(100, function ($products) use (&$synced, &$failed, &$skipped) {
+            ->with(['sizes.colorSizes', 'subCategories']);
+        $this->applySourceFilter($query);
+        $query->chunkById(100, function ($products) use (&$synced, &$failed, &$skipped) {
                 foreach ($products as $product) {
                     [$mainLabel, $subLabel] = $this->expectedMembershipLabels($product);
                     $variants = $product->sizes->flatMap->colorSizes;
@@ -54,7 +70,7 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
                             continue;
                         }
                         try {
-                            SyncMetaCatalogProductJob::dispatch((int) $product->id)
+                            SyncMetaCatalogProductJob::dispatch((int) $product->id, null, $this->whatsappAccountId)
                                 ->onConnection('database');
                             $synced++;
                         } catch (\Throwable $e) {
@@ -76,7 +92,7 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
                             continue;
                         }
                         try {
-                            SyncMetaCatalogProductJob::dispatch((int) $product->id, (int) $variant->id)
+                            SyncMetaCatalogProductJob::dispatch((int) $product->id, (int) $variant->id, $this->whatsappAccountId)
                                 ->onConnection('database');
                             $synced++;
                         } catch (\Throwable $e) {
@@ -95,6 +111,8 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
         MetaCatalogSyncLog::query()->create([
             'action' => 'bulk_sync',
             'status' => 'success',
+            'whatsapp_account_id' => $account?->id,
+            'catalog_id' => $account?->catalog_id ?: config('meta_commerce.catalog_id'),
             'response_payload' => [
                 'queued_at' => now()->toIso8601String(),
                 'queued_items' => $synced,
@@ -110,7 +128,19 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
         if ($this->finalizeHierarchy) {
             // This is queued after all product jobs inserted above, so a
             // single FIFO database worker updates sets after memberships.
-            FinalizeMetaCatalogHierarchyJob::dispatch()->onConnection('database');
+            FinalizeMetaCatalogHierarchyJob::dispatch($this->whatsappAccountId)->onConnection('database');
+        }
+    }
+
+    private function applySourceFilter($query): void
+    {
+        if ($this->sourceType === 'category' && $this->sourceId) {
+            $query->where('category_id', $this->sourceId);
+            return;
+        }
+
+        if ($this->sourceType === 'sub_category' && $this->sourceId) {
+            $query->whereHas('subCategories', fn ($pivots) => $pivots->where('sub_category_id', $this->sourceId));
         }
     }
 

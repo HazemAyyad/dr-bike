@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Exceptions\MetaCatalogValidationException;
 use App\Models\Product;
 use App\Models\SizeColor;
+use App\Models\WhatsAppAccount;
 use App\Services\Meta\MetaCatalogService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -20,7 +21,11 @@ class SyncMetaCatalogProductJob implements ShouldQueue
     public int $tries = 3;
     public int $backoff = 30;
 
-    public function __construct(public int $productId, public ?int $variantId = null)
+    public function __construct(
+        public int $productId,
+        public ?int $variantId = null,
+        public ?int $whatsappAccountId = null,
+    )
     {
         $this->afterCommit();
     }
@@ -29,12 +34,16 @@ class SyncMetaCatalogProductJob implements ShouldQueue
     {
         $product = Product::query()->with('sizes.colorSizes')->find($this->productId);
         if (! $product) return;
+        $account = $this->whatsappAccountId
+            ? WhatsAppAccount::query()->find($this->whatsappAccountId)
+            : null;
+        $service = $account ? $service->forAccount($account) : $service;
         if ($this->variantId === null) {
             $variants = $product->sizes->flatMap->colorSizes;
             if ($variants->isNotEmpty()) {
                 foreach ($variants as $variant) {
                     try {
-                        self::dispatch((int) $product->id, (int) $variant->id);
+                        self::dispatch((int) $product->id, (int) $variant->id, $this->whatsappAccountId);
                     } catch (\Throwable) {
                         // Keep the remaining variants moving when the queue
                         // driver executes jobs synchronously.

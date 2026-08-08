@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\WhatsAppSetting;
+use App\Models\WhatsAppAccount;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeePermission;
 use App\Models\Permission;
@@ -138,25 +139,10 @@ class WhatsAppSettingsController extends Controller
         $instagramUrl = config('meta_messaging.instagram_profile_url')
             ?: ($instagramUsername ? 'https://www.instagram.com/'.ltrim((string) $instagramUsername, '@').'/' : null);
 
+        $whatsAppChannels = $this->whatsAppChannels($service, $whatsAppPhone);
+
         return [
-            [
-                'id' => 'whatsapp',
-                'name' => 'واتساب',
-                'display_name' => $whatsAppPhone ? '+'.$whatsAppPhone : 'واتساب دكتور بايك',
-                'identifier' => $whatsAppPhone,
-                'url' => $whatsAppPhone ? 'https://wa.me/'.$whatsAppPhone : null,
-                'configured' => filled(config('whatsapp.access_token')) && filled(config('whatsapp.phone_number_id')),
-                'health' => [
-                    'token' => filled(config('whatsapp.access_token')),
-                    'identity' => filled(config('whatsapp.phone_number_id')) && filled(config('whatsapp.business_account_id')),
-                    'webhook' => filled(config('whatsapp.verify_token')),
-                    'public_url' => filled(config('app.url')),
-                ],
-                'details' => [
-                    'phone_number_id' => $this->mask(config('whatsapp.phone_number_id')),
-                    'business_account_id' => $this->mask(config('whatsapp.business_account_id')),
-                ],
-            ],
+            ...$whatsAppChannels,
             [
                 'id' => 'facebook',
                 'name' => 'فيسبوك',
@@ -192,6 +178,57 @@ class WhatsAppSettingsController extends Controller
                 ],
             ],
         ];
+    }
+
+    private function whatsAppChannels(WhatsAppCloudApiService $service, ?string $fallbackPhone): array
+    {
+        if (\Illuminate\Support\Facades\Schema::hasTable('whatsapp_accounts')) {
+            $accounts = WhatsAppAccount::query()->orderBy('sort_order')->orderBy('id')->get();
+            if ($accounts->isNotEmpty()) {
+                return $accounts->map(fn (WhatsAppAccount $account) => [
+                    'id' => 'whatsapp:'.$account->id,
+                    'name' => 'واتساب',
+                    'display_name' => $account->name,
+                    'identifier' => $account->display_phone_number,
+                    'url' => $account->display_phone_number ? 'https://wa.me/'.$account->display_phone_number : null,
+                    'configured' => $account->is_active && $account->is_verified
+                        && filled($account->accessToken())
+                        && filled($account->phone_number_id),
+                    'health' => [
+                        'token' => filled($account->accessToken()),
+                        'identity' => filled($account->phone_number_id) && filled($account->waba_id),
+                        'webhook' => filled(config('whatsapp.verify_token')),
+                        'public_url' => filled(config('app.url')),
+                        'catalog' => filled($account->catalog_id),
+                    ],
+                    'details' => [
+                        'account_id' => $account->id,
+                        'phone_number_id' => $this->mask($account->phone_number_id),
+                        'business_account_id' => $this->mask($account->waba_id),
+                        'catalog_id' => $this->mask($account->catalog_id),
+                    ],
+                ])->all();
+            }
+        }
+
+        return [[
+            'id' => 'whatsapp',
+            'name' => 'واتساب',
+            'display_name' => $fallbackPhone ? '+'.$fallbackPhone : 'واتساب دكتور بايك',
+            'identifier' => $fallbackPhone,
+            'url' => $fallbackPhone ? 'https://wa.me/'.$fallbackPhone : null,
+            'configured' => filled(config('whatsapp.access_token')) && filled(config('whatsapp.phone_number_id')),
+            'health' => [
+                'token' => filled(config('whatsapp.access_token')),
+                'identity' => filled(config('whatsapp.phone_number_id')) && filled(config('whatsapp.business_account_id')),
+                'webhook' => filled(config('whatsapp.verify_token')),
+                'public_url' => filled(config('app.url')),
+            ],
+            'details' => [
+                'phone_number_id' => $this->mask(config('whatsapp.phone_number_id')),
+                'business_account_id' => $this->mask(config('whatsapp.business_account_id')),
+            ],
+        ]];
     }
 
     private function metaPageProfile(): array

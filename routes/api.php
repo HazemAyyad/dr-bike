@@ -910,6 +910,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock,Product Quic
 Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.token.expiry']] , function() {
 
     Route::prefix('meta/catalog')->group(function () {
+        Route::get('/accounts', [MetaCatalogController::class, 'accounts']);
         Route::get('/status', [MetaCatalogController::class, 'status']);
         Route::get('/products', [MetaCatalogController::class, 'products']);
         Route::get('/sync-log', [MetaCatalogController::class, 'syncLog']);

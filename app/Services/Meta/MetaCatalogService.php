@@ -5,8 +5,10 @@ namespace App\Services\Meta;
 use App\Exceptions\MetaCatalogValidationException;
 use App\Models\AppSetting;
 use App\Models\MetaCatalogSyncLog;
+use App\Models\MetaCatalogProductSync;
 use App\Models\Product;
 use App\Models\SizeColor;
+use App\Models\WhatsAppAccount;
 use App\Support\ProductImageResolver;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\Response;
@@ -16,11 +18,20 @@ use Throwable;
 
 class MetaCatalogService
 {
+    public function __construct(private readonly ?WhatsAppAccount $account = null)
+    {
+    }
+
+    public function forAccount(?WhatsAppAccount $account): self
+    {
+        return new self($account);
+    }
+
     public function validateConfig(): void
     {
         $missing = collect([
-            'META_CATALOG_ID' => config('meta_commerce.catalog_id'),
-            'WHATSAPP_ACCESS_TOKEN' => config('meta_commerce.access_token'),
+            'META_CATALOG_ID' => $this->catalogId(),
+            'WHATSAPP_ACCESS_TOKEN' => $this->accessToken(),
             'WHATSAPP_API_VERSION' => config('meta_commerce.api_version'),
         ])->filter(fn ($value) => blank($value))->keys();
 
@@ -86,63 +97,50 @@ class MetaCatalogService
     public function syncProduct(Product $product, ?SizeColor $variant = null, string $forcedAction = ''): array
     {
         $target = $variant ?: $product;
-        $action = $forcedAction ?: ($target->meta_catalog_item_id ? 'update' : 'create');
+        $sync = $this->syncRow($product, $variant);
+        $existingItemId = $sync?->meta_catalog_item_id ?: $target->meta_catalog_item_id;
+        $action = $forcedAction ?: ($existingItemId ? 'update' : 'create');
 
         try {
             $this->validateConfig();
             $payload = $this->buildProductPayload($product, $variant);
-            $target->forceFill([
-                'meta_catalog_sync_status' => 'pending',
-                'meta_catalog_retailer_id' => $payload['retailer_id'],
-                'meta_catalog_payload' => $payload,
-                'meta_catalog_last_error' => null,
-            ])->saveQuietly();
+            $this->markPending($target, $sync, $product, $variant, $payload);
 
-            $response = $target->meta_catalog_item_id
-                ? $this->updateCatalogItem($target->meta_catalog_item_id, $payload)
+            $response = $existingItemId
+                ? $this->updateCatalogItem($existingItemId, $payload)
                 : $this->createCatalogItem($payload);
 
-            $itemId = (string) ($response['id'] ?? $target->meta_catalog_item_id ?? '');
+            $itemId = (string) ($response['id'] ?? $existingItemId ?? '');
             if ($itemId === '') throw new RuntimeException('Meta did not return a catalog item id.');
 
-            $target->forceFill([
-                'meta_catalog_item_id' => $itemId,
-                'meta_catalog_retailer_id' => $payload['retailer_id'],
-                'meta_catalog_sync_status' => 'synced',
-                'meta_catalog_last_synced_at' => now(),
-                'meta_catalog_last_error' => null,
-                'meta_catalog_payload' => $payload,
-            ])->saveQuietly();
+            $this->markSynced($target, $sync, $itemId, $payload);
             $this->log($product, $variant, $action, 'success', $payload, $response);
 
             return ['item' => $target->fresh(), 'response' => $response];
         } catch (Throwable $e) {
-            $target->forceFill([
-                'meta_catalog_sync_status' => 'failed',
-                'meta_catalog_last_error' => $e->getMessage(),
-            ])->saveQuietly();
-            $this->log($product, $variant, $action, 'failed', $target->meta_catalog_payload, null, $e->getMessage());
+            $this->markFailed($target, $sync, $e->getMessage());
+            $this->log($product, $variant, $action, 'failed', $sync?->payload ?: $target->meta_catalog_payload, null, $e->getMessage());
             throw $e;
         }
     }
 
     public function createCatalogItem(array $payload): array
     {
-        return $this->request('post', '/'.config('meta_commerce.catalog_id').'/products', $payload);
+        return $this->request('post', '/'.$this->catalogId().'/products', $payload);
     }
 
     public function getCatalogInfo(): array
     {
         return $this->request(
             'get',
-            '/'.config('meta_commerce.catalog_id'),
+            '/'.$this->catalogId(),
             ['fields' => 'id,name,product_count']
         );
     }
 
     public function createProductSet(string $name, array $filter): array
     {
-        return $this->request('post', '/'.config('meta_commerce.catalog_id').'/product_sets', [
+        return $this->request('post', '/'.$this->catalogId().'/product_sets', [
             'name' => $name,
             'filter' => json_encode($filter, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
         ]);
@@ -174,14 +172,28 @@ class MetaCatalogService
     public function disable(Product $product, ?SizeColor $variant = null): array
     {
         $target = $variant ?: $product;
-        if (! $target->meta_catalog_item_id) {
+        $sync = $this->syncRow($product, $variant);
+        $itemId = $sync?->meta_catalog_item_id ?: $target->meta_catalog_item_id;
+        if (! $itemId) {
+            if ($sync) {
+                $sync->forceFill(['sync_status' => 'disabled'])->save();
+                return ['success' => true];
+            }
             $target->forceFill(['meta_catalog_sync_status' => 'disabled'])->saveQuietly();
             return ['success' => true];
         }
 
         try {
-            $response = $this->deleteCatalogItem($target->meta_catalog_item_id);
+            $response = $this->deleteCatalogItem($itemId);
             $this->log($product, $variant, 'disable', 'success', null, $response);
+            if ($sync) {
+                $sync->forceFill([
+                    'meta_catalog_item_id' => null,
+                    'sync_status' => 'disabled',
+                    'last_error' => null,
+                ])->save();
+                return $response;
+            }
             $target->forceFill([
                 'meta_catalog_item_id' => null,
                 'meta_catalog_sync_status' => 'disabled',
@@ -189,6 +201,11 @@ class MetaCatalogService
             ])->saveQuietly();
             return $response;
         } catch (Throwable $e) {
+            if ($sync) {
+                $sync->forceFill(['sync_status' => 'failed', 'last_error' => $e->getMessage()])->save();
+                $this->log($product, $variant, 'disable', 'failed', null, null, $e->getMessage());
+                throw $e;
+            }
             $target->forceFill(['meta_catalog_sync_status' => 'failed', 'meta_catalog_last_error' => $e->getMessage()])->saveQuietly();
             $this->log($product, $variant, 'disable', 'failed', null, null, $e->getMessage());
             throw $e;
@@ -248,7 +265,7 @@ class MetaCatalogService
     private function request(string $method, string $path, array $payload = []): array
     {
         $this->validateConfig();
-        $client = Http::withToken((string) config('meta_commerce.access_token'))
+        $client = Http::withToken((string) $this->accessToken())
             ->acceptJson()
             ->timeout((int) config('meta_commerce.timeout', 20));
         $url = 'https://graph.facebook.com/'.config('meta_commerce.api_version').$path;
@@ -258,7 +275,7 @@ class MetaCatalogService
             $error = $response->json('error') ?: [];
             $message = $error['message'] ?? 'Meta Catalog request failed (HTTP '.$response->status().').';
             if ((int) ($error['code'] ?? 0) === 100 && (int) ($error['error_subcode'] ?? 0) === 33) {
-                $message = 'تعذر الوصول إلى Meta Catalog ID '.config('meta_commerce.catalog_id')
+                $message = 'تعذر الوصول إلى Meta Catalog ID '.$this->catalogId()
                     .'. تأكد أن الكتالوج صحيح، وأن System User الخاص بالتوكن مُضاف إلى الكتالوج بصلاحية Manage catalog،'
                     .' وأن التوكن يحتوي catalog_management و business_management.';
             }
@@ -290,6 +307,8 @@ class MetaCatalogService
         ?string $error = null
     ): void {
         MetaCatalogSyncLog::query()->create([
+            'whatsapp_account_id' => $this->account?->id,
+            'catalog_id' => $this->catalogId(),
             'product_id' => $product->id,
             'variant_id' => $variant?->id,
             'action' => $action,
@@ -300,5 +319,95 @@ class MetaCatalogService
             'response_payload' => $response,
             'error_message' => $error,
         ]);
+    }
+
+    private function catalogId(): ?string
+    {
+        return $this->account?->catalog_id ?: config('meta_commerce.catalog_id');
+    }
+
+    private function accessToken(): ?string
+    {
+        return $this->account?->accessToken() ?: config('meta_commerce.access_token');
+    }
+
+    private function syncRow(Product $product, ?SizeColor $variant): ?MetaCatalogProductSync
+    {
+        if (! $this->account || blank($this->catalogId())) {
+            return null;
+        }
+
+        return MetaCatalogProductSync::query()->firstOrNew([
+            'catalog_id' => (string) $this->catalogId(),
+            'product_id' => (int) $product->id,
+            'variant_id' => $variant?->id,
+        ], [
+            'whatsapp_account_id' => $this->account->id,
+            'meta_catalog_retailer_id' => $this->generateRetailerId($product, $variant),
+        ]);
+    }
+
+    private function markPending(Model $target, ?MetaCatalogProductSync $sync, Product $product, ?SizeColor $variant, array $payload): void
+    {
+        if ($sync) {
+            $sync->fill([
+                'whatsapp_account_id' => $this->account?->id,
+                'catalog_id' => (string) $this->catalogId(),
+                'product_id' => (int) $product->id,
+                'variant_id' => $variant?->id,
+                'meta_catalog_retailer_id' => $payload['retailer_id'],
+                'sync_status' => 'pending',
+                'last_error' => null,
+                'payload' => $payload,
+            ])->save();
+            return;
+        }
+
+        $target->forceFill([
+            'meta_catalog_sync_status' => 'pending',
+            'meta_catalog_retailer_id' => $payload['retailer_id'],
+            'meta_catalog_payload' => $payload,
+            'meta_catalog_last_error' => null,
+        ])->saveQuietly();
+    }
+
+    private function markSynced(Model $target, ?MetaCatalogProductSync $sync, string $itemId, array $payload): void
+    {
+        if ($sync) {
+            $sync->forceFill([
+                'meta_catalog_item_id' => $itemId,
+                'meta_catalog_retailer_id' => $payload['retailer_id'],
+                'sync_status' => 'synced',
+                'last_synced_at' => now(),
+                'last_error' => null,
+                'payload' => $payload,
+            ])->save();
+            return;
+        }
+
+        $target->forceFill([
+            'meta_catalog_item_id' => $itemId,
+            'meta_catalog_retailer_id' => $payload['retailer_id'],
+            'meta_catalog_sync_status' => 'synced',
+            'meta_catalog_last_synced_at' => now(),
+            'meta_catalog_last_error' => null,
+            'meta_catalog_payload' => $payload,
+        ])->saveQuietly();
+    }
+
+    private function markFailed(Model $target, ?MetaCatalogProductSync $sync, string $message): void
+    {
+        if ($sync) {
+            $sync->forceFill([
+                'sync_status' => 'failed',
+                'last_error' => $message,
+            ])->save();
+            return;
+        }
+
+        $target->forceFill([
+            'meta_catalog_sync_status' => 'failed',
+            'meta_catalog_last_error' => $message,
+        ])->saveQuietly();
     }
 }

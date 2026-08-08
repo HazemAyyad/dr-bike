@@ -94,6 +94,7 @@ class WhatsAppController extends Controller
         $replyTo = isset($data['reply_to_message_id'])
             ? $conversation->messages()->findOrFail($data['reply_to_message_id'])
             : null;
+        $service = $this->serviceForConversation($service, $conversation);
         return $this->sendSafely(fn () => $service->sendText(
             $conversation->phone,
             $data['message'],
@@ -106,6 +107,7 @@ class WhatsAppController extends Controller
     {
         $conversation = WhatsAppConversation::query()->findOrFail($id);
 
+        $service = $this->serviceForConversation($service, $conversation);
         return $this->sendSafely(fn () => $service->sendTemplate(
             $conversation->phone,
             (string) config('whatsapp.reengagement_template_name'),
@@ -124,6 +126,7 @@ class WhatsAppController extends Controller
             'caption' => 'nullable|string|max:1024',
             'media_kind' => 'nullable|in:image,audio,video,document',
         ]);
+        $service = $this->serviceForConversation($service, $conversation);
         return $this->sendSafely(fn () => $service->sendMedia(
             $conversation->phone,
             $data['file'],
@@ -150,6 +153,7 @@ class WhatsAppController extends Controller
             ]);
         }
 
+        $service = $this->serviceForConversation($service, $conversation);
         $result = $service->sendTypingIndicator($messageId);
 
         return response()->json([
@@ -255,6 +259,7 @@ class WhatsAppController extends Controller
                 null,
                 true
             );
+            $service = $this->serviceForConversation($service, $conversation);
             return $this->sendSafely(fn () => $service->sendMedia(
                 $conversation->phone,
                 $file,
@@ -448,5 +453,13 @@ class WhatsAppController extends Controller
                 'conversation' => 'انتهت نافذة خدمة العملاء (24 ساعة). يجب أن يرسل الزبون رسالة جديدة أو استخدام قالب Meta معتمد.',
             ]);
         }
+    }
+
+    private function serviceForConversation(WhatsAppCloudApiService $service, WhatsAppConversation $conversation): WhatsAppCloudApiService
+    {
+        $conversation->loadMissing('whatsappAccount');
+        return $conversation->whatsappAccount
+            ? $service->forAccount($conversation->whatsappAccount)
+            : $service;
     }
 }

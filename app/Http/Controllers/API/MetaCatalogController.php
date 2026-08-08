@@ -7,9 +7,11 @@ use App\Jobs\BulkSyncMetaCatalogJob;
 use App\Jobs\SyncMetaCatalogHierarchyJob;
 use App\Models\AppSetting;
 use App\Models\MetaCatalogSyncLog;
+use App\Models\MetaCatalogProductSync;
 use App\Models\MetaCatalogProductSet;
 use App\Models\Product;
 use App\Models\SizeColor;
+use App\Models\WhatsAppAccount;
 use App\Services\Meta\MetaCatalogService;
 use App\Support\ProductImageResolver;
 use Illuminate\Http\Request;
@@ -20,6 +22,10 @@ class MetaCatalogController extends Controller
 {
     public function status(MetaCatalogService $service)
     {
+        $account = $this->accountFromRequest(request());
+        if ($account) {
+            $service = $service->forAccount($account);
+        }
         $error = null;
         $catalogInfo = null;
         try {
@@ -29,22 +35,23 @@ class MetaCatalogController extends Controller
             $error = $e->getMessage();
         }
 
-        $counts = DB::query()->fromSub(
-            Product::query()->whereDoesntHave('sizes.colorSizes')->select('meta_catalog_sync_status')
-                ->unionAll(SizeColor::query()->select('meta_catalog_sync_status')),
-            'sync_items'
-        )->selectRaw("SUM(meta_catalog_sync_status = 'synced') as synced")
-            ->selectRaw("SUM(meta_catalog_sync_status = 'failed') as failed")
-            ->selectRaw("SUM(meta_catalog_sync_status = 'pending' OR meta_catalog_sync_status IS NULL) as pending")
-            ->selectRaw("SUM(meta_catalog_sync_status = 'disabled') as disabled")
-            ->first();
+        $counts = $account ? $this->accountSyncCounts($account) : DB::query()->fromSub(
+                Product::query()->whereDoesntHave('sizes.colorSizes')->select('meta_catalog_sync_status')
+                    ->unionAll(SizeColor::query()->select('meta_catalog_sync_status')),
+                'sync_items'
+            )->selectRaw("SUM(meta_catalog_sync_status = 'synced') as synced")
+                ->selectRaw("SUM(meta_catalog_sync_status = 'failed') as failed")
+                ->selectRaw("SUM(meta_catalog_sync_status = 'pending' OR meta_catalog_sync_status IS NULL) as pending")
+                ->selectRaw("SUM(meta_catalog_sync_status = 'disabled') as disabled")
+                ->first();
 
         return response()->json([
             'status' => 'success',
             'catalog' => [
+                'whatsapp_account' => $account ? $this->accountPayload($account) : null,
                 'configured' => $error === null,
                 'configuration_error' => $error,
-                'catalog_id' => $this->mask((string) config('meta_commerce.catalog_id')),
+                'catalog_id' => $this->mask((string) ($account?->catalog_id ?: config('meta_commerce.catalog_id'))),
                 'catalog_name' => $catalogInfo['name'] ?? null,
                 'meta_product_count' => isset($catalogInfo['product_count'])
                     ? (int) $catalogInfo['product_count']
@@ -54,12 +61,28 @@ class MetaCatalogController extends Controller
                 'failed_products' => (int) ($counts->failed ?? 0),
                 'pending_products' => (int) ($counts->pending ?? 0),
                 'disabled_products' => (int) ($counts->disabled ?? 0),
-                'total_product_sets' => MetaCatalogProductSet::query()->count(),
-                'synced_product_sets' => MetaCatalogProductSet::query()->where('sync_status', 'synced')->count(),
-                'failed_product_sets' => MetaCatalogProductSet::query()->where('sync_status', 'failed')->count(),
-                'last_synced_at' => MetaCatalogSyncLog::query()->where('status', 'success')->max('created_at'),
+                'total_product_sets' => $this->productSetQuery($account)->count(),
+                'synced_product_sets' => $this->productSetQuery($account)->where('sync_status', 'synced')->count(),
+                'failed_product_sets' => $this->productSetQuery($account)->where('sync_status', 'failed')->count(),
+                'last_synced_at' => MetaCatalogSyncLog::query()
+                    ->when($account, fn ($q) => $q->where('whatsapp_account_id', $account->id))
+                    ->where('status', 'success')
+                    ->max('created_at'),
                 ...$this->settingsPayload(),
             ],
+        ]);
+    }
+
+    public function accounts()
+    {
+        return response()->json([
+            'status' => 'success',
+            'accounts' => WhatsAppAccount::query()
+                ->with('catalogRules')
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get()
+                ->map(fn (WhatsAppAccount $account) => $this->accountPayload($account)),
         ]);
     }
 
@@ -70,6 +93,7 @@ class MetaCatalogController extends Controller
             'status' => 'nullable|in:synced,failed,pending,disabled',
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
+        $account = $this->accountFromRequest($request);
         $query = Product::query()->with(['category', 'normalImages', 'viewImages', 'image3d', 'sizes.colorSizes.size']);
         if (! empty($data['search'])) {
             $term = trim($data['search']);
@@ -86,7 +110,7 @@ class MetaCatalogController extends Controller
             });
         }
         $page = $query->orderByDesc('id')->paginate((int) ($data['per_page'] ?? 20));
-        $page->getCollection()->transform(fn (Product $product) => $this->productPayload($product));
+        $page->getCollection()->transform(fn (Product $product) => $this->productPayload($product, $account));
 
         return response()->json(['status' => 'success', 'products' => $page]);
     }
@@ -98,7 +122,9 @@ class MetaCatalogController extends Controller
             'action' => 'nullable|in:create,update,delete,disable,bulk_sync,test',
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
-        $query = MetaCatalogSyncLog::query()->with(['product:id,nameAr,nameEng', 'variant:id,colorAr,colorEn']);
+        $account = $this->accountFromRequest($request);
+        $query = MetaCatalogSyncLog::query()->with(['product:id,nameAr,nameEng', 'variant:id,colorAr,colorEn', 'whatsappAccount:id,name']);
+        if ($account) $query->where('whatsapp_account_id', $account->id);
         if (! empty($data['status'])) $query->where('status', $data['status']);
         if (! empty($data['action'])) $query->where('action', $data['action']);
         return response()->json([
@@ -115,7 +141,8 @@ class MetaCatalogController extends Controller
             'search' => 'nullable|string|max:100',
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
-        $query = MetaCatalogProductSet::query();
+        $account = $this->accountFromRequest($request);
+        $query = $this->productSetQuery($account);
         if (! empty($data['status'])) $query->where('sync_status', $data['status']);
         if (! empty($data['type'])) $query->where('source_type', $data['type']);
         if (! empty($data['search'])) $query->where('name', 'like', '%'.trim($data['search']).'%');
@@ -127,9 +154,10 @@ class MetaCatalogController extends Controller
         ]);
     }
 
-    public function syncHierarchy()
+    public function syncHierarchy(Request $request)
     {
-        SyncMetaCatalogHierarchyJob::dispatch()->onConnection('database');
+        $account = $this->accountFromRequest($request);
+        SyncMetaCatalogHierarchyJob::dispatch(true, $account?->id)->onConnection('database');
         return response()->json([
             'status' => 'success',
             'message' => 'بدأت مزامنة التصنيفات في الخلفية. ستظهر النتيجة في السجل بعد اكتمالها.',
@@ -137,9 +165,10 @@ class MetaCatalogController extends Controller
         ], 202);
     }
 
-    public function queueHierarchySync()
+    public function queueHierarchySync(Request $request)
     {
-        SyncMetaCatalogHierarchyJob::dispatch()->onConnection('database');
+        $account = $this->accountFromRequest($request);
+        SyncMetaCatalogHierarchyJob::dispatch(true, $account?->id)->onConnection('database');
         return response()->json([
             'status' => 'success',
             'message' => 'تمت إضافة مزامنة التصنيفات والمجموعات إلى قائمة الانتظار.',
@@ -148,22 +177,27 @@ class MetaCatalogController extends Controller
 
     public function syncProduct(int $id, MetaCatalogService $service)
     {
-        return $this->syncProductTargets(Product::query()->findOrFail($id), $service);
+        $account = $this->accountFromRequest(request());
+        return $this->syncProductTargets(Product::query()->findOrFail($id), $service, '', $account);
     }
 
     public function resyncProduct(int $id, MetaCatalogService $service)
     {
-        return $this->syncProductTargets(Product::query()->findOrFail($id), $service);
+        $account = $this->accountFromRequest(request());
+        return $this->syncProductTargets(Product::query()->findOrFail($id), $service, '', $account);
     }
 
     public function syncVariant(int $id, MetaCatalogService $service)
     {
         $variant = SizeColor::query()->with('size.product')->findOrFail($id);
-        return $this->syncOne($variant->size->product, $variant, $service);
+        $account = $this->accountFromRequest(request());
+        return $this->syncOne($variant->size->product, $variant, $service, '', $account);
     }
 
     public function disableProduct(int $id, MetaCatalogService $service)
     {
+        $account = $this->accountFromRequest(request());
+        if ($account) $service = $service->forAccount($account);
         $product = Product::query()->with('sizes.colorSizes')->findOrFail($id);
         $targets = $product->sizes->flatMap->colorSizes;
         try {
@@ -177,6 +211,8 @@ class MetaCatalogController extends Controller
 
     public function disableVariant(int $id, MetaCatalogService $service)
     {
+        $account = $this->accountFromRequest(request());
+        if ($account) $service = $service->forAccount($account);
         $variant = SizeColor::query()->with('size.product')->findOrFail($id);
         try {
             $service->disable($variant->size->product, $variant);
@@ -186,17 +222,36 @@ class MetaCatalogController extends Controller
         }
     }
 
-    public function bulkSync()
+    public function bulkSync(Request $request)
     {
-        MetaCatalogSyncLog::query()->create(['action' => 'bulk_sync', 'status' => 'queued']);
-        BulkSyncMetaCatalogJob::dispatch()->onConnection('database');
+        $data = $request->validate([
+            'whatsapp_account_id' => 'nullable|integer|exists:whatsapp_accounts,id',
+            'source_type' => 'nullable|in:all,category,sub_category',
+            'source_id' => 'nullable|integer',
+        ]);
+        $account = isset($data['whatsapp_account_id'])
+            ? WhatsAppAccount::query()->findOrFail($data['whatsapp_account_id'])
+            : null;
+        $sourceType = $data['source_type'] ?? 'all';
+        $sourceId = $sourceType === 'all' ? null : ($data['source_id'] ?? null);
+        abort_if($sourceType !== 'all' && ! $sourceId, 422, 'source_id is required when syncing a category or sub category.');
+
+        MetaCatalogSyncLog::query()->create([
+            'action' => 'bulk_sync',
+            'status' => 'queued',
+            'whatsapp_account_id' => $account?->id,
+            'catalog_id' => $account?->catalog_id ?: config('meta_commerce.catalog_id'),
+            'request_payload' => compact('sourceType', 'sourceId'),
+        ]);
+        BulkSyncMetaCatalogJob::dispatch(false, false, $account?->id, $sourceType, $sourceId)->onConnection('database');
         return response()->json(['status' => 'success', 'message' => 'تمت إضافة مزامنة المنتجات إلى قائمة الانتظار.']);
     }
 
     public function testProduct(Request $request, MetaCatalogService $service)
     {
         $data = $request->validate(['product_id' => 'required|integer|exists:products,id']);
-        return $this->syncProductTargets(Product::query()->findOrFail($data['product_id']), $service, 'test');
+        $account = $this->accountFromRequest($request);
+        return $this->syncProductTargets(Product::query()->findOrFail($data['product_id']), $service, 'test', $account);
     }
 
     public function settings()
@@ -219,10 +274,11 @@ class MetaCatalogController extends Controller
         return $this->settings();
     }
 
-    private function syncProductTargets(Product $product, MetaCatalogService $service, string $action = '') {
+    private function syncProductTargets(Product $product, MetaCatalogService $service, string $action = '', ?WhatsAppAccount $account = null) {
+        if ($account) $service = $service->forAccount($account);
         $product->load(['sizes.colorSizes.size']);
         $targets = $product->sizes->flatMap->colorSizes;
-        if ($targets->isEmpty()) return $this->syncOne($product, null, $service, $action);
+        if ($targets->isEmpty()) return $this->syncOne($product, null, $service, $action, $account);
         $results = [];
         foreach ($targets as $variant) {
             try {
@@ -239,7 +295,8 @@ class MetaCatalogController extends Controller
         ], $failed === count($results) ? 422 : 200);
     }
 
-    private function syncOne(Product $product, ?SizeColor $variant, MetaCatalogService $service, string $action = '') {
+    private function syncOne(Product $product, ?SizeColor $variant, MetaCatalogService $service, string $action = '', ?WhatsAppAccount $account = null) {
+        if ($account) $service = $service->forAccount($account);
         try {
             $result = $service->syncProduct($product, $variant, $action);
             return response()->json(['status' => 'success', 'message' => 'تمت المزامنة بنجاح.', ...$result]);
@@ -248,8 +305,11 @@ class MetaCatalogController extends Controller
         }
     }
 
-    private function productPayload(Product $product): array
+    private function productPayload(Product $product, ?WhatsAppAccount $account = null): array
     {
+        if ($account) {
+            return $this->accountProductPayload($product, $account);
+        }
         $variants = $product->sizes->flatMap->colorSizes;
         $syncStatus = $product->meta_catalog_sync_status ?: 'pending';
         $lastSyncedAt = $product->meta_catalog_last_synced_at;
@@ -288,6 +348,102 @@ class MetaCatalogController extends Controller
                 'meta_catalog_retailer_id' => $variant->meta_catalog_retailer_id,
             ])->values(),
         ];
+    }
+
+    private function accountProductPayload(Product $product, WhatsAppAccount $account): array
+    {
+        $syncs = MetaCatalogProductSync::query()
+            ->where('whatsapp_account_id', $account->id)
+            ->where('product_id', $product->id)
+            ->get()
+            ->keyBy(fn (MetaCatalogProductSync $sync) => $sync->variant_id ?: 0);
+        $variants = $product->sizes->flatMap->colorSizes;
+        $rootSync = $syncs->get(0);
+        $statuses = $variants->isEmpty()
+            ? collect([$rootSync?->sync_status ?: 'pending'])
+            : $variants->map(fn ($variant) => $syncs->get($variant->id)?->sync_status ?: 'pending');
+
+        $syncStatus = $statuses->contains('failed')
+            ? 'failed'
+            : ($statuses->contains('pending')
+                ? 'pending'
+                : ($statuses->every(fn ($status) => $status === 'disabled') ? 'disabled' : 'synced'));
+
+        return [
+            'id' => $product->id,
+            'name' => $product->nameAr ?: $product->nameEng,
+            'image' => ProductImageResolver::preferredUrl($product),
+            'price' => (float) ($product->normailPrice ?: $product->price ?: 0),
+            'quantity' => $variants->isEmpty() ? (int) $product->stock : $variants->sum('stock'),
+            'category' => $product->category?->nameAr ?: $product->category?->nameEng,
+            'meta_catalog_sync_status' => $syncStatus,
+            'meta_catalog_last_synced_at' => $variants->isEmpty()
+                ? $rootSync?->last_synced_at
+                : $variants->map(fn ($variant) => $syncs->get($variant->id)?->last_synced_at)->filter()->max(),
+            'meta_catalog_last_error' => $variants->isEmpty()
+                ? $rootSync?->last_error
+                : $variants->map(fn ($variant) => $syncs->get($variant->id)?->last_error)->filter()->first(),
+            'meta_catalog_item_id' => $rootSync?->meta_catalog_item_id,
+            'meta_catalog_retailer_id' => $rootSync?->meta_catalog_retailer_id,
+            'variants' => $variants->map(function ($variant) use ($syncs) {
+                $sync = $syncs->get($variant->id);
+                return [
+                    'id' => $variant->id,
+                    'name' => trim(($variant->size?->size ?? '').' '.($variant->colorAr ?: $variant->colorEn)),
+                    'price' => (float) $variant->normailPrice,
+                    'quantity' => (int) $variant->stock,
+                    'meta_catalog_sync_status' => $sync?->sync_status ?: 'pending',
+                    'meta_catalog_last_synced_at' => $sync?->last_synced_at,
+                    'meta_catalog_last_error' => $sync?->last_error,
+                    'meta_catalog_item_id' => $sync?->meta_catalog_item_id,
+                    'meta_catalog_retailer_id' => $sync?->meta_catalog_retailer_id,
+                ];
+            })->values(),
+        ];
+    }
+
+    private function accountFromRequest(Request $request): ?WhatsAppAccount
+    {
+        $id = $request->input('whatsapp_account_id');
+        return $id ? WhatsAppAccount::query()->findOrFail((int) $id) : null;
+    }
+
+    private function accountPayload(WhatsAppAccount $account): array
+    {
+        return [
+            'id' => $account->id,
+            'name' => $account->name,
+            'display_phone_number' => $account->display_phone_number,
+            'phone_number_id' => $this->mask($account->phone_number_id),
+            'waba_id' => $account->waba_id,
+            'catalog_id' => $this->mask((string) $account->catalog_id),
+            'is_active' => $account->is_active,
+            'is_verified' => $account->is_verified,
+            'rules' => $account->catalogRules->map(fn ($rule) => [
+                'id' => $rule->id,
+                'source_type' => $rule->source_type,
+                'source_id' => $rule->source_id,
+                'is_active' => $rule->is_active,
+            ])->values(),
+        ];
+    }
+
+    private function productSetQuery(?WhatsAppAccount $account)
+    {
+        return MetaCatalogProductSet::query()
+            ->when($account, fn ($query) => $query->where('whatsapp_account_id', $account->id))
+            ->when(! $account, fn ($query) => $query->whereNull('whatsapp_account_id'));
+    }
+
+    private function accountSyncCounts(WhatsAppAccount $account)
+    {
+        return MetaCatalogProductSync::query()
+            ->where('whatsapp_account_id', $account->id)
+            ->selectRaw("SUM(sync_status = 'synced') as synced")
+            ->selectRaw("SUM(sync_status = 'failed') as failed")
+            ->selectRaw("SUM(sync_status = 'pending' OR sync_status IS NULL) as pending")
+            ->selectRaw("SUM(sync_status = 'disabled') as disabled")
+            ->first();
     }
 
     private function settingsPayload(): array

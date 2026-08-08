@@ -8,6 +8,8 @@ use App\Models\User;
 use App\Models\WhatsAppContact;
 use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessage;
+use App\Models\WhatsAppAccount;
+use App\Models\MetaCatalogProductSync;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Http\UploadedFile;
@@ -16,12 +18,21 @@ use RuntimeException;
 
 class WhatsAppCloudApiService
 {
+    public function __construct(private readonly ?WhatsAppAccount $account = null)
+    {
+    }
+
+    public function forAccount(?WhatsAppAccount $account): self
+    {
+        return new self($account);
+    }
+
     public function validateConfig(): void
     {
         $missing = collect([
             'WHATSAPP_API_VERSION' => config('whatsapp.api_version'),
-            'WHATSAPP_ACCESS_TOKEN' => config('whatsapp.access_token'),
-            'WHATSAPP_PHONE_NUMBER_ID' => config('whatsapp.phone_number_id'),
+            'WHATSAPP_ACCESS_TOKEN' => $this->accessToken(),
+            'WHATSAPP_PHONE_NUMBER_ID' => $this->phoneNumberId(),
         ])->filter(fn ($value) => blank($value))->keys();
 
         if ($missing->isNotEmpty()) {
@@ -95,13 +106,13 @@ class WhatsAppCloudApiService
         $uploadName = $type === 'audio' && $file->getClientOriginalExtension() === 'mp4'
             ? pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME).'.m4a'
             : $file->getClientOriginalName();
-        $upload = Http::withToken(config('whatsapp.access_token'))
+        $upload = Http::withToken($this->accessToken())
             ->acceptJson()
             ->timeout(config('whatsapp.timeout', 20))
             ->attach('file', fopen($file->getRealPath(), 'r'), $uploadName, [
                 'Content-Type' => $uploadMime,
             ])
-            ->post($this->graphEndpoint(config('whatsapp.phone_number_id').'/media'), [
+            ->post($this->graphEndpoint($this->phoneNumberId().'/media'), [
                 'messaging_product' => 'whatsapp',
             ]);
 
@@ -130,15 +141,22 @@ class WhatsAppCloudApiService
 
     public function sendProductList(string $phone, array $products, ?int $adminId = null): array
     {
-        $catalogId = (string) config('meta_commerce.catalog_id');
+        $catalogId = (string) ($this->account?->catalog_id ?: config('meta_commerce.catalog_id'));
         if ($catalogId === '') {
             throw new RuntimeException('META_CATALOG_ID is not configured.');
         }
 
         $rows = collect($products)
-            ->map(fn ($product) => ['product_retailer_id' => $product->meta_catalog_retailer_id])
+            ->map(fn ($product) => [
+                'product_retailer_id' => $this->productRetailerIdForCatalog($product),
+            ])
+            ->filter(fn ($row) => filled($row['product_retailer_id']))
             ->values()
             ->all();
+
+        if ($rows === []) {
+            throw new RuntimeException('No selected products are synced to this WhatsApp catalog.');
+        }
 
         return $this->send($phone, [
             'type' => 'interactive',
@@ -216,7 +234,7 @@ class WhatsAppCloudApiService
     public function downloadMedia(string $mediaId): array
     {
         $this->validateConfig();
-        $metadata = Http::withToken(config('whatsapp.access_token'))
+        $metadata = Http::withToken($this->accessToken())
             ->acceptJson()->timeout(config('whatsapp.timeout', 20))
             ->get($this->graphEndpoint($mediaId));
 
@@ -224,7 +242,7 @@ class WhatsAppCloudApiService
             throw new RuntimeException($metadata->json('error.message') ?: 'Unable to read WhatsApp media.');
         }
 
-        $content = Http::withToken(config('whatsapp.access_token'))
+        $content = Http::withToken($this->accessToken())
             ->timeout(config('whatsapp.timeout', 20))
             ->get($metadata->json('url'));
 
@@ -241,14 +259,18 @@ class WhatsAppCloudApiService
 
     public function businessPhoneNumber(): string
     {
+        if ($this->account?->display_phone_number) {
+            return $this->normalizePhone((string) $this->account->display_phone_number);
+        }
+
         if (filled(config('whatsapp.display_phone_number'))) {
             return $this->normalizePhone((string) config('whatsapp.display_phone_number'));
         }
 
         $this->validateConfig();
-        return Cache::remember('whatsapp.business_phone_number', now()->addHour(), function () {
-            $response = Http::withToken(config('whatsapp.access_token'))->acceptJson()
-                ->get($this->graphEndpoint(config('whatsapp.phone_number_id')), [
+        return Cache::remember('whatsapp.business_phone_number.'.$this->phoneNumberId(), now()->addHour(), function () {
+            $response = Http::withToken($this->accessToken())->acceptJson()
+                ->get($this->graphEndpoint($this->phoneNumberId()), [
                     'fields' => 'display_phone_number',
                 ]);
             if (! $response->successful() || ! $response->json('display_phone_number')) {
@@ -307,7 +329,11 @@ class WhatsAppCloudApiService
     {
         $contact = $this->findOrCreateContact($phone);
         return WhatsAppConversation::query()->firstOrCreate(
-            ['whatsapp_contact_id' => $contact->id, 'status' => 'open'],
+            [
+                'whatsapp_account_id' => $this->account?->id,
+                'whatsapp_contact_id' => $contact->id,
+                'status' => 'open',
+            ],
             ['phone' => $contact->phone]
         );
     }
@@ -320,6 +346,7 @@ class WhatsAppCloudApiService
         $conversation = $this->findOrCreateConversation($phone);
         $message = WhatsAppMessage::query()->create(array_merge($messageData, [
             'whatsapp_conversation_id' => $conversation->id,
+            'whatsapp_account_id' => $this->account?->id,
             'whatsapp_contact_id' => $contact->id,
             'phone' => $phone,
             'direction' => 'outbound',
@@ -355,7 +382,7 @@ class WhatsAppCloudApiService
 
     private function client()
     {
-        return Http::withToken(config('whatsapp.access_token'))
+        return Http::withToken($this->accessToken())
             ->acceptJson()
             ->asJson()
             ->timeout(config('whatsapp.timeout', 20));
@@ -366,7 +393,7 @@ class WhatsAppCloudApiService
         return sprintf(
             'https://graph.facebook.com/%s/%s/messages',
             trim(config('whatsapp.api_version'), '/'),
-            config('whatsapp.phone_number_id')
+            $this->phoneNumberId()
         );
     }
 
@@ -388,5 +415,29 @@ class WhatsAppCloudApiService
     private function responseArray(Response $response): array
     {
         return ['successful' => $response->successful(), 'status_code' => $response->status(), 'body' => $response->json() ?: []];
+    }
+
+    private function productRetailerIdForCatalog($product): ?string
+    {
+        if (! $this->account) {
+            return $product->meta_catalog_retailer_id;
+        }
+
+        return MetaCatalogProductSync::query()
+            ->where('whatsapp_account_id', $this->account->id)
+            ->where('product_id', $product->id)
+            ->whereNull('variant_id')
+            ->where('sync_status', 'synced')
+            ->value('meta_catalog_retailer_id');
+    }
+
+    private function accessToken(): ?string
+    {
+        return $this->account?->accessToken() ?: config('whatsapp.access_token');
+    }
+
+    private function phoneNumberId(): ?string
+    {
+        return $this->account?->phone_number_id ?: config('whatsapp.phone_number_id');
     }
 }

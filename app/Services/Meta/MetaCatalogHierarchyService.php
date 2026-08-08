@@ -4,9 +4,11 @@ namespace App\Services\Meta;
 
 use App\Models\Category;
 use App\Models\MetaCatalogProductSet;
+use App\Models\MetaCatalogProductSync;
 use App\Models\Product;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
+use App\Models\WhatsAppAccount;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -18,11 +20,14 @@ class MetaCatalogHierarchyService
     {
     }
 
-    public function syncAll(): array
+    public function syncAll(?int $whatsappAccountId = null): array
     {
-        $this->meta->validateConfig();
+        $account = $whatsappAccountId ? WhatsAppAccount::query()->find($whatsappAccountId) : null;
+        $meta = $account ? $this->meta->forAccount($account) : $this->meta;
+        $meta->validateConfig();
         $result = ['synced' => 0, 'failed' => 0, 'deleted' => 0, 'errors' => []];
         Log::info('[MetaCatalogHierarchy] sync started', [
+            'whatsapp_account_id' => $account?->id,
             'categories' => Category::query()->count(),
             'sub_categories' => SubCategory::query()->count(),
         ]);
@@ -30,23 +35,24 @@ class MetaCatalogHierarchyService
         Category::query()
             ->with('subCategories.category')
             ->orderBy('id')
-            ->chunkById(100, function ($categories) use (&$result) {
+            ->chunkById(100, function ($categories) use (&$result, $account, $meta) {
                 foreach ($categories as $category) {
-                    $this->syncSafely($category, $result);
+                    $this->syncSafely($category, $result, $account, $meta);
                     foreach ($category->subCategories as $subCategory) {
-                        $this->syncSafely($subCategory, $result);
+                        $this->syncSafely($subCategory, $result, $account, $meta);
                     }
                 }
             });
 
-        $this->deleteOrphanedSets($result);
+        $this->deleteOrphanedSets($result, $account, $meta);
         Log::info('[MetaCatalogHierarchy] sync completed', $result);
 
         return $result;
     }
 
-    public function syncCategory(Category $category): MetaCatalogProductSet
+    public function syncCategory(Category $category, ?WhatsAppAccount $account = null, ?MetaCatalogService $meta = null): MetaCatalogProductSet
     {
+        $meta ??= $account ? $this->meta->forAccount($account) : $this->meta;
         $name = trim((string) ($category->nameAr ?: $category->nameEng ?: 'Category '.$category->id));
         return $this->syncSet(
             sourceType: 'category',
@@ -57,12 +63,15 @@ class MetaCatalogHierarchyService
             filterValue: 'DRBIKE-C-'.$category->id,
             filter: ['custom_label_0' => ['i_contains' => 'DRBIKE-C-'.$category->id]],
             enabled: (bool) $category->isShow
-                && $this->hasSyncedMembers('category', (int) $category->id),
+                && $this->hasSyncedMembers('category', (int) $category->id, $account),
+            account: $account,
+            meta: $meta,
         );
     }
 
-    public function syncSubCategory(SubCategory $subCategory): MetaCatalogProductSet
+    public function syncSubCategory(SubCategory $subCategory, ?WhatsAppAccount $account = null, ?MetaCatalogService $meta = null): MetaCatalogProductSet
     {
+        $meta ??= $account ? $this->meta->forAccount($account) : $this->meta;
         $subCategory->loadMissing('category');
         $parentName = trim((string) ($subCategory->category?->nameAr ?: $subCategory->category?->nameEng));
         $childName = trim((string) ($subCategory->nameAr ?: $subCategory->nameEng ?: 'Subcategory '.$subCategory->id));
@@ -79,7 +88,9 @@ class MetaCatalogHierarchyService
             filter: ['custom_label_1' => ['i_contains' => $token]],
             enabled: (bool) $subCategory->isShow
                 && (bool) ($subCategory->category?->isShow ?? true)
-                && $this->hasSyncedMembers('sub_category', (int) $subCategory->id),
+                && $this->hasSyncedMembers('sub_category', (int) $subCategory->id, $account),
+            account: $account,
+            meta: $meta,
         );
     }
 
@@ -103,12 +114,17 @@ class MetaCatalogHierarchyService
         string $filterValue,
         array $filter,
         bool $enabled,
+        ?WhatsAppAccount $account = null,
+        ?MetaCatalogService $meta = null,
     ): MetaCatalogProductSet {
+        $meta ??= $account ? $this->meta->forAccount($account) : $this->meta;
         $set = MetaCatalogProductSet::query()->firstOrNew([
+            'whatsapp_account_id' => $account?->id,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
         ]);
         $set->fill([
+            'catalog_id' => $account?->catalog_id ?: config('meta_commerce.catalog_id'),
             'parent_source_id' => $parentSourceId,
             'name' => mb_substr($name, 0, 100),
             'filter_field' => $filterField,
@@ -120,7 +136,7 @@ class MetaCatalogHierarchyService
 
         if (! $enabled) {
             if ($set->meta_product_set_id) {
-                $this->meta->deleteProductSet($set->meta_product_set_id);
+                $meta->deleteProductSet($set->meta_product_set_id);
             }
             $set->forceFill([
                 'meta_product_set_id' => null,
@@ -132,8 +148,8 @@ class MetaCatalogHierarchyService
 
         try {
             $response = $set->meta_product_set_id
-                ? $this->meta->updateProductSet($set->meta_product_set_id, $set->name, $filter)
-                : $this->meta->createProductSet($set->name, $filter);
+                ? $meta->updateProductSet($set->meta_product_set_id, $set->name, $filter)
+                : $meta->createProductSet($set->name, $filter);
             $set->forceFill([
                 'meta_product_set_id' => (string) ($response['id'] ?? $set->meta_product_set_id),
                 'sync_status' => 'synced',
@@ -147,12 +163,12 @@ class MetaCatalogHierarchyService
         }
     }
 
-    private function syncSafely(Model $source, array &$result): void
+    private function syncSafely(Model $source, array &$result, ?WhatsAppAccount $account, MetaCatalogService $meta): void
     {
         try {
             $source instanceof Category
-                ? $this->syncCategory($source)
-                : $this->syncSubCategory($source);
+                ? $this->syncCategory($source, $account, $meta)
+                : $this->syncSubCategory($source, $account, $meta);
             $result['synced']++;
         } catch (Throwable $e) {
             $result['failed']++;
@@ -170,16 +186,22 @@ class MetaCatalogHierarchyService
         }
     }
 
-    private function deleteOrphanedSets(array &$result): void
+    private function deleteOrphanedSets(array &$result, ?WhatsAppAccount $account, MetaCatalogService $meta): void
     {
-        MetaCatalogProductSet::query()->chunkById(100, function ($sets) use (&$result) {
+        MetaCatalogProductSet::query()
+            ->when($account, fn ($query) => $query->where('whatsapp_account_id', $account->id))
+            ->when(! $account, fn ($query) => $query->whereNull('whatsapp_account_id'))
+            ->chunkById(100, function ($sets) use (&$result, $meta) {
             foreach ($sets as $set) {
                 $exists = $set->source_type === 'category'
                     ? Category::query()->whereKey($set->source_id)->exists()
                     : SubCategory::query()->whereKey($set->source_id)->exists();
                 if ($exists || $this->localMemberCount($set) > 0) continue;
                 try {
-                    $this->deleteSet($set);
+                    if ($set->meta_product_set_id) {
+                        $meta->deleteProductSet($set->meta_product_set_id);
+                    }
+                    $set->delete();
                     $result['deleted']++;
                 } catch (Throwable $e) {
                     $set->forceFill(['sync_status' => 'failed', 'last_error' => $e->getMessage()])->save();
@@ -201,8 +223,23 @@ class MetaCatalogHierarchyService
             : SubCategoryProduct::query()->where('sub_category_id', $set->source_id)->count();
     }
 
-    private function hasSyncedMembers(string $sourceType, int $sourceId): bool
+    private function hasSyncedMembers(string $sourceType, int $sourceId, ?WhatsAppAccount $account = null): bool
     {
+        if ($account) {
+            $query = MetaCatalogProductSync::query()
+                ->where('whatsapp_account_id', $account->id)
+                ->where('sync_status', 'synced')
+                ->whereHas('product', fn ($products) => $products->where('isShow', true));
+
+            if ($sourceType === 'category') {
+                $query->whereHas('product', fn ($products) => $products->where('category_id', $sourceId));
+            } else {
+                $query->whereHas('product.subCategories', fn ($pivots) => $pivots->where('sub_category_id', $sourceId));
+            }
+
+            return $query->exists();
+        }
+
         $query = Product::query()
             ->where('isShow', true)
             ->where(function ($q) {

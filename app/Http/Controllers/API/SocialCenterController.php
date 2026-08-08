@@ -53,7 +53,7 @@ class SocialCenterController extends Controller
 
         $items = collect();
         if (in_array($channel, ['all', 'whatsapp'], true)) {
-            $query = WhatsAppConversation::query()->with('contact');
+            $query = WhatsAppConversation::query()->with(['contact', 'whatsappAccount']);
             if (filled($status)) $query->where('status', $status);
             $this->applyQuickFilter($query, $quickFilter);
             if ($search !== '') {
@@ -100,7 +100,7 @@ class SocialCenterController extends Controller
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
 
         if ($channel === 'whatsapp') {
-            $conversation = WhatsAppConversation::query()->with('contact')->findOrFail($id);
+            $conversation = WhatsAppConversation::query()->with(['contact', 'whatsappAccount'])->findOrFail($id);
             $hiddenIds = DB::table('whatsapp_message_user_hides')
                 ->where('user_id', $request->user()->id)
                 ->pluck('whatsapp_message_id');
@@ -157,13 +157,14 @@ class SocialCenterController extends Controller
 
         try {
             if ($channel === 'whatsapp') {
-                $conversation = WhatsAppConversation::query()->findOrFail($id);
+                $conversation = WhatsAppConversation::query()->with('whatsappAccount')->findOrFail($id);
                 $message = WhatsAppMessage::query()
                     ->where('whatsapp_conversation_id', $conversation->id)
                     ->where('id', $messageId)
                     ->firstOrFail();
                 $this->ensureResendableText($message->direction, $message->status, $message->message_type, $message->body);
                 $this->ensureCustomerServiceWindow($conversation);
+                $whatsApp = $this->whatsAppForConversation($whatsApp, $conversation);
                 $result = $whatsApp->sendText($conversation->phone, (string) $message->body, $request->user()->id);
             } else {
                 $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
@@ -257,8 +258,9 @@ class SocialCenterController extends Controller
 
         try {
             if ($channel === 'whatsapp') {
-                $conversation = WhatsAppConversation::query()->findOrFail($id);
+                $conversation = WhatsAppConversation::query()->with('whatsappAccount')->findOrFail($id);
                 $this->ensureCustomerServiceWindow($conversation);
+                $whatsApp = $this->whatsAppForConversation($whatsApp, $conversation);
                 $result = $whatsApp->sendText($conversation->phone, $data['message'], $request->user()->id);
             } else {
                 abort_unless(in_array($channel, ['facebook', 'instagram'], true), 404);
@@ -291,8 +293,9 @@ class SocialCenterController extends Controller
 
         try {
             if ($channel === 'whatsapp') {
-                $conversation = WhatsAppConversation::query()->findOrFail($id);
+                $conversation = WhatsAppConversation::query()->with('whatsappAccount')->findOrFail($id);
                 $this->ensureCustomerServiceWindow($conversation);
+                $whatsApp = $this->whatsAppForConversation($whatsApp, $conversation);
                 $result = $whatsApp->sendMedia(
                     $conversation->phone,
                     $data['file'],
@@ -364,6 +367,11 @@ class SocialCenterController extends Controller
             'needs_reply' => $this->needsReply($conversation, 'whatsapp'),
             'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
             'tags' => $this->conversationTags('whatsapp', $conversation->id),
+            'whatsapp_account' => $conversation->whatsappAccount ? [
+                'id' => $conversation->whatsappAccount->id,
+                'name' => $conversation->whatsappAccount->name,
+                'display_phone_number' => $conversation->whatsappAccount->display_phone_number,
+            ] : null,
             'contact' => $conversation->contact,
         ];
     }
@@ -698,6 +706,16 @@ class SocialCenterController extends Controller
             'name' => $user->name,
             'job_title' => $employee?->job_title,
         ];
+    }
+
+    private function whatsAppForConversation(
+        WhatsAppCloudApiService $service,
+        WhatsAppConversation $conversation
+    ): WhatsAppCloudApiService {
+        $conversation->loadMissing('whatsappAccount');
+        return $conversation->whatsappAccount
+            ? $service->forAccount($conversation->whatsappAccount)
+            : $service;
     }
 
     private function messageAssignees(): array

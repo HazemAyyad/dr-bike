@@ -17,7 +17,7 @@ class SyncMetaCatalogHierarchyJob implements ShouldQueue
     public int $tries = 3;
     public int $backoff = 30;
 
-    public function __construct(public bool $resyncProducts = true)
+    public function __construct(public bool $resyncProducts = true, public ?int $whatsappAccountId = null)
     {
         $this->afterCommit();
     }
@@ -27,11 +27,11 @@ class SyncMetaCatalogHierarchyJob implements ShouldQueue
         Log::info('[MetaCatalogHierarchyJob] started', ['resync_products' => $this->resyncProducts]);
         try {
             if ($this->resyncProducts) {
-                BulkSyncMetaCatalogJob::dispatch(true, true)->onConnection('database');
+                BulkSyncMetaCatalogJob::dispatch(true, true, $this->whatsappAccountId)->onConnection('database');
                 Log::info('[MetaCatalogHierarchyJob] membership refresh queued');
                 return;
             }
-            $result = $service->syncAll();
+            $result = $service->syncAll($this->whatsappAccountId);
             Log::info('[MetaCatalogHierarchyJob] completed', $result);
         } catch (\Throwable $e) {
             Log::error('[MetaCatalogHierarchyJob] failed', [

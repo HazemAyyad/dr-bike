@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\WhatsAppMessage;
+use App\Models\WhatsAppAccount;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
 use App\Services\WhatsApp\WhatsAppIncomingNotificationService;
 use Illuminate\Http\Request;
@@ -35,6 +36,8 @@ class WhatsAppWebhookController extends Controller
             foreach ((array) data_get($request->all(), 'entry', []) as $entry) {
                 foreach ((array) data_get($entry, 'changes', []) as $change) {
                     $value = data_get($change, 'value', []);
+                    $account = $this->accountFromWebhookValue($value);
+                    $accountService = $account ? $service->forAccount($account) : $service;
                     $names = collect((array) data_get($value, 'contacts', []))
                         ->mapWithKeys(fn ($contact) => [(string) data_get($contact, 'wa_id') => data_get($contact, 'profile.name')]);
 
@@ -42,10 +45,10 @@ class WhatsAppWebhookController extends Controller
                         if ($this->markCustomerDeletion($incoming)) {
                             continue;
                         }
-                        $message = $this->saveIncoming($service, $incoming, $names->get((string) data_get($incoming, 'from')));
+                        $message = $this->saveIncoming($accountService, $incoming, $names->get((string) data_get($incoming, 'from')), $account);
                         if ($message) {
                             $notificationService->notify($message);
-                            $this->sendWelcomeIfNeeded($service, $message);
+                            $this->sendWelcomeIfNeeded($accountService, $message);
                         }
                     }
                     foreach ((array) data_get($value, 'statuses', []) as $status) {
@@ -122,7 +125,7 @@ class WhatsAppWebhookController extends Controller
         }
     }
 
-    private function saveIncoming(WhatsAppCloudApiService $service, array $incoming, ?string $name): ?WhatsAppMessage
+    private function saveIncoming(WhatsAppCloudApiService $service, array $incoming, ?string $name, ?WhatsAppAccount $account): ?WhatsAppMessage
     {
         $metaId = data_get($incoming, 'id');
         if (! $metaId || WhatsAppMessage::query()->where('meta_message_id', $metaId)->exists()) {
@@ -148,6 +151,7 @@ class WhatsAppWebhookController extends Controller
 
         $message = WhatsAppMessage::query()->create([
             'whatsapp_conversation_id' => $conversation->id,
+            'whatsapp_account_id' => $account?->id,
             'whatsapp_contact_id' => $contact->id,
             'phone' => $phone,
             'direction' => 'inbound',
@@ -192,5 +196,15 @@ class WhatsAppWebhookController extends Controller
                 'error_message' => $metaStatus === 'failed' ? data_get($status, 'errors.0.title') : null,
             ]);
         }
+    }
+
+    private function accountFromWebhookValue(array $value): ?WhatsAppAccount
+    {
+        $phoneNumberId = (string) data_get($value, 'metadata.phone_number_id');
+        if ($phoneNumberId === '') {
+            return null;
+        }
+
+        return WhatsAppAccount::query()->where('phone_number_id', $phoneNumberId)->first();
     }
 }
