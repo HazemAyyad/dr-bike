@@ -153,7 +153,7 @@ class AttendanceController extends Controller
             ]);
 
             if ($nextIsIn) {
-                EmployeeAttendanceScan::create([
+                $scan = EmployeeAttendanceScan::create([
                     'employee_id' => $employee_id,
                     'work_date' => $today,
                     'scanned_at' => $scanAt,
@@ -178,6 +178,25 @@ class AttendanceController extends Controller
                 $attendance->normal_minutes = $daily['normal_minutes'];
                 $attendance->overtime_minutes = $daily['overtime_minutes'];
                 $attendance->save();
+
+                app(\App\Services\EmployeeActivityLogger::class)->log(
+                    $employee_id,
+                    $user,
+                    'attendance',
+                    'attendance_check_in',
+                    'تسجيل دخول دوام',
+                    'سجل الموظف دخول دوام من QR',
+                    $attendance->fresh(),
+                    null,
+                    [
+                        'work_date' => $today,
+                        'scan_id' => (int) $scan->id,
+                        'source' => 'qr',
+                        'scanned_at' => $scanAt->toIso8601String(),
+                        'arrived_at' => $attendance->arrived_at,
+                        'worked_minutes' => (int) ($attendance->worked_minutes ?? 0),
+                    ]
+                );
 
                 try {
                     $attendance->refresh();
@@ -224,7 +243,7 @@ class AttendanceController extends Controller
             $lastIn = $scans->last();
             $segmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes($scanAt));
 
-            EmployeeAttendanceScan::create([
+            $scan = EmployeeAttendanceScan::create([
                 'employee_id' => $employee_id,
                 'work_date' => $today,
                 'scanned_at' => $scanAt,
@@ -258,6 +277,28 @@ class AttendanceController extends Controller
                 );
                 $attendance->refresh();
             }
+
+            app(\App\Services\EmployeeActivityLogger::class)->log(
+                $employee_id,
+                $user,
+                'attendance',
+                'attendance_check_out',
+                'تسجيل خروج دوام',
+                'سجل الموظف خروج دوام من QR',
+                $attendance->fresh(),
+                null,
+                [
+                    'work_date' => $today,
+                    'scan_id' => (int) $scan->id,
+                    'source' => 'qr',
+                    'scanned_at' => $scanAt->toIso8601String(),
+                    'left_at' => $attendance->left_at,
+                    'segment_minutes' => $segmentMinutes,
+                    'day_worked_minutes' => (int) $totalWorked,
+                    'normal_minutes' => (int) ($attendance->normal_minutes ?? 0),
+                    'overtime_minutes' => (int) ($attendance->overtime_minutes ?? 0),
+                ]
+            );
 
             try {
                 $notifier = app(\App\Services\AdminNotificationService::class);

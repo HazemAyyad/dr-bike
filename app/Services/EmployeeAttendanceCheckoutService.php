@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeeDetail;
+use App\Models\User;
 use App\Support\EmployeeAttendanceToday;
 use App\Support\EmployeePendingTasksForToday;
 use Carbon\Carbon;
@@ -25,7 +26,8 @@ class EmployeeAttendanceCheckoutService
         EmployeeDetail $employee,
         ?Carbon $checkoutAt = null,
         ?string $workDate = null,
-        string $source = 'manual'
+        string $source = 'manual',
+        ?User $actor = null
     ): array {
         $checkoutAt = $checkoutAt ?? now();
         $employeeId = (int) $employee->id;
@@ -52,7 +54,7 @@ class EmployeeAttendanceCheckoutService
 
         $segmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes($checkoutAt));
 
-        EmployeeAttendanceScan::create([
+        $scan = EmployeeAttendanceScan::create([
             'employee_id' => $employeeId,
             'work_date' => $workDate,
             'scanned_at' => $checkoutAt,
@@ -124,9 +126,40 @@ class EmployeeAttendanceCheckoutService
                     $source,
                     $calculatedOvertime
                 );
+                $attendance->refresh();
             }
             $this->notifyCheckout($employee, $attendance->fresh(), $checkoutAt, $source);
         }
+
+        app(EmployeeActivityLogger::class)->log(
+            $employeeId,
+            $actor,
+            'attendance',
+            $source === 'auto' ? 'attendance_auto_check_out' : 'attendance_check_out',
+            $source === 'auto' ? 'تسجيل خروج تلقائي' : 'تسجيل خروج دوام',
+            $source === 'auto'
+                ? 'تم تسجيل خروج الموظف تلقائيا من النظام'
+                : 'تم تسجيل خروج الموظف'.($source === 'fingerprint' ? ' من البصمة' : ' يدويا'),
+            $attendance->fresh(),
+            null,
+            [
+                'work_date' => $workDate,
+                'scan_id' => (int) $scan->id,
+                'source' => match ($source) {
+                    'fingerprint' => 'fingerprint',
+                    'auto' => 'auto',
+                    default => 'manual',
+                },
+                'scanned_at' => $checkoutAt->toIso8601String(),
+                'counted_scanned_at' => $countedCheckoutAt->toIso8601String(),
+                'left_at' => $attendance->left_at,
+                'segment_minutes' => $countedSegmentMinutes,
+                'actual_segment_minutes' => $segmentMinutes,
+                'day_worked_minutes' => (int) ($attendance->worked_minutes ?? $totalWorked),
+                'normal_minutes' => (int) ($attendance->normal_minutes ?? 0),
+                'overtime_minutes' => (int) ($attendance->overtime_minutes ?? 0),
+            ]
+        );
 
         return [
             'attendance' => $attendance->fresh(),

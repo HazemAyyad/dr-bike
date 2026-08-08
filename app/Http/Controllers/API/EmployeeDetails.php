@@ -1821,6 +1821,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
         $adjustmentsByDate = $forAdmin
             ? EmployeeAttendanceAdjustment::query()
+                ->with('editor:id,name')
                 ->where('employee_id', $employee->id)
                 ->whereBetween('work_date', [$fromStr, $toStr])
                 ->orderBy('id')
@@ -1882,6 +1883,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     'overtime_requested_minutes' => 0,
                     'overtime_approved_minutes' => null,
                     'can_edit_day' => $forAdmin,
+                    'can_edit_day_reason' => null,
                     'attendance_status' => $isWeeklyDayOff ? 'weekly_day_off' : 'absent',
                     'is_weekly_off' => $isWeeklyDayOff,
                     'weekly_off_worked' => false,
@@ -2077,6 +2079,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     ? (int) $overtimeRequest->approved_minutes
                     : null,
                 'can_edit_day' => $forAdmin && ! $currentlyIn,
+                'can_edit_day_reason' => $currentlyIn ? 'shift_open' : null,
                 'is_weekly_off' => $isWeeklyDayOff,
                 'weekly_off_worked' => $isWeeklyDayOff,
                 'attendance_status' => $isWeeklyDayOff ? 'present_on_weekly_day_off' : 'present',
@@ -2087,6 +2090,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                         'before_values' => $adjustment->before_values ?? [],
                         'after_values' => $adjustment->after_values ?? [],
                         'edited_by' => $adjustment->edited_by ? (int) $adjustment->edited_by : null,
+                        'edited_by_name' => $adjustment->editor?->name,
                         'source' => (string) $adjustment->source,
                         'note' => $adjustment->note,
                         'created_at' => $adjustment->created_at?->toIso8601String(),

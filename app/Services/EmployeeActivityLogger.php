@@ -108,6 +108,7 @@ class EmployeeActivityLogger
             \App\Models\InstantSale::class => 'instant_sale',
             \App\Models\Store\StoreSalesOrder::class => 'sales_order',
             \App\Models\Debt::class => 'debt',
+            \App\Models\EmployeeAttendance::class => 'employee_attendance',
             \App\Models\Maintenance::class => 'maintenance',
             \App\Models\EmployeeTask::class => 'employee_task',
             \App\Models\EmployeeTaskOccurrence::class => 'employee_task_occurrence',

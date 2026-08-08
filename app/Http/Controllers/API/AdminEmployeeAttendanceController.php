@@ -34,7 +34,8 @@ class AdminEmployeeAttendanceController extends Controller
                 $employee,
                 $checkoutAt,
                 $workDate,
-                'manual'
+                'manual',
+                $request->user()
             );
 
             $attendance = $result['attendance'];

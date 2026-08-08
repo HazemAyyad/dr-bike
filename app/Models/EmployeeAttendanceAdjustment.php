@@ -27,4 +27,9 @@ class EmployeeAttendanceAdjustment extends Model
     {
         return $this->belongsTo(EmployeeAttendance::class, 'employee_attendance_id');
     }
+
+    public function editor()
+    {
+        return $this->belongsTo(User::class, 'edited_by');
+    }
 }

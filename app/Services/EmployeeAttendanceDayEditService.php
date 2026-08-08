@@ -45,7 +45,7 @@ class EmployeeAttendanceDayEditService
             }
         }
 
-        return DB::transaction(function () use ($employee, $workDate, $checkInAt, $checkOutAt) {
+        return DB::transaction(function () use ($employee, $workDate, $checkInAt, $checkOutAt, $editedBy) {
             $employeeId = (int) $employee->id;
             $beforeAttendance = EmployeeAttendance::query()
                 ->where('employee_id', $employeeId)
@@ -112,17 +112,6 @@ class EmployeeAttendanceDayEditService
             $calculatedOvertime = (int) ($daily['overtime_minutes'] ?? 0);
             $attendance->overtime_minutes = $calculatedOvertime;
             $attendance->save();
-            $afterValues = $this->snapshot($attendance->fresh(), $allScans);
-
-            EmployeeAttendanceAdjustment::create([
-                'employee_attendance_id' => $attendance->id,
-                'employee_id' => $employeeId,
-                'work_date' => $workDate,
-                'before_values' => $beforeValues,
-                'after_values' => $afterValues,
-                'edited_by' => $editedBy,
-                'source' => 'admin_edit',
-            ]);
 
             if ($checkOutAt !== null && $calculatedOvertime > 0) {
                 $attendance = $this->overtimeService->applyCheckoutOvertimePolicy(
@@ -137,6 +126,35 @@ class EmployeeAttendanceDayEditService
                     ->where('status', EmployeeAttendanceOvertimeRequest::STATUS_PENDING)
                     ->update(['status' => EmployeeAttendanceOvertimeRequest::STATUS_REJECTED]);
             }
+
+            $afterValues = $this->snapshot($attendance->fresh(), $allScans);
+
+            $adjustment = EmployeeAttendanceAdjustment::create([
+                'employee_attendance_id' => $attendance->id,
+                'employee_id' => $employeeId,
+                'work_date' => $workDate,
+                'before_values' => $beforeValues,
+                'after_values' => $afterValues,
+                'edited_by' => $editedBy,
+                'source' => 'admin_edit',
+            ]);
+
+            app(EmployeeActivityLogger::class)->log(
+                $employeeId,
+                $editedBy ? \App\Models\User::query()->find($editedBy) : null,
+                'attendance',
+                'attendance_day_updated',
+                'تعديل دوام يوم',
+                'تم تعديل دوام يوم '.$workDate,
+                $attendance->fresh(),
+                null,
+                [
+                    'work_date' => $workDate,
+                    'adjustment_id' => (int) $adjustment->id,
+                    'before_values' => $beforeValues,
+                    'after_values' => $afterValues,
+                ]
+            );
 
             return [
                 'attendance' => $attendance->fresh(),

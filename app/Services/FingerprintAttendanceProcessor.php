@@ -243,7 +243,7 @@ class FingerprintAttendanceProcessor
         // Real fingerprint scans should clear the "missing checkout" mark.
         $attendance->missing_checkout = false;
 
-        EmployeeAttendanceScan::create([
+        $scan = EmployeeAttendanceScan::create([
             'employee_id' => $employeeId,
             'work_date' => $workDate,
             'scanned_at' => $scanAt,
@@ -300,6 +300,34 @@ class FingerprintAttendanceProcessor
         } else {
             $this->notifyLogout($employee, $attendance, $scanAt, $employeeId, $isReverseCheckout);
         }
+
+        app(EmployeeActivityLogger::class)->log(
+            $employeeId,
+            null,
+            'attendance',
+            $direction === 'in' ? 'attendance_check_in' : 'attendance_check_out',
+            $direction === 'in' ? 'تسجيل دخول دوام' : 'تسجيل خروج دوام',
+            $direction === 'in'
+                ? 'سجل الموظف دخول دوام من البصمة'
+                : 'سجل الموظف خروج دوام من البصمة',
+            $attendance->fresh(),
+            null,
+            [
+                'work_date' => $workDate,
+                'scan_id' => (int) $scan->id,
+                'source' => 'fingerprint',
+                'device_id' => (int) $device->id,
+                'device_user_id' => (string) $rawLog->device_user_id,
+                'fingerprint_raw_log_id' => (int) $rawLog->id,
+                'is_reverse_checkout' => $isReverseCheckout,
+                'scanned_at' => $scanAt->toIso8601String(),
+                'arrived_at' => $attendance->arrived_at,
+                'left_at' => $attendance->left_at,
+                'worked_minutes' => (int) ($attendance->worked_minutes ?? 0),
+                'normal_minutes' => (int) ($attendance->normal_minutes ?? 0),
+                'overtime_minutes' => (int) ($attendance->overtime_minutes ?? 0),
+            ]
+        );
 
         return null;
     }
