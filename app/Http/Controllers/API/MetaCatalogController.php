@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Jobs\BulkSyncMetaCatalogJob;
 use App\Jobs\SyncMetaCatalogHierarchyJob;
 use App\Models\AppSetting;
+use App\Models\Category;
 use App\Models\MetaCatalogSyncLog;
 use App\Models\MetaCatalogProductSync;
 use App\Models\MetaCatalogProductSet;
 use App\Models\Product;
 use App\Models\SizeColor;
+use App\Models\SubCategory;
 use App\Models\WhatsAppAccount;
 use App\Services\Meta\MetaCatalogService;
 use App\Support\ProductImageResolver;
@@ -83,6 +85,41 @@ class MetaCatalogController extends Controller
                 ->orderBy('id')
                 ->get()
                 ->map(fn (WhatsAppAccount $account) => $this->accountPayload($account)),
+        ]);
+    }
+
+    public function syncSources()
+    {
+        return response()->json([
+            'status' => 'success',
+            'categories' => Category::query()
+                ->withCount(['products' => fn ($query) => $query->where('isShow', true)])
+                ->orderBy('sortOrder')
+                ->orderBy('id')
+                ->get(['id', 'nameAr', 'nameEng', 'isShow', 'sortOrder'])
+                ->map(fn (Category $category) => [
+                    'id' => $category->id,
+                    'name' => $category->nameAr ?: $category->nameEng ?: ('تصنيف #'.$category->id),
+                    'is_show' => (bool) $category->isShow,
+                    'products_count' => (int) ($category->products_count ?? 0),
+                ])
+                ->values(),
+            'sub_categories' => SubCategory::query()
+                ->with('category:id,nameAr,nameEng')
+                ->withCount(['products as products_count'])
+                ->orderBy('mainCategoryId')
+                ->orderBy('sortOrder')
+                ->orderBy('id')
+                ->get(['id', 'nameAr', 'nameEng', 'mainCategoryId', 'isShow', 'sortOrder'])
+                ->map(fn (SubCategory $subCategory) => [
+                    'id' => $subCategory->id,
+                    'name' => $subCategory->nameAr ?: $subCategory->nameEng ?: ('تصنيف فرعي #'.$subCategory->id),
+                    'parent_id' => $subCategory->mainCategoryId,
+                    'parent_name' => $subCategory->category?->nameAr ?: $subCategory->category?->nameEng,
+                    'is_show' => (bool) $subCategory->isShow,
+                    'products_count' => (int) ($subCategory->products_count ?? 0),
+                ])
+                ->values(),
         ]);
     }
 
