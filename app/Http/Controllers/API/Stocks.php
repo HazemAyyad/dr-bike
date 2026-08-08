@@ -68,7 +68,7 @@ class Stocks extends Controller
         'rate' => ['rate', 'التقييم'],
         'manufacture_year' => ['manufacture_year', 'manufactureYear', 'سنة الصنع'],
         'model' => ['model', 'الموديل'],
-        'rotation_date' => ['rotation_date', 'تاريخ الدوران'],
+        'rotation_date' => ['rotation_date', 'رقم الدوران'],
     ];
 
     private const SIZE_IMPORT_COLUMNS = [
@@ -320,7 +320,7 @@ class Stocks extends Controller
                 'التقييم',
                 'سنة الصنع',
                 'الموديل',
-                'تاريخ الدوران',
+                'رقم الدوران',
                 'الشروة / المشروع',
             ];
 
@@ -579,7 +579,7 @@ class Stocks extends Controller
             'rate' => ['nullable', 'numeric', 'min:0'],
             'manufactureYear' => ['nullable', 'integer', 'min:0'],
             'model' => ['nullable', 'string', 'max:255'],
-            'rotation_date' => ['nullable', 'date'],
+            'rotation_date' => ['nullable', 'numeric', 'min:0'],
             'mark_today' => ['nullable', 'boolean'],
         ]);
 
@@ -694,7 +694,7 @@ class Stocks extends Controller
                 validator(['value' => $new], ['value' => ['required', 'string', 'max:255']])->validate();
             }
             if ($field === 'rotation_date') {
-                validator(['value' => $new], ['value' => ['nullable', 'date']])->validate();
+                validator(['value' => $new], ['value' => ['nullable', 'numeric', 'min:0']])->validate();
             }
 
             if ($isCostPrice) {
@@ -1691,7 +1691,7 @@ class Stocks extends Controller
             'description_en' => ['field' => 'descriptionEng', 'label' => 'وصف إنجليزي'],
             'description_he' => ['field' => 'descriptionAbree', 'label' => 'وصف عبري'],
             'model' => ['field' => 'model', 'label' => 'الموديل'],
-            'rotation_date' => ['field' => 'rotation_date', 'label' => 'تاريخ الدوران'],
+            'rotation_date' => ['field' => 'rotation_date', 'label' => 'رقم الدوران'],
         ];
 
         foreach ($stringFields as $key => $config) {
@@ -2041,7 +2041,7 @@ class Stocks extends Controller
             'stock' => 'المخزون',
             'min_stock' => 'الحد الأدنى للمخزون',
             'discount' => 'الخصم',
-            'rotation_date' => 'تاريخ الدوران',
+            'rotation_date' => 'رقم الدوران',
             default => $this->productPriceFieldLabel($field),
         };
     }
@@ -2667,7 +2667,7 @@ class Stocks extends Controller
                 'normailPrice' => 'required|numeric|min:1',
                 'discount' => 'required|numeric|min:0',
                 'project_id' => 'nullable|integer|exists:projects,id',
-                'rotation_date' => 'nullable|date',
+                'rotation_date' => 'nullable|numeric|min:0',
                 'min_sale_price' => 'nullable|numeric|min:1',
                 'is_sold_with_paper' => 'required|in:0,1',
                 'price' => 'nullable|numeric|min:1',

@@ -55,7 +55,7 @@ class ProductFormService
             'min_stock' => ['required', 'numeric', 'min:0'],
             'is_sold_with_paper' => ['required', 'in:0,1'],
             'min_sale_price' => ['nullable', 'numeric', 'min:0'],
-            'rotation_date' => ['nullable', 'date'],
+            'rotation_date' => ['nullable', 'numeric', 'min:0'],
             'price' => ['nullable', 'numeric', 'min:0'],
             'purchase_price' => ['nullable', 'numeric', 'min:0'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
