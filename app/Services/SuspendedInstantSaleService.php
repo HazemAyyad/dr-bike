@@ -398,6 +398,22 @@ class SuspendedInstantSaleService
         }
 
         return DB::transaction(function () use ($user, $record, $payload, $activeSession) {
+            $record = SuspendedInstantSale::query()
+                ->lockForUpdate()
+                ->findOrFail($record->id);
+
+            if (! $this->canMutate($user, $record)) {
+                throw ValidationException::withMessages([
+                    'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_forbidden')],
+                ]);
+            }
+
+            if (! $record->isSuspended()) {
+                throw ValidationException::withMessages([
+                    'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_not_active')],
+                ]);
+            }
+
             $payload = $activeSession
                 ? $this->movePaymentBoxToActiveSession($payload, $activeSession)
                 : $payload;
