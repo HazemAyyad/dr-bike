@@ -394,7 +394,7 @@ class SuspendedInstantSaleService
         $isAdjustmentSale = ($payload['sale_kind'] ?? null) === 'adjustment';
         $activeSession = null;
         if (! $isAdjustmentSale) {
-            $activeSession = $this->sessionService->assertCanCreateSale($user);
+            $activeSession = $this->sessionService->assertCanCreateSaleToday($user);
         }
 
         return DB::transaction(function () use ($user, $record, $payload, $activeSession) {
@@ -419,6 +419,9 @@ class SuspendedInstantSaleService
 
             $storeRequest = Request::create('/api/create/instant/sale', 'POST', $storePayload);
             $storeRequest->setUserResolver(fn () => $user);
+            if ($activeSession) {
+                $storeRequest->attributes->set('sales_daily_session_override_id', (int) $activeSession->id);
+            }
 
             $response = app(InstantSales::class)->store($storeRequest);
             $body = json_decode($response->getContent(), true) ?? [];

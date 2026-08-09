@@ -141,6 +141,50 @@ class SalesDailySessionService
             ->first();
     }
 
+    public function findOpenSessionForBusinessDate(User $user, ?Carbon $date = null): ?SalesDailySession
+    {
+        $owner = $this->resolveOwner($user);
+        $date = ($date ?? $this->businessDateToday())->toDateString();
+
+        return SalesDailySession::query()
+            ->where('user_id', $owner['user_id'])
+            ->whereDate('business_date', $date)
+            ->where('status', config('sales_daily.session_status.open'))
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    public function findGlobalOpenSessionForBusinessDate(?Carbon $date = null, ?int $exceptSessionId = null): ?SalesDailySession
+    {
+        $date = ($date ?? $this->businessDateToday())->toDateString();
+        $query = SalesDailySession::query()
+            ->with('user')
+            ->whereDate('business_date', $date)
+            ->where('status', config('sales_daily.session_status.open'));
+
+        if ($exceptSessionId) {
+            $query->where('id', '!=', $exceptSessionId);
+        }
+
+        return $query
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    public function assertCanCreateSaleToday(User $user): SalesDailySession
+    {
+        $session = $this->findOpenSessionForBusinessDate($user)
+            ?? $this->findGlobalOpenSessionForBusinessDate();
+
+        if (! $session) {
+            throw ValidationException::withMessages([
+                'session' => [__('messages.sales_daily_no_session')],
+            ]);
+        }
+
+        return $session;
+    }
+
     public function getActiveSession(User $user, bool $autoOpen = false): ?SalesDailySession
     {
         $owner = $this->resolveOwner($user);
@@ -481,7 +525,7 @@ class SalesDailySessionService
         return $session;
     }
 
-    private function dailyBoxBelongsToSession(Box $box, SalesDailySession $session): bool
+    public function dailyBoxBelongsToSession(Box $box, SalesDailySession $session): bool
     {
         if (! $box->isDailySalesBox()) {
             return true;

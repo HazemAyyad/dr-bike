@@ -11,6 +11,7 @@ use App\Models\InstantSale;
 use App\Models\OfferPackage;
 use App\Models\Product;
 use App\Models\Project;
+use App\Models\SalesDailySession;
 use App\Models\SalesOrder;
 use App\Models\Seller;
 use App\Models\SizeColor;
@@ -999,7 +1000,26 @@ class InstantSales extends Controller
         return $unknown;
     }
 
+    private function resolveSalesDailySessionForStore(Request $request, bool $isAdjustmentSale): ?SalesDailySession
+    {
+        if ($isAdjustmentSale) {
+            return null;
+        }
 
+        $overrideId = (int) $request->attributes->get('sales_daily_session_override_id', 0);
+        if ($overrideId > 0) {
+            $session = SalesDailySession::query()->findOrFail($overrideId);
+            if (! $session->isOpen()) {
+                throw ValidationException::withMessages([
+                    'session' => [__('messages.sales_daily_day_closed')],
+                ]);
+            }
+
+            return $session;
+        }
+
+        return app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
+    }
 
 public function store(Request $request)
  {
@@ -1021,9 +1041,7 @@ public function store(Request $request)
         }
     }
     $isAdjustmentSale = $this->isAdjustmentSaleKind($saleKind);
-    $dailySession = $isAdjustmentSale
-        ? null
-        : app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
+    $dailySession = $this->resolveSalesDailySessionForStore($request, $isAdjustmentSale);
 
     if ($request->input('project_id') === '' || $request->input('project_id') === '0') {
         $request->merge(['project_id' => null]);
@@ -2359,6 +2377,21 @@ public function edit(Request $request)
         if (! $box || ! $box->isDailySalesBox()) {
             throw ValidationException::withMessages([
                 'payment_box_id' => [__('messages.sales_daily_box_required')],
+            ]);
+        }
+
+        $overrideId = (int) $request->attributes->get('sales_daily_session_override_id', 0);
+        if ($overrideId > 0) {
+            $session = SalesDailySession::query()->findOrFail($overrideId);
+            if (
+                $session->isOpen()
+                && app(SalesDailySessionService::class)->dailyBoxBelongsToSession($box, $session)
+            ) {
+                return;
+            }
+
+            throw ValidationException::withMessages([
+                'box_id' => ['الصندوق المختار ليس صندوق جلسة المبيعات اليومية المفتوحة.'],
             ]);
         }
 
