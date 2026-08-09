@@ -192,8 +192,12 @@ class MetaCatalogController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'product_sets' => $query->orderBy('source_type')->orderBy('name')
-                ->paginate((int) ($data['per_page'] ?? 50)),
+            'product_sets' => tap(
+                $query->orderBy('source_type')->orderBy('name')
+                    ->paginate((int) ($data['per_page'] ?? 50)),
+                fn ($page) => $page->getCollection()
+                    ->transform(fn (MetaCatalogProductSet $set) => $this->productSetPayload($set, $account))
+            ),
         ]);
     }
 
@@ -477,6 +481,68 @@ class MetaCatalogController extends Controller
                 'source_id' => $rule->source_id,
                 'is_active' => $rule->is_active,
             ])->values(),
+        ];
+    }
+
+    private function productSetPayload(MetaCatalogProductSet $set, ?WhatsAppAccount $account): array
+    {
+        return [
+            'id' => $set->id,
+            'source_type' => $set->source_type,
+            'source_id' => $set->source_id,
+            'parent_source_id' => $set->parent_source_id,
+            'name' => $set->name,
+            'sync_status' => $set->sync_status,
+            'meta_product_set_id' => $set->meta_product_set_id,
+            'set_uploaded' => filled($set->meta_product_set_id) && $set->sync_status === 'synced',
+            'last_synced_at' => $set->last_synced_at,
+            'last_error' => $set->last_error,
+            ...$this->productSetStats($set, $account),
+        ];
+    }
+
+    private function productSetStats(MetaCatalogProductSet $set, ?WhatsAppAccount $account): array
+    {
+        $productIds = $set->source_type === 'category'
+            ? Product::query()
+                ->where('isShow', true)
+                ->where('category_id', $set->source_id)
+                ->pluck('id')
+            : Product::query()
+                ->where('isShow', true)
+                ->whereHas('subCategories', fn ($pivots) => $pivots->where('sub_category_id', $set->source_id))
+                ->pluck('id');
+
+        $total = $productIds->count();
+        if ($total === 0) {
+            return [
+                'total_products' => 0,
+                'synced_products' => 0,
+                'failed_products' => 0,
+                'disabled_products' => 0,
+                'pending_products' => 0,
+            ];
+        }
+
+        $syncs = MetaCatalogProductSync::query()
+            ->where('catalog_id', $account ? $this->catalogIdForAccount($account) : $set->catalog_id)
+            ->whereIn('product_id', $productIds)
+            ->select('product_id', 'sync_status')
+            ->get()
+            ->groupBy('sync_status')
+            ->map(fn ($rows) => $rows->pluck('product_id')->unique()->count());
+
+        $synced = (int) ($syncs->get('synced') ?? 0);
+        $failed = (int) ($syncs->get('failed') ?? 0);
+        $disabled = (int) ($syncs->get('disabled') ?? 0);
+        $touched = min($total, $synced + $failed + $disabled);
+
+        return [
+            'total_products' => $total,
+            'synced_products' => $synced,
+            'failed_products' => $failed,
+            'disabled_products' => $disabled,
+            'pending_products' => max(0, $total - $touched),
         ];
     }
 
