@@ -114,12 +114,20 @@ class EmployeeAttendanceDayEditService
             $attendance->save();
 
             if ($checkOutAt !== null && $calculatedOvertime > 0) {
-                $attendance = $this->overtimeService->applyCheckoutOvertimePolicy(
-                    $attendance,
-                    $employee,
-                    'admin_edit',
-                    $calculatedOvertime
-                );
+                $latestOvertimeRequest = EmployeeAttendanceOvertimeRequest::query()
+                    ->where('employee_attendance_id', $attendance->id)
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($latestOvertimeRequest) {
+                    $latestOvertimeRequest->update([
+                        'status' => EmployeeAttendanceOvertimeRequest::STATUS_APPROVED,
+                        'approved_minutes' => $calculatedOvertime,
+                        'reviewed_by' => $editedBy ?: null,
+                        'reviewed_at' => now(),
+                        'admin_note' => 'اعتماد مباشر من تعديل الدوام',
+                    ]);
+                }
             } elseif ($checkOutAt !== null) {
                 EmployeeAttendanceOvertimeRequest::query()
                     ->where('employee_attendance_id', $attendance->id)
