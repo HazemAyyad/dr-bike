@@ -8,6 +8,7 @@ use App\Models\BoxLog;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
@@ -17,6 +18,11 @@ class Boxes extends Controller
     {
         $user = $request->user();
         if (! $user || $user->type === 'admin' || ! Schema::hasTable('employee_visible_boxes')) {
+            Log::debug('boxes.visible_scope.unrestricted', [
+                'user_id' => $user?->id,
+                'user_type' => $user?->type,
+                'has_visible_table' => Schema::hasTable('employee_visible_boxes'),
+            ]);
             return null;
         }
 
@@ -25,10 +31,18 @@ class Boxes extends Controller
             return [];
         }
 
-        return $employee->visibleBoxes()
+        $ids = $employee->visibleBoxes()
             ->pluck('boxes.id')
             ->map(fn ($id) => (int) $id)
             ->all();
+
+        Log::debug('boxes.visible_scope.employee', [
+            'user_id' => $user->id,
+            'employee_id' => $employee->id,
+            'visible_box_ids' => $ids,
+        ]);
+
+        return $ids;
     }
 
     private function actorCanAccessBox(Request $request, int $boxId): bool
@@ -190,6 +204,12 @@ class Boxes extends Controller
             $boxes = Box::where('is_shown',$condition)
                 ->when($visibleIds !== null, fn ($q) => $q->whereIn('id', $visibleIds))
                 ->get();
+            Log::debug('boxes.common_data.result', [
+                'condition' => $condition,
+                'visible_ids' => $visibleIds,
+                'result_ids' => $boxes->pluck('id')->map(fn ($id) => (int) $id)->all(),
+                'result_names' => $boxes->pluck('name')->all(),
+            ]);
             $boxesData = $boxes->map(function($box){ 
                 return [
                     'box_id' => $box->id,
