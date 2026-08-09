@@ -2259,9 +2259,18 @@ public function updateEmployeeTask(Request $request)
         ]);
 
         $subTask = EmployeeSubTask::findOrFail($request->sub_task_id);
-        $actorId = (int) (auth()->user()->employee->id ?? 0);
+        $user = $request->user();
+        $actorId = (int) ($user?->employee?->id ?? 0);
+        $canReviewEmployeeTasks = $user?->type === 'admin';
+        if (! $canReviewEmployeeTasks && $user?->employee) {
+            $canReviewEmployeeTasks = (bool) $user->employee->permissions()
+                ->whereHas('permission', fn ($q) => $q->where('name_en', 'Employee Tasks'))
+                ->exists();
+        }
         $parent = $subTask->employeeTask;
-        if (! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, $actorId)) {
+        $parentWasWaitingReview = $parent
+            && $parent->status === EmployeeTaskStatus::WaitingReview->value;
+        if (! $parent || (! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, $actorId) && ! $canReviewEmployeeTasks)) {
            return response()->json([
                 'status' => 'error',
                 'message' => __('messages.unauthorized'),
@@ -2281,7 +2290,7 @@ public function updateEmployeeTask(Request $request)
             ->whereNotIn('status', ['completed', 'rejected'])
             ->exists();
 
-        if (! $pendingRemains) {
+        if (! $pendingRemains && ! $parentWasWaitingReview) {
             $employeeTask = EmployeeTask::findOrFail($subTask->employee_task_id)->fresh();
 
             if ($employeeTask->status === EmployeeTaskStatus::Pending->value

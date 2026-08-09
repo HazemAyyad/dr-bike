@@ -918,17 +918,26 @@ class EmployeeTaskOperationsController extends Controller
             ]);
             $sub = EmployeeTaskOccurrenceSubtask::findOrFail($request->sub_task_id);
 
-            $actorId = (int) (auth()->user()?->employee?->id ?? 0);
-            if ($actorId <= 0 || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) {
+            $user = $request->user();
+            $actorId = (int) ($user?->employee?->id ?? 0);
+            $canReviewEmployeeTasks = $user?->type === 'admin';
+            if (! $canReviewEmployeeTasks && $user?->employee) {
+                $canReviewEmployeeTasks = (bool) $user->employee->permissions()
+                    ->whereHas('permission', fn ($q) => $q->where('name_en', 'Employee Tasks'))
+                    ->exists();
+            }
+            if (! $sub->occurrence || ((! $actorId || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) && ! $canReviewEmployeeTasks)) {
                 return response()->json(['status' => 'error', 'message' => __('messages.unauthorized')], 200);
             }
 
+            $wasWaitingReview = $sub->occurrence
+                && $sub->occurrence->status === EmployeeTaskStatus::WaitingReview->value;
             $this->workflow->rejectOccurrenceSubtask($sub, $request->rejection_reason);
 
             $occurrence = $sub->occurrence->fresh();
             $pending = $occurrence->subtasks()->whereNotIn('status', ['completed', 'rejected'])->exists();
 
-            if (! $pending) {
+            if (! $pending && ! $wasWaitingReview) {
                 if (! \App\Support\TaskMediaFiles::hasRequiredProof(
                     $occurrence->employee_img,
                     $occurrence->proof_media_type,

@@ -622,6 +622,24 @@ class EmployeeTaskWorkflowService
                 EmployeeTaskTimeline::EVENT_SUBTASK_REJECTED,
                 $subTask->name.($reason !== '' ? ' — '.$reason : '')
             );
+
+            if (EmployeeTaskStatus::normalize($task->status) === EmployeeTaskStatus::WaitingReview) {
+                $task->update([
+                    'status' => EmployeeTaskStatus::InProgress->value,
+                    'rejection_notes' => $reason,
+                    'reviewed_at' => now(),
+                    'submitted_at' => null,
+                ]);
+
+                $freshTask = $task->fresh(['employee']);
+                $this->notifyEmployeeTaskRejected(
+                    $freshTask->employee,
+                    $freshTask->name,
+                    $reason,
+                    (int) $freshTask->id,
+                    null
+                );
+            }
         }
 
         return $subTask->fresh();
@@ -645,6 +663,26 @@ class EmployeeTaskWorkflowService
                 EmployeeTaskTimeline::EVENT_SUBTASK_REJECTED,
                 $subTask->name.($reason !== '' ? ' — '.$reason : '')
             );
+
+            $occurrence = $subTask->occurrence;
+            if (EmployeeTaskStatus::normalize($occurrence->status) === EmployeeTaskStatus::WaitingReview) {
+                $occurrence->update([
+                    'status' => EmployeeTaskStatus::InProgress->value,
+                    'rejection_notes' => $reason,
+                    'reviewed_at' => now(),
+                    'submitted_at' => null,
+                    'completed_at' => null,
+                ]);
+
+                $freshOccurrence = $occurrence->fresh(['employee']);
+                $this->notifyEmployeeTaskRejected(
+                    $freshOccurrence->employee,
+                    $freshOccurrence->name,
+                    $reason,
+                    (int) ($freshOccurrence->legacy_task_id ?? $freshOccurrence->id),
+                    (int) $freshOccurrence->id
+                );
+            }
         }
 
         return $subTask->fresh();
