@@ -1658,7 +1658,23 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             $employee = EmployeeDetail::with('user')->findOrFail($request->employee_id);
 
-            $employeePermissions = $this->actorCanViewEmployeePermissions($request)
+            $canViewPermissions = $this->actorCanViewEmployeePermissions($request);
+            $employeeVisibleBoxes = $canViewPermissions
+                ? $this->employeeVisibleBoxesPayload($employee)
+                : [];
+
+            Log::debug('employee.permissions.details', [
+                'actor_user_id' => $request->user()?->id,
+                'actor_user_type' => $request->user()?->type,
+                'employee_id' => $employee->id,
+                'can_view_permissions' => $canViewPermissions,
+                'visible_box_ids' => collect($employeeVisibleBoxes)
+                    ->pluck('box_id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all(),
+            ]);
+
+            $employeePermissions = $canViewPermissions
                 ? $employee->permissions->map(function($permission){
 
                 return [
@@ -1675,9 +1691,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
 
             'permissions'=>$employeePermissions,
-            'visible_boxes' => $this->actorCanViewEmployeePermissions($request)
-                ? $this->employeeVisibleBoxesPayload($employee)
-                : [],
+            'visible_boxes' => $employeeVisibleBoxes,
         
         ],200);
         
