@@ -3,10 +3,12 @@
 namespace App\Services;
 
 use App\Models\EmployeePointCategory;
+use App\Models\EmployeeDetail;
 use App\Models\EmployeePointsLog;
 use App\Models\EmployeeRewardRule;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class EmployeePointsService
 {
@@ -110,6 +112,9 @@ class EmployeePointsService
             'employee_points_log',
             (int) $log->id
         );
+
+        $this->notifyPointsMutation($log);
+        $this->notifyRewardEarnedIfNeeded($log);
 
         return $log;
     }
@@ -322,6 +327,160 @@ class EmployeePointsService
             ->orderByRaw('CASE WHEN max_points IS NULL THEN 1 ELSE 0 END')
             ->orderByDesc('min_points')
             ->first();
+    }
+
+    private function notifyPointsMutation(EmployeePointsLog $log): void
+    {
+        try {
+            $employee = EmployeeDetail::query()
+                ->with('user:id,name,fcm_token')
+                ->find((int) $log->employee_id);
+
+            if (! $employee) {
+                return;
+            }
+
+            $isDeduct = $log->operation_type === EmployeePointsLog::OPERATION_DEDUCT;
+            $employeeName = (string) ($employee->user->name ?? "موظف #{$employee->id}");
+            $points = (int) $log->points;
+            $operationLabel = $isDeduct ? 'خصم' : 'إضافة';
+            $employeeTitle = $isDeduct ? 'تم خصم نقاط' : 'تمت إضافة نقاط';
+            $employeeBody = $isDeduct
+                ? "تم خصم {$points} نقطة من رصيدك."
+                : "تمت إضافة {$points} نقطة إلى رصيدك.";
+            if ($log->reason) {
+                $employeeBody .= " السبب: {$log->reason}";
+            }
+
+            $data = [
+                'points_log_id' => (string) $log->id,
+                'employee_id' => (string) $employee->id,
+                'employee_name' => $employeeName,
+                'operation_type' => (string) $log->operation_type,
+                'points' => (string) $points,
+                'category' => (string) ($log->category ?? ''),
+                'category_id' => $log->category_id !== null ? (string) $log->category_id : '',
+                'source' => (string) ($log->source ?? ''),
+                'reason' => (string) ($log->reason ?? ''),
+                'points_date' => optional($log->points_date)->toDateString() ?? '',
+            ];
+
+            app(EmployeeNotificationService::class)->create(
+                $employee,
+                EmployeeNotificationService::TYPE_EMPLOYEE_POINTS_CHANGED,
+                $employeeTitle,
+                $employeeBody,
+                $data,
+                'employee_points_log',
+                (int) $log->id,
+                true
+            );
+
+            app(AdminNotificationService::class)->create(
+                AdminNotificationService::TYPE_EMPLOYEE_POINTS_CHANGED,
+                'تحديث نقاط موظف',
+                "تم {$operationLabel} {$points} نقطة للموظف {$employeeName}.",
+                $data,
+                (int) $employee->id,
+                'employee_points_log',
+                (int) $log->id,
+                true
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Employee points notification failed', [
+                'points_log_id' => $log->id,
+                'employee_id' => $log->employee_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyRewardEarnedIfNeeded(EmployeePointsLog $log): void
+    {
+        try {
+            $pointsDate = Carbon::parse($log->points_date);
+            $year = (int) $pointsDate->year;
+            $month = (int) $pointsDate->month;
+            $summary = $this->getMonthlySummary((int) $log->employee_id, $year, $month);
+            $ruleId = $summary['reward_rule_id'] ?? null;
+            $rewardAmount = (float) ($summary['reward_amount'] ?? 0);
+
+            if ($ruleId === null || $rewardAmount <= 0) {
+                return;
+            }
+
+            $employee = EmployeeDetail::query()
+                ->with('user:id,name,fcm_token')
+                ->find((int) $log->employee_id);
+
+            if (! $employee) {
+                return;
+            }
+
+            if ($this->rewardNotificationAlreadySent((int) $employee->id, $year, $month, (int) $ruleId)) {
+                return;
+            }
+
+            $employeeName = (string) ($employee->user->name ?? "موظف #{$employee->id}");
+            $amount = number_format($rewardAmount, 2, '.', '');
+            $netPoints = (int) ($summary['net_points'] ?? 0);
+            $monthLabel = $pointsDate->locale('ar')->translatedFormat('F Y');
+            $data = [
+                'employee_id' => (string) $employee->id,
+                'employee_name' => $employeeName,
+                'year' => (string) $year,
+                'month' => (string) $month,
+                'month_label' => $monthLabel,
+                'net_points' => (string) $netPoints,
+                'reward_amount' => $amount,
+                'reward_rule_id' => (string) $ruleId,
+                'points_log_id' => (string) $log->id,
+            ];
+
+            app(EmployeeNotificationService::class)->create(
+                $employee,
+                EmployeeNotificationService::TYPE_EMPLOYEE_REWARD_EARNED,
+                'استحققت مكافأة',
+                "استحققت مكافأة بقيمة {$amount} لهذا الشهر بعد وصولك إلى {$netPoints} نقطة.",
+                $data,
+                'employee_reward_rule',
+                (int) $ruleId,
+                true
+            );
+
+            app(AdminNotificationService::class)->create(
+                AdminNotificationService::TYPE_EMPLOYEE_REWARD_EARNED,
+                'موظف استحق مكافأة',
+                "الموظف {$employeeName} استحق مكافأة بقيمة {$amount} بعد وصوله إلى {$netPoints} نقطة.",
+                $data,
+                (int) $employee->id,
+                'employee_reward_rule',
+                (int) $ruleId,
+                true
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Employee reward notification failed', [
+                'points_log_id' => $log->id,
+                'employee_id' => $log->employee_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function rewardNotificationAlreadySent(int $employeeId, int $year, int $month, int $ruleId): bool
+    {
+        $matchesReward = function ($query) use ($year, $month, $ruleId) {
+            $query->where('type', EmployeeNotificationService::TYPE_EMPLOYEE_REWARD_EARNED)
+                ->where('related_type', 'employee_reward_rule')
+                ->where('related_id', $ruleId)
+                ->where('data->year', (string) $year)
+                ->where('data->month', (string) $month);
+        };
+
+        return \App\Models\EmployeeNotification::query()
+            ->where('employee_id', $employeeId)
+            ->where($matchesReward)
+            ->exists();
     }
 
     /**

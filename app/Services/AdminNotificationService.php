@@ -87,6 +87,10 @@ class AdminNotificationService
 
     public const TYPE_STOCK_IMAGES_EXPORT_READY = 'stock_images_export_ready';
 
+    public const TYPE_EMPLOYEE_POINTS_CHANGED = 'employee_points_changed';
+
+    public const TYPE_EMPLOYEE_REWARD_EARNED = 'employee_reward_earned';
+
     /**
      * @param  array<string, mixed>  $data
      */

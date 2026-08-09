@@ -49,6 +49,10 @@ class EmployeeNotificationService
 
     public const TYPE_NOTE_REMINDER = 'note_reminder';
 
+    public const TYPE_EMPLOYEE_POINTS_CHANGED = 'employee_points_changed';
+
+    public const TYPE_EMPLOYEE_REWARD_EARNED = 'employee_reward_earned';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}
