@@ -9,12 +9,12 @@ class RolloverWeeklySpecialTasks extends Command
 {
     protected $signature = 'special-tasks:rollover-weekly';
 
-    protected $description = 'Move incomplete expired special tasks to the next week';
+    protected $description = 'Move unfinished weekly special tasks to no-date tasks';
 
     public function handle(SpecialTaskRolloverService $service): int
     {
-        $count = $service->rolloverToNextWeek();
-        $this->info("Rolled over {$count} special task(s) to the next week.");
+        $count = $service->moveEndingWeekToNoDate();
+        $this->info("Moved {$count} special task(s) to no-date tasks.");
 
         return self::SUCCESS;
     }

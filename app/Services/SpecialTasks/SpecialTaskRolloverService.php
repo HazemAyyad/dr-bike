@@ -8,36 +8,35 @@ use Illuminate\Support\Facades\Log;
 
 class SpecialTaskRolloverService
 {
-    private const ROLLOVER_DAYS = 7;
-
     /**
-     * Move incomplete expired special tasks forward by one week.
+     * Move unfinished special tasks from the ending week to the no-date list.
      */
-    public function rolloverToNextWeek(?Carbon $asOf = null): int
+    public function moveEndingWeekToNoDate(?Carbon $asOf = null): int
     {
         $now = ($asOf ?? now())->copy()->timezone('Asia/Hebron');
+        $weekStart = $now->copy()->previous(Carbon::SATURDAY)->startOfDay();
+        $weekEnd = $now->copy()->previous(Carbon::FRIDAY)->endOfDay();
         $count = 0;
 
         $tasks = SpecialTask::query()
             ->where('status', 'ongoing')
             ->where('is_canceled', 0)
-            ->where('end_date', '<', $now)
+            ->whereBetween('start_date', [
+                $weekStart->format('Y-m-d H:i:s'),
+                $weekEnd->format('Y-m-d H:i:s'),
+            ])
             ->get();
 
         foreach ($tasks as $task) {
-            $start = Carbon::parse($task->start_date)->timezone('Asia/Hebron');
-            $end = Carbon::parse($task->end_date)->timezone('Asia/Hebron');
-
             $task->update([
-                'start_date' => $start->copy()->addDays(self::ROLLOVER_DAYS)->format('Y-m-d H:i:s'),
-                'end_date' => $end->copy()->addDays(self::ROLLOVER_DAYS)->format('Y-m-d H:i:s'),
+                'end_date' => $weekEnd->format('Y-m-d H:i:s'),
             ]);
 
             $count++;
         }
 
         if ($count > 0) {
-            Log::info("Rolled over {$count} incomplete special task(s) to the next week.");
+            Log::info("Moved {$count} unfinished special task(s) to no-date tasks.");
         }
 
         return $count;

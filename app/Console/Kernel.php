@@ -76,7 +76,7 @@ class Kernel extends ConsoleKernel
             ->withoutOverlapping();
 
         $schedule->command('special-tasks:rollover-weekly')
-            ->weeklyOn(5, '00:00')
+            ->weeklyOn(6, '00:00')
             ->timezone('Asia/Hebron')
             ->withoutOverlapping();
 
