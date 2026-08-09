@@ -28,6 +28,7 @@ class MetaCatalogController extends Controller
         if ($account) {
             $service = $service->forAccount($account);
         }
+        $catalogId = $this->catalogIdForAccount($account);
         $error = null;
         $catalogInfo = null;
         try {
@@ -37,7 +38,7 @@ class MetaCatalogController extends Controller
             $error = $e->getMessage();
         }
 
-        $counts = $account ? $this->accountSyncCounts($account) : DB::query()->fromSub(
+        $counts = $account ? $this->catalogSyncCounts($catalogId) : DB::query()->fromSub(
                 Product::query()->whereDoesntHave('sizes.colorSizes')->select('meta_catalog_sync_status')
                     ->unionAll(SizeColor::query()->select('meta_catalog_sync_status')),
                 'sync_items'
@@ -53,7 +54,7 @@ class MetaCatalogController extends Controller
                 'whatsapp_account' => $account ? $this->accountPayload($account) : null,
                 'configured' => $error === null,
                 'configuration_error' => $error,
-                'catalog_id' => $this->mask((string) ($account?->catalog_id ?: config('meta_commerce.catalog_id'))),
+                'catalog_id' => $this->mask((string) $catalogId),
                 'catalog_name' => $catalogInfo['name'] ?? null,
                 'meta_product_count' => isset($catalogInfo['product_count'])
                     ? (int) $catalogInfo['product_count']
@@ -67,7 +68,7 @@ class MetaCatalogController extends Controller
                 'synced_product_sets' => $this->productSetQuery($account)->where('sync_status', 'synced')->count(),
                 'failed_product_sets' => $this->productSetQuery($account)->where('sync_status', 'failed')->count(),
                 'last_synced_at' => MetaCatalogSyncLog::query()
-                    ->when($account, fn ($q) => $q->where('whatsapp_account_id', $account->id))
+                    ->when($account, fn ($q) => $q->where('catalog_id', $catalogId))
                     ->where('status', 'success')
                     ->max('created_at'),
                 ...$this->settingsPayload(),
@@ -84,7 +85,12 @@ class MetaCatalogController extends Controller
                 ->orderBy('sort_order')
                 ->orderBy('id')
                 ->get()
-                ->map(fn (WhatsAppAccount $account) => $this->accountPayload($account)),
+                ->groupBy(fn (WhatsAppAccount $account) => ($account->waba_id ?: 'waba-'.$account->id).'|'.($account->catalog_id ?: 'no-catalog'))
+                ->map(function ($accounts) {
+                    $representative = $accounts->first();
+                    return $this->accountPayload($representative, $accounts);
+                })
+                ->values(),
         ]);
     }
 
@@ -161,7 +167,7 @@ class MetaCatalogController extends Controller
         ]);
         $account = $this->accountFromRequest($request);
         $query = MetaCatalogSyncLog::query()->with(['product:id,nameAr,nameEng', 'variant:id,colorAr,colorEn', 'whatsappAccount:id,name']);
-        if ($account) $query->where('whatsapp_account_id', $account->id);
+        if ($account) $query->where('catalog_id', $this->catalogIdForAccount($account));
         if (! empty($data['status'])) $query->where('status', $data['status']);
         if (! empty($data['action'])) $query->where('action', $data['action']);
         return response()->json([
@@ -277,7 +283,7 @@ class MetaCatalogController extends Controller
             'action' => 'bulk_sync',
             'status' => 'queued',
             'whatsapp_account_id' => $account?->id,
-            'catalog_id' => $account?->catalog_id ?: config('meta_commerce.catalog_id'),
+            'catalog_id' => $this->catalogIdForAccount($account),
             'request_payload' => compact('sourceType', 'sourceId'),
         ]);
         BulkSyncMetaCatalogJob::dispatch(false, false, $account?->id, $sourceType, $sourceId)->onConnection('database');
@@ -389,8 +395,9 @@ class MetaCatalogController extends Controller
 
     private function accountProductPayload(Product $product, WhatsAppAccount $account): array
     {
+        $catalogId = $this->catalogIdForAccount($account);
         $syncs = MetaCatalogProductSync::query()
-            ->where('whatsapp_account_id', $account->id)
+            ->where('catalog_id', $catalogId)
             ->where('product_id', $product->id)
             ->get()
             ->keyBy(fn (MetaCatalogProductSync $sync) => $sync->variant_id ?: 0);
@@ -445,17 +452,25 @@ class MetaCatalogController extends Controller
         return $id ? WhatsAppAccount::query()->findOrFail((int) $id) : null;
     }
 
-    private function accountPayload(WhatsAppAccount $account): array
+    private function accountPayload(WhatsAppAccount $account, $accounts = null): array
     {
+        $accounts ??= collect([$account]);
+        $numbers = $accounts
+            ->pluck('display_phone_number')
+            ->filter()
+            ->values()
+            ->all();
+
         return [
             'id' => $account->id,
-            'name' => $account->name,
-            'display_phone_number' => $account->display_phone_number,
+            'name' => $accounts->count() > 1 ? $this->businessDisplayName($accounts) : $account->name,
+            'display_phone_number' => implode(', ', $numbers),
             'phone_number_id' => $this->mask($account->phone_number_id),
             'waba_id' => $account->waba_id,
             'catalog_id' => $this->mask((string) $account->catalog_id),
-            'is_active' => $account->is_active,
-            'is_verified' => $account->is_verified,
+            'is_active' => $accounts->contains(fn (WhatsAppAccount $item) => $item->is_active),
+            'is_verified' => $accounts->contains(fn (WhatsAppAccount $item) => $item->is_verified),
+            'numbers' => $numbers,
             'rules' => $account->catalogRules->map(fn ($rule) => [
                 'id' => $rule->id,
                 'source_type' => $rule->source_type,
@@ -467,20 +482,39 @@ class MetaCatalogController extends Controller
 
     private function productSetQuery(?WhatsAppAccount $account)
     {
+        if ($account) {
+            return MetaCatalogProductSet::query()
+                ->where('catalog_id', $this->catalogIdForAccount($account));
+        }
+
         return MetaCatalogProductSet::query()
-            ->when($account, fn ($query) => $query->where('whatsapp_account_id', $account->id))
-            ->when(! $account, fn ($query) => $query->whereNull('whatsapp_account_id'));
+            ->whereNull('whatsapp_account_id');
     }
 
-    private function accountSyncCounts(WhatsAppAccount $account)
+    private function catalogSyncCounts(?string $catalogId)
     {
         return MetaCatalogProductSync::query()
-            ->where('whatsapp_account_id', $account->id)
+            ->where('catalog_id', $catalogId)
             ->selectRaw("SUM(sync_status = 'synced') as synced")
             ->selectRaw("SUM(sync_status = 'failed') as failed")
             ->selectRaw("SUM(sync_status = 'pending' OR sync_status IS NULL) as pending")
             ->selectRaw("SUM(sync_status = 'disabled') as disabled")
             ->first();
+    }
+
+    private function catalogIdForAccount(?WhatsAppAccount $account): ?string
+    {
+        return $account?->catalog_id ?: config('meta_commerce.catalog_id');
+    }
+
+    private function businessDisplayName($accounts): string
+    {
+        $wabaId = $accounts->first()?->waba_id;
+        if ($wabaId === '1021382140304311') {
+            return 'Dr Bike - Main';
+        }
+
+        return ($accounts->first()?->name ?: 'WhatsApp Business').' ('.$accounts->count().' أرقام)';
     }
 
     private function settingsPayload(): array

@@ -118,13 +118,15 @@ class MetaCatalogHierarchyService
         ?MetaCatalogService $meta = null,
     ): MetaCatalogProductSet {
         $meta ??= $account ? $this->meta->forAccount($account) : $this->meta;
+        $catalogId = $account?->catalog_id ?: config('meta_commerce.catalog_id');
         $set = MetaCatalogProductSet::query()->firstOrNew([
-            'whatsapp_account_id' => $account?->id,
+            'catalog_id' => $catalogId,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
         ]);
         $set->fill([
-            'catalog_id' => $account?->catalog_id ?: config('meta_commerce.catalog_id'),
+            'whatsapp_account_id' => $account?->id,
+            'catalog_id' => $catalogId,
             'parent_source_id' => $parentSourceId,
             'name' => mb_substr($name, 0, 100),
             'filter_field' => $filterField,
@@ -189,7 +191,7 @@ class MetaCatalogHierarchyService
     private function deleteOrphanedSets(array &$result, ?WhatsAppAccount $account, MetaCatalogService $meta): void
     {
         MetaCatalogProductSet::query()
-            ->when($account, fn ($query) => $query->where('whatsapp_account_id', $account->id))
+            ->when($account, fn ($query) => $query->where('catalog_id', $this->catalogIdForAccount($account)))
             ->when(! $account, fn ($query) => $query->whereNull('whatsapp_account_id'))
             ->chunkById(100, function ($sets) use (&$result, $meta) {
             foreach ($sets as $set) {
@@ -227,7 +229,7 @@ class MetaCatalogHierarchyService
     {
         if ($account) {
             $query = MetaCatalogProductSync::query()
-                ->where('whatsapp_account_id', $account->id)
+                ->where('catalog_id', $this->catalogIdForAccount($account))
                 ->where('sync_status', 'synced')
                 ->whereHas('product', fn ($products) => $products->where('isShow', true));
 
@@ -254,5 +256,10 @@ class MetaCatalogHierarchyService
         }
 
         return $query->exists();
+    }
+
+    private function catalogIdForAccount(?WhatsAppAccount $account): ?string
+    {
+        return $account?->catalog_id ?: config('meta_commerce.catalog_id');
     }
 }
