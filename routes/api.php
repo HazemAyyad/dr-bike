@@ -1331,5 +1331,4 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
     Route::get('/all/sellers' , [Customers::class,'allSellers']);
     Route::get('/all/customers' , [Customers::class,'allCustomers']);
-    Route::get('/get/shown/boxes' , [Boxes::class,'getShownBoxes']);
     Route::get('/all/products' , [Products::class,'allproducts']);
