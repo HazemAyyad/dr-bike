@@ -28,12 +28,17 @@ class EmployeeDetail extends Model
         'employee_img',
         'document_img',
         'total_work_hours',
+        'wifi_ssid',
+        'wifi_connected',
+        'wifi_status_updated_at',
     ];
 
     protected $casts = [
         'employee_img'=>'array',
         'document_img' => 'array',
         'weekly_days_off' => 'array',
+        'wifi_connected' => 'boolean',
+        'wifi_status_updated_at' => 'datetime',
     ];
 
 
