@@ -36,6 +36,7 @@ use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeOrders;
 use App\Http\Controllers\API\EmployeeActivityLogController;
 use App\Http\Controllers\API\EmployeePointCategoryController;
+use App\Http\Controllers\API\EmployeePointRuleController;
 use App\Http\Controllers\API\EmployeePointsController;
 use App\Http\Controllers\API\EmployeeRewardRuleController;
 use App\Http\Controllers\API\EmployeeRemindersController;
@@ -325,6 +326,32 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->middleware('check.permission:Employees Points Manage');
     Route::delete('/employee-point-categories/{id}', [EmployeePointCategoryController::class, 'destroy'])
         ->whereNumber('id')
+        ->middleware('check.permission:Employees Points Manage');
+
+    // Automatic point rules and per-employee overrides
+    Route::get('/employee-point-rules', [EmployeePointRuleController::class, 'index'])
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
+    Route::post('/employee-point-rules', [EmployeePointRuleController::class, 'store'])
+        ->middleware('check.permission:Employees Points Manage');
+    Route::put('/employee-point-rules/{id}', [EmployeePointRuleController::class, 'update'])
+        ->whereNumber('id')
+        ->middleware('check.permission:Employees Points Manage');
+    Route::delete('/employee-point-rules/{id}', [EmployeePointRuleController::class, 'destroy'])
+        ->whereNumber('id')
+        ->middleware('check.permission:Employees Points Manage');
+    Route::post('/employee-point-rules/run', [EmployeePointRuleController::class, 'run'])
+        ->middleware('check.permission:Employees Points Manage');
+    Route::post('/employee-point-rules/{id}/run', [EmployeePointRuleController::class, 'run'])
+        ->whereNumber('id')
+        ->middleware('check.permission:Employees Points Manage');
+    Route::get('/employees/{employee}/point-rule-overrides', [EmployeePointRuleController::class, 'employeeOverrides'])
+        ->whereNumber('employee')
+        ->middleware('check.permission:Employees Points View,Employees Points Manage');
+    Route::post('/employees/{employee}/point-rule-overrides', [EmployeePointRuleController::class, 'upsertEmployeeOverride'])
+        ->whereNumber('employee')
+        ->middleware('check.permission:Employees Points Manage');
+    Route::delete('/employees/{employee}/point-rule-overrides/{override}', [EmployeePointRuleController::class, 'deleteEmployeeOverride'])
+        ->whereNumber(['employee', 'override'])
         ->middleware('check.permission:Employees Points Manage');
 
     // Banks (checks)

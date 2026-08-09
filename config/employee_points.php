@@ -26,5 +26,6 @@ return [
         'absence',
         'lateness',
         'employee_task',
+        'rule_engine',
     ],
 ];
