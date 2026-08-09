@@ -923,7 +923,9 @@ class EmployeeTaskOperationsController extends Controller
             $canReviewEmployeeTasks = $user?->type === 'admin';
             if (! $canReviewEmployeeTasks && $user?->employee) {
                 $canReviewEmployeeTasks = (bool) $user->employee->permissions()
-                    ->whereHas('permission', fn ($q) => $q->where('name_en', 'Employee Tasks'))
+                    ->whereHas('permission', fn ($q) => $q
+                        ->where('name_en', 'Employee Tasks')
+                        ->orWhere('id', 7))
                     ->exists();
             }
             if (! $sub->occurrence || ((! $actorId || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) && ! $canReviewEmployeeTasks)) {

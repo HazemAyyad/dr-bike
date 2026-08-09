@@ -434,9 +434,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
     Route::post('/employee/task/approve', [EmployeeTaskOperationsController::class, 'approveTask']);
     Route::post('/employee/task/reject', [EmployeeTaskOperationsController::class, 'rejectTask']);
     Route::post('/employee/task/reopen', [EmployeeTaskOperationsController::class, 'reopenTask']);
-    Route::post('/change/sub/employee/task/to/rejected' ,
+    Route::post('/admin/change/sub/employee/task/to/rejected' ,
      [EmployeeTasks::class,'rejectSubTask']);
-    Route::post('/change/sub/employee/occurrence/task/to/rejected',
+    Route::post('/admin/change/sub/employee/occurrence/task/to/rejected',
      [EmployeeTaskOperationsController::class, 'rejectOccurrenceSubtask']);
     Route::post('/employee/task/timeline', [EmployeeTaskOperationsController::class, 'getTimeline']);
     Route::get('/employee/task/performance', [EmployeeTaskOperationsController::class, 'getPerformance']);
