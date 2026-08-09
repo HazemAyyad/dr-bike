@@ -67,6 +67,12 @@ class EmployeeDetail extends Model
         return $this->hasMany(Box::class);
     }
 
+    public function visibleBoxes()
+    {
+        return $this->belongsToMany(Box::class, 'employee_visible_boxes', 'employee_id', 'box_id')
+            ->withTimestamps();
+    }
+
     public function goals(){
         return $this->hasMany(Goal::class);
     }

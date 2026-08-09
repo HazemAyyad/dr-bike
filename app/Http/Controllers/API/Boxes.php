@@ -8,10 +8,34 @@ use App\Models\BoxLog;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class Boxes extends Controller
 {
+    private function actorVisibleBoxIds(Request $request): ?array
+    {
+        $user = $request->user();
+        if (! $user || $user->type === 'admin' || ! Schema::hasTable('employee_visible_boxes')) {
+            return null;
+        }
+
+        $employee = $user->employee;
+        if (! $employee) {
+            return [];
+        }
+
+        return $employee->visibleBoxes()
+            ->pluck('boxes.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    private function actorCanAccessBox(Request $request, int $boxId): bool
+    {
+        $visibleIds = $this->actorVisibleBoxIds($request);
+        return $visibleIds === null || in_array($boxId, $visibleIds, true);
+    }
 
     public function addBox(Request $request){
      try{
@@ -22,6 +46,10 @@ class Boxes extends Controller
         ]);
     
         $box = Box::create($data);
+        $user = $request->user();
+        if ($user?->type === 'employee' && $user->employee && Schema::hasTable('employee_visible_boxes')) {
+            $user->employee->visibleBoxes()->syncWithoutDetaching([(int) $box->id]);
+        }
         Logs::createLog('اضافة صندوق جديد',' تم اضافة صندوق جديد باسم'.' '.$request->name,
         'boxes');
     
@@ -108,6 +136,12 @@ class Boxes extends Controller
             $request->validate([
                 'box_id' =>'required|exists:boxes,id']);
                 $box = Box::findOrFail($request->box_id);
+                if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+                    return response()->json([
+                        'status'  => 'error',
+                        'message' => __('messages.box_not_found')
+                    ], 200);
+                }
                $logs = BoxLog::where('box_id', $box->id)
                     ->orWhere('to_box_id', $box->id)
                     ->orWhere('from_box_id', $box->id)
@@ -152,7 +186,10 @@ class Boxes extends Controller
 
     private function commonData($condition){
         try{
-            $boxes = Box::where('is_shown',$condition)->get();
+            $visibleIds = $this->actorVisibleBoxIds(request());
+            $boxes = Box::where('is_shown',$condition)
+                ->when($visibleIds !== null, fn ($q) => $q->whereIn('id', $visibleIds))
+                ->get();
             $boxesData = $boxes->map(function($box){ 
                 return [
                     'box_id' => $box->id,
@@ -203,8 +240,14 @@ class Boxes extends Controller
             'note' => 'nullable|string|max:2000',
         ]);
 
-        $box = Box::findOrFail($request->box_id);
-        $box->update(['total' => $box->total + $request->total]);
+            $box = Box::findOrFail($request->box_id);
+            if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('messages.box_not_found')
+                ], 200);
+            }
+            $box->update(['total' => $box->total + $request->total]);
         $msg = 'added';
         $note = $request->filled('note') ? (string) $request->note : null;
         if($request->total >0){
@@ -272,6 +315,13 @@ class Boxes extends Controller
 
             $fromBox = Box::findOrFail($request->from_box_id);
             $toBox = Box::findOrFail($request->to_box_id);
+            if (! $this->actorCanAccessBox($request, (int) $fromBox->id) ||
+                ! $this->actorCanAccessBox($request, (int) $toBox->id)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.box_not_found'),
+                ], 200);
+            }
             if($fromBox->currency !== $toBox->currency){
                 return response()->json([
                     'status'=>'error',
@@ -331,7 +381,14 @@ class Boxes extends Controller
 
             $request->validate(['box_id'=>'required|integer|exists:boxes,id']);
 
-            Box::findOrFail($request->box_id)->delete();
+            $box = Box::findOrFail($request->box_id);
+            if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('messages.box_not_found')
+                ], 200);
+            }
+            $box->delete();
             return response()->json([
                 'status'  => 'success',
                 'message' => __('messages.box_deleted'),

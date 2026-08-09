@@ -15,6 +15,29 @@ use Illuminate\Validation\ValidationException;
 
 class BoxLogs extends Controller
 {
+    private function actorVisibleBoxIds(Request $request): ?array
+    {
+        $user = $request->user();
+        if (! $user || $user->type === 'admin' || ! Schema::hasTable('employee_visible_boxes')) {
+            return null;
+        }
+
+        $employee = $user->employee;
+        if (! $employee) {
+            return [];
+        }
+
+        return $employee->visibleBoxes()
+            ->pluck('boxes.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    private function actorCanAccessBox(Request $request, int $boxId): bool
+    {
+        $visibleIds = $this->actorVisibleBoxIds($request);
+        return $visibleIds === null || in_array($boxId, $visibleIds, true);
+    }
 
     static public function createTransferLog(Box $fromBox , Box $toBox ,$description, $value, ?string $note = null){
 
@@ -60,13 +83,24 @@ class BoxLogs extends Controller
 
     public function allBoxLogs(){
         try{
-            $boxLogs = BoxLog::with('fromBox:id,name,total,type')
+            $visibleIds = $this->actorVisibleBoxIds(request());
+
+            $boxLogs = BoxLog::query()
+            ->when($visibleIds !== null, function ($query) use ($visibleIds) {
+                $query->where(function ($q) use ($visibleIds) {
+                    $q->whereIn('box_id', $visibleIds)
+                        ->orWhereIn('to_box_id', $visibleIds)
+                        ->orWhereIn('from_box_id', $visibleIds);
+                });
+            })
+            ->with('fromBox:id,name,total,type')
             ->with('toBox:id,name,total,type')
             ->with('box:id,name,total,type')
             ->get()
             ->map(fn (BoxLog $log) => $log->toArray());
 
             $maintenanceLogs = MaintenanceDailyBoxLog::query()
+                ->when($visibleIds !== null, fn ($query) => $query->whereIn('box_id', $visibleIds))
                 ->with(['box:id,name,total,type', 'instantSale:id,serial_number'])
                 ->get()
                 ->map(fn (MaintenanceDailyBoxLog $log) => [
@@ -130,6 +164,12 @@ class BoxLogs extends Controller
             
             ]);
             $box = Box::findOrFail($request->box_id);
+            if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('messages.box_not_found')
+                ], 200);
+            }
             $logs = BoxLog::where(function ($q) use ($box) {
                         $q->where('box_id', $box->id)
                         ->orWhere('to_box_id', $box->id)

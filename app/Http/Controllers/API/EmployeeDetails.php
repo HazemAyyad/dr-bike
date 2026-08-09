@@ -9,6 +9,7 @@ use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceAdjustment;
 use App\Models\EmployeeAttendanceScan;
 use App\Support\AttendanceScanPresenter;
+use App\Models\Box;
 use App\Support\EmployeeAttendanceToday;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeOrder;
@@ -225,6 +226,91 @@ class EmployeeDetails extends Controller
             ->map(fn ($id) => (int) $id)
             ->filter(fn ($id) => $id > 0)
             ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param array<int|string> $boxIds
+     * @return int[]
+     */
+    private function normalizeBoxIds(array $boxIds): array
+    {
+        return collect($boxIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function employeeVisibleBoxesTableExists(): bool
+    {
+        return Schema::hasTable('employee_visible_boxes');
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function visibleBoxesPayload(): array
+    {
+        if (! Schema::hasTable('boxes')) {
+            return [];
+        }
+
+        return Box::query()
+            ->orderBy('name')
+            ->get(['id', 'name', 'total', 'is_shown', 'currency', 'type'])
+            ->map(fn (Box $box) => [
+                'box_id' => (int) $box->id,
+                'box_name' => $box->name,
+                'total_balance' => $box->total,
+                'is_shown' => $box->is_shown,
+                'currency' => $box->currency,
+                'type' => $box->type,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param int[] $boxIds
+     */
+    private function syncEmployeeVisibleBoxes(EmployeeDetail $employee, array $boxIds): void
+    {
+        if (! $this->employeeVisibleBoxesTableExists()) {
+            return;
+        }
+
+        $boxIds = Box::query()
+            ->whereIn('id', $boxIds)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $employee->visibleBoxes()->sync($boxIds);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function employeeVisibleBoxesPayload(EmployeeDetail $employee): array
+    {
+        if (! $this->employeeVisibleBoxesTableExists()) {
+            return [];
+        }
+
+        return $employee->visibleBoxes()
+            ->orderBy('name')
+            ->get(['boxes.id', 'name', 'total', 'is_shown', 'currency', 'type'])
+            ->map(fn (Box $box) => [
+                'box_id' => (int) $box->id,
+                'box_name' => $box->name,
+                'total_balance' => $box->total,
+                'is_shown' => $box->is_shown,
+                'currency' => $box->currency,
+                'type' => $box->type,
+            ])
             ->values()
             ->all();
     }
@@ -976,6 +1062,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             'document_img.*' => ['image'],
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['integer', 'exists:permissions,id'],
+            'visible_box_ids' => ['nullable', 'array'],
+            'visible_box_ids.*' => ['integer', 'exists:boxes,id'],
 
             'weekly_days_off' => ['nullable', 'array'],
             'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
@@ -1051,6 +1139,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                     'permission_id' => $permissionId,
                 ]);
             }
+        }
+
+        if ($this->actorCanManageEmployeePermissions($request)) {
+            $this->syncEmployeeVisibleBoxes(
+                $employee,
+                $this->normalizeBoxIds($data['visible_box_ids'] ?? [])
+            );
         }
        
         Logs::createLog('اضافة موظف جديد','اضافة الموظف'.' '.$request->name,'employees');
@@ -1132,6 +1227,8 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['integer', 'exists:permissions,id'],
+            'visible_box_ids' => ['nullable', 'array'],
+            'visible_box_ids.*' => ['integer', 'exists:boxes,id'],
 
             'weekly_days_off' => ['nullable', 'array'],
             'weekly_days_off.*' => ['in:monday,tuesday,wednesday,thursday,friday,saturday,sunday'],
@@ -1232,6 +1329,13 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             ]);
         }
     }
+
+            if ($this->actorCanManageEmployeePermissions($request)) {
+                $this->syncEmployeeVisibleBoxes(
+                    $employee,
+                    $this->normalizeBoxIds($data['visible_box_ids'] ?? [])
+                );
+            }
 
             Logs::createLog('تعديل بيانات موظف ','تعديل بيانات الموظف'.' '. $request->name,'employees');
 
@@ -1387,7 +1491,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             return response()->json([
                 'status' => 'success',
                 'permissions' => $permissions,
-                'permissions of the system' => $permissions], 200);
+                'permissions of the system' => $permissions,
+                'boxes' => $this->visibleBoxesPayload(),
+            ], 200);
         } catch (QueryException $e) {
             return response(['status' => 'error', 'message' => __('messages.retrieve_data_error')], 200);
         } catch (\Exception $e) {
@@ -1423,6 +1529,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
 
             'permissions'=>$employeePermissions,
+            'visible_boxes' => $this->actorCanViewEmployeePermissions($request)
+                ? $this->employeeVisibleBoxesPayload($employee)
+                : [],
         
         ],200);
         
