@@ -1098,6 +1098,18 @@ public function store(Request $request)
                 'status' => 'active',
             ];
         } else {
+            if (empty($paymentBoxPayload['payment_box_id'])) {
+                $dailyBox = app(SalesDailySessionService::class)
+                    ->dailyBoxForCurrency($request->user(), 'شيكل');
+                $paymentBoxPayload['payment_box_id'] = (int) $dailyBox->id;
+                $paymentBoxPayload['payment_box_name'] = $dailyBox->name;
+                if ($request->has('payment_box_value')) {
+                    $paymentBoxPayload['payment_box_value'] = max(
+                        0,
+                        (float) $request->input('payment_box_value')
+                    );
+                }
+            }
             $this->assertDailySalesPaymentBox($request, $paymentBoxPayload);
         }
         if (($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement) && $existingReplaceSale) {
