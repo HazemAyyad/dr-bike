@@ -250,6 +250,26 @@ class EmployeeDetails extends Controller
     }
 
     /**
+     * @return string[]
+     */
+    private function dailyBoxTypes(): array
+    {
+        return array_values(array_filter([
+            config('sales_daily.box_type', 'daily_sales'),
+            config('maintenance_daily.box_type', 'daily_maintenance'),
+        ]));
+    }
+
+    private function scopeRegularBoxes($query)
+    {
+        $dailyTypes = $this->dailyBoxTypes();
+
+        return $query->where(function ($q) use ($dailyTypes) {
+            $q->whereNull('type')->orWhereNotIn('type', $dailyTypes);
+        });
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     private function visibleBoxesPayload(): array
@@ -258,7 +278,7 @@ class EmployeeDetails extends Controller
             return [];
         }
 
-        return Box::query()
+        return $this->scopeRegularBoxes(Box::query())
             ->orderBy('name')
             ->get(['id', 'name', 'total', 'is_shown', 'currency', 'type'])
             ->map(fn (Box $box) => [
@@ -282,7 +302,7 @@ class EmployeeDetails extends Controller
             return;
         }
 
-        $boxIds = Box::query()
+        $boxIds = $this->scopeRegularBoxes(Box::query())
             ->whereIn('id', $boxIds)
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
@@ -300,7 +320,7 @@ class EmployeeDetails extends Controller
             return [];
         }
 
-        return $employee->visibleBoxes()
+        return $this->scopeRegularBoxes($employee->visibleBoxes())
             ->orderBy('name')
             ->get(['boxes.id', 'name', 'total', 'is_shown', 'currency', 'type'])
             ->map(fn (Box $box) => [

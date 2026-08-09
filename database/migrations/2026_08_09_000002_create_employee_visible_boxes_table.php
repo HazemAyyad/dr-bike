@@ -41,7 +41,16 @@ return new class extends Migration
             ->unique()
             ->values();
 
-        $boxIds = DB::table('boxes')->pluck('id');
+        $dailyBoxTypes = array_values(array_filter([
+            config('sales_daily.box_type', 'daily_sales'),
+            config('maintenance_daily.box_type', 'daily_maintenance'),
+        ]));
+
+        $boxIds = DB::table('boxes')
+            ->where(function ($query) use ($dailyBoxTypes) {
+                $query->whereNull('type')->orWhereNotIn('type', $dailyBoxTypes);
+            })
+            ->pluck('id');
 
         foreach ($employeeIds as $employeeId) {
             foreach ($boxIds as $boxId) {
