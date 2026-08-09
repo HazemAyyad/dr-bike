@@ -128,7 +128,8 @@ class BulkSyncMetaCatalogJob implements ShouldQueue, ShouldBeUnique
         if ($this->finalizeHierarchy) {
             // This is queued after all product jobs inserted above, so a
             // single FIFO database worker updates sets after memberships.
-            FinalizeMetaCatalogHierarchyJob::dispatch($this->whatsappAccountId)->onConnection('database');
+            FinalizeMetaCatalogHierarchyJob::dispatch($this->whatsappAccountId, $this->sourceType, $this->sourceId)
+                ->onConnection('database');
         }
     }
 

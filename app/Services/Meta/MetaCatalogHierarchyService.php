@@ -50,6 +50,50 @@ class MetaCatalogHierarchyService
         return $result;
     }
 
+    public function syncSource(string $sourceType = 'all', ?int $sourceId = null, ?int $whatsappAccountId = null): array
+    {
+        if ($sourceType === 'all') {
+            return $this->syncAll($whatsappAccountId);
+        }
+
+        $account = $whatsappAccountId ? WhatsAppAccount::query()->find($whatsappAccountId) : null;
+        $meta = $account ? $this->meta->forAccount($account) : $this->meta;
+        $meta->validateConfig();
+        $result = ['synced' => 0, 'failed' => 0, 'deleted' => 0, 'errors' => []];
+
+        try {
+            if ($sourceType === 'category') {
+                $category = Category::query()->findOrFail((int) $sourceId);
+                $this->syncCategory($category, $account, $meta);
+                $result['synced']++;
+                return $result;
+            }
+
+            if ($sourceType === 'sub_category') {
+                $subCategory = SubCategory::query()->with('category')->findOrFail((int) $sourceId);
+                $this->syncSubCategory($subCategory, $account, $meta);
+                $result['synced']++;
+
+                if ($subCategory->category) {
+                    $this->syncCategory($subCategory->category, $account, $meta);
+                    $result['synced']++;
+                }
+
+                return $result;
+            }
+
+            throw new RuntimeException('نوع نطاق المزامنة غير مدعوم.');
+        } catch (Throwable $e) {
+            $result['failed']++;
+            $result['errors'][] = [
+                'type' => $sourceType,
+                'id' => $sourceId,
+                'message' => $e->getMessage(),
+            ];
+            throw $e;
+        }
+    }
+
     public function syncCategory(Category $category, ?WhatsAppAccount $account = null, ?MetaCatalogService $meta = null): MetaCatalogProductSet
     {
         $meta ??= $account ? $this->meta->forAccount($account) : $this->meta;

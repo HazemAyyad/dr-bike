@@ -286,8 +286,8 @@ class MetaCatalogController extends Controller
             'catalog_id' => $this->catalogIdForAccount($account),
             'request_payload' => compact('sourceType', 'sourceId'),
         ]);
-        BulkSyncMetaCatalogJob::dispatch(false, false, $account?->id, $sourceType, $sourceId)->onConnection('database');
-        return response()->json(['status' => 'success', 'message' => 'تمت إضافة مزامنة المنتجات إلى قائمة الانتظار.']);
+        BulkSyncMetaCatalogJob::dispatch(false, true, $account?->id, $sourceType, $sourceId)->onConnection('database');
+        return response()->json(['status' => 'success', 'message' => 'تمت إضافة مزامنة المنتجات والتصنيفات إلى قائمة الانتظار.']);
     }
 
     public function testProduct(Request $request, MetaCatalogService $service)

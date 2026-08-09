@@ -19,20 +19,33 @@ class FinalizeMetaCatalogHierarchyJob implements ShouldQueue, ShouldBeUnique
     public int $backoff = 30;
     public int $uniqueFor = 3600;
 
-    public function __construct(public ?int $whatsappAccountId = null)
+    public function __construct(
+        public ?int $whatsappAccountId = null,
+        public string $sourceType = 'all',
+        public ?int $sourceId = null,
+    )
     {
         $this->afterCommit();
     }
 
     public function uniqueId(): string
     {
-        return 'meta-catalog-hierarchy-finalize:'.($this->whatsappAccountId ?: 'default');
+        return implode(':', [
+            'meta-catalog-hierarchy-finalize',
+            $this->whatsappAccountId ?: 'default',
+            $this->sourceType,
+            $this->sourceId ?: 'all',
+        ]);
     }
 
     public function handle(MetaCatalogHierarchyService $service): void
     {
-        Log::info('[MetaCatalogHierarchyFinalize] started');
-        $result = $service->syncAll($this->whatsappAccountId);
+        Log::info('[MetaCatalogHierarchyFinalize] started', [
+            'whatsapp_account_id' => $this->whatsappAccountId,
+            'source_type' => $this->sourceType,
+            'source_id' => $this->sourceId,
+        ]);
+        $result = $service->syncSource($this->sourceType, $this->sourceId, $this->whatsappAccountId);
         Log::info('[MetaCatalogHierarchyFinalize] completed', $result);
     }
 }
