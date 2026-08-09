@@ -47,9 +47,15 @@ class DashboardSectionBadges
             $salesQuery->where('created_by_user_id', $user->id);
         }
 
+        $employeeTasksWaitingReview = self::employeeTasksWaitingReview($user);
+        $employeeTasksBadge = $user->type === 'admin'
+            ? $employeeTasksWaitingReview
+            : self::employeeTasksTodayPending($user);
+
         return [
             'technical_support' => (int) $supportQuery->count(),
-            'employee_tasks_today_pending' => self::employeeTasksTodayPending($user),
+            'employee_tasks_today_pending' => $employeeTasksBadge,
+            'employee_tasks_waiting_review' => $employeeTasksWaitingReview,
             'special_tasks_today_pending' => self::specialTasksTodayPending(),
             'employees_absent_today' => self::employeesAbsentToday(),
             'maintenance' => (int) Maintenance::query()->where('status', '!=', 'delivered')->count(),
@@ -122,6 +128,24 @@ class DashboardSectionBadges
         return self::ongoingEmployeeTaskItemsForToday()->count();
     }
 
+    private static function employeeTasksWaitingReview(User $user): int
+    {
+        $employeeId = (int) ($user->employee?->id ?? 0);
+
+        $items = self::waitingReviewEmployeeTaskItems();
+        if ($user->type !== 'admin') {
+            if ($employeeId <= 0) {
+                return 0;
+            }
+
+            return $items
+                ->filter(fn ($item) => (int) ($item['employee_id'] ?? 0) === $employeeId)
+                ->count();
+        }
+
+        return $items->count();
+    }
+
     private static function specialTasksTodayPending(): int
     {
         return (int) SpecialTask::query()
@@ -151,6 +175,15 @@ class DashboardSectionBadges
                     ->timezone(EmployeePendingTasksForToday::TIMEZONE)
                     ->toDateString() === $today;
             })
+            ->unique(fn ($item) => (string) ($item['task_id'] ?? '').':'.(string) ($item['employee_id'] ?? ''))
+            ->values();
+    }
+
+    private static function waitingReviewEmployeeTaskItems()
+    {
+        return app(EmployeeTaskListService::class)
+            ->getOngoingItems(fn ($employee) => '')
+            ->filter(fn ($item) => ($item['status'] ?? '') === 'waiting_review')
             ->unique(fn ($item) => (string) ($item['task_id'] ?? '').':'.(string) ($item['employee_id'] ?? ''))
             ->values();
     }
