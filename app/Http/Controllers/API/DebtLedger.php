@@ -360,7 +360,11 @@ class DebtLedger extends Controller
                 'note' => 'nullable|string',
                 'box_id' => 'nullable|integer|exists:boxes,id',
                 'receipt_images' => 'nullable|array',
-                'receipt_images.*' => 'image',
+                'receipt_images.*' => [
+                    'file',
+                    'mimes:jpg,jpeg,png,webp,heic,heif,mp4,mov,webm,3gp,m4v,avi,mkv',
+                    'max:51200',
+                ],
             ]);
 
             if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
@@ -469,7 +473,11 @@ class DebtLedger extends Controller
                 'note' => 'nullable|string',
                 'box_id' => 'nullable|integer|exists:boxes,id',
                 'receipt_images' => 'nullable|array',
-                'receipt_images.*' => 'image',
+                'receipt_images.*' => [
+                    'file',
+                    'mimes:jpg,jpeg,png,webp,heic,heif,mp4,mov,webm,3gp,m4v,avi,mkv',
+                    'max:51200',
+                ],
             ]);
 
             $transaction = DebtTransaction::active()->findOrFail($id);
