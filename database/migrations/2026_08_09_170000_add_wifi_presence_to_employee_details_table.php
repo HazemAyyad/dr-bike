@@ -15,8 +15,11 @@ return new class extends Migration
             if (! Schema::hasColumn('employee_details', 'wifi_connected')) {
                 $table->boolean('wifi_connected')->default(false)->after('wifi_ssid');
             }
+            if (! Schema::hasColumn('employee_details', 'network_connected')) {
+                $table->boolean('network_connected')->default(false)->after('wifi_connected');
+            }
             if (! Schema::hasColumn('employee_details', 'wifi_status_updated_at')) {
-                $table->timestamp('wifi_status_updated_at')->nullable()->after('wifi_connected');
+                $table->timestamp('wifi_status_updated_at')->nullable()->after('network_connected');
             }
         });
     }
@@ -26,6 +29,9 @@ return new class extends Migration
         Schema::table('employee_details', function (Blueprint $table) {
             if (Schema::hasColumn('employee_details', 'wifi_status_updated_at')) {
                 $table->dropColumn('wifi_status_updated_at');
+            }
+            if (Schema::hasColumn('employee_details', 'network_connected')) {
+                $table->dropColumn('network_connected');
             }
             if (Schema::hasColumn('employee_details', 'wifi_connected')) {
                 $table->dropColumn('wifi_connected');

@@ -1246,6 +1246,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     // employee home page
     Route::get('/employee/home/data', [EmployeeData::class, 'getEmployeeData']);
+    Route::post('/employee/wifi-presence', [EmployeeDetails::class, 'updateWifiPresence']);
     Route::get('/employee/my/attendance/history', [EmployeeDetails::class, 'employeeMyAttendanceHistory']);
     Route::get('/get/attendance/details', [EmployeeData::class, 'attendanceReport']);
 

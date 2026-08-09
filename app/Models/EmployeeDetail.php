@@ -30,6 +30,7 @@ class EmployeeDetail extends Model
         'total_work_hours',
         'wifi_ssid',
         'wifi_connected',
+        'network_connected',
         'wifi_status_updated_at',
     ];
 
@@ -38,6 +39,7 @@ class EmployeeDetail extends Model
         'document_img' => 'array',
         'weekly_days_off' => 'array',
         'wifi_connected' => 'boolean',
+        'network_connected' => 'boolean',
         'wifi_status_updated_at' => 'datetime',
     ];
 

@@ -9,6 +9,7 @@ class AppSetting extends Model
 {
     public const KEY_SUBTASK_BONUS_DEFAULT = 'employee_task_subtask_bonus_default';
     public const KEY_ADMIN_FAB_OPTIONS = 'admin_fab_options';
+    public const KEY_EMPLOYEE_ALLOWED_WIFI_SSIDS = 'employee_allowed_wifi_ssids';
 
     public const KEY_PASSWORD_RESET_OTP_DELIVERY_METHOD = 'password_reset_otp_delivery_method';
 

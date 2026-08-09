@@ -50,6 +50,7 @@ class AppSettingsController extends Controller
             $data = $request->validate(array_merge([
                 'employee_task_subtask_bonus_default' => 'sometimes|integer|min:0|max:9999',
                 'admin_fab_options' => 'nullable|string|max:500',
+                'employee_allowed_wifi_ssids' => 'nullable|string|max:2000',
                 'password_reset_otp_delivery_method' => 'sometimes|string|in:email,admin,sms',
                 'sales_daily_variance_alert_threshold' => 'sometimes|numeric|min:0|max:999999',
                 'sales_daily_max_float' => 'sometimes|array',
@@ -68,6 +69,12 @@ class AppSettingsController extends Controller
                 AppSetting::set(
                     AppSetting::KEY_ADMIN_FAB_OPTIONS,
                     (string) ($data['admin_fab_options'] ?? '')
+                );
+            }
+            if ($request->has('employee_allowed_wifi_ssids')) {
+                AppSetting::set(
+                    AppSetting::KEY_EMPLOYEE_ALLOWED_WIFI_SSIDS,
+                    $this->normalizeWifiSsidsForStorage((string) ($data['employee_allowed_wifi_ssids'] ?? ''))
                 );
             }
             if ($request->has('password_reset_otp_delivery_method')) {
@@ -142,6 +149,10 @@ class AppSettingsController extends Controller
                 AppSetting::KEY_ADMIN_FAB_OPTIONS,
                 'newInvoice,newEmployee,newExpense,newCustomer'
             ),
+            'employee_allowed_wifi_ssids' => AppSetting::get(
+                AppSetting::KEY_EMPLOYEE_ALLOWED_WIFI_SSIDS,
+                implode(',', config('employee_wifi.allowed_ssids', []))
+            ),
             'password_reset_otp_delivery_method' => AppSetting::get(
                 AppSetting::KEY_PASSWORD_RESET_OTP_DELIVERY_METHOD,
                 'email'
@@ -152,5 +163,15 @@ class AppSettingsController extends Controller
             'shiply' => ShiplySettings::toArray(),
             'app_update' => AppUpdateSettings::all(),
         ];
+    }
+
+    protected function normalizeWifiSsidsForStorage(string $raw): string
+    {
+        return collect(preg_split('/[\r\n,]+/', $raw) ?: [])
+            ->map(fn ($ssid) => trim((string) $ssid))
+            ->filter()
+            ->unique()
+            ->values()
+            ->implode(',');
     }
 }
