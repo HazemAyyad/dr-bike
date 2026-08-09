@@ -2279,7 +2279,8 @@ public function updateEmployeeTask(Request $request)
             ], 200);
         }
 
-        $this->workflow->rejectSubtask($subTask, $request->rejection_reason);
+        $returnForRework = str_contains((string) $request->path(), 'admin/change/');
+        $this->workflow->rejectSubtask($subTask, $request->rejection_reason, $returnForRework);
 
         Logs::createLog('رفض مهمة موظف فرعية','رفض تنفيذ مهمة فرعية باسم'.' '.$subTask->name
         .' '.'التابعة للمهمة الرئيسية باسم'.' '.$subTask->employeeTask->name

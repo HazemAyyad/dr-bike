@@ -603,15 +603,20 @@ class EmployeeTaskWorkflowService
      * Employee declines to execute a subtask (with a reason). A rejected subtask
      * does NOT block submitting the parent task and earns no bonus points.
      */
-    public function rejectSubtask(EmployeeSubTask $subTask, string $reason): EmployeeSubTask
+    public function rejectSubtask(EmployeeSubTask $subTask, string $reason, bool $returnForRework = false): EmployeeSubTask
     {
         $actorId = (int) (auth()->user()?->employee?->id ?? 0);
         $payload = [
-            'status' => 'rejected',
+            'status' => $returnForRework ? EmployeeTaskStatus::Pending->value : 'rejected',
             'rejection_reason' => $reason,
         ];
         if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
-            $payload['completed_by_employee_id'] = $actorId > 0 ? $actorId : null;
+            $payload['completed_by_employee_id'] = $returnForRework
+                ? null
+                : ($actorId > 0 ? $actorId : null);
+        }
+        if ($returnForRework && Schema::hasColumn('sub_employee_tasks', 'employee_img')) {
+            $payload['employee_img'] = null;
         }
         $subTask->update($payload);
 
@@ -645,15 +650,24 @@ class EmployeeTaskWorkflowService
         return $subTask->fresh();
     }
 
-    public function rejectOccurrenceSubtask(EmployeeTaskOccurrenceSubtask $subTask, string $reason): EmployeeTaskOccurrenceSubtask
+    public function rejectOccurrenceSubtask(
+        EmployeeTaskOccurrenceSubtask $subTask,
+        string $reason,
+        bool $returnForRework = false
+    ): EmployeeTaskOccurrenceSubtask
     {
         $actorId = (int) (auth()->user()?->employee?->id ?? 0);
         $payload = [
-            'status' => 'rejected',
+            'status' => $returnForRework ? EmployeeTaskStatus::Pending->value : 'rejected',
             'rejection_reason' => $reason,
         ];
         if (Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')) {
-            $payload['completed_by_employee_id'] = $actorId > 0 ? $actorId : null;
+            $payload['completed_by_employee_id'] = $returnForRework
+                ? null
+                : ($actorId > 0 ? $actorId : null);
+        }
+        if ($returnForRework && Schema::hasColumn('employee_task_occurrence_subtasks', 'employee_img')) {
+            $payload['employee_img'] = null;
         }
         $subTask->update($payload);
 

@@ -934,7 +934,8 @@ class EmployeeTaskOperationsController extends Controller
 
             $wasWaitingReview = $sub->occurrence
                 && $sub->occurrence->status === EmployeeTaskStatus::WaitingReview->value;
-            $this->workflow->rejectOccurrenceSubtask($sub, $request->rejection_reason);
+            $returnForRework = str_contains((string) $request->path(), 'admin/change/');
+            $this->workflow->rejectOccurrenceSubtask($sub, $request->rejection_reason, $returnForRework);
 
             $occurrence = $sub->occurrence->fresh();
             $pending = $occurrence->subtasks()->whereNotIn('status', ['completed', 'rejected'])->exists();
