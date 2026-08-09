@@ -248,7 +248,6 @@ class SuspendedInstantSaleService
 
         $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
 
-        $this->notifyAdminSuspendedCreated($record);
         $this->logSuspendedActivity(
             $record,
             $user,
