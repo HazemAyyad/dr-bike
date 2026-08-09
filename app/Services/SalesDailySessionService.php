@@ -609,6 +609,33 @@ class SalesDailySessionService
         return $box;
     }
 
+    public function dailyBoxForSessionCurrency(SalesDailySession $session, ?string $currency = null): ?Box
+    {
+        $owner = User::query()->find($session->user_id);
+        if ($owner) {
+            $this->ensureDailyBoxes($owner);
+        }
+
+        $query = Box::query()
+            ->where('type', config('sales_daily.box_type'));
+
+        $currency = trim((string) $currency);
+        if ($currency !== '') {
+            $query->where('currency', $currency);
+        }
+
+        if ($session->employee_id) {
+            $query->where('employee_id', $session->employee_id);
+        } else {
+            $query->where('user_id', $session->user_id)->whereNull('employee_id');
+        }
+
+        return $query
+            ->orderByRaw("CASE WHEN currency = 'شيكل' THEN 0 ELSE 1 END")
+            ->orderBy('currency')
+            ->first();
+    }
+
     public function assertDailyBoxOwnedByUser(User $user, Box $box): void
     {
         if (! $box->isDailySalesBox()) {

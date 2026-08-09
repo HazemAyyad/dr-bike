@@ -1021,6 +1021,46 @@ class InstantSales extends Controller
         return app(SalesDailySessionService::class)->assertCanCreateSale($request->user());
     }
 
+    /**
+     * @param  array<string, mixed>  $paymentBoxPayload
+     * @return array<string, mixed>
+     */
+    private function movePaymentBoxPayloadToSession(array $paymentBoxPayload, ?SalesDailySession $session): array
+    {
+        if (! $session) {
+            return $paymentBoxPayload;
+        }
+
+        $sessionService = app(SalesDailySessionService::class);
+        $boxId = (int) ($paymentBoxPayload['payment_box_id'] ?? 0);
+        $currentBox = $boxId > 0 ? Box::query()->find($boxId) : null;
+
+        if (
+            $currentBox
+            && $currentBox->isDailySalesBox()
+            && $sessionService->dailyBoxBelongsToSession($currentBox, $session)
+        ) {
+            $paymentBoxPayload['payment_box_name'] = $paymentBoxPayload['payment_box_name']
+                ?? $currentBox->name;
+
+            return $paymentBoxPayload;
+        }
+
+        $currency = $currentBox?->currency ?: 'شيكل';
+        $targetBox = $sessionService->dailyBoxForSessionCurrency($session, $currency)
+            ?? $sessionService->dailyBoxForSessionCurrency($session, 'شيكل')
+            ?? $sessionService->dailyBoxForSessionCurrency($session);
+
+        if (! $targetBox) {
+            return $paymentBoxPayload;
+        }
+
+        $paymentBoxPayload['payment_box_id'] = (int) $targetBox->id;
+        $paymentBoxPayload['payment_box_name'] = $targetBox->name;
+
+        return $paymentBoxPayload;
+    }
+
 public function store(Request $request)
  {
     $replaceId = 0;
@@ -1116,9 +1156,10 @@ public function store(Request $request)
                 'status' => 'active',
             ];
         } else {
+            $paymentBoxPayload = $this->movePaymentBoxPayloadToSession($paymentBoxPayload, $dailySession);
             if (empty($paymentBoxPayload['payment_box_id'])) {
-                $dailyBox = app(SalesDailySessionService::class)
-                    ->dailyBoxForCurrency($request->user(), 'شيكل');
+                $dailyBox = app(SalesDailySessionService::class)->dailyBoxForSessionCurrency($dailySession, 'شيكل')
+                    ?? app(SalesDailySessionService::class)->dailyBoxForCurrency($request->user(), 'شيكل');
                 $paymentBoxPayload['payment_box_id'] = (int) $dailyBox->id;
                 $paymentBoxPayload['payment_box_name'] = $dailyBox->name;
                 if ($request->has('payment_box_value')) {
