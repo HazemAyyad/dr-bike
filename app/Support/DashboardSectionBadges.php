@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeOrder;
 use App\Models\EmployeeSuggestion;
 use App\Models\Followup;
 use App\Models\IncomingCheck;
@@ -48,14 +49,18 @@ class DashboardSectionBadges
         }
 
         $employeeTasksWaitingReview = self::employeeTasksWaitingReview($user);
+        $employeeTasksTodayPending = self::employeeTasksTodayPending($user);
+        $pendingEmployeeLoans = self::pendingEmployeeLoans($user);
         $employeeTasksBadge = $user->type === 'admin'
-            ? $employeeTasksWaitingReview
-            : self::employeeTasksTodayPending($user);
+            ? $employeeTasksWaitingReview + $employeeTasksTodayPending + $pendingEmployeeLoans
+            : $employeeTasksTodayPending;
 
         return [
             'technical_support' => (int) $supportQuery->count(),
             'employee_tasks_today_pending' => $employeeTasksBadge,
+            'employee_tasks_today_remaining' => $employeeTasksTodayPending,
             'employee_tasks_waiting_review' => $employeeTasksWaitingReview,
+            'employee_loan_orders_pending' => $pendingEmployeeLoans,
             'special_tasks_today_pending' => self::specialTasksTodayPending(),
             'employees_absent_today' => self::employeesAbsentToday(),
             'maintenance' => (int) Maintenance::query()->where('status', '!=', 'delivered')->count(),
@@ -152,6 +157,18 @@ class DashboardSectionBadges
             ->where('is_canceled', 0)
             ->where('status', '!=', 'completed')
             ->whereDate('start_date', EmployeePendingTasksForToday::todayDateString())
+            ->count();
+    }
+
+    private static function pendingEmployeeLoans(User $user): int
+    {
+        if ($user->type !== 'admin') {
+            return 0;
+        }
+
+        return (int) EmployeeOrder::query()
+            ->where('type', 'loan')
+            ->where('status', 'pending')
             ->count();
     }
 
