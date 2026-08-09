@@ -35,8 +35,9 @@ return new class extends Migration
         }
 
         $employeeIds = DB::table('employee_permissions')
+            ->join('employee_details', 'employee_permissions.employee_id', '=', 'employee_details.id')
             ->whereIn('permission_id', $boxPermissionIds)
-            ->pluck('employee_id')
+            ->pluck('employee_permissions.employee_id')
             ->unique()
             ->values();
 
