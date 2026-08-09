@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\EmployeeDetailResource;
 use App\Mail\NewEmployeeAccountMail;
+use App\Models\AppSetting;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeAttendanceAdjustment;
 use App\Models\EmployeeAttendanceScan;
@@ -29,6 +30,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
@@ -299,14 +301,29 @@ class EmployeeDetails extends Controller
     private function syncEmployeeVisibleBoxes(EmployeeDetail $employee, array $boxIds): void
     {
         if (! $this->employeeVisibleBoxesTableExists()) {
+            Log::debug('employee.visible_boxes.sync_skipped_missing_table', [
+                'employee_id' => $employee->id,
+                'requested_box_ids' => $boxIds,
+            ]);
             return;
         }
+
+        $existingIds = $employee->visibleBoxes()
+            ->pluck('boxes.id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
 
         $boxIds = $this->scopeRegularBoxes(Box::query())
             ->whereIn('id', $boxIds)
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->all();
+
+        Log::debug('employee.visible_boxes.sync', [
+            'employee_id' => $employee->id,
+            'existing_box_ids' => $existingIds,
+            'requested_box_ids' => $boxIds,
+        ]);
 
         $employee->visibleBoxes()->sync($boxIds);
     }
@@ -593,12 +610,120 @@ class EmployeeDetails extends Controller
 
     
 
+    private function normalizeWifiSsid(?string $ssid): ?string
+    {
+        if ($ssid === null) {
+            return null;
+        }
+
+        $ssid = trim($ssid);
+        if ($ssid === '') {
+            return null;
+        }
+
+        return trim($ssid, "\"'");
+    }
+
+    private function allowedWifiSsids(): array
+    {
+        $raw = AppSetting::get(
+            AppSetting::KEY_EMPLOYEE_ALLOWED_WIFI_SSIDS,
+            implode(',', config('employee_wifi.allowed_ssids', []))
+        );
+
+        return collect(preg_split('/[\r\n,]+/', (string) $raw) ?: [])
+            ->map(fn ($ssid) => $this->normalizeWifiSsid((string) $ssid))
+            ->filter()
+            ->map(fn ($ssid) => strtolower($ssid))
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function employeeWifiStatus(EmployeeDetail $employee): array
+    {
+        $updatedAt = $employee->wifi_status_updated_at;
+        $timeout = max(30, (int) config('employee_wifi.presence_timeout_seconds', 120));
+        $fresh = $updatedAt !== null && Carbon::parse($updatedAt)->greaterThanOrEqualTo(
+            Carbon::now()->subSeconds($timeout)
+        );
+        $allowedWifi = (bool) $employee->wifi_connected && $fresh;
+        $networkConnected = (bool) $employee->network_connected && $fresh;
+        $state = $allowedWifi ? 'green' : ($networkConnected ? 'orange' : 'red');
+
+        return [
+            'connected' => $allowedWifi,
+            'network_connected' => $networkConnected,
+            'state' => $state,
+            'ssid' => $employee->wifi_ssid,
+            'updated_at' => $updatedAt?->toIso8601String(),
+            'stale' => ! $fresh,
+        ];
+    }
+
+    public function updateWifiPresence(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'ssid' => ['nullable', 'string', 'max:255'],
+                'connected' => ['required', 'boolean'],
+                'network_connected' => ['nullable', 'boolean'],
+            ]);
+
+            $user = $request->user();
+            $employee = $user?->employee;
+            if (! $employee) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.employee_not_found'),
+                ], 200);
+            }
+
+            $ssid = $this->normalizeWifiSsid($data['ssid'] ?? null);
+            $allowed = $this->allowedWifiSsids();
+            $matchesAllowed = $ssid !== null
+                && in_array(strtolower($ssid), $allowed, true);
+
+            $employee->update([
+                'wifi_ssid' => $ssid,
+                'wifi_connected' => (bool) $data['connected'] && $matchesAllowed,
+                'network_connected' => (bool) ($data['network_connected'] ?? $data['connected']),
+                'wifi_status_updated_at' => Carbon::now(),
+            ]);
+
+            $employee->refresh();
+
+            return response()->json([
+                'status' => 'success',
+                'wifi_status' => $this->employeeWifiStatus($employee),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
+        } catch (\Exception $e) {
+            return response(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
      public function employeesList()
     {
         try {
+            $select = ['id', 'hour_work_price', 'user_id','employee_img', 'start_work_time'];
+            if (Schema::hasColumn('employee_details', 'wifi_ssid')) {
+                $select[] = 'wifi_ssid';
+            }
+            if (Schema::hasColumn('employee_details', 'wifi_connected')) {
+                $select[] = 'wifi_connected';
+            }
+            if (Schema::hasColumn('employee_details', 'network_connected')) {
+                $select[] = 'network_connected';
+            }
+            if (Schema::hasColumn('employee_details', 'wifi_status_updated_at')) {
+                $select[] = 'wifi_status_updated_at';
+            }
+
             $employees = EmployeeDetail::with('user:id,name')
                 ->orderBy('created_at', 'desc')
-                ->get(['id', 'hour_work_price', 'user_id','employee_img', 'start_work_time']);
+                ->get($select);
 
             $now = Carbon::now();
             $pointsService = app(EmployeePointsService::class);
@@ -638,6 +763,7 @@ class EmployeeDetails extends Controller
                     'has_attended_today' => $statuses['has_attended_today'],
                     'is_working_now' => $statuses['is_working_now'],
                     'is_came_on_time' => $statuses['is_came_on_time'],
+                    'wifi_status' => $this->employeeWifiStatus($employee),
                 ];
             });
 
