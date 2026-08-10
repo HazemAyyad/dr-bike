@@ -648,7 +648,7 @@ class EmployeeDetails extends Controller
             Carbon::now()->subSeconds($timeout)
         );
         $allowedWifi = (bool) $employee->wifi_connected && $fresh;
-        $networkConnected = (bool) $employee->network_connected && $fresh;
+        $networkConnected = (bool) ($employee->network_connected ?? false) && $fresh;
         $state = $allowedWifi ? 'green' : ($networkConnected ? 'orange' : 'red');
 
         return [
@@ -684,12 +684,16 @@ class EmployeeDetails extends Controller
             $matchesAllowed = $ssid !== null
                 && in_array(strtolower($ssid), $allowed, true);
 
-            $employee->update([
+            $updates = [
                 'wifi_ssid' => $ssid,
                 'wifi_connected' => (bool) $data['connected'] && $matchesAllowed,
-                'network_connected' => (bool) ($data['network_connected'] ?? $data['connected']),
                 'wifi_status_updated_at' => Carbon::now(),
-            ]);
+            ];
+            if (Schema::hasColumn('employee_details', 'network_connected')) {
+                $updates['network_connected'] = (bool) ($data['network_connected'] ?? $data['connected']);
+            }
+
+            $employee->update($updates);
 
             $employee->refresh();
 
