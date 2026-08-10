@@ -894,6 +894,7 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales','refresh.
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:Employees View,Employees Edit Basic,Employees Delete,Employees Password Manage,Employees Section,Employee Tasks,Goal Creation','refresh.token.expiry']], function () {
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
+    Route::get('/admin/employees/wifi-presence/history' , [EmployeeDetails::class,'wifiPresenceHistory']);
 
   });
 

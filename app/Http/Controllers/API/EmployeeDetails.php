@@ -13,6 +13,7 @@ use App\Support\AttendanceScanPresenter;
 use App\Models\Box;
 use App\Support\EmployeeAttendanceToday;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeWifiPresenceLog;
 use App\Models\EmployeeOrder;
 use App\Models\EmployeePermission;
 use App\Models\FingerprintRawLog;
@@ -661,6 +662,71 @@ class EmployeeDetails extends Controller
         ];
     }
 
+    private function wifiPresenceState(bool $allowedWifi, bool $networkConnected): string
+    {
+        return $allowedWifi ? 'green' : ($networkConnected ? 'orange' : 'red');
+    }
+
+    private function syncWifiPresenceLog(
+        EmployeeDetail $employee,
+        ?string $ssid,
+        bool $allowedWifi,
+        bool $networkConnected,
+        Carbon $reportedAt
+    ): void {
+        if (! Schema::hasTable('employee_wifi_presence_logs')) {
+            return;
+        }
+
+        $state = $this->wifiPresenceState($allowedWifi, $networkConnected);
+        $timeout = max(30, (int) config('employee_wifi.presence_timeout_seconds', 120));
+        $open = EmployeeWifiPresenceLog::query()
+            ->where('employee_detail_id', $employee->id)
+            ->whereNull('ended_at')
+            ->latest('started_at')
+            ->first();
+        $lastSeen = $open?->last_seen_at;
+        $expired = $lastSeen !== null
+            && Carbon::parse($lastSeen)->lt($reportedAt->copy()->subSeconds($timeout));
+
+        $sameSession = $open
+            && ! $expired
+            && (string) ($open->ssid ?? '') === (string) ($ssid ?? '')
+            && (bool) $open->wifi_connected === $allowedWifi
+            && (bool) $open->network_connected === $networkConnected
+            && $open->state === $state;
+
+        if ($sameSession) {
+            $startedAt = $open->started_at ?: $reportedAt;
+            $open->update([
+                'last_seen_at' => $reportedAt,
+                'duration_seconds' => max(0, $startedAt->diffInSeconds($reportedAt)),
+            ]);
+            return;
+        }
+
+        if ($open) {
+            $endAt = $open->last_seen_at ?: $reportedAt;
+            $startedAt = $open->started_at ?: $endAt;
+            $open->update([
+                'ended_at' => $endAt,
+                'duration_seconds' => max(0, $startedAt->diffInSeconds($endAt)),
+            ]);
+        }
+
+        EmployeeWifiPresenceLog::create([
+            'employee_detail_id' => $employee->id,
+            'user_id' => $employee->user_id,
+            'ssid' => $ssid,
+            'wifi_connected' => $allowedWifi,
+            'network_connected' => $networkConnected,
+            'state' => $state,
+            'started_at' => $reportedAt,
+            'last_seen_at' => $reportedAt,
+            'duration_seconds' => 0,
+        ]);
+    }
+
     public function updateWifiPresence(Request $request)
     {
         try {
@@ -683,23 +749,94 @@ class EmployeeDetails extends Controller
             $allowed = $this->allowedWifiSsids();
             $matchesAllowed = $ssid !== null
                 && in_array(strtolower($ssid), $allowed, true);
+            $networkConnected = (bool) ($data['network_connected'] ?? $data['connected']);
+            $allowedWifi = (bool) $data['connected'] && $matchesAllowed;
+            $reportedAt = Carbon::now();
 
             $updates = [
                 'wifi_ssid' => $ssid,
-                'wifi_connected' => (bool) $data['connected'] && $matchesAllowed,
-                'wifi_status_updated_at' => Carbon::now(),
+                'wifi_connected' => $allowedWifi,
+                'wifi_status_updated_at' => $reportedAt,
             ];
             if (Schema::hasColumn('employee_details', 'network_connected')) {
-                $updates['network_connected'] = (bool) ($data['network_connected'] ?? $data['connected']);
+                $updates['network_connected'] = $networkConnected;
             }
 
             $employee->update($updates);
+            $this->syncWifiPresenceLog($employee, $ssid, $allowedWifi, $networkConnected, $reportedAt);
 
             $employee->refresh();
 
             return response()->json([
                 'status' => 'success',
                 'wifi_status' => $this->employeeWifiStatus($employee),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
+        } catch (\Exception $e) {
+            return response(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function wifiPresenceHistory(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'employee_id' => ['nullable', 'integer', 'exists:employee_details,id'],
+                'ssid' => ['nullable', 'string', 'max:255'],
+                'state' => ['nullable', Rule::in(['green', 'orange', 'red'])],
+                'from_date' => ['nullable', 'date'],
+                'to_date' => ['nullable', 'date'],
+                'limit' => ['nullable', 'integer', 'min:1', 'max:500'],
+            ]);
+
+            $limit = (int) ($data['limit'] ?? 100);
+            $query = EmployeeWifiPresenceLog::query()
+                ->with('user:id,name')
+                ->latest('started_at')
+                ->latest('id');
+
+            if (! empty($data['employee_id'])) {
+                $query->where('employee_detail_id', (int) $data['employee_id']);
+            }
+            if (! empty($data['ssid'])) {
+                $query->where('ssid', 'like', '%'.$data['ssid'].'%');
+            }
+            if (! empty($data['state'])) {
+                $query->where('state', $data['state']);
+            }
+            if (! empty($data['from_date'])) {
+                $query->where('started_at', '>=', Carbon::parse($data['from_date'])->startOfDay());
+            }
+            if (! empty($data['to_date'])) {
+                $query->where('started_at', '<=', Carbon::parse($data['to_date'])->endOfDay());
+            }
+
+            $logs = $query->limit($limit)->get()->map(function ($log) {
+                $durationSeconds = (int) $log->duration_seconds;
+                if ($log->ended_at === null && $log->started_at !== null) {
+                    $durationSeconds = max(0, $log->started_at->diffInSeconds(Carbon::now()));
+                }
+
+                return [
+                    'id' => (int) $log->id,
+                    'employee_id' => (int) $log->employee_detail_id,
+                    'employee_name' => $log->user?->name,
+                    'ssid' => $log->ssid,
+                    'wifi_connected' => (bool) $log->wifi_connected,
+                    'network_connected' => (bool) $log->network_connected,
+                    'state' => $log->state,
+                    'started_at' => $log->started_at?->toIso8601String(),
+                    'ended_at' => $log->ended_at?->toIso8601String(),
+                    'last_seen_at' => $log->last_seen_at?->toIso8601String(),
+                    'duration_seconds' => $durationSeconds,
+                ];
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'current' => $this->employeesList()->getData(true)['employees'] ?? [],
+                'logs' => $logs,
             ], 200);
         } catch (ValidationException $e) {
             return response(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
