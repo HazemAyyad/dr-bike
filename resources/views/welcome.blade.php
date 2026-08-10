@@ -201,7 +201,7 @@
                 <li class="nav-item"><a class="nav-link" href="#company">معلومات الشركة</a></li>
                 <li class="nav-item"><a class="nav-link" href="#contact">تواصل معنا</a></li>
             </ul>
-            <a class="btn btn-db btn-sm" href="tel:0599600809">اتصل الآن</a>
+            <a class="btn btn-db btn-sm" href="tel:0569600809">اتصل الآن</a>
         </div>
     </div>
 </nav>
@@ -343,7 +343,7 @@
                         <div class="col-md-6">
                             <div class="contact-card">
                                 <p class="muted mb-2">الهاتف</p>
-                                <a class="contact-link fs-5" href="tel:0599600809">0599600809</a>
+                                <a class="contact-link fs-5" href="tel:0569600809">0569600809</a>
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -353,7 +353,7 @@
                             </div>
                         </div>
                         <div class="col-md-4">
-                            <a class="btn btn-outline-db w-100" href="https://wa.me/970599600809" target="_blank" rel="noopener">واتساب</a>
+                            <a class="btn btn-outline-db w-100" href="https://wa.me/970569600809" target="_blank" rel="noopener">واتساب</a>
                         </div>
                         <div class="col-md-4">
                             <a class="btn btn-outline-db w-100" href="https://www.instagram.com/" target="_blank" rel="noopener">إنستغرام</a>
