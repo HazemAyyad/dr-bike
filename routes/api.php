@@ -715,94 +715,94 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Debts','refresh.to
 Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function() {
       //outgoing checks
       Route::post('/add/outgoing/check' , [OutgoingChecks::class,'store'])
-          ->middleware('check.permission:Checks Outgoing Create,Checks');
+          ->middleware('check.permission:Checks Outgoing Create');
       Route::post('/cancel/an/outgoing/check' , [OutgoingChecks::class,'cancelCheck'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::post('/return/an/outgoing/check' , [OutgoingChecks::class,'returnCheck'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::post('/cash/an/outgoing/check' , [OutgoingChecks::class,'cashCheck'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
 
       Route::post('/cash/an/outgoing/check/to/person' , [OutgoingChecks::class,'cashCheckToPerson'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
 
       Route::get('/not-cashed/outgoing/checks' , [OutgoingChecks::class,'notCashedChecks'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::get('/cashed/to/person/outgoing/checks' , [OutgoingChecks::class,'cashedToPersonChecks'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::get('/cancelled/outgoing/checks' , [OutgoingChecks::class,'cancelledChecks'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::get('/returned/outgoing/checks' , [OutgoingChecks::class,'returnedChecks'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::get('/general/outgoing/checks/data' , [OutgoingChecks::class,'generalOutgoingChecksData'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::get('/general/checks/data/first/page' , [OutgoingChecks::class,'generalDataFirstPage'])
           ->middleware('check.permission:Checks Incoming View,Checks Outgoing View,Checks');
       Route::get('/cashed/outgoing/checks' , [OutgoingChecks::class,'cashedChecks'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::get('/archived/outgoing/checks' , [OutgoingChecks::class,'archive'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::post('/edit/outgoing/check' , [OutgoingChecks::class,'editCheck'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::post('/delete/outgoing/check' , [OutgoingChecks::class,'deleteCheck'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
       Route::post('/cash/outgoing/check/from/box' , [OutgoingChecks::class,'cashFromBox'])
-          ->middleware('check.permission:Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Outgoing View');
 
 
     //incoming checks
       Route::post('/add/incoming/check' , [IncomingChecks::class,'store'])
-          ->middleware('check.permission:Checks Incoming Create,Checks');
+          ->middleware('check.permission:Checks Incoming Create');
       Route::post('/add/incoming/checks/batch' , [IncomingChecks::class,'storeBatch'])
-          ->middleware('check.permission:Checks Incoming Create,Checks');
+          ->middleware('check.permission:Checks Incoming Create');
       Route::get('/check-notification-rules' , [CheckNotificationRulesController::class,'index'])
-          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View');
       Route::post('/check-notification-rules' , [CheckNotificationRulesController::class,'store'])
-          ->middleware('check.permission:Checks');
+          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View');
       Route::get('/check-notification-rules/check-owner' , [CheckNotificationRulesController::class,'checkOwner'])
-          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View');
       Route::put('/check-notification-rules/check-owner-phone' , [CheckNotificationRulesController::class,'updateCheckOwnerPhone'])
-          ->middleware('check.permission:Checks');
+          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View');
       Route::put('/check-notification-rules/{rule}' , [CheckNotificationRulesController::class,'update'])
-          ->middleware('check.permission:Checks');
+          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View');
       Route::delete('/check-notification-rules/{rule}' , [CheckNotificationRulesController::class,'destroy'])
-          ->middleware('check.permission:Checks');
+          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View');
       Route::post('/cash/incoming/check/to/person' , [IncomingChecks::class,'cashCheckToPerson'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::post('/cash/incoming/check/to/box' , [IncomingChecks::class,'cashCheckToBox'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
 
       Route::post('/cancel/an/incoming/check' , [IncomingChecks::class,'cancelCheck'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::post('/return/an/incoming/check' , [IncomingChecks::class,'returnCheck'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::post('/cash/an/incoming/check' , [IncomingChecks::class,'cashCheck'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::post('/show/check' , [IncomingChecks::class,'showCheck'])
-          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View,Checks');
+          ->middleware('check.permission:Checks Incoming View,Checks Outgoing View');
       Route::post('/edit/incoming/check' , [IncomingChecks::class,'editCheck'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::post('/delete/incoming/check' , [IncomingChecks::class,'deleteCheck'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
 
 
       Route::get('/not-cashed/incoming/checks' , [IncomingChecks::class,'notCashedChecks'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::get('/cashed/to/person/incoming/checks' , [IncomingChecks::class,'cashedToPersonChecks'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::get('/cancelled/incoming/checks' , [IncomingChecks::class,'cancelledChecks'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::get('/returned/incoming/checks' , [IncomingChecks::class,'returnedChecks'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::get('/cashed/incoming/checks' , [IncomingChecks::class,'cashedChecks'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::get('/general/incoming/checks/data' , [IncomingChecks::class,'generalIncomingChecksData'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
       Route::get('/cashed/to/box/incoming/checks' , [IncomingChecks::class,'cashedToBoxChecks'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
 
       Route::get('/archived/incoming/checks' , [IncomingChecks::class,'archive'])
-          ->middleware('check.permission:Checks Incoming View,Checks');
+          ->middleware('check.permission:Checks Incoming View');
 
 });
 

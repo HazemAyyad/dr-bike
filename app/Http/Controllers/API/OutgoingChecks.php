@@ -529,9 +529,8 @@ class OutgoingChecks extends Controller
 
             $data = OutgoingCheck::generalChecksData();
             $user = request()->user();
-            $canViewAll = $user?->type === 'admin' || $this->userHasPermission($user, 'Checks');
-            $canViewIncoming = $canViewAll || $this->userHasPermission($user, 'Checks Incoming View');
-            $canViewOutgoing = $canViewAll || $this->userHasPermission($user, 'Checks Outgoing View');
+            $canViewIncoming = $user?->type === 'admin' || $this->userHasPermission($user, 'Checks Incoming View');
+            $canViewOutgoing = $user?->type === 'admin' || $this->userHasPermission($user, 'Checks Outgoing View');
 
             if (! $canViewIncoming) {
                 $data['not_cashed_incoming_checks_count'] = 0;
