@@ -31,6 +31,7 @@ class EmployeeDetail extends Model
         'wifi_ssid',
         'wifi_connected',
         'network_connected',
+        'wifi_connection_type',
         'wifi_status_updated_at',
     ];
 

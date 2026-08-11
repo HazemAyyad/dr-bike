@@ -651,15 +651,72 @@ class EmployeeDetails extends Controller
         $allowedWifi = (bool) $employee->wifi_connected && $fresh;
         $networkConnected = (bool) ($employee->network_connected ?? false) && $fresh;
         $state = $allowedWifi ? 'green' : ($networkConnected ? 'orange' : 'red');
+        $connectionType = $fresh ? ($employee->wifi_connection_type ?? null) : 'none';
 
         return [
             'connected' => $allowedWifi,
             'network_connected' => $networkConnected,
             'state' => $state,
             'ssid' => $employee->wifi_ssid,
+            'connection_type' => $connectionType,
+            'display_name' => $this->wifiPresenceDisplayName(
+                $employee->wifi_ssid,
+                $state,
+                $connectionType,
+                $networkConnected
+            ),
+            'label' => $this->wifiPresenceLabel($state, $connectionType, $employee->wifi_ssid),
             'updated_at' => $updatedAt?->toIso8601String(),
             'stale' => ! $fresh,
         ];
+    }
+
+    private function normalizeWifiConnectionType(?string $type, ?string $ssid, bool $networkConnected): string
+    {
+        $type = strtolower(trim((string) $type));
+        if (in_array($type, ['wifi', 'mobile', 'none'], true)) {
+            return $type;
+        }
+
+        if (! $networkConnected) {
+            return 'none';
+        }
+
+        return $ssid !== null ? 'wifi' : 'unknown';
+    }
+
+    private function wifiPresenceLabel(string $state, ?string $connectionType, ?string $ssid): string
+    {
+        if ($state === 'green') {
+            return 'شبكة مسموحة';
+        }
+
+        if ($connectionType === 'mobile') {
+            return 'بيانات الهاتف';
+        }
+
+        if ($connectionType === 'wifi' && ($ssid === null || trim($ssid) === '')) {
+            return 'واي فاي بدون اسم';
+        }
+
+        return $state === 'orange' ? 'شبكة أخرى' : 'بدون إنترنت';
+    }
+
+    private function wifiPresenceDisplayName(?string $ssid, string $state, ?string $connectionType, bool $networkConnected): string
+    {
+        if ($ssid !== null && trim($ssid) !== '') {
+            return $ssid;
+        }
+
+        if ($connectionType === 'mobile') {
+            return 'بيانات الهاتف';
+        }
+
+        if ($networkConnected && $connectionType === 'wifi') {
+            return 'واي فاي بدون اسم';
+        }
+
+        return $state === 'red' ? 'بدون إنترنت' : 'اتصال بدون اسم';
     }
 
     private function wifiPresenceState(bool $allowedWifi, bool $networkConnected): string
@@ -672,6 +729,7 @@ class EmployeeDetails extends Controller
         ?string $ssid,
         bool $allowedWifi,
         bool $networkConnected,
+        string $connectionType,
         Carbon $reportedAt
     ): void {
         if (! Schema::hasTable('employee_wifi_presence_logs')) {
@@ -679,6 +737,7 @@ class EmployeeDetails extends Controller
         }
 
         $state = $this->wifiPresenceState($allowedWifi, $networkConnected);
+        $hasConnectionTypeColumn = Schema::hasColumn('employee_wifi_presence_logs', 'connection_type');
         $timeout = max(30, (int) config('employee_wifi.presence_timeout_seconds', 120));
         $open = EmployeeWifiPresenceLog::query()
             ->where('employee_detail_id', $employee->id)
@@ -694,6 +753,7 @@ class EmployeeDetails extends Controller
             && (string) ($open->ssid ?? '') === (string) ($ssid ?? '')
             && (bool) $open->wifi_connected === $allowedWifi
             && (bool) $open->network_connected === $networkConnected
+            && (! $hasConnectionTypeColumn || (string) ($open->connection_type ?? '') === $connectionType)
             && $open->state === $state;
 
         if ($sameSession) {
@@ -714,7 +774,7 @@ class EmployeeDetails extends Controller
             ]);
         }
 
-        EmployeeWifiPresenceLog::create([
+        $createData = [
             'employee_detail_id' => $employee->id,
             'user_id' => $employee->user_id,
             'ssid' => $ssid,
@@ -724,7 +784,12 @@ class EmployeeDetails extends Controller
             'started_at' => $reportedAt,
             'last_seen_at' => $reportedAt,
             'duration_seconds' => 0,
-        ]);
+        ];
+        if ($hasConnectionTypeColumn) {
+            $createData['connection_type'] = $connectionType;
+        }
+
+        EmployeeWifiPresenceLog::create($createData);
     }
 
     public function updateWifiPresence(Request $request)
@@ -734,6 +799,7 @@ class EmployeeDetails extends Controller
                 'ssid' => ['nullable', 'string', 'max:255'],
                 'connected' => ['required', 'boolean'],
                 'network_connected' => ['nullable', 'boolean'],
+                'connection_type' => ['nullable', Rule::in(['wifi', 'mobile', 'none', 'unknown'])],
             ]);
 
             $user = $request->user();
@@ -750,6 +816,11 @@ class EmployeeDetails extends Controller
             $matchesAllowed = $ssid !== null
                 && in_array(strtolower($ssid), $allowed, true);
             $networkConnected = (bool) ($data['network_connected'] ?? $data['connected']);
+            $connectionType = $this->normalizeWifiConnectionType(
+                $data['connection_type'] ?? null,
+                $ssid,
+                $networkConnected
+            );
             $allowedWifi = (bool) $data['connected'] && $matchesAllowed;
             $reportedAt = Carbon::now();
 
@@ -761,9 +832,12 @@ class EmployeeDetails extends Controller
             if (Schema::hasColumn('employee_details', 'network_connected')) {
                 $updates['network_connected'] = $networkConnected;
             }
+            if (Schema::hasColumn('employee_details', 'wifi_connection_type')) {
+                $updates['wifi_connection_type'] = $connectionType;
+            }
 
             $employee->update($updates);
-            $this->syncWifiPresenceLog($employee, $ssid, $allowedWifi, $networkConnected, $reportedAt);
+            $this->syncWifiPresenceLog($employee, $ssid, $allowedWifi, $networkConnected, $connectionType, $reportedAt);
 
             $employee->refresh();
 
@@ -825,7 +899,15 @@ class EmployeeDetails extends Controller
                     'ssid' => $log->ssid,
                     'wifi_connected' => (bool) $log->wifi_connected,
                     'network_connected' => (bool) $log->network_connected,
+                    'connection_type' => $log->connection_type,
                     'state' => $log->state,
+                    'display_name' => $this->wifiPresenceDisplayName(
+                        $log->ssid,
+                        $log->state,
+                        $log->connection_type,
+                        (bool) $log->network_connected
+                    ),
+                    'label' => $this->wifiPresenceLabel($log->state, $log->connection_type, $log->ssid),
                     'started_at' => $log->started_at?->toIso8601String(),
                     'ended_at' => $log->ended_at?->toIso8601String(),
                     'last_seen_at' => $log->last_seen_at?->toIso8601String(),
@@ -833,9 +915,18 @@ class EmployeeDetails extends Controller
                 ];
             });
 
+            $current = $this->employeesList()->getData(true)['employees'] ?? [];
+            if (! empty($data['employee_id'])) {
+                $employeeId = (int) $data['employee_id'];
+                $current = collect($current)
+                    ->filter(fn ($employee) => (int) ($employee['id'] ?? 0) === $employeeId)
+                    ->values()
+                    ->all();
+            }
+
             return response()->json([
                 'status' => 'success',
-                'current' => $this->employeesList()->getData(true)['employees'] ?? [],
+                'current' => $current,
                 'logs' => $logs,
             ], 200);
         } catch (ValidationException $e) {
@@ -857,6 +948,9 @@ class EmployeeDetails extends Controller
             }
             if (Schema::hasColumn('employee_details', 'network_connected')) {
                 $select[] = 'network_connected';
+            }
+            if (Schema::hasColumn('employee_details', 'wifi_connection_type')) {
+                $select[] = 'wifi_connection_type';
             }
             if (Schema::hasColumn('employee_details', 'wifi_status_updated_at')) {
                 $select[] = 'wifi_status_updated_at';

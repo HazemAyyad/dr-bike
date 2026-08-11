@@ -17,6 +17,7 @@ class EmployeeWifiPresenceLog extends Model
         'ssid',
         'wifi_connected',
         'network_connected',
+        'connection_type',
         'state',
         'started_at',
         'ended_at',
