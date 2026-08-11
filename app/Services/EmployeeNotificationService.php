@@ -45,6 +45,10 @@ class EmployeeNotificationService
 
     public const TYPE_EMPLOYEE_LOAN_REJECTED = 'employee_loan_rejected';
 
+    public const TYPE_EMPLOYEE_LOAN_CANCELLED = 'employee_loan_cancelled';
+
+    public const TYPE_EMPLOYEE_LOAN_UPDATED = 'employee_loan_updated';
+
     public const TYPE_NOTE_SHARED = 'note_shared';
 
     public const TYPE_NOTE_REMINDER = 'note_reminder';
@@ -184,6 +188,69 @@ class EmployeeNotificationService
                     'loan_value' => $amount,
                     'status' => 'rejected',
                     'rejection_reason' => $reasonLabel,
+                    'reviewed_at' => now()->toIso8601String(),
+                ],
+                'employee_order',
+                (int) $order->id,
+                true
+            );
+        });
+    }
+
+    public function notifyLoanCancelled(EmployeeOrder $order, ?string $reason = null): ?EmployeeNotification
+    {
+        return $this->withArabicLocale(function () use ($order, $reason) {
+            $order->loadMissing('employee.user');
+            $employee = $order->employee;
+            if (! $employee) {
+                return null;
+            }
+
+            $amount = number_format((float) ($order->loan_value ?? 0), 2, '.', '');
+            $reason = trim((string) ($reason ?? $order->cancellation_reason ?? ''));
+            $reasonLabel = $reason !== '' ? $reason : 'لم يتم توضيح السبب';
+
+            return $this->create(
+                $employee,
+                self::TYPE_EMPLOYEE_LOAN_CANCELLED,
+                'تم إلغاء السلفة',
+                "تم إلغاء السلفة بقيمة {$amount}. السبب: {$reasonLabel}",
+                [
+                    'employee_order_id' => (string) $order->id,
+                    'loan_value' => $amount,
+                    'status' => 'cancelled',
+                    'cancellation_reason' => $reasonLabel,
+                    'reviewed_at' => now()->toIso8601String(),
+                ],
+                'employee_order',
+                (int) $order->id,
+                true
+            );
+        });
+    }
+
+    public function notifyLoanUpdated(EmployeeOrder $order, float $oldAmount, float $newAmount): ?EmployeeNotification
+    {
+        return $this->withArabicLocale(function () use ($order, $oldAmount, $newAmount) {
+            $order->loadMissing('employee.user');
+            $employee = $order->employee;
+            if (! $employee) {
+                return null;
+            }
+
+            $old = number_format($oldAmount, 2, '.', '');
+            $new = number_format($newAmount, 2, '.', '');
+
+            return $this->create(
+                $employee,
+                self::TYPE_EMPLOYEE_LOAN_UPDATED,
+                'تم تعديل السلفة',
+                "تم تعديل السلفة من {$old} إلى {$new}",
+                [
+                    'employee_order_id' => (string) $order->id,
+                    'old_loan_value' => $old,
+                    'loan_value' => $new,
+                    'status' => 'approved',
                     'reviewed_at' => now()->toIso8601String(),
                 ],
                 'employee_order',

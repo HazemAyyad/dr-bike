@@ -50,6 +50,12 @@ class EmployeeOrders extends Controller
                     'rejection_reason' => $order->rejection_reason,
                     'approved_box_id' => $order->approved_box_id ? (int) $order->approved_box_id : null,
                     'box_log_id' => $order->box_log_id ? (int) $order->box_log_id : null,
+                    'cancellation_reason' => $order->cancellation_reason,
+                    'cancelled_at' => $order->cancelled_at?->format('Y-m-d h:i A'),
+                    'previous_loan_value' => $order->previous_loan_value,
+                    'edited_after_approval_at' => $order->edited_after_approval_at?->format('Y-m-d h:i A'),
+                    'can_edit' => $order->type === 'loan' && $order->status === 'approved',
+                    'can_cancel' => $order->type === 'loan' && $order->status === 'approved',
                     'day' => $created->format('l'),
                     'date' => $created->toDateString(),
                     'time' => $created->format('h:i A'),
@@ -118,6 +124,12 @@ class EmployeeOrders extends Controller
                         : $order->updated_at?->format('Y-m-d h:i A'),
                     'rejection_reason' => $order->rejection_reason,
                     'approved_box_id' => $order->approved_box_id ? (int) $order->approved_box_id : null,
+                    'cancellation_reason' => $order->cancellation_reason,
+                    'cancelled_at' => $order->cancelled_at?->format('Y-m-d h:i A'),
+                    'previous_loan_value' => $order->previous_loan_value,
+                    'edited_after_approval_at' => $order->edited_after_approval_at?->format('Y-m-d h:i A'),
+                    'can_edit' => $order->type === 'loan' && $order->status === 'approved',
+                    'can_cancel' => $order->type === 'loan' && $order->status === 'approved',
 
                 ];
           
@@ -485,6 +497,235 @@ class EmployeeOrders extends Controller
                     'amount' => $amount,
                     'approved_box_id' => $box ? (int) $box->id : null,
                     'box_log_id' => $boxLog ? (int) $boxLog->id : null,
+                ],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function cancelApprovedAdvance(Request $request)
+    {
+        try {
+            $request->validate([
+                'employee_order_id' => 'required|exists:employee_orders,id',
+                'cancellation_reason' => 'nullable|string|max:1000',
+            ]);
+
+            $reason = trim((string) $request->input('cancellation_reason', ''));
+            $order = EmployeeOrder::with('employee.user')->findOrFail($request->employee_order_id);
+            if ($order->type !== 'loan' || $order->status !== 'approved') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'يمكن إلغاء السلفة المقبولة فقط',
+                ], 200);
+            }
+
+            $amount = (float) ($order->loan_value ?? 0);
+            DB::transaction(function () use ($request, $order, $amount, $reason) {
+                $employee = $order->employee()->lockForUpdate()->firstOrFail();
+                $employee->debts = max(0, (float) ($employee->debts ?? 0) - $amount);
+                $employee->save();
+
+                if ($order->approved_box_id) {
+                    $box = Box::lockForUpdate()->find($order->approved_box_id);
+                    if ($box) {
+                        $box->total = (float) ($box->total ?? 0) + $amount;
+                        $box->save();
+
+                        BoxLog::create([
+                            'box_id' => $box->id,
+                            'value' => $amount,
+                            'type' => 'income',
+                            'description' => 'إلغاء سلفة موظف',
+                            'note' => 'إرجاع مبلغ سلفة ملغاة للموظف '.$employee->user?->name.' بقيمة '.number_format($amount, 2, '.', ''),
+                        ]);
+                    }
+                }
+
+                $order->update([
+                    'status' => 'cancelled',
+                    'cancelled_by' => $request->user()?->id,
+                    'cancelled_at' => now(),
+                    'cancellation_reason' => $reason !== '' ? $reason : null,
+                ]);
+            });
+
+            $freshOrder = $order->fresh('employee.user');
+
+            try {
+                app(EmployeeNotificationService::class)->notifyLoanCancelled($freshOrder, $reason);
+            } catch (\Throwable $e) {
+                Log::error('Employee notification (loan cancelled) failed: '.$e->getMessage(), [
+                    'employee_order_id' => $order->id,
+                ]);
+            }
+
+            app(EmployeeActivityLogger::class)->log(
+                (int) $freshOrder->employee_id,
+                $request->user(),
+                'advances',
+                'employee_advance_cancelled',
+                'إلغاء سلفة',
+                'تم إلغاء سلفة بقيمة '.number_format($amount, 2, '.', ''),
+                $freshOrder,
+                -$amount,
+                [
+                    'order_id' => (int) $freshOrder->id,
+                    'amount' => $amount,
+                    'reason' => $reason !== '' ? $reason : null,
+                    'approved_box_id' => $freshOrder->approved_box_id ? (int) $freshOrder->approved_box_id : null,
+                ]
+            );
+
+            Logs::createLog(
+                'إلغاء سلفة موظف',
+                'تم إلغاء سلفة للموظف '.$freshOrder->employee?->user?->name.' بقيمة '.$amount,
+                'employees'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.status_upated'),
+                'advance' => [
+                    'id' => (int) $freshOrder->id,
+                    'status' => $freshOrder->status,
+                    'amount' => (float) ($freshOrder->loan_value ?? 0),
+                    'cancellation_reason' => $freshOrder->cancellation_reason,
+                    'cancelled_at' => $freshOrder->cancelled_at?->toIso8601String(),
+                ],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function updateApprovedAdvance(Request $request)
+    {
+        try {
+            $request->validate([
+                'employee_order_id' => 'required|exists:employee_orders,id',
+                'loan_value' => 'required|numeric|min:1',
+                'order' => 'nullable|string|max:500',
+            ]);
+
+            $order = EmployeeOrder::with('employee.user')->findOrFail($request->employee_order_id);
+            if ($order->type !== 'loan' || $order->status !== 'approved') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'يمكن تعديل السلفة المقبولة فقط',
+                ], 200);
+            }
+
+            $oldAmount = (float) ($order->loan_value ?? 0);
+            $newAmount = (float) $request->loan_value;
+            $difference = $newAmount - $oldAmount;
+
+            DB::transaction(function () use ($request, $order, $oldAmount, $newAmount, $difference) {
+                $employee = $order->employee()->lockForUpdate()->firstOrFail();
+
+                if ($order->approved_box_id && abs($difference) > 0.0001) {
+                    $box = Box::lockForUpdate()->find($order->approved_box_id);
+                    if ($box) {
+                        if ($difference > 0 && (float) ($box->total ?? 0) < $difference) {
+                            throw new \InvalidArgumentException(__('messages.box_out_of_money'));
+                        }
+
+                        $box->total = (float) ($box->total ?? 0) - $difference;
+                        $box->save();
+
+                        BoxLog::create([
+                            'box_id' => $box->id,
+                            'value' => -$difference,
+                            'type' => $difference > 0 ? 'payment' : 'income',
+                            'description' => 'تعديل سلفة موظف',
+                            'note' => 'تعديل سلفة الموظف '.$employee->user?->name.' من '.number_format($oldAmount, 2, '.', '').' إلى '.number_format($newAmount, 2, '.', ''),
+                        ]);
+                    }
+                }
+
+                $employee->debts = max(0, (float) ($employee->debts ?? 0) + $difference);
+                $employee->save();
+
+                $payload = [
+                    'loan_value' => $newAmount,
+                    'previous_loan_value' => $oldAmount,
+                    'edited_after_approval_by' => $request->user()?->id,
+                    'edited_after_approval_at' => now(),
+                ];
+                if ($request->filled('order')) {
+                    $payload['order'] = $request->order;
+                }
+
+                $order->update($payload);
+            });
+
+            $freshOrder = $order->fresh('employee.user');
+
+            try {
+                app(EmployeeNotificationService::class)->notifyLoanUpdated($freshOrder, $oldAmount, $newAmount);
+            } catch (\Throwable $e) {
+                Log::error('Employee notification (loan updated) failed: '.$e->getMessage(), [
+                    'employee_order_id' => $order->id,
+                ]);
+            }
+
+            app(EmployeeActivityLogger::class)->log(
+                (int) $freshOrder->employee_id,
+                $request->user(),
+                'advances',
+                'employee_advance_updated_after_approval',
+                'تعديل سلفة بعد الموافقة',
+                'تم تعديل السلفة من '.number_format($oldAmount, 2, '.', '').' إلى '.number_format($newAmount, 2, '.', ''),
+                $freshOrder,
+                $difference,
+                [
+                    'order_id' => (int) $freshOrder->id,
+                    'old_amount' => $oldAmount,
+                    'new_amount' => $newAmount,
+                    'difference' => $difference,
+                    'approved_box_id' => $freshOrder->approved_box_id ? (int) $freshOrder->approved_box_id : null,
+                ]
+            );
+
+            Logs::createLog(
+                'تعديل سلفة موظف',
+                'تم تعديل سلفة للموظف '.$freshOrder->employee?->user?->name.' من '.$oldAmount.' إلى '.$newAmount,
+                'employees'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.status_upated'),
+                'advance' => [
+                    'id' => (int) $freshOrder->id,
+                    'status' => $freshOrder->status,
+                    'amount' => (float) ($freshOrder->loan_value ?? 0),
+                    'previous_loan_value' => (float) ($freshOrder->previous_loan_value ?? 0),
+                    'edited_after_approval_at' => $freshOrder->edited_after_approval_at?->toIso8601String(),
                 ],
             ], 200);
         } catch (ValidationException $e) {

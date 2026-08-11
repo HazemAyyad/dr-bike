@@ -528,6 +528,28 @@ class OutgoingChecks extends Controller
         try{
 
             $data = OutgoingCheck::generalChecksData();
+            $user = request()->user();
+            $canViewAll = $user?->type === 'admin' || $this->userHasPermission($user, 'Checks');
+            $canViewIncoming = $canViewAll || $this->userHasPermission($user, 'Checks Incoming View');
+            $canViewOutgoing = $canViewAll || $this->userHasPermission($user, 'Checks Outgoing View');
+
+            if (! $canViewIncoming) {
+                $data['not_cashed_incoming_checks_count'] = 0;
+                $data['cashed_incoming_checks_count'] = 0;
+                $data['cashed_to_box_incoming_checks_count'] = 0;
+                $data['total_incoming_checks_dollar'] = 0;
+                $data['total_incoming_checks_dinar'] = 0;
+                $data['total_incoming_checks_shekel'] = 0;
+            }
+
+            if (! $canViewOutgoing) {
+                $data['not_cashed_outgoing_checks_count'] = 0;
+                $data['cashed_outgoing_checks_count'] = 0;
+                $data['total_outgoing_checks_dollar'] = 0;
+                $data['total_outgoing_checks_dinar'] = 0;
+                $data['total_outgoing_checks_shekel'] = 0;
+            }
+
             return response()->json([
                 'status'=>'success',
                 'data' => $data,
@@ -547,6 +569,17 @@ class OutgoingChecks extends Controller
         ], 200);
 
     }
+    }
+
+    private function userHasPermission($user, string $permission): bool
+    {
+        if (! $user || $user->type !== 'employee') {
+            return false;
+        }
+
+        return $user->employee?->permissions()
+            ->whereHas('permission', fn ($q) => $q->where('name_en', $permission))
+            ->exists() ?? false;
     }
 
    public function editCheck(Request $request){

@@ -20,6 +20,18 @@ class EmployeeOrder extends Model
         'rejection_reason',
         'approved_box_id',
         'box_log_id',
+        'cancelled_by',
+        'cancelled_at',
+        'cancellation_reason',
+        'edited_after_approval_by',
+        'edited_after_approval_at',
+        'previous_loan_value',
+    ];
+
+    protected $casts = [
+        'cancelled_at' => 'datetime',
+        'edited_after_approval_at' => 'datetime',
+        'previous_loan_value' => 'float',
     ];
 
     public function employee(){
