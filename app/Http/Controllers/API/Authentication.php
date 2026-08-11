@@ -323,6 +323,14 @@ class Authentication extends Controller
             }
 
             $user = $request->user();
+            $tokenName = (string) ($user?->currentAccessToken()?->name ?? '');
+            if (str_starts_with($tokenName, 'impersonation-')) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'skipped_impersonation',
+                ], 200);
+            }
+
             $user->forceFill(['fcm_token' => $fcm])->save();
 
             if ($user->type === 'admin') {
