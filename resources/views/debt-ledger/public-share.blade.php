@@ -135,6 +135,45 @@
             color: var(--muted);
             text-align: center;
         }
+        .source-row td {
+            padding: 0;
+            background: #fff;
+            white-space: normal;
+        }
+        .source-box {
+            margin: 10px;
+            padding: 12px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #fbfdff;
+        }
+        .source-title {
+            margin-bottom: 8px;
+            color: #334155;
+            font-weight: 700;
+        }
+        .source-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 18px;
+            margin-bottom: 10px;
+            color: #475569;
+            font-size: 12px;
+        }
+        .items-table {
+            min-width: 620px;
+            font-size: 12px;
+        }
+        .items-table th {
+            background: #e8ecff;
+            color: #334155;
+        }
+        .product-img {
+            width: 44px;
+            height: 44px;
+            object-fit: cover;
+            border-radius: 5px;
+        }
         @media (max-width: 640px) {
             body { padding: 0; }
             .report {
@@ -163,6 +202,10 @@
     </style>
 </head>
 <body>
+    @php
+        $showSourceDetails = ($detail_level ?? 'summary') !== 'summary';
+        $showProductImages = ($detail_level ?? 'summary') === 'detailed_with_images';
+    @endphp
     <main class="report">
         <header class="header">
             <h1>دكتور بايك - دفتر الديون</h1>
@@ -234,6 +277,61 @@
                                     {{ number_format($transaction->balance_after, 2) }} ₪
                                 </td>
                             </tr>
+                            @php
+                                $sourceDetail = $source_details[$transaction->id] ?? null;
+                            @endphp
+                            @if($showSourceDetails && $sourceDetail)
+                                <tr class="source-row">
+                                    <td colspan="7">
+                                        <div class="source-box">
+                                            <div class="source-title">{{ $sourceDetail['title'] }}</div>
+                                            @if(!empty($sourceDetail['meta']))
+                                                <div class="source-meta">
+                                                    @foreach($sourceDetail['meta'] as $label => $value)
+                                                        <span><strong>{{ $label }}:</strong> {{ is_numeric($value) ? number_format((float) $value, 2) : $value }}</span>
+                                                    @endforeach
+                                                </div>
+                                            @endif
+                                            @if(!empty($sourceDetail['items']))
+                                                <div class="table-wrap">
+                                                    <table class="items-table">
+                                                        <thead>
+                                                            <tr>
+                                                                @if($showProductImages)
+                                                                    <th>الصورة</th>
+                                                                @endif
+                                                                <th>المنتج</th>
+                                                                <th class="num">الكمية</th>
+                                                                <th class="num">السعر</th>
+                                                                <th class="num">المجموع</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            @foreach($sourceDetail['items'] as $item)
+                                                                <tr>
+                                                                    @if($showProductImages)
+                                                                        <td class="num">
+                                                                            @if(!empty($item['image_url']))
+                                                                                <img class="product-img" src="{{ $item['image_url'] }}" alt="">
+                                                                            @else
+                                                                                —
+                                                                            @endif
+                                                                        </td>
+                                                                    @endif
+                                                                    <td>{{ $item['name'] }}</td>
+                                                                    <td class="num">{{ number_format($item['quantity'], 0) }}</td>
+                                                                    <td class="num">{{ number_format($item['unit_price'], 2) }} ₪</td>
+                                                                    <td class="num">{{ number_format($item['line_total'], 2) }} ₪</td>
+                                                                </tr>
+                                                            @endforeach
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            @endif
+                                        </div>
+                                    </td>
+                                </tr>
+                            @endif
                         @endforeach
                     </tbody>
                 </table>
