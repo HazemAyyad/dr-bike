@@ -15,6 +15,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class EmployeeOrders extends Controller
@@ -28,6 +29,7 @@ class EmployeeOrders extends Controller
 
             $month = Carbon::createFromFormat('Y-m', $request->month)->startOfMonth();
             $orders = EmployeeOrder::query()
+                ->with('approvedBox:id,name')
                 ->where('employee_id', $employee->id)
                 ->where('type', 'loan')
                 ->whereBetween('created_at', [$month->copy()->startOfMonth(), $month->copy()->endOfMonth()])
@@ -49,6 +51,7 @@ class EmployeeOrders extends Controller
                         : $order->updated_at?->format('Y-m-d h:i A'),
                     'rejection_reason' => $order->rejection_reason,
                     'approved_box_id' => $order->approved_box_id ? (int) $order->approved_box_id : null,
+                    'approved_box_name' => $order->approvedBox?->name,
                     'box_log_id' => $order->box_log_id ? (int) $order->box_log_id : null,
                     'cancellation_reason' => $order->cancellation_reason,
                     'cancelled_at' => $order->cancelled_at?->format('Y-m-d h:i A'),
@@ -105,6 +108,7 @@ class EmployeeOrders extends Controller
     private function getOrdersByType(String $type){
         try{
             $orders = EmployeeOrder::with('employee.user')
+                ->with('approvedBox:id,name')
                 ->where('type',$type)
                 ->latest()
                 ->get();
@@ -124,6 +128,7 @@ class EmployeeOrders extends Controller
                         : $order->updated_at?->format('Y-m-d h:i A'),
                     'rejection_reason' => $order->rejection_reason,
                     'approved_box_id' => $order->approved_box_id ? (int) $order->approved_box_id : null,
+                    'approved_box_name' => $order->approvedBox?->name,
                     'cancellation_reason' => $order->cancellation_reason,
                     'cancelled_at' => $order->cancelled_at?->format('Y-m-d h:i A'),
                     'previous_loan_value' => $order->previous_loan_value,
@@ -557,12 +562,20 @@ class EmployeeOrders extends Controller
                     }
                 }
 
-                $order->update([
+                $payload = [
                     'status' => 'cancelled',
-                    'cancelled_by' => $request->user()?->id,
-                    'cancelled_at' => now(),
-                    'cancellation_reason' => $reason !== '' ? $reason : null,
-                ]);
+                ];
+                if (Schema::hasColumn('employee_orders', 'cancelled_by')) {
+                    $payload['cancelled_by'] = $request->user()?->id;
+                }
+                if (Schema::hasColumn('employee_orders', 'cancelled_at')) {
+                    $payload['cancelled_at'] = now();
+                }
+                if (Schema::hasColumn('employee_orders', 'cancellation_reason')) {
+                    $payload['cancellation_reason'] = $reason !== '' ? $reason : null;
+                }
+
+                $order->update($payload);
             });
 
             $freshOrder = $order->fresh('employee.user');
@@ -616,6 +629,9 @@ class EmployeeOrders extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {
+            Log::error('Employee advance cancellation failed: '.$e->getMessage(), [
+                'employee_order_id' => $request->input('employee_order_id'),
+            ]);
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
@@ -672,10 +688,16 @@ class EmployeeOrders extends Controller
 
                 $payload = [
                     'loan_value' => $newAmount,
-                    'previous_loan_value' => $oldAmount,
-                    'edited_after_approval_by' => $request->user()?->id,
-                    'edited_after_approval_at' => now(),
                 ];
+                if (Schema::hasColumn('employee_orders', 'previous_loan_value')) {
+                    $payload['previous_loan_value'] = $oldAmount;
+                }
+                if (Schema::hasColumn('employee_orders', 'edited_after_approval_by')) {
+                    $payload['edited_after_approval_by'] = $request->user()?->id;
+                }
+                if (Schema::hasColumn('employee_orders', 'edited_after_approval_at')) {
+                    $payload['edited_after_approval_at'] = now();
+                }
                 if ($request->filled('order')) {
                     $payload['order'] = $request->order;
                 }
@@ -740,6 +762,9 @@ class EmployeeOrders extends Controller
                 'message' => $e->getMessage(),
             ], 200);
         } catch (\Exception $e) {
+            Log::error('Employee advance update failed: '.$e->getMessage(), [
+                'employee_order_id' => $request->input('employee_order_id'),
+            ]);
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
