@@ -102,6 +102,7 @@
             width: 100%;
             border-collapse: collapse;
             font-size: 12px;
+            direction: rtl;
         }
         table.items th,
         table.items td {
@@ -208,7 +209,7 @@
                                     </div>
                                 @endif
                                 @if(!empty($sourceDetail['items']))
-                                    <table class="items">
+                                    <table class="items" dir="rtl">
                                         <thead>
                                             <tr>
                                                 @if($showProductImages)

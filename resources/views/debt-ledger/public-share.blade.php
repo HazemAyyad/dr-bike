@@ -163,6 +163,7 @@
         .items-table {
             min-width: 620px;
             font-size: 12px;
+            direction: rtl;
         }
         .items-table th {
             background: #e8ecff;
@@ -294,7 +295,7 @@
                                             @endif
                                             @if(!empty($sourceDetail['items']))
                                                 <div class="table-wrap">
-                                                    <table class="items-table">
+                                                    <table class="items-table" dir="rtl">
                                                         <thead>
                                                             <tr>
                                                                 @if($showProductImages)

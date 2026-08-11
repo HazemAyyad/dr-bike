@@ -92,8 +92,6 @@ class DebtLedgerShareWebController extends Controller
             'title' => 'تفاصيل طلبية البيع '.($order->serial_number ?: '#'.$order->id),
             'meta' => array_filter([
                 'رقم الطلبية' => $order->serial_number ?: '#'.$order->id,
-                'اسم الزبون' => $order->customer_name,
-                'الهاتف' => $order->customer_phone,
                 'طريقة الدفع' => $order->payment_type,
                 'الإجمالي' => $order->total,
                 'الخصم' => $order->discount,
@@ -127,8 +125,6 @@ class DebtLedgerShareWebController extends Controller
         return [
             'title' => 'تفاصيل البيع الفوري #'.$sale->id,
             'meta' => array_filter([
-                'اسم المشتري' => $sale->buyer_name,
-                'الهاتف' => $sale->buyer_phone,
                 'الإجمالي' => $sale->total_cost,
                 'المدفوع' => $sale->payment_box_value,
             ], fn ($value) => $value !== null && $value !== ''),
@@ -156,7 +152,6 @@ class DebtLedgerShareWebController extends Controller
         return [
             'title' => 'تفاصيل البيع الربحي #'.$sale->id,
             'meta' => array_filter([
-                'اسم المشتري' => $sale->buyer_name,
                 'الإجمالي' => $sale->total_cost,
                 'المدفوع' => $sale->payment_box_value,
                 'ملاحظات' => $sale->notes,
