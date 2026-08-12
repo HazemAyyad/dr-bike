@@ -507,7 +507,12 @@ public function createSpecialTask(Request $request){
         'description' => ['nullable', 'string'],
         'notes' => ['nullable', 'string'],
         'admin_img' => ['nullable', 'array'],
-        'admin_img.*' => ['required', 'image'],
+        'admin_img.*' => [
+            'required',
+            'file',
+            'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp',
+            'max:102400',
+        ],
 
         'start_date' => ['required', 'date', 'before_or_equal:end_date'],
         'end_date' => ['required', 'date', 'after_or_equal:start_date'],
@@ -527,8 +532,13 @@ public function createSpecialTask(Request $request){
         'sub_special_tasks' => ['nullable', 'array'],
         'sub_special_tasks.*.name' => ['required', 'string', 'max:255'],
         'sub_special_tasks.*.description' => ['nullable', 'string'],
-        'sub_special_tasks.*.admin_subtask_img' => ['nullable', 'array'],
-        'sub_special_tasks.*.admin_subtask_img.*' => ['required', 'image'],
+        'sub_special_tasks.*.admin_subtask__img' => ['nullable', 'array'],
+        'sub_special_tasks.*.admin_subtask__img.*' => [
+            'required',
+            'file',
+            'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp,m4a,aac,mp3,wav',
+            'max:102400',
+        ],
 
         'sub_special_tasks.*.force_employee_to_add_img_for_sub_task' => ['required','in:1,0'],
 
@@ -1014,14 +1024,24 @@ public function updateTask(Request $request)
                 //'required_unless:task_recurrence,noRepeat',
             ],
             'admin_img' => ['nullable', 'array'],
-            'admin_img.*' => ['nullable'],
+            'admin_img.*' => [
+                'nullable',
+                'file',
+                'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp',
+                'max:102400',
+            ],
 
             'sub_special_tasks' => ['nullable', 'array'],
             'sub_special_tasks.*.id' => ['nullable', 'exists:sub_tasks,id'],
             'sub_special_tasks.*.name' => ['nullable', 'string', 'max:255'],
             'sub_special_tasks.*.description' => ['nullable', 'string'],
             'sub_special_tasks.*.admin_subtask_img' => ['nullable', 'array'],
-            'sub_special_tasks.*.admin_subtask_img.*' => ['required', 'image'],
+            'sub_special_tasks.*.admin_subtask_img.*' => [
+                'required',
+                'file',
+                'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp,m4a,aac,mp3,wav',
+                'max:102400',
+            ],
  
             'audio' => 'nullable',
 

@@ -297,6 +297,14 @@ class EmployeeTaskOperationsController extends Controller
                 'sub_employee_tasks.*.proof_media_type' => 'nullable|string|in:none,image,video,both',
                 'sub_employee_tasks.*.bonus_points' => 'nullable|integer|min:0',
                 'sub_employee_tasks.*.sort_order' => 'nullable|integer|min:0',
+                'admin_img' => 'nullable|array',
+                'admin_img.*' => [
+                    'nullable',
+                    'file',
+                    'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp',
+                    'max:102400',
+                ],
+                'audio' => 'nullable',
                 'reminder_before_minutes' => 'nullable|integer|min:0|max:10080',
                 'reminder_channel' => 'nullable|string|in:push,email',
                 'reminder_when' => 'nullable|string|in:none,at_time,before_10m,before_1h,before_1d',
@@ -333,6 +341,13 @@ class EmployeeTaskOperationsController extends Controller
             $data['employee_id'] = $assigneeIds[0] ?? (int) $data['employee_id'];
             $proofRequired = $request->boolean('is_forced_to_upload_img');
             $proofMediaType = $this->proofMediaTypeFromInput($request, 'proof_media_type', $proofRequired);
+            $adminImg = EmployeeTasks::mediaHelper($request, 'AdminEmployeeTasksImages');
+            $audio = null;
+            if ($request->hasFile('audio')) {
+                $file = $request->file('audio');
+                $audio = $file->getClientOriginalName();
+                $file->move(public_path('employeeTasksAudio'), $audio);
+            }
 
             $template = EmployeeTaskTemplate::create([
                 'employee_id' => $data['employee_id'],
@@ -347,6 +362,8 @@ class EmployeeTaskOperationsController extends Controller
                 'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
                 'recurrence_type' => $data['task_recurrence'],
                 'recurrence_config' => $recurrenceConfig,
+                'admin_img' => $adminImg,
+                'audio' => $audio,
                 'created_by' => auth()->id(),
             ]);
 
@@ -395,6 +412,8 @@ class EmployeeTaskOperationsController extends Controller
                     'requires_admin_review' => $request->boolean('requires_admin_review', true),
                     'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
                     'template_id' => $template->id,
+                    'admin_img' => $adminImg,
+                    'audio' => $audio,
                 ]);
                 $assigneeService->syncForTask($legacyAnchor, $assigneeIds);
             }
@@ -463,7 +482,12 @@ class EmployeeTaskOperationsController extends Controller
                 'sub_employee_tasks.*.is_forced_to_upload_img' => 'nullable|in:0,1,true,false',
                 'sub_employee_tasks.*.proof_media_type' => 'nullable|string|in:none,image,video,both',
                 'admin_img' => 'nullable|array',
-                'admin_img.*' => 'nullable',
+                'admin_img.*' => [
+                    'nullable',
+                    'file',
+                    'mimes:jpg,jpeg,png,gif,webp,bmp,mp4,mov,avi,webm,mkv,m4v,3gp',
+                    'max:102400',
+                ],
                 'audio' => 'nullable',
                 'reminder_before_minutes' => 'nullable|integer|min:0|max:10080',
                 'reminder_channel' => 'nullable|string|in:push,email',
