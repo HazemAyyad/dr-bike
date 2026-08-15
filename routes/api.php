@@ -633,6 +633,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Follow-up Section'
     Route::get('/get/inform/person/followups' , [FollowupAPI::class,'getSecondStepFollowups']);
     Route::get('/get/finish/and/agreement/followups' , [FollowupAPI::class,'getThirdStepFollowups']);
     Route::get('/get/archived/followups' , [FollowupAPI::class,'getArchivedFollowups']);
+    Route::get('/get/delivered/followups' , [FollowupAPI::class,'getDeliveredFollowups']);
+    Route::get('/get/deleted/followups' , [FollowupAPI::class,'getDeletedFollowups']);
 
     Route::get('/canceled/followup' , [FollowupAPI::class,'getCanceledFollowups']);
    
@@ -656,6 +658,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::get('/get/ongoing/maintenances' , [MaintenanceAPI::class,'getPendingMaintenances']);
     Route::get('/get/ready/maintenances' , [MaintenanceAPI::class,'getReadyMaintenances']);
     Route::get('/get/delivered/maintenances' , [MaintenanceAPI::class,'getDoneMaintenances']);
+    Route::get('/get/archived/maintenances' , [MaintenanceAPI::class,'getArchivedMaintenances']);
     Route::post('/change/maintenance/to/ongoing' , [MaintenanceAPI::class,'changeToPending']);
     Route::post('/change/maintenance/to/ready' , [MaintenanceAPI::class,'changeToReady']);
     Route::post('/change/maintenance/to/delivered' , [MaintenanceAPI::class,'changeToDone']);

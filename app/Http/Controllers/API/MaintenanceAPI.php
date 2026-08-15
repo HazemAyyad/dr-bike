@@ -15,7 +15,6 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\File;
 use Illuminate\Validation\ValidationException;
 
 class MaintenanceAPI extends Controller
@@ -44,10 +43,15 @@ class MaintenanceAPI extends Controller
     }
 
     // get all maintenance details
-    private function maintenances($status){
+    private function maintenances($status, bool $onlyTrashed = false){
 
       try{
-        $maintenances = Maintenance::where('status',$status)
+        $query = Maintenance::query();
+        if ($onlyTrashed) {
+            $query->onlyTrashed();
+        }
+
+        $maintenances = $query->where('status',$status)
         ->with('customer:id,name,phone')
         ->with('seller:id,name,phone')
         ->withSum('products as parts_total', 'line_total')
@@ -132,6 +136,68 @@ class MaintenanceAPI extends Controller
 
     public function getDoneMaintenances(){
         return $this->maintenances('delivered');
+    }
+
+    public function getArchivedMaintenances()
+    {
+        try {
+            $maintenances = Maintenance::onlyTrashed()
+                ->with('customer:id,name,phone')
+                ->with('seller:id,name,phone')
+                ->withSum('products as parts_total', 'line_total')
+                ->get();
+
+            $formatted = $maintenances->map(function ($maintenance) {
+                $imagePath = null;
+
+                if (is_array($maintenance->files) && count($maintenance->files) > 0) {
+                    foreach ($maintenance->files as $file) {
+                        $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+
+                        if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'tiff', 'webp', 'avif', 'svg+xml'])) {
+                            $imagePath = 'public/MaintenanceFiles/' . $file;
+                            break;
+                        }
+                    }
+                }
+
+                return [
+                    'id' => $maintenance->id,
+                    'customer_name' => $maintenance->customer_id ? $maintenance->customer->name : null,
+                    'seller_name' => $maintenance->seller_id ? $maintenance->seller->name : null,
+                    'contact_phone' => $this->resolveContactPhone($maintenance),
+                    'customer_id' => $maintenance->customer_id,
+                    'seller_id' => $maintenance->seller_id,
+                    'receipt_date' => $maintenance->receipt_date ?? null,
+                    'receipt_time' => $maintenance->receipt_time ?? null,
+                    'created_at' => $maintenance->created_at->format('Y-m-d'),
+                    'deleted_at' => optional($maintenance->deleted_at)->format('Y-m-d H:i:s'),
+                    'status' => $maintenance->status ?? 'unknown',
+                    'parts_total' => round((float) ($maintenance->parts_total ?? 0), 2),
+                    'labor_cost' => round((float) ($maintenance->labor_cost ?? 0), 2),
+                    'invoice_total' => round((float) ($maintenance->invoice_total ?? 0), 2),
+                    'paid_amount' => round((float) ($maintenance->paid_amount ?? 0), 2),
+                    'remaining_amount' => max(0, round((float) ($maintenance->invoice_total ?? 0) - (float) ($maintenance->paid_amount ?? 0), 2)),
+                    'instant_sale_id' => $maintenance->instant_sale_id,
+                    'media_files' => $imagePath ?? 'no image files',
+                ];
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'maintenance_details' => $formatted,
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_load_maintenances'),
+            ], 200);
+        }
     }
 
     private function fileStorage(Request $request){
@@ -350,19 +416,10 @@ class MaintenanceAPI extends Controller
             $logDescription = $maintenance->customer_id
                 ? 'تم حذف طلب الصيانة للزبون '.$name
                 : 'تم حذف طلب الصيانة للتاجر '.$name;
-            $files = is_array($maintenance->files) ? $maintenance->files : [];
-
             DB::transaction(function () use ($maintenance, $logDescription) {
                 Logs::createLog('حذف طلب صيانة', $logDescription, 'maintenances');
                 $maintenance->delete();
             });
-
-            foreach ($files as $file) {
-                $path = public_path('MaintenanceFiles/'.basename((string) $file));
-                if (File::exists($path)) {
-                    File::delete($path);
-                }
-            }
 
             return response()->json([
                 'status' => 'success',
