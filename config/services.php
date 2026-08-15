@@ -47,6 +47,7 @@ return [
         'access_secret' => env('TUYA_ACCESS_SECRET'),
         'project_id' => env('TUYA_PROJECT_ID'),
         'region' => env('TUYA_REGION', 'central_europe'),
+        'country_code' => env('TUYA_COUNTRY_CODE', '970'),
     ],
 
 ];

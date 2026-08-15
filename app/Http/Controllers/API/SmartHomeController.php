@@ -410,6 +410,7 @@ class SmartHomeController extends Controller
         $mapping = SmartHomeTuyaUser::firstOrCreate(['user_id' => $request->user()->id], [
             'region' => config('services.tuya.region'),
         ]);
+        $login = $this->tuyaUidLoginPayload($request);
 
         return response()->json([
             'status' => 'success',
@@ -418,6 +419,8 @@ class SmartHomeController extends Controller
                 'tuya_uid' => $mapping->tuya_uid,
                 'region' => $mapping->region,
                 'last_login_at' => $mapping->last_login_at?->toISOString(),
+                'linked' => filled($mapping->tuya_uid),
+                'uid_login' => $login,
             ],
         ]);
     }
@@ -445,8 +448,21 @@ class SmartHomeController extends Controller
                 'tuya_uid' => $mapping->tuya_uid,
                 'region' => $mapping->region,
                 'last_login_at' => $mapping->last_login_at?->toISOString(),
+                'linked' => filled($mapping->tuya_uid),
             ],
         ]);
+    }
+
+    private function tuyaUidLoginPayload(Request $request): array
+    {
+        $uid = 'doctorbike_user_'.$request->user()->id;
+        $secret = config('app.key') ?: config('services.tuya.access_secret') ?: 'doctor-bike';
+
+        return [
+            'country_code' => config('services.tuya.country_code', '970'),
+            'uid' => $uid,
+            'password' => hash_hmac('sha256', $uid, $secret),
+        ];
     }
 
     private function homeQuery(Request $request, int $id): Builder
