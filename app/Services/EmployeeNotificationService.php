@@ -92,7 +92,18 @@ class EmployeeNotificationService
         ?string $relatedType = null,
         ?int $relatedId = null,
         bool $sendPush = true
-    ): EmployeeNotification {
+    ): ?EmployeeNotification {
+        if ((bool) ($employee->is_suspended ?? false)) {
+            Log::info('Employee notification skipped: employee suspended', [
+                'employee_id' => $employee->id,
+                'type' => $type,
+                'related_type' => $relatedType,
+                'related_id' => $relatedId,
+            ]);
+
+            return null;
+        }
+
         $notification = EmployeeNotification::create([
             'employee_id' => $employee->id,
             'type' => $type,
@@ -114,6 +125,15 @@ class EmployeeNotificationService
     public function pushToEmployee(EmployeeDetail $employee, EmployeeNotification $notification): bool
     {
         $employee->loadMissing('user');
+        if ((bool) ($employee->is_suspended ?? false)) {
+            Log::info('Employee FCM skipped: employee suspended', [
+                'employee_id' => $employee->id,
+                'notification_id' => $notification->id,
+            ]);
+
+            return false;
+        }
+
         $token = trim((string) ($employee->user->fcm_token ?? ''));
         if ($token === '' || $token === 'no_token') {
             Log::warning('Employee FCM skipped: no token', [

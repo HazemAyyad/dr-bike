@@ -254,6 +254,15 @@ class Authentication extends Controller
                 ], 200);
             }
 
+            if ($user->type === 'employee' && (bool) ($user->employee?->is_suspended ?? false)) {
+                Auth::logout();
+
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'تم تعطيل حسابك مؤقتاً، تواصل مع الإدارة.',
+                ], 200);
+            }
+
             $fcm = trim((string) $request->fcm_token);
             if ($fcm !== '' && $fcm !== 'no_token') {
                 $user->forceFill(['fcm_token' => $fcm])->save();
@@ -268,6 +277,12 @@ class Authentication extends Controller
 
             if ($user->type === 'employee') {
                 $employee = $user->employee;
+                if (! $employee || (bool) ($employee->is_suspended ?? false)) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'تم تعطيل حسابك مؤقتاً، تواصل مع الإدارة.',
+                    ], 200);
+                }
                 $employee->employee_img = $employee->employee_img
                     ? 'public/EmployeeImages/'.$employee->employee_img[0]
                     : null;
@@ -683,6 +698,13 @@ class Authentication extends Controller
             ];
             if ($user->type === 'employee') {
                 $employee = $user->employee;
+                if (! $employee || (bool) ($employee->is_suspended ?? false)) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'تم تعطيل حسابك مؤقتاً، تواصل مع الإدارة.',
+                    ], 200);
+                }
+
                 $employee->employee_img = $employee->employee_img
                     ? 'public/EmployeeImages/'.$employee->employee_img[0]
                     : null;

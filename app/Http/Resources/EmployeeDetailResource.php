@@ -21,6 +21,9 @@ class EmployeeDetailResource extends JsonResource
     {
         return [
             'id' => $this->id,
+            'is_suspended' => (bool) ($this->is_suspended ?? false),
+            'suspended_at' => $this->suspended_at?->toIso8601String(),
+            'suspension_reason' => $this->suspension_reason,
             'name' => $this->user?->name ?? '',
             'email' => $this->user?->email ?? '',
             'phone' => $this->user?->phone ?? 'no phone number',

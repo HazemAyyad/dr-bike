@@ -951,6 +951,11 @@ class EmployeeDetails extends Controller
     {
         try {
             $select = ['id', 'hour_work_price', 'user_id','employee_img', 'start_work_time'];
+            if (Schema::hasColumn('employee_details', 'is_suspended')) {
+                $select[] = 'is_suspended';
+                $select[] = 'suspended_at';
+                $select[] = 'suspension_reason';
+            }
             if (Schema::hasColumn('employee_details', 'wifi_ssid')) {
                 $select[] = 'wifi_ssid';
             }
@@ -967,51 +972,14 @@ class EmployeeDetails extends Controller
                 $select[] = 'wifi_status_updated_at';
             }
 
-            $employees = EmployeeDetail::with('user:id,name')
-                ->orderBy('created_at', 'desc')
-                ->get($select);
+            $query = EmployeeDetail::with('user:id,name');
+            if (Schema::hasColumn('employee_details', 'is_suspended')) {
+                $query->where('is_suspended', false);
+            }
 
-            $now = Carbon::now();
-            $pointsService = app(EmployeePointsService::class);
-            $summaries = $pointsService->getMonthlySummaryMany(
-                $employees->pluck('id')->all(),
-                (int) $now->year,
-                (int) $now->month,
-            );
+            $employees = $query->orderBy('created_at', 'desc')->get($select);
 
-            $formatted = $employees->map(function ($employee) use ($summaries) {
-                $statuses = $this->getAttendanceStatuses($employee->id, $employee->start_work_time);
-                $summary = $summaries[$employee->id] ?? [
-                    'earned_points' => 0,
-                    'deducted_points' => 0,
-                    'net_points' => 0,
-                    'reward_amount' => 0.0,
-                    'reward_rule_id' => null,
-                    'reward_status_label' => null,
-                    'reward_status_color' => null,
-                ];
-
-                return [
-                    'id' => $employee->id,
-                    'employee_name' => $employee->user?->name,
-                    'hour_work_price' => $employee->hour_work_price,
-                    'points' => (string) $summary['net_points'],
-                    'points_summary' => [
-                        'earned_points' => (int) $summary['earned_points'],
-                        'deducted_points' => (int) $summary['deducted_points'],
-                        'net_points' => (int) $summary['net_points'],
-                        'reward_amount' => number_format((float) $summary['reward_amount'], 2, '.', ''),
-                        'reward_rule_id' => $summary['reward_rule_id'],
-                        'reward_status_label' => $summary['reward_status_label'],
-                        'reward_status_color' => $summary['reward_status_color'],
-                    ],
-                    'employee_img' => $employee->employee_img? 'public/EmployeeImages/'.$employee->employee_img[0] : 'no images',
-                    'has_attended_today' => $statuses['has_attended_today'],
-                    'is_working_now' => $statuses['is_working_now'],
-                    'is_came_on_time' => $statuses['is_came_on_time'],
-                    'wifi_status' => $this->employeeWifiStatus($employee),
-                ];
-            });
+            $formatted = $this->formatEmployeeList($employees);
 
             return response()->json(['status' => 'success',
              'employees' => $formatted,
@@ -1025,11 +993,98 @@ class EmployeeDetails extends Controller
         }
     }
 
+    public function suspendedEmployeesList()
+    {
+        try {
+            $select = ['id', 'hour_work_price', 'user_id','employee_img', 'start_work_time'];
+            foreach (['is_suspended', 'suspended_at', 'suspension_reason'] as $column) {
+                if (Schema::hasColumn('employee_details', $column)) {
+                    $select[] = $column;
+                }
+            }
+            foreach (['wifi_ssid', 'wifi_connected', 'network_connected', 'wifi_connection_type', 'wifi_status_updated_at'] as $column) {
+                if (Schema::hasColumn('employee_details', $column)) {
+                    $select[] = $column;
+                }
+            }
+
+            $query = EmployeeDetail::with('user:id,name');
+            if (Schema::hasColumn('employee_details', 'is_suspended')) {
+                $query->where('is_suspended', true);
+            } else {
+                return response()->json([
+                    'status' => 'success',
+                    'employees' => [],
+                ], 200);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'employees' => $this->formatEmployeeList($query->orderByDesc('suspended_at')->orderByDesc('created_at')->get($select)),
+            ], 200);
+        } catch (QueryException $e) {
+            return response(['status' => 'error', 'message' => __('messages.retrieve_data_error')], 200);
+        } catch (\Exception $e) {
+            return response(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
+    private function formatEmployeeList($employees)
+    {
+        $now = Carbon::now();
+        $pointsService = app(EmployeePointsService::class);
+        $summaries = $pointsService->getMonthlySummaryMany(
+            $employees->pluck('id')->all(),
+            (int) $now->year,
+            (int) $now->month,
+        );
+
+        return $employees->map(function ($employee) use ($summaries) {
+            $statuses = $this->getAttendanceStatuses($employee->id, $employee->start_work_time);
+            $summary = $summaries[$employee->id] ?? [
+                'earned_points' => 0,
+                'deducted_points' => 0,
+                'net_points' => 0,
+                'reward_amount' => 0.0,
+                'reward_rule_id' => null,
+                'reward_status_label' => null,
+                'reward_status_color' => null,
+            ];
+
+            return [
+                'id' => $employee->id,
+                'employee_name' => $employee->user?->name,
+                'hour_work_price' => $employee->hour_work_price,
+                'points' => (string) $summary['net_points'],
+                'points_summary' => [
+                    'earned_points' => (int) $summary['earned_points'],
+                    'deducted_points' => (int) $summary['deducted_points'],
+                    'net_points' => (int) $summary['net_points'],
+                    'reward_amount' => number_format((float) $summary['reward_amount'], 2, '.', ''),
+                    'reward_rule_id' => $summary['reward_rule_id'],
+                    'reward_status_label' => $summary['reward_status_label'],
+                    'reward_status_color' => $summary['reward_status_color'],
+                ],
+                'employee_img' => $employee->employee_img? 'public/EmployeeImages/'.$employee->employee_img[0] : 'no images',
+                'has_attended_today' => $statuses['has_attended_today'],
+                'is_working_now' => $statuses['is_working_now'],
+                'is_came_on_time' => $statuses['is_came_on_time'],
+                'wifi_status' => $this->employeeWifiStatus($employee),
+                'is_suspended' => (bool) ($employee->is_suspended ?? false),
+                'suspended_at' => $employee->suspended_at?->toIso8601String(),
+                'suspension_reason' => $employee->suspension_reason,
+            ];
+        });
+    }
+
      public function workingTimes()
     {
         try {
-            $employees = EmployeeDetail::with('user:id,name')
-                ->orderBy('created_at', 'desc')
+            $query = EmployeeDetail::with('user:id,name');
+            if (Schema::hasColumn('employee_details', 'is_suspended')) {
+                $query->where('is_suspended', false);
+            }
+            $employees = $query->orderBy('created_at', 'desc')
                 ->get(['user_id', 'id', 'start_work_time', 'end_work_time', 'number_of_work_hours','employee_img']);
 
             $formatted = $employees->map(function ($employee) {
@@ -1062,8 +1117,11 @@ class EmployeeDetails extends Controller
    public function financialDues()
     {
         try {
-            $employees = EmployeeDetail::with('user:id,name')
-                ->orderBy('created_at', 'desc')
+            $query = EmployeeDetail::with('user:id,name');
+            if (Schema::hasColumn('employee_details', 'is_suspended')) {
+                $query->where('is_suspended', false);
+            }
+            $employees = $query->orderBy('created_at', 'desc')
                 ->get(['id', 'salary', 'debts', 'user_id','employee_img']);
 
             $formatted = $employees->map(function ($employee) {
@@ -1852,6 +1910,130 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.failed_to_delete_employee'),
+            ], 200);
+        }
+    }
+
+    public function suspendEmployee(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'employee_id' => ['required', 'integer', 'exists:employee_details,id'],
+                'reason' => ['nullable', 'string', 'max:500'],
+            ]);
+
+            if (! Schema::hasColumn('employee_details', 'is_suspended')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'ميزة تجميد الموظفين غير مفعلة بعد. شغل migrations أولاً.',
+                ], 200);
+            }
+
+            $employee = EmployeeDetail::with('user')->findOrFail((int) $data['employee_id']);
+            $employeeName = $employee->user?->name ?? '—';
+
+            DB::transaction(function () use ($employee, $request, $data) {
+                $updates = [
+                    'is_suspended' => true,
+                    'suspended_at' => now(),
+                    'suspended_by' => $request->user()?->id,
+                    'suspension_reason' => trim((string) ($data['reason'] ?? '')) ?: null,
+                ];
+                if (Schema::hasColumn('employee_details', 'wifi_connected')) {
+                    $updates['wifi_connected'] = false;
+                }
+                if (Schema::hasColumn('employee_details', 'network_connected')) {
+                    $updates['network_connected'] = false;
+                }
+
+                $employee->forceFill($updates)->save();
+
+                if ($employee->user) {
+                    $employee->user->tokens()->delete();
+                    if (Schema::hasColumn('users', 'fcm_token')) {
+                        $employee->user->forceFill(['fcm_token' => null])->save();
+                    }
+                }
+            });
+
+            Logs::createLog(
+                'تجميد موظف',
+                'تم تجميد الموظف '.$employeeName,
+                'employees',
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم تجميد الموظف بنجاح',
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.employee_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'فشل تجميد الموظف',
+            ], 200);
+        }
+    }
+
+    public function restoreSuspendedEmployee(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'employee_id' => ['required', 'integer', 'exists:employee_details,id'],
+            ]);
+
+            if (! Schema::hasColumn('employee_details', 'is_suspended')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'ميزة تجميد الموظفين غير مفعلة بعد. شغل migrations أولاً.',
+                ], 200);
+            }
+
+            $employee = EmployeeDetail::with('user')->findOrFail((int) $data['employee_id']);
+            $employeeName = $employee->user?->name ?? '—';
+
+            $employee->forceFill([
+                'is_suspended' => false,
+                'suspended_at' => null,
+                'suspended_by' => null,
+                'suspension_reason' => null,
+            ])->save();
+
+            Logs::createLog(
+                'إلغاء تجميد موظف',
+                'تم إلغاء تجميد الموظف '.$employeeName,
+                'employees',
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم إلغاء تجميد الموظف بنجاح',
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.employee_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'فشل إلغاء تجميد الموظف',
             ], 200);
         }
     }

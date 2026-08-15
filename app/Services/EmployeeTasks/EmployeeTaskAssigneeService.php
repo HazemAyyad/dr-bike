@@ -220,6 +220,10 @@ class EmployeeTaskAssigneeService
 
         $employees = EmployeeDetail::with('user')
             ->whereIn('id', $ids)
+            ->when(
+                Schema::hasColumn('employee_details', 'is_suspended'),
+                fn ($query) => $query->where('is_suspended', false)
+            )
             ->get()
             ->keyBy('id');
 

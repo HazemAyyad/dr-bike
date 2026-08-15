@@ -207,6 +207,7 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         Route::post('/devices/{id}/activity-log', [SmartHomeController::class, 'storeActivityLog'])->whereNumber('id');
         Route::get('/devices/{id}/activity', [SmartHomeController::class, 'deviceActivity'])->whereNumber('id');
     });
+
     // only for customers
     // orders
     Route::post('/add/order' , [Orders::class,'addOrder']);
@@ -265,6 +266,10 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::post('/employee/change-password' , [EmployeeDetails::class,'changeEmployeePassword'])
         ->middleware('check.permission:Employees Password Manage');
     Route::post('/delete/employee' , [EmployeeDetails::class,'deleteEmployee'])
+        ->middleware('check.permission:Employees Delete');
+    Route::post('/suspend/employee' , [EmployeeDetails::class,'suspendEmployee'])
+        ->middleware('check.permission:Employees Delete');
+    Route::post('/restore/suspended/employee' , [EmployeeDetails::class,'restoreSuspendedEmployee'])
         ->middleware('check.permission:Employees Delete');
     Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions'])
         ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
@@ -964,6 +969,8 @@ Route::group(['middleware' => ['auth:sanctum','check.permission:Sales','refresh.
 
 Route::group(['middleware' => ['auth:sanctum','check.permission:Employees View,Employees Edit Basic,Employees Delete,Employees Password Manage,Employees Section,Employee Tasks,Goal Creation','refresh.token.expiry']], function () {
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
+    Route::get('/employees/suspended' , [EmployeeDetails::class,'suspendedEmployeesList'])
+        ->middleware('auth:sanctum', 'refresh.token.expiry', 'check.permission:Employees View,Employees Delete');
     Route::get('/admin/employees/wifi-presence/history' , [EmployeeDetails::class,'wifiPresenceHistory']);
 
   });

@@ -161,6 +161,7 @@ class EmployeeTaskListService
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')
             ->where(fn ($q) => $this->applyAdminLegacyVisibilityScope($q))
+            ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->filter(fn ($task) => $this->passesRecurrenceFilter($task))
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
@@ -181,6 +182,7 @@ class EmployeeTaskListService
             ])
             ->whereIn('status', $statuses)
             ->where('is_canceled', 0)
+            ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
 
@@ -198,6 +200,7 @@ class EmployeeTaskListService
             ->where('is_canceled', 0)
             ->whereNull('occurrence_id')
             ->where(fn ($q) => $this->applyAdminLegacyVisibilityScope($q))
+            ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
 
@@ -213,6 +216,7 @@ class EmployeeTaskListService
         ])
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
+            ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
 
@@ -224,6 +228,7 @@ class EmployeeTaskListService
         $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
             ->where('is_canceled', 1)
             ->whereNull('parent_id')
+            ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
 
@@ -238,6 +243,7 @@ class EmployeeTaskListService
             'subtasks:id,occurrence_id,name',
         ])
             ->where('is_canceled', 1)
+            ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
 
@@ -267,6 +273,17 @@ class EmployeeTaskListService
             'monthly' => in_array((string) $dayOfMonth, $times),
             default => true,
         };
+    }
+
+    private function excludeSuspendedEmployees($query): void
+    {
+        if (! Schema::hasColumn('employee_details', 'is_suspended')) {
+            return;
+        }
+
+        $query->whereHas('employee', function ($employeeQuery) {
+            $employeeQuery->where('is_suspended', false);
+        });
     }
 
     /**

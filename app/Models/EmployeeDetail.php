@@ -13,6 +13,10 @@ class EmployeeDetail extends Model
 
     protected $fillable = [
         'user_id',
+        'is_suspended',
+        'suspended_at',
+        'suspended_by',
+        'suspension_reason',
         'device_user_id',
         'fingerprint_enabled',
         'hour_work_price',
@@ -39,6 +43,8 @@ class EmployeeDetail extends Model
         'employee_img'=>'array',
         'document_img' => 'array',
         'weekly_days_off' => 'array',
+        'is_suspended' => 'boolean',
+        'suspended_at' => 'datetime',
         'wifi_connected' => 'boolean',
         'network_connected' => 'boolean',
         'wifi_status_updated_at' => 'datetime',
@@ -50,6 +56,11 @@ class EmployeeDetail extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function suspender()
+    {
+        return $this->belongsTo(User::class, 'suspended_by');
     }
 
     public function tasks(){
