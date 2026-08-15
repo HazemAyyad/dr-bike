@@ -103,6 +103,7 @@ use App\Http\Controllers\API\WhatsAppWebhookController;
 use App\Http\Controllers\API\MetaCatalogController;
 use App\Http\Controllers\API\MetaMessagingWebhookController;
 use App\Http\Controllers\API\SocialCenterController;
+use App\Http\Controllers\API\SmartHomeController;
 
 /*
 |--------------------------------------------------------------------------
@@ -181,6 +182,31 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->whereNumber('id')
         ->whereNumber('attachmentId');
 
+    Route::prefix('smart-home')->group(function () {
+        Route::get('/tuya-user', [SmartHomeController::class, 'tuyaUser']);
+        Route::put('/tuya-user', [SmartHomeController::class, 'updateTuyaUser']);
+
+        Route::get('/homes', [SmartHomeController::class, 'homes']);
+        Route::post('/homes', [SmartHomeController::class, 'storeHome']);
+        Route::get('/homes/{id}', [SmartHomeController::class, 'showHome'])->whereNumber('id');
+        Route::put('/homes/{id}', [SmartHomeController::class, 'updateHome'])->whereNumber('id');
+        Route::delete('/homes/{id}', [SmartHomeController::class, 'destroyHome'])->whereNumber('id');
+
+        Route::get('/homes/{id}/rooms', [SmartHomeController::class, 'rooms'])->whereNumber('id');
+        Route::post('/homes/{id}/rooms', [SmartHomeController::class, 'storeRoom'])->whereNumber('id');
+        Route::put('/rooms/{id}', [SmartHomeController::class, 'updateRoom'])->whereNumber('id');
+        Route::delete('/rooms/{id}', [SmartHomeController::class, 'destroyRoom'])->whereNumber('id');
+
+        Route::get('/devices', [SmartHomeController::class, 'devices']);
+        Route::get('/devices/{id}', [SmartHomeController::class, 'showDevice'])->whereNumber('id');
+        Route::post('/devices/sync', [SmartHomeController::class, 'syncDevices']);
+        Route::post('/devices/register', [SmartHomeController::class, 'registerDevice']);
+        Route::patch('/devices/{id}', [SmartHomeController::class, 'updateDevice'])->whereNumber('id');
+        Route::delete('/devices/{id}', [SmartHomeController::class, 'destroyDevice'])->whereNumber('id');
+        Route::post('/devices/{id}/status', [SmartHomeController::class, 'updateDeviceStatus'])->whereNumber('id');
+        Route::post('/devices/{id}/activity-log', [SmartHomeController::class, 'storeActivityLog'])->whereNumber('id');
+        Route::get('/devices/{id}/activity', [SmartHomeController::class, 'deviceActivity'])->whereNumber('id');
+    });
     // only for customers
     // orders
     Route::post('/add/order' , [Orders::class,'addOrder']);

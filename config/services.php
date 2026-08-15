@@ -42,4 +42,11 @@ return [
         'api_key' => env('GOOGLE_CLOUD_VISION_API_KEY'),
     ],
 
+    'tuya' => [
+        'access_id' => env('TUYA_ACCESS_ID'),
+        'access_secret' => env('TUYA_ACCESS_SECRET'),
+        'project_id' => env('TUYA_PROJECT_ID'),
+        'region' => env('TUYA_REGION', 'central_europe'),
+    ],
+
 ];
