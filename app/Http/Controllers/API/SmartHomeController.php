@@ -5,11 +5,13 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SmartDeviceActivityLogResource;
 use App\Http\Resources\SmartDeviceResource;
+use App\Http\Resources\SmartHomeEventLogResource;
 use App\Http\Resources\SmartHomeResource;
 use App\Http\Resources\SmartRoomResource;
 use App\Models\SmartDevice;
 use App\Models\SmartDeviceActivityLog;
 use App\Models\SmartHome;
+use App\Models\SmartHomeEventLog;
 use App\Models\SmartHomeTuyaUser;
 use App\Models\SmartRoom;
 use Illuminate\Database\Eloquent\Builder;
@@ -403,6 +405,52 @@ class SmartHomeController extends Controller
                 $device->activityLogs()->with('user:id,name')->latest()->paginate($perPage)
             ),
         ]);
+    }
+
+    public function eventLogs(Request $request)
+    {
+        $query = SmartHomeEventLog::query()
+            ->where('user_id', $request->user()->id)
+            ->latest();
+
+        if ($request->filled('home_id')) {
+            $home = $this->ownedHome($request, (int) $request->input('home_id'));
+            $query->where('smart_home_id', $home->id);
+        }
+
+        $perPage = min(max((int) $request->input('per_page', 30), 1), 100);
+
+        return response()->json([
+            'status' => 'success',
+            'logs' => SmartHomeEventLogResource::collection($query->paginate($perPage)),
+        ]);
+    }
+
+    public function storeEventLog(Request $request)
+    {
+        $data = $request->validate([
+            'smart_home_id' => ['nullable', 'integer'],
+            'event' => ['required', 'string', 'max:100'],
+            'success' => ['required', 'boolean'],
+            'error_code' => ['nullable', 'string', 'max:160'],
+            'message' => ['nullable', 'string', 'max:4000'],
+            'context' => ['nullable', 'array'],
+        ]);
+
+        if (! empty($data['smart_home_id'])) {
+            $home = $this->ownedHome($request, (int) $data['smart_home_id']);
+            $data['smart_home_id'] = $home->id;
+        }
+
+        $log = SmartHomeEventLog::create([
+            ...$data,
+            'user_id' => $request->user()->id,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'log' => new SmartHomeEventLogResource($log),
+        ], 201);
     }
 
     public function tuyaUser(Request $request)

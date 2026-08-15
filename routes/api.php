@@ -206,6 +206,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         Route::post('/devices/{id}/status', [SmartHomeController::class, 'updateDeviceStatus'])->whereNumber('id');
         Route::post('/devices/{id}/activity-log', [SmartHomeController::class, 'storeActivityLog'])->whereNumber('id');
         Route::get('/devices/{id}/activity', [SmartHomeController::class, 'deviceActivity'])->whereNumber('id');
+        Route::get('/event-logs', [SmartHomeController::class, 'eventLogs']);
+        Route::post('/event-logs', [SmartHomeController::class, 'storeEventLog']);
     });
 
     // only for customers
