@@ -31,11 +31,8 @@ class FollowupAPI extends Controller
         ]);
     }
 
-    private function visibleFollowupsQuery(Request $request, array $statuses)
+    private function applyVisibility($query, Request $request)
     {
-        $query = Followup::whereIn('status', $statuses)
-            ->where('is_canceled', 0);
-
         if ($request->user()?->type !== 'admin') {
             $query->where(function ($q) {
                 $q->where('admin_only', 0)->orWhereNull('admin_only');
@@ -43,6 +40,49 @@ class FollowupAPI extends Controller
         }
 
         return $query;
+    }
+
+    private function visibleFollowupsQuery(Request $request, array $statuses)
+    {
+        $query = Followup::whereIn('status', $statuses)
+            ->where('is_canceled', 0);
+
+        return $this->applyVisibility($query, $request);
+    }
+
+    private function formatFollowups($followups)
+    {
+        return $followups->map(function($followup){
+
+            return [
+                'id'=> $followup->id,
+                'customer_name' => $followup->customer_id? $followup->customer->name:null,
+                'customer_phone' => $followup->customer_id
+                    ? ($followup->customer->phone ?? 'no phone')
+                    : null,
+                'customer_img' => $followup->customer_id
+                    ?(  ($followup->customer->ID_image && count($followup->customer->ID_image)>0)? 'public/customerImages/ID/' . $followup->customer->ID_image[0]:'no image'   ):null,
+
+
+                'seller_name' => $followup->seller_id? $followup->seller->name:null,
+                'seller_phone' => $followup->seller_id
+                    ? ($followup->seller->phone ?? 'no phone')
+                    : null,
+                'seller_img' => $followup->seller_id
+                    ?( ($followup->seller->ID_image && count($followup->seller->ID_image)>0)? 'public/sellerImages/ID/' . $followup->seller->ID_image[0]:'no image') :null,
+
+                'product_name' => $followup->product_id,
+                'followup_status'=> $followup->status,
+                'created_at' => $followup->created_at? $followup->created_at->format('Y-m-d'):null,
+                'created_by_name' => $followup->createdBy?->name,
+                'created_by_type' => $followup->createdBy?->type,
+                'admin_only' => (bool) $followup->admin_only,
+                'is_canceled' => (bool) $followup->is_canceled,
+                'deleted_at' => $followup->deleted_at?->format('Y-m-d H:i:s'),
+
+            ];
+        });
+
     }
 
     public function storeFollowup(Request $request)
@@ -273,34 +313,7 @@ public function updateFollowup(Request $request)
 
             ])->get();
 
-            $formatted = $followups->map(function($followup){
-
-                return [
-                    'id'=> $followup->id,
-                    'customer_name' => $followup->customer_id? $followup->customer->name:null,
-                    'customer_phone' => $followup->customer_id
-                        ? ($followup->customer->phone ?? 'no phone')
-                        : null,
-                    'customer_img' => $followup->customer_id
-                        ?(  ($followup->customer->ID_image && count($followup->customer->ID_image)>0)? 'public/customerImages/ID/' . $followup->customer->ID_image[0]:'no image'   ):null,
-
-
-                    'seller_name' => $followup->seller_id? $followup->seller->name:null,
-                    'seller_phone' => $followup->seller_id
-                        ? ($followup->seller->phone ?? 'no phone')
-                        : null,
-                    'seller_img' => $followup->seller_id
-                        ?( ($followup->seller->ID_image && count($followup->seller->ID_image)>0)? 'public/sellerImages/ID/' . $followup->seller->ID_image[0]:'no image') :null,
-
-                    'product_name' => $followup->product_id,
-                    'followup_status'=> $followup->status,
-                    'created_at' => $followup->created_at? $followup->created_at->format('Y-m-d'):null,
-                    'created_by_name' => $followup->createdBy?->name,
-                    'created_by_type' => $followup->createdBy?->type,
-                    'admin_only' => (bool) $followup->admin_only,
-
-                ];
-            });
+            $formatted = $this->formatFollowups($followups);
             return response()->json([
                 'status' => 'success',
                 'followups' => $formatted
@@ -338,7 +351,65 @@ public function updateFollowup(Request $request)
         return $this->getFollowups($request, ['delivered','rejected']);
     }
 
+    public function getDeliveredFollowups(Request $request)
+    {
+        return $this->getFollowups($request, 'delivered');
+    }
 
+    public function getCanceledFollowups(Request $request)
+    {
+        try {
+            $followups = $this->applyVisibility(
+                Followup::where(function ($query) {
+                    $query->where('is_canceled', 1)
+                        ->orWhere('status', 'rejected');
+                }),
+                $request
+            )
+                ->with([
+                    'customer:id,name,phone,ID_image',
+                    'seller:id,name,phone,ID_image',
+                    'createdBy:id,name,type',
+                ])
+                ->get();
+
+            return response()->json([
+                'status' => 'success',
+                'followups' => $this->formatFollowups($followups),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_load_followups')
+            ], 200);
+        }
+    }
+
+    public function getDeletedFollowups(Request $request)
+    {
+        try {
+            $followups = $this->applyVisibility(
+                Followup::onlyTrashed(),
+                $request
+            )
+                ->with([
+                    'customer:id,name,phone,ID_image',
+                    'seller:id,name,phone,ID_image',
+                    'createdBy:id,name,type',
+                ])
+                ->get();
+
+            return response()->json([
+                'status' => 'success',
+                'followups' => $this->formatFollowups($followups),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_load_followups')
+            ], 200);
+        }
+    }
     public function cancelFollowUp(Request $request){
       try{
         $request->validate(['followup_id'=>'required|exists:followups,id']);
