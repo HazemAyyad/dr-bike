@@ -677,6 +677,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::post('/maintenance/daily-session/open' , [MaintenanceAPI::class,'dailySessionOpen']);
     Route::post('/maintenance/daily-session/request-closing' , [MaintenanceAPI::class,'dailySessionRequestClosing']);
     Route::get('/maintenance/daily-sessions/open' , [MaintenanceAPI::class,'dailySessionOpenSessions']);
+    Route::get('/maintenance/daily-sessions' , [MaintenanceAPI::class,'dailySessions']);
+    Route::get('/maintenance/daily-sessions/{sessionId}' , [MaintenanceAPI::class,'dailySessionShow']);
     Route::get('/maintenance/daily-closing/pending' , [MaintenanceAPI::class,'dailySessionPendingClosing']);
     Route::post('/maintenance/daily-closing/direct' , [MaintenanceAPI::class,'dailySessionDirectClose']);
     Route::post('/maintenance/daily-closing/approve' , [MaintenanceAPI::class,'dailySessionApproveClosing']);

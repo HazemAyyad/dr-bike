@@ -343,6 +343,135 @@ class MaintenanceDailyBoxService
             ->values();
     }
 
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array{sessions: \Illuminate\Support\Collection<int, array<string, mixed>>, pagination: array<string, int|null>}
+     */
+    public function listSessions(User $viewer, array $filters = []): array
+    {
+        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
+        $page = max(1, (int) ($filters['page'] ?? 1));
+
+        $query = MaintenanceDailySession::query()
+            ->with(['box:id,name,total,currency,type', 'user:id,name', 'employee.user'])
+            ->orderByDesc('business_date')
+            ->orderByDesc('id');
+
+        if (! $this->canReviewClosing($viewer)) {
+            $query->where('user_id', $viewer->id);
+        }
+
+        if (! empty($filters['business_date'])) {
+            $query->whereDate('business_date', $filters['business_date']);
+        }
+        if (! empty($filters['from_date'])) {
+            $query->whereDate('business_date', '>=', $filters['from_date']);
+        }
+        if (! empty($filters['to_date'])) {
+            $query->whereDate('business_date', '<=', $filters['to_date']);
+        }
+        if (! empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+        $sessions = collect($paginator->items())
+            ->map(fn (MaintenanceDailySession $session) => $this->formatSessionSummary($session));
+
+        return [
+            'sessions' => $sessions,
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function buildSessionDetail(User $viewer, int $sessionId): array
+    {
+        $session = MaintenanceDailySession::query()
+            ->with([
+                'box:id,name,total,currency,type',
+                'user:id,name',
+                'employee.user',
+                'closingRequests.requestedBy',
+                'closingRequests.reviewedBy',
+            ])
+            ->findOrFail($sessionId);
+
+        $this->assertCanViewSession($viewer, $session);
+
+        $payload = $this->payload($session->business_date?->toDateString(), $session->user);
+        $currencies = $this->currenciesForPayload($payload, $session);
+        $maintenanceLog = $this->buildSessionMaintenanceLog($session);
+        $closingRequests = $session->closingRequests
+            ->sortByDesc('id')
+            ->values()
+            ->map(fn (MaintenanceDailyClosingRequest $request) => $this->formatClosingRequestForDailyModel($request, $session))
+            ->all();
+        $pendingClosing = $session->closingRequests
+            ->contains(fn (MaintenanceDailyClosingRequest $request) => $request->status === 'pending');
+
+        return [
+            'session' => [
+                'id' => $session->id,
+                'user_id' => $session->user_id,
+                'employee_id' => $session->employee_id,
+                'employee_name' => $session->user?->name,
+                'business_date' => $session->business_date?->toDateString(),
+                'status' => $session->status,
+                'allows_sales' => $session->isOpen() && ! $pendingClosing,
+                'can_request_closing' => $session->isOpen()
+                    && ! $pendingClosing
+                    && ($this->canReviewClosing($viewer) || (int) $session->user_id === (int) $viewer->id),
+                'requires_late_close_reason' => false,
+                'opened_at' => $session->opened_at?->toDateTimeString(),
+                'closed_at' => $session->closed_at?->toDateTimeString(),
+                'closed_on_next_day' => $session->closed_at
+                    && $session->business_date
+                    && $session->closed_at->toDateString() > $session->business_date->toDateString(),
+                'opening_balances' => [
+                    ($session->box?->currency ?: config('maintenance_daily.currency', 'شيكل')) => round((float) $session->opening_balance, 2),
+                ],
+            ],
+            'currencies' => $currencies,
+            'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
+            'instant_sales_count' => count($maintenanceLog),
+            'profit_sales_count' => 0,
+            'instant_sales' => $maintenanceLog,
+            'profit_sales' => [],
+            'sales_orders_count' => 0,
+            'sales_orders' => [],
+            'closing_requests' => $closingRequests,
+            'config' => [
+                'variance_alert_threshold' => 50,
+                'max_float' => [
+                    config('maintenance_daily.currency', 'شيكل') => 0,
+                ],
+            ],
+        ];
+    }
+
+    public function assertCanViewSession(User $viewer, MaintenanceDailySession $session): void
+    {
+        if ($this->canReviewClosing($viewer)) {
+            return;
+        }
+
+        if ((int) $session->user_id === (int) $viewer->id) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'session' => [__('messages.unauthorized')],
+        ]);
+    }
+
     public function directClose(User $reviewer, int $sessionId, ?int $toBoxId = null, ?string $note = null): MaintenanceDailyClosingRequest
     {
         if (! $this->canReviewClosing($reviewer)) {
@@ -944,6 +1073,199 @@ class MaintenanceDailyBoxService
             'reviewed_by_name' => $request->reviewedBy?->name,
             'review_notes' => $request->review_notes,
             'transfers' => $request->transfers ?? [],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatSessionSummary(MaintenanceDailySession $session): array
+    {
+        $session->loadMissing(['box:id,name,total,currency,type', 'user:id,name', 'closingRequests']);
+        $payload = $this->payload($session->business_date?->toDateString(), $session->user);
+        $maintenanceCount = Maintenance::query()
+            ->where('maintenance_daily_session_id', $session->id)
+            ->count();
+        $pendingClosing = $session->closingRequests
+            ->where('status', 'pending')
+            ->sortByDesc('id')
+            ->first();
+
+        return [
+            'id' => $session->id,
+            'user_id' => $session->user_id,
+            'employee_id' => $session->employee_id,
+            'employee_name' => $session->user?->name,
+            'business_date' => $session->business_date?->toDateString(),
+            'status' => $session->status,
+            'opened_at' => $session->opened_at?->toDateTimeString(),
+            'closed_at' => $session->closed_at?->toDateTimeString(),
+            'closed_on_next_day' => $session->closed_at
+                && $session->business_date
+                && $session->closed_at->toDateString() > $session->business_date->toDateString(),
+            'instant_sales_count' => $maintenanceCount,
+            'profit_sales_count' => 0,
+            'currencies' => $this->currenciesForPayload($payload, $session),
+            'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
+            'can_close' => $session->isOpen() && ! $pendingClosing,
+            'pending_closing_request_id' => $pendingClosing?->id,
+        ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function currenciesForPayload(array $payload, MaintenanceDailySession $session): array
+    {
+        $box = $session->box;
+        $currency = $box?->currency ?: config('maintenance_daily.currency', 'شيكل');
+        $opening = round((float) ($session->opening_balance ?? 0), 2);
+        $cash = round((float) ($payload['cash_total'] ?? 0), 2);
+        $expectedClosing = round((float) ($payload['expected_closing_balance'] ?? ($opening + $cash)), 2);
+
+        return [[
+            'currency' => $currency,
+            'daily_box_id' => (int) ($box?->id ?? $session->box_id ?? 0),
+            'daily_box_name' => $box?->name ?: config('maintenance_daily.box_name', 'صندوق الصيانة اليومي'),
+            'box_balance' => round((float) ($box?->total ?? $expectedClosing), 2),
+            'opening_float' => $opening,
+            'sales_collected' => $cash,
+            'system_balance' => $expectedClosing,
+        ]];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function expectedOpeningCountsForSession(?MaintenanceDailySession $session = null): array
+    {
+        $currency = config('maintenance_daily.currency', 'شيكل');
+        $previousQuery = MaintenanceDailySession::query()
+            ->with([
+                'user:id,name',
+                'closingRequests' => fn ($query) => $query
+                    ->where('status', 'approved')
+                    ->latest('id')
+                    ->limit(1),
+            ])
+            ->where('status', config('maintenance_daily.session_status.closed', 'closed'));
+
+        if ($session) {
+            if ($session->opened_at) {
+                $previousQuery->where('closed_at', '<=', $session->opened_at);
+            } else {
+                $previousQuery->where(function ($query) use ($session) {
+                    $query
+                        ->whereDate('business_date', '<', $session->business_date)
+                        ->orWhere(function ($sameDay) use ($session) {
+                            $sameDay
+                                ->whereDate('business_date', $session->business_date)
+                                ->where('id', '<', $session->id);
+                        });
+                });
+            }
+            $previousQuery->where('id', '!=', $session->id);
+        }
+
+        $previous = $previousQuery
+            ->orderByDesc('closed_at')
+            ->orderByDesc('id')
+            ->first();
+        $previousRequest = $previous?->closingRequests->first();
+        $count = collect($previousRequest?->cash_counts ?? [])->first() ?: [];
+
+        return [[
+            'currency' => (string) ($count['currency'] ?? $currency),
+            'expected_amount' => round((float) ($count['float_to_keep'] ?? 0), 2),
+            'previous_daily_box_id' => $count['daily_box_id'] ?? $previous?->box_id,
+            'previous_employee_name' => $previous?->user?->name,
+            'previous_session_id' => $previous?->id,
+            'previous_business_date' => $previous?->business_date?->toDateString(),
+        ]];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildSessionMaintenanceLog(MaintenanceDailySession $session): array
+    {
+        return MaintenanceDailyBoxLog::query()
+            ->where('session_id', $session->id)
+            ->with(['maintenance.customer:id,name', 'maintenance.seller:id,name', 'user:id,name', 'instantSale:id,serial_number'])
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->get()
+            ->map(function (MaintenanceDailyBoxLog $log) {
+                $maintenance = $log->maintenance;
+                $partyName = $maintenance?->customer?->name ?: $maintenance?->seller?->name;
+                $method = $log->payment_method ?: 'cash';
+                $label = match ($method) {
+                    'visa' => 'دفعة فيزا صيانة',
+                    'bank_transfer', 'transfer' => 'دفعة حوالة صيانة',
+                    'debt' => 'دين صيانة',
+                    default => 'دفعة كاش صيانة',
+                };
+
+                return [
+                    'id' => $log->id,
+                    'sale_type' => 'maintenance',
+                    'label' => trim($label.' #'.($log->maintenance_id ?? '-')),
+                    'invoice_number' => $log->instantSale?->serial_number
+                        ?: ($log->maintenance_id ? 'MNT-'.str_pad((string) $log->maintenance_id, 6, '0', STR_PAD_LEFT) : null),
+                    'serial_number' => $log->instantSale?->serial_number,
+                    'maintenance_id' => $log->maintenance_id,
+                    'maintenance_invoice_number' => $log->maintenance_id
+                        ? 'MNT-'.str_pad((string) $log->maintenance_id, 6, '0', STR_PAD_LEFT)
+                        : null,
+                    'is_package_sale' => false,
+                    'is_from_sales_order' => false,
+                    'total_cost' => round((float) $log->amount, 2),
+                    'paid_amount' => round((float) $log->amount, 2),
+                    'remaining_amount' => 0,
+                    'quantity' => 1,
+                    'status' => 'active',
+                    'created_at' => $log->created_at?->toDateTimeString(),
+                    'buyer_name' => $partyName,
+                    'created_by' => $log->user_id,
+                    'created_by_name' => $log->actor_name ?: $log->user?->name,
+                    'payment_box_name' => $method,
+                    'payment_box_value' => round((float) $log->amount, 2),
+                    'notes' => $log->note,
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formatClosingRequestForDailyModel(
+        MaintenanceDailyClosingRequest $request,
+        ?MaintenanceDailySession $session = null
+    ): array {
+        $request->loadMissing(['requestedBy', 'reviewedBy', 'session.user', 'session.box']);
+        $session = $session ?? $request->session;
+        $requestedDate = $request->requested_at?->toDateString();
+        $businessDate = $session?->business_date?->toDateString();
+
+        return [
+            'id' => $request->id,
+            'status' => $request->status,
+            'requested_at' => $request->requested_at?->toDateTimeString(),
+            'requested_date' => $requestedDate,
+            'reviewed_at' => $request->reviewed_at?->toDateTimeString(),
+            'reviewed_date' => $request->reviewed_at?->toDateString(),
+            'review_notes' => $request->review_notes,
+            'requested_by' => $request->requestedBy?->name,
+            'reviewed_by' => $request->reviewedBy?->name,
+            'instant_sales_count' => $request->maintenances_count,
+            'profit_sales_count' => 0,
+            'cash_counts' => $request->cash_counts ?? [],
+            'transfers' => $request->transfers ?? [],
+            'is_late_close' => $businessDate && $requestedDate ? $requestedDate > $businessDate : false,
+            'late_close_reason' => null,
+            'business_date' => $businessDate,
         ];
     }
 

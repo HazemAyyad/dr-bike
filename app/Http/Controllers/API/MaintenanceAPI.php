@@ -950,6 +950,67 @@ class MaintenanceAPI extends Controller
         }
     }
 
+    public function dailySessions(Request $request)
+    {
+        try {
+            $filters = $request->validate([
+                'business_date' => 'nullable|date',
+                'from_date' => 'nullable|date',
+                'to_date' => 'nullable|date',
+                'status' => 'nullable|string|in:open,closing_requested,closed',
+                'page' => 'nullable|integer|min:1',
+                'per_page' => 'nullable|integer|min:1|max:50',
+            ]);
+
+            $result = $this->maintenanceDailyBoxService->listSessions($request->user(), $filters);
+
+            return response()->json([
+                'status' => 'success',
+                'sessions' => $result['sessions']->values()->all(),
+                'pagination' => $result['pagination'],
+                'can_view_all' => $this->maintenanceDailyBoxService->canReviewClosing($request->user()),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function dailySessionShow(Request $request, int $sessionId)
+    {
+        try {
+            return response()->json([
+                'status' => 'success',
+                'session_detail' => $this->maintenanceDailyBoxService
+                    ->buildSessionDetail($request->user(), $sessionId),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.unauthorized'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function dailySessionDirectClose(Request $request)
     {
         try {
