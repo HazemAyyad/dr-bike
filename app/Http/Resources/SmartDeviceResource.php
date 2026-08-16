@@ -9,6 +9,9 @@ class SmartDeviceResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $lastStatus = $this->last_status ?? [];
+        $primaryPowerDp = $this->primaryPowerDp($lastStatus);
+
         return [
             'id' => (int) $this->id,
             'smart_home_id' => (int) $this->smart_home_id,
@@ -29,12 +32,31 @@ class SmartDeviceResource extends JsonResource
             'online' => (bool) $this->online,
             'model' => $this->model,
             'manufacturer' => $this->manufacturer,
-            'last_status' => $this->last_status ?? [],
+            'last_status' => $lastStatus,
+            'primary_power_dp' => $primaryPowerDp,
+            'power_on' => $primaryPowerDp !== null ? (bool) ($lastStatus[$primaryPowerDp] ?? false) : null,
             'raw_metadata' => $this->when($request->boolean('include_debug'), $this->raw_metadata ?? []),
             'paired_at' => $this->paired_at?->toISOString(),
             'last_seen_at' => $this->last_seen_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];
+    }
+
+    private function primaryPowerDp(array $lastStatus): ?string
+    {
+        foreach (['switch_led', 'switch', 'power', '1'] as $key) {
+            if (array_key_exists($key, $lastStatus)) {
+                return $key;
+            }
+        }
+
+        foreach ($lastStatus as $key => $value) {
+            if (is_bool($value)) {
+                return (string) $key;
+            }
+        }
+
+        return null;
     }
 }

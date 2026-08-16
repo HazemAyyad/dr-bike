@@ -426,6 +426,45 @@ class SmartHomeController extends Controller
         ], 201);
     }
 
+    public function storeControlLog(Request $request, int $id)
+    {
+        $device = $this->ownedDevice($request, $id);
+        $data = $request->validate([
+            'command_code' => ['required', 'string', 'max:120'],
+            'command_value' => ['nullable', 'array'],
+            'success' => ['required', 'boolean'],
+            'error_code' => ['nullable', 'string', 'max:120'],
+            'error_message' => ['nullable', 'string', 'max:2000'],
+            'last_status' => ['nullable', 'array'],
+            'online' => ['sometimes', 'boolean'],
+        ]);
+
+        $log = SmartDeviceActivityLog::create([
+            'smart_device_id' => $device->id,
+            'user_id' => $request->user()->id,
+            'action' => 'tuya_control',
+            'command_code' => $data['command_code'],
+            'command_value' => $data['command_value'] ?? null,
+            'success' => (bool) $data['success'],
+            'error_code' => $data['error_code'] ?? null,
+            'error_message' => $data['error_message'] ?? null,
+        ]);
+
+        if ((bool) $data['success']) {
+            $device->update([
+                'last_status' => $data['last_status'] ?? $device->last_status,
+                'online' => $data['online'] ?? $device->online,
+                'last_seen_at' => now(),
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'log' => new SmartDeviceActivityLogResource($log),
+            'device' => new SmartDeviceResource($device->fresh()->load('room:id,name,tuya_room_id')),
+        ], 201);
+    }
+
     public function deviceActivity(Request $request, int $id)
     {
         $device = $this->readableDevice($request, $id);
