@@ -77,6 +77,16 @@ class User extends Authenticatable
         return $this->hasOne(EmployeeDetail::class);
     }
 
+    public function smartHomes()
+    {
+        return $this->hasMany(SmartHome::class);
+    }
+
+    public function smartDevices()
+    {
+        return $this->hasManyThrough(SmartDevice::class, SmartHome::class);
+    }
+
     /**
      * هل يحق لهذا المستخدم رؤية/تعديل سعر التكلفة؟
      * الأدمن دائماً مسموح، والموظف فقط إذا منحه الأدمن صلاحية "Cost Price".

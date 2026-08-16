@@ -186,6 +186,7 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         Route::get('/tuya-user', [SmartHomeController::class, 'tuyaUser']);
         Route::put('/tuya-user', [SmartHomeController::class, 'updateTuyaUser']);
 
+        Route::get('/owners', [SmartHomeController::class, 'owners']);
         Route::get('/homes', [SmartHomeController::class, 'homes']);
         Route::post('/homes', [SmartHomeController::class, 'storeHome']);
         Route::get('/homes/{id}', [SmartHomeController::class, 'showHome'])->whereNumber('id');

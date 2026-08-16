@@ -14,6 +14,7 @@ use App\Models\SmartHome;
 use App\Models\SmartHomeEventLog;
 use App\Models\SmartHomeTuyaUser;
 use App\Models\SmartRoom;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,8 +24,9 @@ class SmartHomeController extends Controller
 {
     public function homes(Request $request)
     {
+        $userId = $this->requestedOwnerId($request);
         $homes = SmartHome::query()
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $userId)
             ->withCount(['rooms', 'devices'])
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)])
             ->orderByDesc('is_default')
@@ -34,6 +36,36 @@ class SmartHomeController extends Controller
         return response()->json([
             'status' => 'success',
             'homes' => SmartHomeResource::collection($homes),
+        ]);
+    }
+
+    public function owners(Request $request)
+    {
+        abort_unless($request->user()?->type === 'admin', 403);
+
+        $owners = User::query()
+            ->select('id', 'name', 'phone', 'type')
+            ->whereHas('smartDevices')
+            ->withCount([
+                'smartHomes as homes_count',
+                'smartDevices as devices_count',
+                'smartDevices as online_devices_count' => fn (Builder $query) => $query->where('online', true),
+            ])
+            ->orderBy('name')
+            ->get()
+            ->map(fn (User $user) => [
+                'id' => (int) $user->id,
+                'name' => $user->name,
+                'phone' => $user->phone,
+                'type' => $user->type,
+                'homes_count' => (int) ($user->homes_count ?? 0),
+                'devices_count' => (int) ($user->devices_count ?? 0),
+                'online_devices_count' => (int) ($user->online_devices_count ?? 0),
+            ]);
+
+        return response()->json([
+            'status' => 'success',
+            'owners' => $owners,
         ]);
     }
 
@@ -77,7 +109,7 @@ class SmartHomeController extends Controller
     {
         return response()->json([
             'status' => 'success',
-            'home' => new SmartHomeResource($this->homeQuery($request, $id)->firstOrFail()),
+            'home' => new SmartHomeResource($this->readableHomeQuery($request, $id)->firstOrFail()),
         ]);
     }
 
@@ -122,7 +154,7 @@ class SmartHomeController extends Controller
 
     public function rooms(Request $request, int $homeId)
     {
-        $this->ownedHome($request, $homeId);
+        $this->readableHome($request, $homeId);
 
         $rooms = SmartRoom::query()
             ->where('smart_home_id', $homeId)
@@ -193,15 +225,15 @@ class SmartHomeController extends Controller
     {
         $query = SmartDevice::query()
             ->with('room:id,name,tuya_room_id')
-            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $request->user()->id));
+            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request)));
 
         if ($request->filled('home_id')) {
-            $this->ownedHome($request, (int) $request->input('home_id'));
+            $this->readableHome($request, (int) $request->input('home_id'));
             $query->where('smart_home_id', (int) $request->input('home_id'));
         }
 
         if ($request->filled('room_id')) {
-            $room = $this->ownedRoom($request, (int) $request->input('room_id'));
+            $room = $this->readableRoom($request, (int) $request->input('room_id'));
             $query->where('smart_room_id', $room->id);
         }
 
@@ -228,7 +260,7 @@ class SmartHomeController extends Controller
     {
         return response()->json([
             'status' => 'success',
-            'device' => new SmartDeviceResource($this->ownedDevice($request, $id)->load('room:id,name,tuya_room_id')),
+            'device' => new SmartDeviceResource($this->readableDevice($request, $id)->load('room:id,name,tuya_room_id')),
         ]);
     }
 
@@ -396,7 +428,7 @@ class SmartHomeController extends Controller
 
     public function deviceActivity(Request $request, int $id)
     {
-        $device = $this->ownedDevice($request, $id);
+        $device = $this->readableDevice($request, $id);
         $perPage = min(max((int) $request->input('per_page', 30), 1), 100);
 
         return response()->json([
@@ -410,11 +442,11 @@ class SmartHomeController extends Controller
     public function eventLogs(Request $request)
     {
         $query = SmartHomeEventLog::query()
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $this->requestedOwnerId($request))
             ->latest();
 
         if ($request->filled('home_id')) {
-            $home = $this->ownedHome($request, (int) $request->input('home_id'));
+            $home = $this->readableHome($request, (int) $request->input('home_id'));
             $query->where('smart_home_id', $home->id);
         }
 
@@ -522,6 +554,32 @@ class SmartHomeController extends Controller
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)]);
     }
 
+    private function readableHomeQuery(Request $request, int $id): Builder
+    {
+        return SmartHome::query()
+            ->where('user_id', $this->requestedOwnerId($request))
+            ->whereKey($id)
+            ->withCount(['rooms', 'devices'])
+            ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)]);
+    }
+
+    private function requestedOwnerId(Request $request): int
+    {
+        if ($request->user()?->type === 'admin' && $request->filled('user_id')) {
+            return (int) $request->input('user_id');
+        }
+
+        return (int) $request->user()->id;
+    }
+
+    private function readableHome(Request $request, int $id): SmartHome
+    {
+        return SmartHome::query()
+            ->where('user_id', $this->requestedOwnerId($request))
+            ->whereKey($id)
+            ->firstOrFail();
+    }
+
     private function ownedHome(Request $request, int $id): SmartHome
     {
         return SmartHome::query()
@@ -538,11 +596,27 @@ class SmartHomeController extends Controller
             ->firstOrFail();
     }
 
+    private function readableRoom(Request $request, int $id): SmartRoom
+    {
+        return SmartRoom::query()
+            ->whereKey($id)
+            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request)))
+            ->firstOrFail();
+    }
+
     private function ownedDevice(Request $request, int $id): SmartDevice
     {
         return SmartDevice::query()
             ->whereKey($id)
             ->whereHas('home', fn (Builder $query) => $query->where('user_id', $request->user()->id))
+            ->firstOrFail();
+    }
+
+    private function readableDevice(Request $request, int $id): SmartDevice
+    {
+        return SmartDevice::query()
+            ->whereKey($id)
+            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request)))
             ->firstOrFail();
     }
 
