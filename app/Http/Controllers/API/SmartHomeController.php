@@ -345,7 +345,7 @@ class SmartHomeController extends Controller
 
     public function updateDevice(Request $request, int $id)
     {
-        $device = $this->ownedDevice($request, $id);
+        $device = $this->readableDevice($request, $id);
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:191'],
             'smart_room_id' => ['nullable', 'integer'],
@@ -384,7 +384,7 @@ class SmartHomeController extends Controller
 
     public function updateDeviceStatus(Request $request, int $id)
     {
-        $device = $this->ownedDevice($request, $id);
+        $device = $this->readableDevice($request, $id);
         $data = $request->validate([
             'online' => ['sometimes', 'boolean'],
             'last_status' => ['nullable', 'array'],
@@ -428,7 +428,7 @@ class SmartHomeController extends Controller
 
     public function storeControlLog(Request $request, int $id)
     {
-        $device = $this->ownedDevice($request, $id);
+        $device = $this->readableDevice($request, $id);
         $data = $request->validate([
             'command_code' => ['required', 'string', 'max:120'],
             'command_value' => ['nullable', 'array'],
