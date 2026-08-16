@@ -182,7 +182,7 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->whereNumber('id')
         ->whereNumber('attachmentId');
 
-    Route::prefix('smart-home')->group(function () {
+    Route::prefix('smart-home')->middleware('check.permission:Smart Home')->group(function () {
         Route::get('/tuya-user', [SmartHomeController::class, 'tuyaUser']);
         Route::put('/tuya-user', [SmartHomeController::class, 'updateTuyaUser']);
 

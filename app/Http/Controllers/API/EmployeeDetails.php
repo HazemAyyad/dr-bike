@@ -184,6 +184,7 @@ class EmployeeDetails extends Controller
             'Checks Incoming Create', 'Checks Outgoing Create' => 'checks',
             'Maintenance' => 'maintenance',
             'Messages Section', 'Technical Support' => 'communication',
+            'Smart Home' => 'smart_home',
             default => 'general',
         };
     }
@@ -200,6 +201,7 @@ class EmployeeDetails extends Controller
             'checks' => 'الشيكات',
             'maintenance' => 'الصيانة',
             'communication' => 'التواصل والدعم',
+            'smart_home' => 'المنزل الذكي',
             default => 'إعدادات عامة',
         };
     }
