@@ -376,11 +376,7 @@ class MaintenanceDeliveryService
 
     private function normalizePaymentMethod(mixed $method): string
     {
-        return match ((string) $method) {
-            'visa', 'card' => 'visa',
-            'bank_transfer', 'transfer' => 'bank_transfer',
-            default => 'cash',
-        };
+        return 'cash';
     }
 
     /**

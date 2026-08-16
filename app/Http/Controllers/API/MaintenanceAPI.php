@@ -656,7 +656,7 @@ class MaintenanceAPI extends Controller
                 'payment_amount' => 'nullable|numeric|min:0',
                 'payment_box_id' => 'nullable|integer|exists:boxes,id',
                 'payments' => 'nullable|array',
-                'payments.*.method' => 'required_with:payments|string|in:cash,visa,card,bank_transfer,transfer',
+                'payments.*.method' => 'required_with:payments|string|in:cash',
                 'payments.*.amount' => 'required_with:payments|numeric|min:0',
                 'payments.*.note' => 'nullable|string|max:1000',
             ]);

@@ -1118,26 +1118,7 @@ class MaintenanceDailyBoxService
                 ->values()
             : collect();
 
-        $cashTotal = round((float) $logs
-            ->where('affects_cash_balance', true)
-            ->filter(fn ($log) => in_array($log['payment_method'] ?? null, ['cash', null], true))
-            ->sum('amount'), 2);
-        $visaTotal = round((float) $logs
-            ->where('payment_method', 'visa')
-            ->sum('amount'), 2);
-        $transferTotal = round((float) $logs
-            ->where('payment_method', 'bank_transfer')
-            ->sum('amount'), 2);
-        $debtTotal = round((float) ($session
-            ? Maintenance::query()
-                ->where('maintenance_daily_session_id', $session->id)
-                ->where('status', 'delivered')
-                ->get(['invoice_total', 'paid_amount'])
-                ->sum(fn (Maintenance $maintenance) => max(
-                    0,
-                    round((float) $maintenance->invoice_total - (float) $maintenance->paid_amount, 2)
-                ))
-            : 0), 2);
+        $cashTotal = round((float) $logs->sum('amount'), 2);
         $expectedClosingBalance = round((float) ($session?->opening_balance ?? 0) + $cashTotal, 2);
 
         return [
@@ -1185,14 +1166,12 @@ class MaintenanceDailyBoxService
                 'total' => round((float) $box->total, 2),
             ] : null,
             'logs' => $logs,
-            'logs_total' => round((float) $logs->sum('amount'), 2),
+            'logs_total' => $cashTotal,
             'cash_total' => $cashTotal,
-            'visa_total' => $visaTotal,
-            'transfer_total' => $transferTotal,
-            'debt_total' => $debtTotal,
-            'non_cash_total' => round((float) $logs
-                ->where('affects_cash_balance', false)
-                ->sum('amount'), 2),
+            'visa_total' => 0,
+            'transfer_total' => 0,
+            'debt_total' => 0,
+            'non_cash_total' => 0,
             'expected_closing_balance' => $expectedClosingBalance,
             'config' => [
                 'open_time' => config('maintenance_daily.open_time', '08:00'),
@@ -1203,11 +1182,7 @@ class MaintenanceDailyBoxService
 
     private function paymentDescription(string $method, Maintenance $maintenance): string
     {
-        return match ($method) {
-            'visa' => 'قبض فيزا صيانة #'.$maintenance->id,
-            'bank_transfer' => 'قبض حوالة صيانة #'.$maintenance->id,
-            default => 'قبض كاش صيانة #'.$maintenance->id,
-        };
+        return 'قبض كاش صيانة #'.$maintenance->id;
     }
 
     public function formatClosingRequest(MaintenanceDailyClosingRequest $request): array
@@ -1371,18 +1346,11 @@ class MaintenanceDailyBoxService
             ->map(function (MaintenanceDailyBoxLog $log) {
                 $maintenance = $log->maintenance;
                 $partyName = $maintenance?->customer?->name ?: $maintenance?->seller?->name;
-                $method = $log->payment_method ?: 'cash';
-                $label = match ($method) {
-                    'visa' => 'دفعة فيزا صيانة',
-                    'bank_transfer', 'transfer' => 'دفعة حوالة صيانة',
-                    'debt' => 'دين صيانة',
-                    default => 'دفعة كاش صيانة',
-                };
 
                 return [
                     'id' => $log->id,
                     'sale_type' => 'maintenance',
-                    'label' => trim($label.' #'.($log->maintenance_id ?? '-')),
+                    'label' => trim('دفعة كاش صيانة #'.($log->maintenance_id ?? '-')),
                     'invoice_number' => $log->instantSale?->serial_number
                         ?: ($log->maintenance_id ? 'MNT-'.str_pad((string) $log->maintenance_id, 6, '0', STR_PAD_LEFT) : null),
                     'serial_number' => $log->instantSale?->serial_number,
@@ -1401,7 +1369,7 @@ class MaintenanceDailyBoxService
                     'buyer_name' => $partyName,
                     'created_by' => $log->user_id,
                     'created_by_name' => $log->actor_name ?: $log->user?->name,
-                    'payment_box_name' => $method,
+                    'payment_box_name' => 'cash',
                     'payment_box_value' => round((float) $log->amount, 2),
                     'notes' => $log->note,
                 ];
