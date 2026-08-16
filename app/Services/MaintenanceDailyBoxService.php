@@ -127,6 +127,12 @@ class MaintenanceDailyBoxService
         $at = $at ?? now();
 
         $session = $this->currentSession($user, $at);
+        if (! $session || ! $session->isOpen()) {
+            $globalSession = $this->findGlobalOpenSession();
+            if ($globalSession?->isOpen()) {
+                return $globalSession->loadMissing(['box:id,name,total,currency,type']);
+            }
+        }
 
         if (! $session || ! $session->isOpen()) {
             throw ValidationException::withMessages([
