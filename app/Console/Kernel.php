@@ -35,6 +35,11 @@ class Kernel extends ConsoleKernel
             ->timezone('Asia/Hebron')
             ->between('10:00', '23:59');
 
+        $schedule->command('maintenance-daily:notify-previous-day-open')
+            ->everyThirtyMinutes()
+            ->timezone('Asia/Hebron')
+            ->between('10:00', '23:59');
+
         $schedule->command('employees:send-hourly-reminders')
             ->hourly()
             ->timezone('Asia/Hebron')

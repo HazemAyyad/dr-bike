@@ -39,6 +39,8 @@ class EmployeeNotificationService
 
     public const TYPE_MAINTENANCE_DAILY_CLOSING_REJECTED = 'maintenance_daily_closing_rejected';
 
+    public const TYPE_MAINTENANCE_DAILY_PREVIOUS_DAY_OPEN = 'maintenance_daily_previous_day_open';
+
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
 
     public const TYPE_EMPLOYEE_LOAN_APPROVED = 'employee_loan_approved';
