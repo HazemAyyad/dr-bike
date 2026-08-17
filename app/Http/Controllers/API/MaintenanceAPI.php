@@ -460,6 +460,7 @@ class MaintenanceAPI extends Controller
             'status' => 'required|string|in:ongoing,ready,delivered,new',
             'labor_cost' => 'nullable|numeric|min:0',
             'discount' => 'nullable|numeric|min:0',
+            'edit_reason' => 'nullable|string|max:1000',
 
     ]);
         if (!$request->filled('customer_id') && !$request->filled('seller_id')) {
@@ -479,6 +480,12 @@ class MaintenanceAPI extends Controller
         
         $maintenance = Maintenance::findOrFail($request->maintenance_id);
         $oldStatus = $maintenance->status;
+        $editReason = trim((string) ($data['edit_reason'] ?? ''));
+        if ($oldStatus === 'delivered' && $editReason === '') {
+            throw ValidationException::withMessages([
+                'edit_reason' => ['يجب إدخال سبب التعديل على الصيانة المسلّمة.'],
+            ]);
+        }
         $before = $maintenance->only([
             'customer_id',
             'seller_id',
@@ -496,7 +503,7 @@ class MaintenanceAPI extends Controller
         // Merge existing and new files
         $data['files'] = CommonUse::handleImageUpdate($request,'files','MaintenanceFiles',$maintenance->files);
         $data['status'] = $request->status;
-        unset($data['labor_cost'], $data['discount']);
+        unset($data['labor_cost'], $data['discount'], $data['edit_reason']);
 
         if ($request->has('labor_cost')) {
             $maintenance->labor_cost = max(0, round((float) $request->labor_cost, 2));
@@ -528,10 +535,16 @@ class MaintenanceAPI extends Controller
                 $oldStatus !== $maintenance->status ? 'تغيير حالة الصيانة' : 'تعديل بيانات الصيانة',
                 $oldStatus !== $maintenance->status
                     ? 'تم تغيير حالة الصيانة من '.$oldStatus.' إلى '.$maintenance->status
-                    : 'تم تعديل بيانات الصيانة.',
+                    : ($oldStatus === 'delivered'
+                        ? 'تم تعديل بيانات صيانة مسلّمة. السبب: '.$editReason
+                        : 'تم تعديل بيانات الصيانة.'),
                 $oldStatus,
                 $maintenance->status,
-                ['changes' => $changes]
+                array_filter([
+                    'changes' => $changes,
+                    'edit_reason' => $editReason !== '' ? $editReason : null,
+                    'edited_after_delivery' => $oldStatus === 'delivered',
+                ], fn ($value) => $value !== null)
             );
         }
 
@@ -611,6 +624,7 @@ class MaintenanceAPI extends Controller
                 'products.*.size_color_id' => 'nullable|integer|exists:size_colors,id',
                 'products.*.quantity' => 'required|numeric|min:1',
                 'products.*.unit_price' => 'required|numeric|min:0',
+                'edit_reason' => 'nullable|string|max:1000',
             ]);
 
             $maintenance = Maintenance::findOrFail($data['maintenance_id']);
@@ -620,6 +634,7 @@ class MaintenanceAPI extends Controller
                 isset($data['labor_cost']) ? (float) $data['labor_cost'] : null,
                 isset($data['discount']) ? (float) $data['discount'] : null,
                 $request->user(),
+                $data['edit_reason'] ?? null,
             );
 
             return response()->json([
@@ -878,11 +893,18 @@ class MaintenanceAPI extends Controller
         try {
             $data = $request->validate([
                 'note' => 'nullable|string|max:2000',
+                'physical_count' => 'nullable|numeric|min:0',
+                'float_to_keep' => 'nullable|numeric|min:0',
             ]);
 
             $closingRequest = $this->maintenanceDailyBoxService->requestClosing(
                 $request->user(),
-                $data['note'] ?? null
+                $data['note'] ?? null,
+                null,
+                [
+                    'physical_count' => $data['physical_count'] ?? null,
+                    'float_to_keep' => $data['float_to_keep'] ?? null,
+                ]
             );
 
             return response()->json([
@@ -1025,13 +1047,19 @@ class MaintenanceAPI extends Controller
                 'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
                 'to_box_id' => 'nullable|integer|exists:boxes,id',
                 'review_note' => 'nullable|string|max:2000',
+                'physical_count' => 'nullable|numeric|min:0',
+                'float_to_keep' => 'nullable|numeric|min:0',
             ]);
 
             $closingRequest = $this->maintenanceDailyBoxService->directClose(
                 $request->user(),
                 (int) $data['session_id'],
                 isset($data['to_box_id']) ? (int) $data['to_box_id'] : null,
-                $data['review_note'] ?? null
+                $data['review_note'] ?? null,
+                [
+                    'physical_count' => $data['physical_count'] ?? null,
+                    'float_to_keep' => $data['float_to_keep'] ?? null,
+                ]
             );
 
             return response()->json([

@@ -226,11 +226,11 @@ class MaintenanceDailyBoxService
         return $session;
     }
 
-    public function requestClosing(User $user, ?string $note = null, ?Carbon $at = null): MaintenanceDailyClosingRequest
+    public function requestClosing(User $user, ?string $note = null, ?Carbon $at = null, ?array $closingInput = null): MaintenanceDailyClosingRequest
     {
         $at = $at ?? now();
 
-        return DB::transaction(function () use ($user, $note, $at) {
+        return DB::transaction(function () use ($user, $note, $at, $closingInput) {
             $session = $this->requireOpenSession($user, $at);
             $box = Box::lockForUpdate()->findOrFail($session->box_id);
             $pending = $session->closingRequests()->where('status', 'pending')->exists();
@@ -240,23 +240,11 @@ class MaintenanceDailyBoxService
                 ]);
             }
 
-            $cashCounts = [[
-                'currency' => $box->currency,
-                'daily_box_id' => (int) $box->id,
-                'opening_float' => round((float) $session->opening_balance, 2),
-                'sales_collected' => round(max(0, (float) $box->total - (float) $session->opening_balance), 2),
-                'system_balance' => round((float) $box->total, 2),
-                'physical_count' => round((float) $box->total, 2),
-                'variance' => 0,
-                'float_to_keep' => 0,
-                'amount_to_transfer' => round((float) $box->total, 2),
-                'employee_note' => $note ? trim($note) : '',
-                'variance_alert' => false,
-            ]];
+            $cashCounts = $this->buildClosingCashCounts($session, $box, $note, $closingInput);
 
             $session->update([
                 'status' => config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
-                'closing_balance' => round((float) $box->total, 2),
+                'closing_balance' => round((float) ($cashCounts[0]['physical_count'] ?? $box->total), 2),
                 'closing_requested_at' => now(),
                 'closing_requested_by_user_id' => $user->id,
                 'closing_request_note' => $note ? trim($note) : null,
@@ -645,7 +633,7 @@ class MaintenanceDailyBoxService
             ->exists();
     }
 
-    public function directClose(User $reviewer, int $sessionId, ?int $toBoxId = null, ?string $note = null): MaintenanceDailyClosingRequest
+    public function directClose(User $reviewer, int $sessionId, ?int $toBoxId = null, ?string $note = null, ?array $closingInput = null): MaintenanceDailyClosingRequest
     {
         if (! $this->canReviewClosing($reviewer)) {
             throw ValidationException::withMessages([
@@ -653,7 +641,7 @@ class MaintenanceDailyBoxService
             ]);
         }
 
-        return DB::transaction(function () use ($reviewer, $sessionId, $toBoxId, $note) {
+        return DB::transaction(function () use ($reviewer, $sessionId, $toBoxId, $note, $closingInput) {
             $session = MaintenanceDailySession::query()
                 ->with(['user', 'closingRequests'])
                 ->lockForUpdate()
@@ -675,11 +663,11 @@ class MaintenanceDailyBoxService
             }
 
             $box = Box::lockForUpdate()->findOrFail($session->box_id);
-            $cashCounts = $this->buildClosingCashCounts($session, $box, $note);
+            $cashCounts = $this->buildClosingCashCounts($session, $box, $note, $closingInput);
 
             $session->update([
                 'status' => config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
-                'closing_balance' => round((float) $box->total, 2),
+                'closing_balance' => round((float) ($cashCounts[0]['physical_count'] ?? $box->total), 2),
                 'closing_requested_at' => now(),
                 'closing_requested_by_user_id' => $reviewer->id,
                 'closing_request_note' => $note ? trim($note) : null,
@@ -722,11 +710,14 @@ class MaintenanceDailyBoxService
                 ]);
             }
 
+            $cashCount = collect($closingRequest->cash_counts ?? [])->first() ?: [];
             $box = Box::lockForUpdate()->find($session->box_id);
-            $closingBalance = round((float) ($box?->total ?? $session->closing_balance ?? 0), 2);
+            $closingBalance = round((float) ($cashCount['physical_count'] ?? $box?->total ?? $session->closing_balance ?? 0), 2);
+            $floatToKeep = round((float) ($cashCount['float_to_keep'] ?? 0), 2);
+            $amountToTransfer = round((float) ($cashCount['amount_to_transfer'] ?? max(0, $closingBalance - $floatToKeep)), 2);
             $transfer = null;
 
-            if ($closingBalance > 0) {
+            if ($amountToTransfer > 0) {
                 if (! $box || ! $toBoxId) {
                     throw ValidationException::withMessages([
                         'to_box_id' => ['يجب اختيار صندوق لترحيل صندوق الصيانة.'],
@@ -746,18 +737,21 @@ class MaintenanceDailyBoxService
                     ]);
                 }
 
-                $box->update(['total' => 0]);
-                $toBox->update(['total' => round((float) $toBox->total + $closingBalance, 2)]);
+                $box->update(['total' => $floatToKeep]);
+                $toBox->update(['total' => round((float) $toBox->total + $amountToTransfer, 2)]);
 
                 $transferNote = trim('جلسة صيانة #'.$session->id.' | بواسطة: '.$reviewer->name.($note ? ' | '.$note : ''));
-                BoxLogs::createTransferLog($box, $toBox, 'ترحيل صندوق صيانة يومي', $closingBalance, $transferNote);
+                BoxLogs::createTransferLog($box, $toBox, 'ترحيل صندوق صيانة يومي', $amountToTransfer, $transferNote);
                 $transfer = [
                     'from_box_id' => $box->id,
                     'to_box_id' => $toBox->id,
                     'to_box_name' => $toBox->name,
-                    'amount' => $closingBalance,
+                    'amount' => $amountToTransfer,
+                    'float_kept' => $floatToKeep,
                     'currency' => $box->currency,
                 ];
+            } elseif ($box) {
+                $box->update(['total' => $floatToKeep]);
             }
 
             $closingRequest->update([
@@ -891,9 +885,21 @@ class MaintenanceDailyBoxService
     private function buildClosingCashCounts(
         MaintenanceDailySession $session,
         Box $box,
-        ?string $note = null
+        ?string $note = null,
+        ?array $input = null
     ): array {
         $closingBalance = round((float) $box->total, 2);
+        $physicalCount = round((float) ($input['physical_count'] ?? $closingBalance), 2);
+        $floatToKeep = round((float) ($input['float_to_keep'] ?? 0), 2);
+
+        if ($floatToKeep > $physicalCount) {
+            throw ValidationException::withMessages([
+                'float_to_keep' => ['لا يمكن أن تكون فكة الغد أكبر من المعدود فعلياً.'],
+            ]);
+        }
+
+        $variance = round($physicalCount - $closingBalance, 2);
+        $amountToTransfer = round(max(0, $physicalCount - $floatToKeep), 2);
 
         return [[
             'currency' => $box->currency,
@@ -901,12 +907,12 @@ class MaintenanceDailyBoxService
             'opening_float' => round((float) $session->opening_balance, 2),
             'sales_collected' => round(max(0, $closingBalance - (float) $session->opening_balance), 2),
             'system_balance' => $closingBalance,
-            'physical_count' => $closingBalance,
-            'variance' => 0,
-            'float_to_keep' => 0,
-            'amount_to_transfer' => $closingBalance,
+            'physical_count' => $physicalCount,
+            'variance' => $variance,
+            'float_to_keep' => $floatToKeep,
+            'amount_to_transfer' => $amountToTransfer,
             'employee_note' => $note ? trim($note) : '',
-            'variance_alert' => false,
+            'variance_alert' => abs($variance) > 0.01,
         ]];
     }
 
@@ -1238,14 +1244,27 @@ class MaintenanceDailyBoxService
             ->where('status', 'pending')
             ->sortByDesc('id')
             ->first();
+        $currencyRows = $this->currenciesForPayload($payload, $session);
+        $firstCurrency = $currencyRows[0] ?? [];
+        $firstCount = collect($pendingClosing?->cash_counts ?? [])->first() ?: [];
 
         return [
             'id' => $session->id,
+            'session_id' => $session->id,
             'user_id' => $session->user_id,
             'employee_id' => $session->employee_id,
             'employee_name' => $session->user?->name,
             'business_date' => $session->business_date?->toDateString(),
             'status' => $session->status,
+            'opening_balance' => round((float) $session->opening_balance, 2),
+            'cash_total' => round((float) ($payload['cash_total'] ?? 0), 2),
+            'visa_total' => round((float) ($payload['visa_total'] ?? 0), 2),
+            'transfer_total' => round((float) ($payload['transfer_total'] ?? 0), 2),
+            'debt_total' => round((float) ($payload['debt_total'] ?? 0), 2),
+            'expected_closing_balance' => round((float) ($payload['expected_closing_balance'] ?? 0), 2),
+            'amount_to_transfer' => round((float) ($firstCount['amount_to_transfer'] ?? $payload['expected_closing_balance'] ?? 0), 2),
+            'currency' => (string) ($firstCurrency['currency'] ?? config('maintenance_daily.currency', 'شيكل')),
+            'box_name' => (string) ($firstCurrency['daily_box_name'] ?? config('maintenance_daily.box_name', 'صندوق الصيانة اليومي')),
             'opened_at' => $session->opened_at?->toDateTimeString(),
             'closed_at' => $session->closed_at?->toDateTimeString(),
             'closed_on_next_day' => $session->closed_at
@@ -1253,7 +1272,7 @@ class MaintenanceDailyBoxService
                 && $session->closed_at->toDateString() > $session->business_date->toDateString(),
             'instant_sales_count' => $maintenanceCount,
             'profit_sales_count' => 0,
-            'currencies' => $this->currenciesForPayload($payload, $session),
+            'currencies' => $currencyRows,
             'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
             'can_close' => $session->isOpen() && ! $pendingClosing,
             'pending_closing_request_id' => $pendingClosing?->id,

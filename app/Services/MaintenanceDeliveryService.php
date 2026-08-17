@@ -92,18 +92,21 @@ class MaintenanceDeliveryService
         array $items,
         ?float $laborCost = null,
         ?float $discount = null,
-        ?User $actor = null
+        ?User $actor = null,
+        ?string $editReason = null
     ): Maintenance
     {
-        if ($maintenance->status === 'delivered') {
+        $editReason = trim((string) $editReason);
+        if ($maintenance->status === 'delivered' && $editReason === '') {
             throw ValidationException::withMessages([
-                'maintenance' => [__('messages.maintenance_already_delivered')],
+                'edit_reason' => ['يجب إدخال سبب تعديل قطع الصيانة المسلّمة.'],
             ]);
         }
 
-        return DB::transaction(function () use ($maintenance, $items, $laborCost, $discount, $actor) {
+        return DB::transaction(function () use ($maintenance, $items, $laborCost, $discount, $actor, $editReason) {
             $maintenance = Maintenance::lockForUpdate()->findOrFail($maintenance->id);
             $before = $this->formatProductsSummary($maintenance);
+            $wasDelivered = $maintenance->status === 'delivered';
             $maintenance->products()->delete();
 
             foreach ($items as $row) {
@@ -147,14 +150,18 @@ class MaintenanceDeliveryService
                     $actor,
                     'products_synced',
                     'تعديل قطع وتكاليف الصيانة',
-                    'تم حفظ قطع الصيانة وتحديث الإجماليات.',
+                    $wasDelivered
+                        ? 'تم تعديل قطع وتكاليف صيانة مسلّمة. السبب: '.$editReason
+                        : 'تم حفظ قطع الصيانة وتحديث الإجماليات.',
                     $maintenance->status,
                     $fresh->status,
-                    [
+                    array_filter([
                         'before' => $before,
                         'after' => $after,
                         'items_count' => count($after['items']),
-                    ]
+                        'edit_reason' => $wasDelivered ? $editReason : null,
+                        'edited_after_delivery' => $wasDelivered,
+                    ], fn ($value) => $value !== null)
                 );
             }
 
