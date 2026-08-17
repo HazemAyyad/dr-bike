@@ -373,7 +373,7 @@ class SmartHomeController extends Controller
 
     public function destroyDevice(Request $request, int $id)
     {
-        $device = $this->ownedDevice($request, $id);
+        $device = $this->readableDevice($request, $id);
         $device->delete();
 
         return response()->json([
