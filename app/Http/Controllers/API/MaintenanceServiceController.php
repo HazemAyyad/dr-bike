@@ -209,7 +209,7 @@ class MaintenanceServiceController extends Controller
             'price' => 'required|numeric|min:0',
             'is_active' => 'nullable|boolean',
             'media' => 'nullable|array',
-            'media.*' => 'file|max:102400|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
+            'media.*' => 'file|max:512000',
             'keep_media_ids' => 'nullable|array',
             'keep_media_ids.*' => 'integer|exists:maintenance_service_media,id',
         ]);
@@ -243,9 +243,20 @@ class MaintenanceServiceController extends Controller
 
         File::ensureDirectoryExists(public_path(self::MEDIA_DIR));
         $sort = (int) $service->media()->max('sort_order');
+        $allowedExtensions = [
+            'jpg', 'jpeg', 'png', 'gif', 'tif', 'tiff', 'webp', 'avif', 'svg',
+            'heic', 'heif', 'mp4', 'mov', 'qt', 'avi', 'wmv', 'mkv', 'webm',
+            'm4v', '3gp', '3g2',
+        ];
 
         foreach ($request->file('media') as $file) {
             $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
+            if (! in_array($extension, $allowedExtensions, true)) {
+                throw ValidationException::withMessages([
+                    'media' => ['نوع الملف غير مدعوم. الرجاء رفع صورة أو فيديو فقط.'],
+                ]);
+            }
+
             $fileName = Str::uuid().'.'.$extension;
             $file->move(public_path(self::MEDIA_DIR), $fileName);
 
