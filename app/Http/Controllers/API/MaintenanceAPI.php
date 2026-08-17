@@ -216,8 +216,8 @@ class MaintenanceAPI extends Controller
     private function validateFields(Request $request){
         $data = $request->validate([
             'description'  => 'nullable|string',
-            'receipt_date' => 'required|date',
-            'receipt_time' => 'required|date_format:H:i',
+            'receipt_date' => 'nullable|date',
+            'receipt_time' => 'nullable|date_format:H:i',
             'files' => 'nullable|array',
             'files.*' => 'file|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
 
@@ -453,8 +453,8 @@ class MaintenanceAPI extends Controller
             'customer_id'  => 'nullable|exists:customers,id',
             'seller_id'  => 'nullable|exists:sellers,id',
             'description'  => 'nullable|string',
-            'receipt_date' => 'required|date',
-            'receipt_time' => 'required|date_format:H:i',
+            'receipt_date' => 'nullable|date',
+            'receipt_time' => 'nullable|date_format:H:i',
             'files' => 'nullable|array',
             'files.*' => 'nullable',
             'status' => 'required|string|in:ongoing,ready,delivered,new',
