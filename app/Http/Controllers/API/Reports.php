@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\Bill;
 use App\Models\Box;
 use App\Models\Customer;
-use App\Models\Seller;
 use Barryvdh\DomPDF\Facade\Pdf;
 use ArPHP\I18N\Arabic;
 use App\Models\Debt;
@@ -20,6 +19,7 @@ use App\Models\OutgoingCheck;
 use App\Models\Product;
 use App\Models\Project;
 use App\Models\ReturnModel;
+use App\Models\Seller;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -234,6 +234,159 @@ class Reports extends Controller
             'message' => __('messages.something_wrong')
         ], 200);
     }
+    }
+
+    public function salesReport(Request $request)
+    {
+        try {
+            $request->validate([
+                'period' => [
+                    'nullable',
+                    'string',
+                    Rule::in(['today', 'week', 'month', 'quarter', 'half_year', 'year', 'custom']),
+                ],
+                'from_date' => ['nullable', 'date'],
+                'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
+                'status' => ['nullable', 'string', Rule::in(['all', 'active', 'cancelled'])],
+                'payment_type' => ['nullable', 'string', Rule::in(['all', 'cash', 'debt', 'mixed'])],
+                'box_id' => ['nullable', 'integer', 'exists:boxes,id'],
+            ]);
+
+            [$from, $to, $period] = $this->resolveReportPeriod($request);
+            $status = $request->input('status', 'all');
+            $paymentType = $request->input('payment_type', 'all');
+
+            $baseQuery = InstantSale::query()
+                ->with(['product:id,nameAr,nameEng', 'buyerCustomer:id,name,phone', 'seller:id,name,phone', 'paymentBox:id,name'])
+                ->whereNull('parent_id')
+                ->whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+                ->when($request->filled('box_id'), fn ($query) => $query->where('payment_box_id', $request->box_id))
+                ->when($status === 'active', function ($query) {
+                    $query->where(function ($nested) {
+                        $nested->whereNull('status')->orWhere('status', '!=', 'cancelled');
+                    })->whereNull('cancelled_at');
+                })
+                ->when($status === 'cancelled', function ($query) {
+                    $query->where(function ($nested) {
+                        $nested->where('status', 'cancelled')->orWhereNotNull('cancelled_at');
+                    });
+                });
+
+            $sales = $baseQuery
+                ->orderByDesc('created_at')
+                ->limit(1000)
+                ->get();
+
+            $rows = $sales->map(function (InstantSale $sale) {
+                $total = (float) ($sale->total_cost ?? 0);
+                $discount = (float) ($sale->discount ?? 0);
+                $paid = (float) ($sale->payment_box_value ?? 0);
+                $remaining = max($total - $paid, 0);
+                $isCancelled = $sale->isCancelled();
+
+                return [
+                    'id' => $sale->id,
+                    'serial_number' => $sale->serial_number,
+                    'date' => optional($sale->created_at)->toDateTimeString(),
+                    'status' => $isCancelled ? 'cancelled' : ($sale->status ?: 'active'),
+                    'sale_kind' => $sale->sale_kind ?: 'regular',
+                    'buyer_type' => $sale->buyer_type,
+                    'buyer_id' => $sale->buyer_id,
+                    'buyer_name' => $sale->buyer_name ?: optional($sale->buyerCustomer)->name ?: optional($sale->seller)->name ?: 'زبون نقدي',
+                    'buyer_phone' => $sale->buyer_phone ?: optional($sale->buyerCustomer)->phone ?: optional($sale->seller)->phone,
+                    'product_name' => optional($sale->product)->nameAr ?: optional($sale->product)->nameEng,
+                    'quantity' => (float) ($sale->quantity ?? 0),
+                    'unit_price' => (float) ($sale->cost ?? 0),
+                    'total' => $total,
+                    'discount' => $discount,
+                    'paid' => $paid,
+                    'remaining' => $remaining,
+                    'payment_type' => $this->salesReportPaymentType($total, $paid),
+                    'box_id' => $sale->payment_box_id,
+                    'box_name' => $sale->payment_box_name ?: optional($sale->paymentBox)->name,
+                    'notes' => $sale->notes,
+                ];
+            })->filter(function (array $row) use ($paymentType) {
+                return $paymentType === 'all' || $row['payment_type'] === $paymentType;
+            })->values();
+
+            $activeRows = $rows->where('status', '!=', 'cancelled');
+            $cancelledRows = $rows->where('status', 'cancelled');
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'period' => [
+                        'key' => $period,
+                        'from_date' => $from->toDateString(),
+                        'to_date' => $to->toDateString(),
+                    ],
+                    'filters' => [
+                        'status' => $status,
+                        'payment_type' => $paymentType,
+                        'box_id' => $request->box_id,
+                    ],
+                    'summary' => [
+                        'invoice_count' => $rows->count(),
+                        'active_invoice_count' => $activeRows->count(),
+                        'cancelled_invoice_count' => $cancelledRows->count(),
+                        'gross_sales' => round($activeRows->sum('total'), 3),
+                        'cancelled_sales' => round($cancelledRows->sum('total'), 3),
+                        'discounts' => round($activeRows->sum('discount'), 3),
+                        'cash_paid' => round($activeRows->sum('paid'), 3),
+                        'debt_remaining' => round($activeRows->sum('remaining'), 3),
+                    ],
+                    'rows' => $rows,
+                ],
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    private function resolveReportPeriod(Request $request): array
+    {
+        $period = $request->input('period', 'month');
+
+        if ($period === 'custom' || $request->filled('from_date') || $request->filled('to_date')) {
+            $from = $request->filled('from_date') ? Carbon::parse($request->from_date) : Carbon::now()->startOfMonth();
+            $to = $request->filled('to_date') ? Carbon::parse($request->to_date) : Carbon::now();
+
+            return [$from, $to, 'custom'];
+        }
+
+        $now = Carbon::now();
+
+        return match ($period) {
+            'today' => [$now->copy(), $now->copy(), 'today'],
+            'week' => [$now->copy()->startOfWeek(), $now->copy()->endOfWeek(), 'week'],
+            'quarter' => [$now->copy()->subMonths(3)->startOfDay(), $now->copy(), 'quarter'],
+            'half_year' => [$now->copy()->subMonths(6)->startOfDay(), $now->copy(), 'half_year'],
+            'year' => [$now->copy()->startOfYear(), $now->copy()->endOfYear(), 'year'],
+            default => [$now->copy()->startOfMonth(), $now->copy()->endOfMonth(), 'month'],
+        };
+    }
+
+    private function salesReportPaymentType(float $total, float $paid): string
+    {
+        if ($paid <= 0 && $total > 0) {
+            return 'debt';
+        }
+
+        if ($paid >= $total) {
+            return 'cash';
+        }
+
+        return 'mixed';
     }
 
     public static function fixArabic($reportHtml){
