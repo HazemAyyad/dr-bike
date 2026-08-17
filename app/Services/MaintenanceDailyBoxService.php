@@ -1124,7 +1124,12 @@ class MaintenanceDailyBoxService
                 ->values()
             : collect();
 
-        $cashTotal = round((float) $logs->sum('amount'), 2);
+        $cashTotal = round((float) $logs
+            ->where('affects_cash_balance', true)
+            ->sum('amount'), 2);
+        $debtTotal = round((float) $logs
+            ->where('payment_method', 'debt')
+            ->sum('amount'), 2);
         $expectedClosingBalance = round((float) ($session?->opening_balance ?? 0) + $cashTotal, 2);
 
         return [
@@ -1176,7 +1181,7 @@ class MaintenanceDailyBoxService
             'cash_total' => $cashTotal,
             'visa_total' => 0,
             'transfer_total' => 0,
-            'debt_total' => 0,
+            'debt_total' => $debtTotal,
             'non_cash_total' => 0,
             'expected_closing_balance' => $expectedClosingBalance,
             'config' => [

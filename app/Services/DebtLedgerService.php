@@ -663,6 +663,9 @@ class DebtLedgerService
         [$customerId, $sellerId] = $this->resolveInstantSalePersonIds($sale);
         if (! $customerId && ! $sellerId) {
             $this->deleteSourceLedger('instant_sale', $sale->id);
+            if (! empty($sale->maintenance_id)) {
+                $this->deleteSourceLedger('maintenance', (int) $sale->maintenance_id);
+            }
 
             return null;
         }
@@ -673,11 +676,20 @@ class DebtLedgerService
             : 'شيكل';
 
         $debtAmount = $this->instantSaleDebtAmount($sale);
+        $source = 'instant_sale';
+        $sourceId = (int) $sale->id;
         $note = 'بيع فوري #'.$sale->id;
 
+        if (! empty($sale->maintenance_id)) {
+            $this->deleteSourceLedger('instant_sale', (int) $sale->id, false);
+            $source = 'maintenance';
+            $sourceId = (int) $sale->maintenance_id;
+            $note = 'دين صيانة #'.$sale->maintenance_id.' | فاتورة '.$sale->id;
+        }
+
         return $this->upsertSourceLedgerEntry(
-            'instant_sale',
-            $sale->id,
+            $source,
+            $sourceId,
             $customerId,
             $sellerId,
             'given',
