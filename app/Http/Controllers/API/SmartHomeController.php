@@ -388,6 +388,7 @@ class SmartHomeController extends Controller
         $data = $request->validate([
             'online' => ['sometimes', 'boolean'],
             'last_status' => ['nullable', 'array'],
+            'raw_metadata' => ['nullable', 'array'],
             'last_seen_at' => ['nullable', 'date'],
         ]);
 
@@ -526,10 +527,11 @@ class SmartHomeController extends Controller
 
     public function tuyaUser(Request $request)
     {
-        $mapping = SmartHomeTuyaUser::firstOrCreate(['user_id' => $request->user()->id], [
+        $userId = $this->requestedOwnerId($request);
+        $mapping = SmartHomeTuyaUser::firstOrCreate(['user_id' => $userId], [
             'region' => config('services.tuya.region'),
         ]);
-        $login = $this->tuyaUidLoginPayload($request);
+        $login = $this->tuyaUidLoginPayload($userId);
 
         return response()->json([
             'status' => 'success',
@@ -553,7 +555,7 @@ class SmartHomeController extends Controller
         ]);
 
         $mapping = SmartHomeTuyaUser::updateOrCreate(
-            ['user_id' => $request->user()->id],
+            ['user_id' => $this->requestedOwnerId($request)],
             [
                 ...$data,
                 'last_login_at' => now(),
@@ -572,9 +574,9 @@ class SmartHomeController extends Controller
         ]);
     }
 
-    private function tuyaUidLoginPayload(Request $request): array
+    private function tuyaUidLoginPayload(int $userId): array
     {
-        $uid = 'doctorbike_user_'.$request->user()->id;
+        $uid = 'doctorbike_user_'.$userId;
         $secret = config('app.key') ?: config('services.tuya.access_secret') ?: 'doctor-bike';
 
         return [
