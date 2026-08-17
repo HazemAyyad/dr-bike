@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 class MaintenanceServiceController extends Controller
 {
@@ -86,6 +87,11 @@ class MaintenanceServiceController extends Controller
                 'message' => __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'تعذر قراءة ملف الوسائط. تأكد من حجم الملف ونوعه ثم حاول مرة أخرى.',
+            ], 200);
         }
     }
 
@@ -152,6 +158,11 @@ class MaintenanceServiceController extends Controller
                 'status' => 'error',
                 'message' => 'الخدمة غير موجودة',
             ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'تعذر قراءة ملف الوسائط. تأكد من حجم الملف ونوعه ثم حاول مرة أخرى.',
+            ], 200);
         }
     }
 
@@ -191,15 +202,37 @@ class MaintenanceServiceController extends Controller
 
     private function validatePayload(Request $request): array
     {
+        $this->validateReadableMediaFiles($request);
+
         return $request->validate([
             'name' => 'required|string|max:255',
             'price' => 'required|numeric|min:0',
             'is_active' => 'nullable|boolean',
             'media' => 'nullable|array',
-            'media.*' => 'file|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
+            'media.*' => 'file|max:102400|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
             'keep_media_ids' => 'nullable|array',
             'keep_media_ids.*' => 'integer|exists:maintenance_service_media,id',
         ]);
+    }
+
+    private function validateReadableMediaFiles(Request $request): void
+    {
+        $files = $request->file('media', []);
+        if ($files instanceof UploadedFile) {
+            $files = [$files];
+        }
+
+        foreach ((array) $files as $file) {
+            if (! $file instanceof UploadedFile) {
+                continue;
+            }
+
+            if (! $file->isValid() || ! is_readable($file->getPathname())) {
+                throw ValidationException::withMessages([
+                    'media' => ['تعذر قراءة ملف الوسائط. قد يكون الملف كبيراً أو لم يكتمل رفعه.'],
+                ]);
+            }
+        }
     }
 
     private function storeMedia(Request $request, MaintenanceService $service): void
