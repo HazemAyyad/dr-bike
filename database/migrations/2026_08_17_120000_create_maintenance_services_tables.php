@@ -31,7 +31,7 @@ return new class extends Migration
                 $table->unsignedInteger('sort_order')->default(0);
                 $table->timestamps();
 
-                $table->index(['maintenance_service_id', 'sort_order']);
+                $table->index(['maintenance_service_id', 'sort_order'], 'mnt_service_media_sort_idx');
             });
         }
     }
