@@ -528,7 +528,7 @@ class Reports extends Controller
                     ['title' => 'مدين', 'value' => 0],
                     ['title' => 'دائن', 'value' => 0],
                 ],
-                'columns' => ['التاريخ', 'الشخص', 'النوع', 'القيمة', 'العملة', 'الرصيد بعد', 'الصندوق', 'الملاحظة'],
+                'columns' => ['التاريخ', 'الشخص', 'النوع', 'القيمة', 'العملة', 'الرصيد بعد', 'الصندوق', 'المصدر', 'الملاحظة'],
                 'rows' => collect(),
             ];
         }
@@ -550,7 +550,7 @@ class Reports extends Controller
                 'currency' => $transaction->currency,
                 'balance_after' => (float) $transaction->balance_after,
                 'box' => optional($transaction->box)->name,
-                'source' => $transaction->source,
+                'source' => $this->statementSourceLabel($transaction->source, $transaction->source_id),
                 'note' => $transaction->note,
             ];
         });
@@ -562,7 +562,7 @@ class Reports extends Controller
                 ['title' => 'مدين', 'value' => round($rows->where('amount', '>', 0)->sum('amount'), 3)],
                 ['title' => 'دائن', 'value' => round(abs($rows->where('amount', '<', 0)->sum('amount')), 3)],
             ],
-            'columns' => ['التاريخ', 'الشخص', 'النوع', 'القيمة', 'العملة', 'الرصيد بعد', 'الصندوق', 'الملاحظة'],
+            'columns' => ['التاريخ', 'الشخص', 'النوع', 'القيمة', 'العملة', 'الرصيد بعد', 'الصندوق', 'المصدر', 'الملاحظة'],
             'rows' => $rows,
         ];
     }
@@ -863,6 +863,22 @@ class Reports extends Controller
             'cashed_to_box' => 'مصروف للصندوق',
             default => $status ?: '-',
         };
+    }
+
+    private function statementSourceLabel(?string $source, $sourceId = null): string
+    {
+        $label = match ((string) $source) {
+            'instant_sale' => 'باقي فاتورة بيع فوري',
+            'profit_sale' => 'باقي فاتورة بيع ربحي',
+            'sales_order' => 'باقي طلبية',
+            'incoming_check' => 'شيك وارد',
+            'incoming_check_disposal' => 'تصرف في شيك وارد',
+            'outgoing_check' => 'شيك صادر',
+            'manual', '' => 'قسم الديون',
+            default => 'مصدر آخر',
+        };
+
+        return $sourceId ? $label.' #'.$sourceId : $label;
     }
 
     private function reportDateString($value): string
