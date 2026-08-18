@@ -424,6 +424,51 @@ class Reports extends Controller
         }
     }
 
+    public function reportPeople()
+    {
+        try {
+            $customers = Customer::query()
+                ->select(['id', 'name', 'phone'])
+                ->withSum(['debtTransactions as balance' => fn ($query) => $query->active()], 'amount')
+                ->orderBy('name')
+                ->get()
+                ->map(fn (Customer $person) => [
+                    'id' => $person->id,
+                    'type' => 'customer',
+                    'type_label' => 'زبون',
+                    'name' => $person->name,
+                    'phone' => $person->phone,
+                    'balance' => round((float) ($person->balance ?? 0), 3),
+                ]);
+
+            $sellers = Seller::query()
+                ->select(['id', 'name', 'phone'])
+                ->withSum(['debtTransactions as balance' => fn ($query) => $query->active()], 'amount')
+                ->orderBy('name')
+                ->get()
+                ->map(fn (Seller $person) => [
+                    'id' => $person->id,
+                    'type' => 'seller',
+                    'type_label' => 'مورد',
+                    'name' => $person->name,
+                    'phone' => $person->phone,
+                    'balance' => round((float) ($person->balance ?? 0), 3),
+                ]);
+
+            return response()->json([
+                'status' => 'success',
+                'data' => [
+                    'people' => $customers->merge($sellers)->values(),
+                ],
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     private function balancesReportPayload(): array
     {
         $customerRows = Customer::query()
@@ -474,6 +519,20 @@ class Reports extends Controller
 
     private function statementReportPayload(Request $request, Carbon $from, Carbon $to): array
     {
+        if (! $request->filled('person_id') || ! $request->filled('person_type')) {
+            return [
+                'title' => 'كشف حركات الحساب',
+                'summary' => [
+                    ['title' => 'الحساب', 'value' => 'اختر شخص من الفلاتر'],
+                    ['title' => 'عدد الحركات', 'value' => 0],
+                    ['title' => 'مدين', 'value' => 0],
+                    ['title' => 'دائن', 'value' => 0],
+                ],
+                'columns' => ['التاريخ', 'الشخص', 'النوع', 'القيمة', 'العملة', 'الرصيد بعد', 'الصندوق', 'الملاحظة'],
+                'rows' => collect(),
+            ];
+        }
+
         $query = DebtTransaction::query()
             ->with(['customer:id,name,phone', 'seller:id,name,phone', 'box:id,name'])
             ->active()

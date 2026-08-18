@@ -1208,6 +1208,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/get/reprot/by/type' , [Reports::class,'getReport']);
     Route::get('/admin/reports/sales' , [Reports::class,'salesReport']);
     Route::get('/admin/reports/data' , [Reports::class,'reportData']);
+    Route::get('/admin/reports/people' , [Reports::class,'reportPeople']);
 
 
 
