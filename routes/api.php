@@ -1106,7 +1106,10 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
     Route::post('/purchase/receive' , [Bills::class,'receivePurchase']);
     Route::post('/purchase/finalize' , [Bills::class,'finalizePurchase']);
     Route::post('/purchase/payment' , [Bills::class,'payPurchase']);
+    Route::post('/purchase/account/payment' , [Bills::class,'paySupplierAccount']);
     Route::post('/purchase/amanat/purchase' , [Bills::class,'purchaseAmanat']);
+    Route::post('/purchase/amanat/return' , [Bills::class,'returnAmanat']);
+    Route::get('/purchase/timeline' , [Bills::class,'purchaseTimeline']);
     Route::get('/purchase/price-intelligence' , [Bills::class,'purchasePriceIntelligence']);
     Route::get('/unfinished/bills' , [Bills::class,'getUnfinishedBills']);
     Route::post('/change/product/status' , [Bills::class,'changeProductStatus']);

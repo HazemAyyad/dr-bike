@@ -50,6 +50,7 @@ class DebtLedgerService
             'purchase_invoice' => 'فاتورة شراء',
             'purchase_initial_payment' => 'دفعة شراء أولية',
             'purchase_payment' => 'دفعة مورد',
+            'purchase_account_payment' => 'دفعة مورد على الحساب',
             'purchase_return' => 'مرتجع شراء',
             'purchase_refund' => 'استرداد من مورد',
             'purchase_settlement' => 'تسوية شراء',

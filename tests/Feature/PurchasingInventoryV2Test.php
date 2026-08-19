@@ -10,9 +10,11 @@ use App\Models\Product;
 use App\Models\PurchaseAmanatStock;
 use App\Models\PurchasePayment;
 use App\Models\PurchasePriceHistory;
+use App\Models\ReturnModel;
 use App\Models\Seller;
 use App\Models\User;
 use App\Services\InventoryCostingService;
+use App\Services\PurchaseAccountService;
 use App\Services\PurchasingService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -97,6 +99,32 @@ class PurchasingInventoryV2Test extends TestCase
         ]);
     }
 
+    public function test_amanat_can_be_returned_without_becoming_owned_stock(): void
+    {
+        $seller = Seller::create(['name' => 'Supplier', 'phone' => '05922']);
+        $product = $this->product(1012, 0);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 10, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $bill->items()->first()->id, 'accepted_quantity' => 10, 'extra_quantity' => 2, 'unit_price' => 5],
+            ],
+        ], $this->user->id);
+
+        $amanat = PurchaseAmanatStock::where('bill_id', $bill->id)->firstOrFail();
+        app(PurchaseAccountService::class)->returnAmanat($amanat, 2, 'رجعت للمورد', $this->user->id);
+
+        $this->assertSame(10, (int) $product->fresh()->stock);
+        $this->assertEquals(0, (float) $amanat->fresh()->remaining_quantity);
+        $this->assertSame('returned', $amanat->fresh()->status);
+    }
+
     public function test_purchase_finalization_and_payments_update_invoice_ledger_and_boxes(): void
     {
         $seller = Seller::create(['name' => 'Supplier', 'phone' => '0593']);
@@ -133,6 +161,86 @@ class PurchasingInventoryV2Test extends TestCase
         $this->assertEquals(9000, (float) $boxB->fresh()->total);
         $this->assertSame(5, DebtTransaction::where('seller_id', $seller->id)->count());
         $this->assertSame(4, PurchasePayment::where('bill_id', $bill->id)->count());
+    }
+
+    public function test_supplier_account_payment_can_allocate_oldest_finalized_invoices(): void
+    {
+        $seller = Seller::create(['name' => 'Supplier', 'phone' => '05933']);
+        $product = $this->product(1013, 0);
+        $box = Box::create(['name' => 'A', 'total' => 20000, 'currency' => 'شيكل']);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 1, 'purchase_price' => 1000],
+            ],
+        ], $this->user->id);
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $bill->items()->first()->id, 'accepted_quantity' => 1, 'unit_price' => 1000],
+            ],
+        ], $this->user->id);
+        app(PurchasingService::class)->finalize($bill, 0, null, $this->user->id);
+
+        app(PurchaseAccountService::class)->paySupplierOnAccount([
+            'seller_id' => $seller->id,
+            'amount' => 600,
+            'box_id' => $box->id,
+            'currency' => 'شيكل',
+            'allocate_oldest_first' => true,
+        ], $this->user->id);
+
+        $this->assertEquals(19400, (float) $box->fresh()->total);
+        $this->assertEquals(600, (float) $bill->fresh()->paid_amount);
+        $this->assertSame('partially_paid', $bill->fresh()->payment_status);
+        $this->assertDatabaseHas('purchase_payments', [
+            'seller_id' => $seller->id,
+            'bill_id' => null,
+            'type' => 'account_payment',
+            'amount' => 600,
+        ]);
+    }
+
+    public function test_purchase_return_updates_stock_cost_layers_ledger_and_cash_refund_box(): void
+    {
+        $seller = Seller::create(['name' => 'Supplier', 'phone' => '05944']);
+        $product = $this->product(1014, 0);
+        $box = Box::create(['name' => 'Refund Box', 'total' => 1000, 'currency' => 'شيكل']);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 10, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $bill->items()->first()->id, 'accepted_quantity' => 10, 'unit_price' => 5],
+            ],
+        ], $this->user->id);
+        app(PurchasingService::class)->finalize($bill, 50, $box->id, $this->user->id);
+
+        $return = app(PurchaseAccountService::class)->createPurchaseReturn([
+            'seller_id' => $seller->id,
+            'bill_id' => $bill->id,
+            'resolution' => 'cash_refund',
+            'refund_box_id' => $box->id,
+            'products' => [
+                ['product_id' => $product->id, 'bill_item_id' => $bill->items()->first()->id, 'quantity' => 2, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+        app(PurchaseAccountService::class)->deliverPurchaseReturn($return, $box->id, $this->user->id);
+
+        $this->assertSame(8, (int) $product->fresh()->stock);
+        $this->assertEquals(960, (float) $box->fresh()->total);
+        $this->assertEquals(8, (float) InventoryCostLayer::where('product_id', $product->id)->firstOrFail()->remaining_quantity);
+        $this->assertSame('delivered', ReturnModel::find($return->id)->status);
+        $this->assertDatabaseHas('debt_transactions', [
+            'seller_id' => $seller->id,
+            'source' => 'purchase_refund',
+            'source_id' => $return->id,
+            'amount' => 10,
+        ]);
     }
 
     public function test_fifo_and_weighted_average_costing(): void

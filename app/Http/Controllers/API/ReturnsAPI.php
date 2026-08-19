@@ -3,10 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Models\Debt;
-use App\Models\Product;
-use App\Models\PurchaseReturn;
 use App\Models\ReturnModel;
+use App\Services\PurchaseAccountService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -14,67 +12,40 @@ use Illuminate\Validation\ValidationException;
 
 class ReturnsAPI extends Controller
 {
+    public function __construct(private PurchaseAccountService $purchaseAccounts)
+    {
+    }
+
         public function createReturnPurchase(Request $request){
         try{
             $data = $request->validate([
-                'seller_id'=>['required','integer','exists:sellers,id'],
+                'seller_id'=>['nullable','integer','exists:sellers,id'],
+                'customer_id'=>['nullable','integer','exists:customers,id'],
+                'bill_id'=>['nullable','integer','exists:bills,id'],
+                'currency'=>['nullable','string'],
+                'resolution'=>['nullable','string','in:supplier_credit,cash_refund'],
+                'refund_box_id'=>['nullable','integer','exists:boxes,id'],
+                'note'=>['nullable','string'],
                 'products.*'=>['required','array'],
 
                 'products.*.product_id'=>['required','integer','exists:products,id'],
+                'products.*.bill_item_id'=>['nullable','integer','exists:bill_items,id'],
+                'products.*.size_id'=>['nullable','integer'],
+                'products.*.size_color_id'=>['nullable','integer'],
                 'products.*.quantity'=>['required','numeric','min:1'],
                 'products.*.purchase_price'=>['required','numeric','min:1'],
-                'total' => 'required|numeric|min:1',
+                'products.*.note'=>['nullable','string'],
+                'total' => 'nullable|numeric|min:1',
             ]);
 
-
-
-            foreach($request->products as $item){ 
-                $product = Product::findOrFail($item['product_id']);
-                if($product->stock < $item['quantity']){
-                    return response()->json([
-                        'status'=>'error',
-                        'message'=>__('messages.stcok_failed'),
-                    ],200);            
-                }
-           
-            }
-
-            $returnProduct = ReturnModel::create([
-                'seller_id' => $request->seller_id,
-                'total' => $request->total,
-            ]);
-
-            foreach($request->products as $item){
-                $product = Product::findOrFail($item['product_id']);
-
-                $product->stock -= $item['quantity'];
-                $product->save();
-                if ($product->stock === 0) {
-                    $closeout = $product->closeout;
-
-                    if ($closeout) { // check if it exists
-                        $closeout->status = 'archived'; 
-                        $closeout->save();
-                    }
-                }
-             
-                PurchaseReturn::create([
-                    'return_id' => $returnProduct->id,
-                    'product_id' => $product->id,
-                    'quantity'=> $item['quantity'],
-                    'price' => $item['purchase_price'],
-                ]);
-                
-            }
-
-
-
+            $returnProduct = $this->purchaseAccounts->createPurchaseReturn($data, auth()->id());
             Logs::createLog('انشاء مردودات مشتريات','انشاء مردودات مشتريات للتاجر'.' '
-            .$returnProduct->seller->name.' '.'بقيمة'.' '.$returnProduct->total,'returns');
+            .($returnProduct->seller?->name ?? $returnProduct->customer?->name ?? '').' '.'بقيمة'.' '.$returnProduct->total,'returns');
 
             return response()->json([
                 'status'=>'success',
                 'message'=> __('messages.return_products_added'),
+                'return_purchase' => $returnProduct,
             ],200);
             
         }
@@ -110,6 +81,7 @@ class ReturnsAPI extends Controller
 
             $returnProducts = ReturnModel::where('status',$status)
             ->with('seller:id,name')
+            ->with('customer:id,name')
             ->with('items')
             ->get();
 
@@ -157,30 +129,18 @@ class ReturnsAPI extends Controller
 
             $request->validate([
                 'return_purchase_id'=>'required|integer|exists:returns,id',
+                'refund_box_id'=>'nullable|integer|exists:boxes,id',
             ]);
             $returnProduct = ReturnModel::findOrFail($request->return_purchase_id);
-            $returnProduct->update(['status'=>'delivered']);
-
-
-            Debt::create([
-                'seller_id'=> $returnProduct->seller_id,
-                'type' => 'owed to us',
-                'total' => $returnProduct->total,
-                'return_id' => $returnProduct->id,
-            ]);
+            $returnProduct = $this->purchaseAccounts->deliverPurchaseReturn($returnProduct, $request->refund_box_id, auth()->id());
 
             Logs::createLog('تسليم مردودات مشتريات','تسم تسليم مردودات مشتريات للتاجر'.' '
-            .$returnProduct->seller->name.' '.'بقيمة'.' '.$returnProduct->total,'returns');
-            Logs::createLog(
-                    'اضافة دين لنا بعد انشاء مردودات مشتريات',
-                    ' تمت اضافة دين لنا على رصيد ديون التاجر'.' '.$returnProduct->seller->name
-                    .' '.' بقيمة'.' '.$returnProduct->total,
-                    'debts'
-                );
+            .($returnProduct->seller?->name ?? $returnProduct->customer?->name ?? '').' '.'بقيمة'.' '.$returnProduct->total,'returns');
 
             return response()->json([
                 'status'=>'success',
                 'message'=>__('messages.return_delivered'),
+                'return_purchase' => $returnProduct,
             ],200);
         }
 

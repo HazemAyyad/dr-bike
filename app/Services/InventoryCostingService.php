@@ -166,6 +166,44 @@ class InventoryCostingService
         });
     }
 
+    /**
+     * @return array{method: string, total_cost: float, unit_cost: float, allocations: array<int, InventoryCostAllocation>}
+     */
+    public function consumeOwnedStock(
+        Product $product,
+        float $quantity,
+        string $movementType,
+        string $referenceType,
+        ?int $referenceId,
+        ?int $sizeColorId = null,
+        ?int $sizeId = null,
+        ?int $userId = null,
+        ?string $note = null,
+    ): array {
+        if ($quantity <= 0) {
+            throw new \InvalidArgumentException('Quantity must be positive.');
+        }
+
+        return DB::transaction(function () use ($product, $quantity, $movementType, $referenceType, $referenceId, $sizeColorId, $sizeId, $userId, $note) {
+            $cost = $this->consumeCost($product, $quantity, $referenceType, $referenceId);
+
+            $this->stockService->adjustStock(
+                product: $product,
+                quantityDelta: -1 * (int) round($quantity),
+                type: $movementType,
+                sizeColorId: $sizeColorId,
+                referenceType: $referenceType,
+                referenceId: $referenceId,
+                note: $note,
+                userId: $userId,
+                unitCost: $cost['unit_cost'],
+                totalCost: $cost['total_cost'],
+            );
+
+            return $cost;
+        });
+    }
+
     private function movingAverageUnitCost(int $productId): float
     {
         $layers = InventoryCostLayer::query()

@@ -12,14 +12,37 @@ class ReturnModel extends Model
 
     protected $fillable = [
         'seller_id',
+        'customer_id',
+        'bill_id',
         'total',
+        'currency',
         'status',
+        'resolution',
+        'refund_box_id',
+        'debt_transaction_id',
+        'note',
+        'created_by',
+        'delivered_at',
     ];
 
+    protected $casts = [
+        'total' => 'float',
+        'delivered_at' => 'datetime',
+    ];
 
     public function seller()
     {
         return $this->belongsTo(Seller::class);
+    }
+
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function bill()
+    {
+        return $this->belongsTo(Bill::class);
     }
 
     public function items(){
