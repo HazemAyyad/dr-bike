@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Closeout;
+use App\Models\InventoryCostLayer;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\Size;
@@ -216,6 +217,7 @@ class ProductStockService
                 $variant = SizeColor::lockForUpdate()->findOrFail($sizeColorId);
                 $before = (int) $variant->stock;
                 $after = $allowNegative ? $before - $quantity : max(0, $before - $quantity);
+                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId);
                 $variant->update(['stock' => $after]);
                 $result = [
                     'product_id' => (int) $lockedProduct->id,
@@ -229,7 +231,7 @@ class ProductStockService
                     productId: (int) $lockedProduct->id,
                     sizeId: $sizeId ?? (int) $variant->sizeId,
                     sizeColorId: $sizeColorId,
-                    type: ProductStockMovement::TYPE_SALE,
+                    type: $referenceType === 'maintenance' ? ProductStockMovement::TYPE_MAINTENANCE : ProductStockMovement::TYPE_SALE,
                     quantity: -$quantity,
                     stockBefore: $before,
                     stockAfter: $after,
@@ -237,12 +239,16 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
+                    unitCost: $cost['unit_cost'] ?? null,
+                    totalCost: $cost['total_cost'] ?? null,
                 );
+                $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
 
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
             } else {
                 $before = (int) $lockedProduct->stock;
                 $after = $allowNegative ? $before - $quantity : max(0, $before - $quantity);
+                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId);
                 $lockedProduct->update(['stock' => $after]);
                 $result = [
                     'product_id' => (int) $lockedProduct->id,
@@ -256,7 +262,7 @@ class ProductStockService
                     productId: (int) $lockedProduct->id,
                     sizeId: null,
                     sizeColorId: null,
-                    type: ProductStockMovement::TYPE_SALE,
+                    type: $referenceType === 'maintenance' ? ProductStockMovement::TYPE_MAINTENANCE : ProductStockMovement::TYPE_SALE,
                     quantity: -$quantity,
                     stockBefore: $before,
                     stockAfter: $after,
@@ -264,7 +270,10 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
+                    unitCost: $cost['unit_cost'] ?? null,
+                    totalCost: $cost['total_cost'] ?? null,
                 );
+                $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
             }
 
             $this->refreshCloseoutStatus((int) $lockedProduct->id);
@@ -546,6 +555,94 @@ class ProductStockService
         }
 
         ProductStockMovement::create($payload);
+    }
+
+    /**
+     * @return array{method: string, total_cost: float, unit_cost: float}|null
+     */
+    private function tryConsumeCostSnapshot(
+        Product $product,
+        int $quantity,
+        ?string $referenceType,
+        ?int $referenceId
+    ): ?array {
+        if ($quantity <= 0 || ! in_array($referenceType, ['instant_sale', 'sales_order', 'maintenance'], true)) {
+            return null;
+        }
+
+        if (! Schema::hasTable('inventory_cost_layers') || ! Schema::hasTable('inventory_cost_allocations')) {
+            return null;
+        }
+
+        $available = (float) InventoryCostLayer::query()
+            ->where('product_id', $product->id)
+            ->where('remaining_quantity', '>', 0)
+            ->sum('remaining_quantity');
+
+        if ($available + 0.0001 < $quantity) {
+            return null;
+        }
+
+        try {
+            $cost = app(InventoryCostingService::class)->consumeCost(
+                $product,
+                $quantity,
+                $referenceType ?? 'stock_out',
+                $referenceId
+            );
+
+            return [
+                'method' => $cost['method'],
+                'unit_cost' => (float) $cost['unit_cost'],
+                'total_cost' => (float) $cost['total_cost'],
+            ];
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function persistOutboundCostSnapshot(
+        Product $product,
+        int $quantity,
+        ?string $referenceType,
+        ?int $referenceId,
+        ?array $cost
+    ): void {
+        if (! $cost || ! $referenceId) {
+            return;
+        }
+
+        if ($referenceType === 'instant_sale' && Schema::hasTable('instant_sales') && Schema::hasColumn('instant_sales', 'inventory_total_cost')) {
+            DB::table('instant_sales')
+                ->where('id', $referenceId)
+                ->update([
+                    'inventory_cost_method' => $cost['method'],
+                    'inventory_unit_cost' => $cost['unit_cost'],
+                    'inventory_total_cost' => $cost['total_cost'],
+                    'updated_at' => now(),
+                ]);
+        }
+
+        if ($referenceType === 'maintenance' && Schema::hasTable('maintenance_products') && Schema::hasColumn('maintenance_products', 'inventory_total_cost')) {
+            $maintenanceProductId = DB::table('maintenance_products')
+                ->where('maintenance_id', $referenceId)
+                ->where('product_id', $product->id)
+                ->where('quantity', $quantity)
+                ->whereNull('inventory_total_cost')
+                ->orderBy('id')
+                ->value('id');
+
+            if ($maintenanceProductId) {
+                DB::table('maintenance_products')
+                ->where('id', $maintenanceProductId)
+                ->update([
+                    'inventory_cost_method' => $cost['method'],
+                    'inventory_unit_cost' => $cost['unit_cost'],
+                    'inventory_total_cost' => $cost['total_cost'],
+                    'updated_at' => now(),
+                ]);
+            }
+        }
     }
 
     private function refreshCloseoutStatus(int $productId, bool $reopen = false): void

@@ -17,12 +17,17 @@ class MaintenanceProduct extends Model
         'quantity',
         'unit_price',
         'line_total',
+        'inventory_cost_method',
+        'inventory_unit_cost',
+        'inventory_total_cost',
     ];
 
     protected $casts = [
         'quantity' => 'integer',
         'unit_price' => 'float',
         'line_total' => 'float',
+        'inventory_unit_cost' => 'float',
+        'inventory_total_cost' => 'float',
     ];
 
     public function maintenance()

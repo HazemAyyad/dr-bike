@@ -5,8 +5,10 @@ namespace Tests\Feature;
 use App\Models\Bill;
 use App\Models\Box;
 use App\Models\DebtTransaction;
+use App\Models\InstantSale;
 use App\Models\InventoryCostLayer;
 use App\Models\Product;
+use App\Models\ProductStockMovement;
 use App\Models\PurchaseAmanatStock;
 use App\Models\PurchasePayment;
 use App\Models\PurchasePriceHistory;
@@ -15,6 +17,7 @@ use App\Models\Seller;
 use App\Models\User;
 use App\Services\InventoryCostingService;
 use App\Services\PurchaseAccountService;
+use App\Services\ProductStockService;
 use App\Services\PurchasingService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -295,6 +298,52 @@ class PurchasingInventoryV2Test extends TestCase
 
         $weighted = $costing->consumeCost($product2, 20, 'test_sale', 3);
         $this->assertEquals(73.333333, round($weighted['total_cost'], 6));
+    }
+
+    public function test_instant_sale_stock_deduction_persists_cost_snapshot(): void
+    {
+        $product = $this->product(1015, 50);
+        InventoryCostLayer::create([
+            'product_id' => $product->id,
+            'quantity' => 50,
+            'remaining_quantity' => 50,
+            'unit_cost' => 5,
+            'currency' => 'شيكل',
+            'source_type' => 'opening',
+            'effective_at' => now()->subDay(),
+        ]);
+
+        $sale = InstantSale::create([
+            'product_id' => $product->id,
+            'quantity' => 3,
+            'cost' => 10,
+            'total_cost' => 30,
+            'type' => 'normal',
+            'buyer_type' => 'unknown',
+            'buyer_name' => '-',
+            'status' => 'active',
+        ]);
+
+        app(ProductStockService::class)->deductForSale(
+            product: $product,
+            quantity: 3,
+            referenceType: 'instant_sale',
+            referenceId: $sale->id,
+            userId: $this->user->id,
+        );
+
+        $this->assertSame(47, (int) $product->fresh()->stock);
+        $this->assertEquals(47, (float) InventoryCostLayer::where('product_id', $product->id)->firstOrFail()->remaining_quantity);
+        $this->assertEquals(15, (float) $sale->fresh()->inventory_total_cost);
+        $this->assertDatabaseHas('product_stock_movements', [
+            'product_id' => $product->id,
+            'type' => ProductStockMovement::TYPE_SALE,
+            'quantity' => -3,
+            'unit_cost' => 5,
+            'total_cost' => 15,
+            'reference_type' => 'instant_sale',
+            'reference_id' => $sale->id,
+        ]);
     }
 
     private function product(int $id, int $stock): Product

@@ -18,6 +18,9 @@ class InstantSale extends Model
         'offer_package_id',
         'parent_id',
         'total_cost',
+        'inventory_cost_method',
+        'inventory_unit_cost',
+        'inventory_total_cost',
         'cost',
         'notes',
         'additional_notes',
@@ -49,6 +52,8 @@ class InstantSale extends Model
 
     protected $casts = [
         'payment_box_value' => 'float',
+        'inventory_unit_cost' => 'float',
+        'inventory_total_cost' => 'float',
         'additional_notes' => 'array',
         'cancelled_at' => 'datetime',
         'stock_restored' => 'boolean',
