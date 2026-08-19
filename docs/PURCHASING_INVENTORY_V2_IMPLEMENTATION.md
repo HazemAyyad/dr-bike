@@ -7,12 +7,12 @@ Date: 2026-08-19
 - Backend repository: `F:\laragon\www\doctor-bike`
 - Backend baseline branch: `main`
 - Backend baseline SHA: `1d9146b4ec9c211f4e7676ae7db00fbf7d97dfca`
-- Backend implementation branch: `codex/purchasing-inventory-v2-20260819-1110`
+- Backend implementation branch: `purchasing-inventory-v2-20260819-1110`
 - Backend baseline tag: `backup/pre-purchasing-inventory-v2-20260819-1110`
 - Flutter repository: `F:\flutter_projects\doctorbike`
 - Flutter baseline branch: `main`
 - Flutter baseline SHA: `02b161ec132cdae0e3c38ea76d6c113cb4139076`
-- Flutter implementation branch: `codex/purchasing-inventory-v2-20260819-1110`
+- Flutter implementation branch: `purchasing-inventory-v2-20260819-1110`
 - Flutter baseline tag: `backup/pre-purchasing-inventory-v2-20260819-1110`
 
 ## Backups
@@ -32,6 +32,8 @@ Backend:
 - `a516008` - Phase 05 - add purchase returns and account payments
 - `2a0df6d` - Phase 07 - integrate outbound inventory costing
 - `bfa6040` - Phase 12 - document purchasing inventory rollout
+- `c2d7188` - Phase 12 - update purchasing inventory verification report
+- `7e42056` - Phase 08 - expose purchase attachments and custody details
 
 Flutter:
 
@@ -39,6 +41,7 @@ Flutter:
 - `aa5029c` - Phase 10 - add purchase payment controls
 - `3bcf313` - Phase 10 - add inventory costing settings UI
 - `8806a8f` - Phase 10 - add purchase account timeline controls
+- `aa68316` - Phase 10 - complete purchase custody attachments UI
 
 ## Backend Changes
 
@@ -81,6 +84,17 @@ Flutter:
   - purchase return as supplier credit or cash refund
   - purchase return stock/cost-layer consumption
 - Added purchase timeline endpoint.
+- Added purchase attachment upload endpoint:
+  - `POST /purchase/attachments`
+  - stores evidence on the public disk under `purchase-evidence/{bill_id}`
+  - supports optional `attachable_type` / `attachable_id` links
+- Extended purchase bill details with:
+  - `customer_id`
+  - payments
+  - returns and return items
+  - attachments with public URLs
+  - compact timeline
+  - per-product amanat stock rows with `amanat_id`, remaining quantity, status, negotiated price, and notes
 - Added outbound cost snapshots for instant sales and maintenance consumption:
   - `instant_sales.inventory_cost_method`
   - `instant_sales.inventory_unit_cost`
@@ -97,9 +111,9 @@ Flutter:
 ## Flutter Changes
 
 - Added endpoints for receiving/finalization/payment/amanat purchase.
-- Added endpoints for supplier account payment, amanat return, and purchase timeline.
+- Added endpoints for supplier account payment, amanat return, purchase timeline, and purchase attachments.
 - Added datasource/repository/usecase methods for purchase workflow actions.
-- Extended bill details model with workflow/payment/receiving quantities.
+- Extended bill details model with workflow/payment/receiving quantities, amanat rows, payments, returns, attachments, and timeline.
 - Added purchase workflow panel on bill details screen:
   - receiving status
   - payment status
@@ -109,6 +123,10 @@ Flutter:
   - action to finalize with optional initial payment and box selection
   - action to record later invoice payment
   - action to record supplier account payment and allocate oldest invoices first
+  - action to purchase or return individual amanat rows
+  - action to upload purchase evidence files
+  - attachment list with external open support
+  - compact payment and return summaries
   - compact purchase activity timeline preview
 - Added inventory costing method UI under stock inventory settings:
   - FIFO
@@ -124,6 +142,7 @@ Backend:
 - `php -l app\Http\Controllers\API\Bills.php` passed.
 - `php -l app\Http\Controllers\API\ReturnsAPI.php` passed.
 - `php -l app\Services\PurchaseAccountService.php` passed.
+- `php -l app\Services\PurchaseAttachmentService.php` passed.
 - `php -l app\Services\ProductStockService.php` passed.
 - `php -l app\Console\Commands\BackfillInventoryCostLayers.php` passed.
 - `php artisan migrate` passed.
@@ -133,7 +152,7 @@ Backend:
   - `2026_08_19_113000_inventory_cost_snapshots_and_backfill_support`
 - `php artisan inventory:backfill-cost-layers` dry-run passed: would create `0`, review `0`.
 - `php artisan inventory:backfill-cost-layers --write` passed: created `0`, review `0`.
-- `php artisan test --filter=PurchasingInventoryV2Test` passed: 8 tests, 36 assertions.
+- `php artisan test --filter=PurchasingInventoryV2Test` passed: 9 tests, 42 assertions.
 
 Flutter:
 
@@ -146,12 +165,10 @@ Flutter:
 - During early testing, `RefreshDatabase` was unsafe because `phpunit.xml` uses the local MySQL database rather than isolated SQLite. A pre-implementation SQL dump exists and migrations were reapplied with `php artisan migrate`.
 - Tests were changed to `DatabaseTransactions` to avoid `migrate:fresh`.
 - No GitHub push was performed.
-- No completion tag was created yet because full-suite verification and attachment UI remain outside the completed slice.
+- No completion tag was created yet because full-suite verification and production builds were not run.
 
 ## Current Limitations
 
-- Purchase attachment storage table exists, but a full multipart upload endpoint/UI for every evidence location is not yet completed.
-- Amanat return backend endpoint exists; Flutter has datasource/repository support, but bill details still needs exposed `amanat_id` rows before adding a precise return button per custody row.
 - Timeline backend exists and Flutter shows a compact preview. A full detailed audit screen with filters is not yet added.
 - Outbound costing is integrated into central stock deduction when layers exist. Existing old stock is protected by the backfill command; if future legacy data lacks defensible cost, it will be flagged for review rather than blocking sales.
 - Full `php artisan test`, `flutter test`, and production build were not run in this pass; targeted Laravel tests and Flutter analyzer passed.
@@ -168,6 +185,12 @@ git reset --hard backup/pre-purchasing-inventory-v2-20260819-1110
 For shared history, revert commits in reverse order instead of rewriting history:
 
 ```bash
+git revert 7e42056
+git revert c2d7188
+git revert 2a0df6d
+git revert a516008
+git revert 38c8fa0
+git revert bfa6040
 git revert e068247582ae08b664d99ff57f3077530c72c202
 git revert d94405d32dc0f758b3eba77646e7eb1f48aa4dd7
 ```
@@ -175,6 +198,7 @@ git revert d94405d32dc0f758b3eba77646e7eb1f48aa4dd7
 Flutter shared-history rollback:
 
 ```bash
+git revert aa68316
 git revert 8806a8f
 git revert 3bcf313
 git revert aa5029c
