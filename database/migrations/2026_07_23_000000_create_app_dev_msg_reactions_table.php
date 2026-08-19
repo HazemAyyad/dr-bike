@@ -8,11 +8,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasTable('app_development_task_message_reactions')) {
+            return;
+        }
+
         Schema::create('app_development_task_message_reactions', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('app_development_task_message_id')
-                ->constrained('app_development_task_messages', indexName: 'adt_msg_react_msg_fk')
-                ->cascadeOnDelete();
+            $table->unsignedBigInteger('app_development_task_message_id');
             $table->foreignId('user_id')
                 ->nullable()
                 ->constrained('users', indexName: 'adt_msg_react_user_fk')
@@ -23,6 +25,15 @@ return new class extends Migration
             $table->unique(['app_development_task_message_id', 'user_id'], 'adt_msg_react_user_unique');
             $table->index(['app_development_task_message_id', 'reaction'], 'adt_msg_react_lookup');
         });
+
+        if (Schema::hasTable('app_development_task_messages')) {
+            Schema::table('app_development_task_message_reactions', function (Blueprint $table) {
+                $table->foreign('app_development_task_message_id', 'adt_msg_react_msg_fk')
+                    ->references('id')
+                    ->on('app_development_task_messages')
+                    ->cascadeOnDelete();
+            });
+        }
     }
 
     public function down(): void

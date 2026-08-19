@@ -12,9 +12,21 @@ class PurchaseReturn extends Model
 
     protected $fillable = [
         'return_id',
+        'bill_id',
+        'bill_item_id',
         'product_id',
+        'size_id',
+        'size_color_id',
         'price',
         'quantity',
+        'cost_total',
+        'note',
+    ];
+
+    protected $casts = [
+        'price' => 'float',
+        'quantity' => 'float',
+        'cost_total' => 'float',
     ];
 
     /**
@@ -31,5 +43,15 @@ class PurchaseReturn extends Model
     public function product()
     {
         return $this->belongsTo(Product::class, 'product_id');
+    }
+
+    public function bill()
+    {
+        return $this->belongsTo(Bill::class, 'bill_id');
+    }
+
+    public function billItem()
+    {
+        return $this->belongsTo(BillItem::class, 'bill_item_id');
     }
 }

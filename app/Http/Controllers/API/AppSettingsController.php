@@ -8,6 +8,7 @@ use App\Support\AppUpdateSettings;
 use App\Support\AttendanceSettings;
 use App\Support\SalesDailySettings;
 use App\Support\ShiplySettings;
+use App\Services\InventoryCostingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
@@ -57,6 +58,7 @@ class AppSettingsController extends Controller
                 'attendance' => 'sometimes|array',
                 'shiply' => 'sometimes|array',
                 'app_update' => 'sometimes|array',
+                'inventory_costing_method' => 'sometimes|string|in:fifo,moving_average',
             ], $maxFloatRules));
 
             if ($request->has('employee_task_subtask_bonus_default')) {
@@ -113,6 +115,9 @@ class AppSettingsController extends Controller
             if ($request->has('app_update') && is_array($request->input('app_update'))) {
                 AppUpdateSettings::updateFromArray($request->input('app_update'));
             }
+            if ($request->has('inventory_costing_method')) {
+                app(InventoryCostingService::class)->setMethod((string) $data['inventory_costing_method']);
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -162,6 +167,14 @@ class AppSettingsController extends Controller
             'attendance' => AttendanceSettings::toArray(),
             'shiply' => ShiplySettings::toArray(),
             'app_update' => AppUpdateSettings::all(),
+            'inventory_costing_method' => AppSetting::get(
+                AppSetting::KEY_INVENTORY_COSTING_METHOD,
+                InventoryCostingService::METHOD_FIFO
+            ),
+            'inventory_costing_method_effective_from' => AppSetting::get(
+                AppSetting::KEY_INVENTORY_COSTING_METHOD_EFFECTIVE_FROM,
+                null
+            ),
         ];
     }
 

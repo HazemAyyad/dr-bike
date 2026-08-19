@@ -47,6 +47,13 @@ class DebtLedgerService
             'incoming_check' => 'شيك وارد',
             'incoming_check_disposal' => 'تصرف في شيك وارد',
             'outgoing_check' => 'شيك صادر',
+            'purchase_invoice' => 'فاتورة شراء',
+            'purchase_initial_payment' => 'دفعة شراء أولية',
+            'purchase_payment' => 'دفعة مورد',
+            'purchase_account_payment' => 'دفعة مورد على الحساب',
+            'purchase_return' => 'مرتجع شراء',
+            'purchase_refund' => 'استرداد من مورد',
+            'purchase_settlement' => 'تسوية شراء',
             'manual', '' => 'إدخال يدوي',
             default => 'مصدر آخر',
         };
