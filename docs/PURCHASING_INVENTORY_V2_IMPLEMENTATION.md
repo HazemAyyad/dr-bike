@@ -28,10 +28,17 @@ Backend:
 
 - `d94405d32dc0f758b3eba77646e7eb1f48aa4dd7` - Phase 01 - purchasing inventory foundation
 - `e068247582ae08b664d99ff57f3077530c72c202` - Phase 02 - expose purchase receiving details
+- `38c8fa0` - Phase 06 - expose inventory costing setting
+- `a516008` - Phase 05 - add purchase returns and account payments
+- `2a0df6d` - Phase 07 - integrate outbound inventory costing
+- `bfa6040` - Phase 12 - document purchasing inventory rollout
 
 Flutter:
 
 - `a78ae30` - Phase 09 - wire purchasing workflow UI
+- `aa5029c` - Phase 10 - add purchase payment controls
+- `3bcf313` - Phase 10 - add inventory costing settings UI
+- `8806a8f` - Phase 10 - add purchase account timeline controls
 
 ## Backend Changes
 
@@ -64,10 +71,33 @@ Flutter:
 - Integrated purchase finalization and payments with `DebtLedgerService` and `Box` movement.
 - Added purchase source labels to debt ledger.
 - Added purchase workflow API endpoints under the existing purchasing permission group.
+- Added inventory costing setting through `AppSettingsController`:
+  - `inventory_costing_method`
+  - `inventory_costing_method_effective_from`
+- Added purchase returns and supplier-account operations:
+  - `PurchaseAccountService`
+  - amanat return without entering owned inventory
+  - supplier account payment with oldest-invoice allocation
+  - purchase return as supplier credit or cash refund
+  - purchase return stock/cost-layer consumption
+- Added purchase timeline endpoint.
+- Added outbound cost snapshots for instant sales and maintenance consumption:
+  - `instant_sales.inventory_cost_method`
+  - `instant_sales.inventory_unit_cost`
+  - `instant_sales.inventory_total_cost`
+  - `maintenance_products.inventory_cost_method`
+  - `maintenance_products.inventory_unit_cost`
+  - `maintenance_products.inventory_total_cost`
+- Added idempotent backfill command:
+  - `php artisan inventory:backfill-cost-layers`
+  - `php artisan inventory:backfill-cost-layers --write`
+- Backfill write report: `storage/app/inventory-cost-backfill/backfill-20260819-203215.json`
+- Backfill result on current local DB: created opening layers `0`, products needing review `0`.
 
 ## Flutter Changes
 
 - Added endpoints for receiving/finalization/payment/amanat purchase.
+- Added endpoints for supplier account payment, amanat return, and purchase timeline.
 - Added datasource/repository/usecase methods for purchase workflow actions.
 - Extended bill details model with workflow/payment/receiving quantities.
 - Added purchase workflow panel on bill details screen:
@@ -76,7 +106,14 @@ Flutter:
   - ordered vs received quantities
   - final/paid/remaining totals
   - action to receive remaining shown quantities
-  - action to finalize without an initial payment
+  - action to finalize with optional initial payment and box selection
+  - action to record later invoice payment
+  - action to record supplier account payment and allocate oldest invoices first
+  - compact purchase activity timeline preview
+- Added inventory costing method UI under stock inventory settings:
+  - FIFO
+  - Moving Weighted Average
+  - Arabic warning that the change applies prospectively only
 
 ## Verification
 
@@ -85,26 +122,39 @@ Backend:
 - `php -l app\Services\PurchasingService.php` passed.
 - `php -l app\Services\InventoryCostingService.php` passed.
 - `php -l app\Http\Controllers\API\Bills.php` passed.
+- `php -l app\Http\Controllers\API\ReturnsAPI.php` passed.
+- `php -l app\Services\PurchaseAccountService.php` passed.
+- `php -l app\Services\ProductStockService.php` passed.
+- `php -l app\Console\Commands\BackfillInventoryCostLayers.php` passed.
 - `php artisan migrate` passed.
-- `php artisan test --filter=PurchasingInventoryV2Test` passed: 4 tests, 20 assertions.
+- `php artisan migrate:status` shows new migrations as Ran:
+  - `2026_08_19_111000_purchase_inventory_v2_foundation`
+  - `2026_08_19_112000_purchase_returns_account_payments_and_audit`
+  - `2026_08_19_113000_inventory_cost_snapshots_and_backfill_support`
+- `php artisan inventory:backfill-cost-layers` dry-run passed: would create `0`, review `0`.
+- `php artisan inventory:backfill-cost-layers --write` passed: created `0`, review `0`.
+- `php artisan test --filter=PurchasingInventoryV2Test` passed: 8 tests, 36 assertions.
 
 Flutter:
 
 - `dart format` run on changed Flutter files.
 - `flutter analyze lib\features\admin\buying` passed with no issues.
+- `flutter analyze lib\features\admin\buying lib\features\admin\general_settings\presentation\views\stock_inventory_settings_screen.dart lib\core\services\app_settings_service.dart` passed with no issues.
 
 ## Important Notes
 
 - During early testing, `RefreshDatabase` was unsafe because `phpunit.xml` uses the local MySQL database rather than isolated SQLite. A pre-implementation SQL dump exists and migrations were reapplied with `php artisan migrate`.
 - Tests were changed to `DatabaseTransactions` to avoid `migrate:fresh`.
 - No GitHub push was performed.
-- No completion tag was created because the full requested 48-section implementation is not fully complete.
+- No completion tag was created yet because full-suite verification and attachment UI remain outside the completed slice.
 
 ## Current Limitations
 
-- Flutter payment UI has backend/repository/controller support, but the visible bill details action currently finalizes without an initial payment. A full box selector payment dialog still needs to be added before exposing direct payment buttons.
-- Purchase returns, supplier refunds, allocation of account payments, attachment upload UI, full audit timeline UI, settings UI for costing method, and full sales/maintenance costing integration are not complete.
-- Full backend test suite and full Flutter test suite were not completed in this pass.
+- Purchase attachment storage table exists, but a full multipart upload endpoint/UI for every evidence location is not yet completed.
+- Amanat return backend endpoint exists; Flutter has datasource/repository support, but bill details still needs exposed `amanat_id` rows before adding a precise return button per custody row.
+- Timeline backend exists and Flutter shows a compact preview. A full detailed audit screen with filters is not yet added.
+- Outbound costing is integrated into central stock deduction when layers exist. Existing old stock is protected by the backfill command; if future legacy data lacks defensible cost, it will be flagged for review rather than blocking sales.
+- Full `php artisan test`, `flutter test`, and production build were not run in this pass; targeted Laravel tests and Flutter analyzer passed.
 
 ## Rollback
 
@@ -125,6 +175,9 @@ git revert d94405d32dc0f758b3eba77646e7eb1f48aa4dd7
 Flutter shared-history rollback:
 
 ```bash
+git revert 8806a8f
+git revert 3bcf313
+git revert aa5029c
 git revert a78ae30
 ```
 
