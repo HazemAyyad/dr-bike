@@ -271,10 +271,15 @@ private function getBills($statuses)
 
                 return [
                         'bill_id' => $bill->id,
+                        'bill_item_id' => $item->id,
                         'product_id' => $item->product->id,
                         'product_name'=> $item->product->nameAr,
                         'product_image' => $image ? $image->imageUrl : 'no image',
                         'quantity' => $item->quantity,
+                        'ordered_quantity' => $item->ordered_quantity ?? $item->quantity,
+                        'received_owned_quantity' => $item->received_owned_quantity ?? 0,
+                        'remaining_quantity' => max(0, (float) ($item->ordered_quantity ?? $item->quantity) - (float) ($item->received_owned_quantity ?? 0)),
+                        'custody_quantity' => $item->custody_quantity ?? 0,
                         'price' => $item->price,
                         'product_status' => $item->status,
                         'sub_total' => $item->quantity * $item->price,
@@ -290,6 +295,11 @@ private function getBills($statuses)
                 'seller_name' => $bill->seller->name,
                 'created_at' => $bill->created_at->format('d M Y'), 
                 'total_bill' => $bill->total,
+                'workflow_status' => $bill->workflow_status,
+                'payment_status' => $bill->payment_status,
+                'final_total' => $bill->final_total,
+                'paid_amount' => $bill->paid_amount,
+                'remaining_amount' => max(0, (float) $bill->final_total - (float) $bill->paid_amount),
             ];
 
             return response()->json([
