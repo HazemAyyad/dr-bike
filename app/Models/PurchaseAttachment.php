@@ -18,4 +18,8 @@ class PurchaseAttachment extends Model
         'size',
         'created_by',
     ];
+
+    protected $casts = [
+        'size' => 'integer',
+    ];
 }

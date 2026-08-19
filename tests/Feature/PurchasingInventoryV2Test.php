@@ -17,9 +17,13 @@ use App\Models\Seller;
 use App\Models\User;
 use App\Services\InventoryCostingService;
 use App\Services\PurchaseAccountService;
+use App\Services\PurchaseAttachmentService;
 use App\Services\ProductStockService;
 use App\Services\PurchasingService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
 class PurchasingInventoryV2Test extends TestCase
@@ -126,6 +130,56 @@ class PurchasingInventoryV2Test extends TestCase
         $this->assertSame(10, (int) $product->fresh()->stock);
         $this->assertEquals(0, (float) $amanat->fresh()->remaining_quantity);
         $this->assertSame('returned', $amanat->fresh()->status);
+    }
+
+    public function test_bill_details_expose_amanat_ids_and_purchase_attachments(): void
+    {
+        Storage::fake('public');
+        $seller = Seller::create(['name' => 'Supplier', 'phone' => '05923']);
+        $product = $this->product(1023, 0);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 10, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $bill->items()->first()->id, 'accepted_quantity' => 10, 'extra_quantity' => 2, 'unit_price' => 5],
+            ],
+        ], $this->user->id);
+
+        $created = app(PurchaseAttachmentService::class)->store(
+            $bill->fresh(),
+            [UploadedFile::fake()->image('invoice.jpg')],
+            'invoice',
+            'bill',
+            $bill->id,
+            $this->user->id
+        );
+
+        Sanctum::actingAs($this->user);
+        $this->withoutMiddleware([
+            \App\Http\Middleware\RefreshSanctumTokenExpiry::class,
+            \App\Http\Middleware\CheckPermission::class,
+        ]);
+        $response = $this->postJson('/api/get/bill/details', [
+            'bill_id' => $bill->id,
+        ]);
+
+        $response->assertOk();
+        $payload = $response->json('bill_details');
+        $this->assertIsArray($payload, $response->getContent());
+        $this->assertNotEmpty($payload['products'][0]['amanat_stocks']);
+        $this->assertSame(PurchaseAmanatStock::where('bill_id', $bill->id)->first()->id, $payload['products'][0]['amanat_stocks'][0]['id']);
+        $this->assertSame($created[0]->id, $payload['attachments'][0]['id']);
+        $this->assertDatabaseHas('purchase_attachments', [
+            'bill_id' => $bill->id,
+            'category' => 'invoice',
+            'original_name' => 'invoice.jpg',
+        ]);
     }
 
     public function test_purchase_finalization_and_payments_update_invoice_ledger_and_boxes(): void

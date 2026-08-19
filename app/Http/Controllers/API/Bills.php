@@ -9,8 +9,10 @@ use App\Models\BillQuantity;
 use App\Models\Debt;
 use App\Models\Product;
 use App\Models\PurchaseAmanatStock;
+use App\Models\PurchaseAttachment;
 use App\Models\PurchaseProduct;
 use App\Services\PurchaseAccountService;
+use App\Services\PurchaseAttachmentService;
 use App\Services\PurchasingService;
 use App\Services\StoreManageItemService;
 use ArPHP\I18N\Arabic;
@@ -258,6 +260,40 @@ class Bills extends Controller
         }
     }
 
+    public function uploadPurchaseAttachment(Request $request, PurchaseAttachmentService $attachments)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+                'category' => ['nullable', 'string', 'max:60'],
+                'attachable_type' => ['nullable', 'string', 'max:120'],
+                'attachable_id' => ['nullable', 'integer'],
+                'files' => ['required', 'array', 'min:1'],
+                'files.*' => ['required', 'file', 'mimes:jpg,jpeg,png,webp,pdf,doc,docx,xls,xlsx', 'max:10240'],
+            ]);
+
+            $bill = Bill::findOrFail($data['bill_id']);
+            $created = $attachments->store(
+                $bill,
+                $request->file('files', []),
+                $data['category'] ?? 'evidence',
+                $data['attachable_type'] ?? null,
+                $data['attachable_id'] ?? null,
+                $request->user()?->id
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.data_added_successfully'),
+                'attachments' => array_map(fn (PurchaseAttachment $attachment) => $attachments->format($attachment), $created),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
     public function purchasePriceIntelligence(Request $request, PurchasingService $purchases)
     {
         try {
@@ -332,18 +368,72 @@ private function getBills($statuses)
                 'bill_id'=>'required|integer|exists:bills,id'
             ]);
 
-            $bill = Bill::findOrFail($request->bill_id);
+            $bill = Bill::with([
+                'items.product',
+                'items.amanatStocks',
+                'seller',
+                'customer',
+                'payments',
+                'activityLogs' => fn ($q) => $q->latest('id'),
+            ])->findOrFail($request->bill_id);
             $items = $bill->items;
+            $attachmentService = app(PurchaseAttachmentService::class);
+            $attachments = PurchaseAttachment::query()
+                ->where('bill_id', $bill->id)
+                ->latest('id')
+                ->get()
+                ->map(fn (PurchaseAttachment $attachment) => $attachmentService->format($attachment))
+                ->values();
+            $returns = \App\Models\ReturnModel::query()
+                ->where('bill_id', $bill->id)
+                ->with('items.product')
+                ->latest('id')
+                ->get()
+                ->map(fn ($return) => [
+                    'id' => (int) $return->id,
+                    'total' => (float) $return->total,
+                    'currency' => $return->currency,
+                    'status' => $return->status,
+                    'resolution' => $return->resolution,
+                    'refund_box_id' => $return->refund_box_id ? (int) $return->refund_box_id : null,
+                    'created_at' => $return->created_at?->format('Y-m-d H:i:s'),
+                    'items' => $return->items->map(fn ($item) => [
+                        'id' => (int) $item->id,
+                        'product_id' => (int) $item->product_id,
+                        'product_name' => $item->product?->nameAr,
+                        'quantity' => (float) $item->quantity,
+                        'price' => (float) $item->price,
+                    ])->values(),
+                ])->values();
 
             $productsFormatted =  $items->map( function ($item) use ($bill){
-                $image = $item->product->normalImages->first();
+                $image = null;
+                if (\Illuminate\Support\Facades\Schema::hasTable('normal_image_products')) {
+                    $productColumn = \Illuminate\Support\Facades\Schema::hasColumn('normal_image_products', 'itemId') ? 'itemId' : 'product_id';
+                    $imageColumn = \Illuminate\Support\Facades\Schema::hasColumn('normal_image_products', 'imageUrl') ? 'imageUrl' : 'image_url';
+                    $image = \Illuminate\Support\Facades\DB::table('normal_image_products')
+                        ->where($productColumn, $item->product->id)
+                        ->orderBy('id')
+                        ->value($imageColumn);
+                }
+                $amanat = $item->amanatStocks
+                    ->where('remaining_quantity', '>', 0)
+                    ->values()
+                    ->map(fn ($row) => [
+                        'id' => (int) $row->id,
+                        'quantity' => (float) $row->quantity,
+                        'remaining_quantity' => (float) $row->remaining_quantity,
+                        'status' => $row->status,
+                        'negotiated_unit_price' => $row->negotiated_unit_price ? (float) $row->negotiated_unit_price : null,
+                        'notes' => $row->notes,
+                    ]);
 
                 return [
                         'bill_id' => $bill->id,
                         'bill_item_id' => $item->id,
                         'product_id' => $item->product->id,
                         'product_name'=> $item->product->nameAr,
-                        'product_image' => $image ? $image->imageUrl : 'no image',
+                        'product_image' => $image ?: 'no image',
                         'quantity' => $item->quantity,
                         'ordered_quantity' => $item->ordered_quantity ?? $item->quantity,
                         'received_owned_quantity' => $item->received_owned_quantity ?? 0,
@@ -355,13 +445,17 @@ private function getBills($statuses)
                         'extra_amount' => $item->extra_amount?? null,
                         'missing_amount' => $item->missing_amount?? null,
                         'not_compatible_amount' => $item->not_compatible_amount?? null,
+                        'damaged_quantity' => $item->damaged_quantity ?? 0,
+                        'mismatched_quantity' => $item->mismatched_quantity ?? 0,
+                        'amanat_stocks' => $amanat,
                     ];
                 } );
             $formatted =  [
                 'bill_id' => $bill->id,
                 'products'=> $productsFormatted,
                 'seller_id' => $bill->seller_id,
-                'seller_name' => $bill->seller->name,
+                'customer_id' => $bill->customer_id,
+                'seller_name' => $bill->seller?->name ?? $bill->customer?->name ?? '',
                 'created_at' => $bill->created_at->format('d M Y'), 
                 'total_bill' => $bill->total,
                 'workflow_status' => $bill->workflow_status,
@@ -369,6 +463,26 @@ private function getBills($statuses)
                 'final_total' => $bill->final_total,
                 'paid_amount' => $bill->paid_amount,
                 'remaining_amount' => max(0, (float) $bill->final_total - (float) $bill->paid_amount),
+                'payments' => $bill->payments->map(fn ($payment) => [
+                    'id' => (int) $payment->id,
+                    'box_id' => $payment->box_id ? (int) $payment->box_id : null,
+                    'amount' => (float) $payment->amount,
+                    'currency' => $payment->currency,
+                    'type' => $payment->type,
+                    'paid_at' => $payment->paid_at?->format('Y-m-d'),
+                    'note' => $payment->note,
+                ])->values(),
+                'returns' => $returns,
+                'attachments' => $attachments,
+                'timeline' => $bill->activityLogs->map(fn ($log) => [
+                    'id' => (int) $log->id,
+                    'event' => $log->event,
+                    'title' => $log->title,
+                    'description' => $log->description,
+                    'source_type' => $log->source_type,
+                    'source_id' => $log->source_id ? (int) $log->source_id : null,
+                    'created_at' => $log->created_at?->format('Y-m-d H:i:s'),
+                ])->values(),
             ];
 
             return response()->json([
@@ -394,6 +508,10 @@ private function getBills($statuses)
 
 
         catch(QueryException $e){
+                \Illuminate\Support\Facades\Log::error('purchase bill details query failed', [
+                    'bill_id' => $request->bill_id ?? null,
+                    'error' => $e->getMessage(),
+                ]);
                 return response([
                     'status'=>'error',
                     'message' => __('messages.retrieve_data_error'),
@@ -402,6 +520,10 @@ private function getBills($statuses)
             
 
             catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::error('purchase bill details failed', [
+                    'bill_id' => $request->bill_id ?? null,
+                    'error' => $e->getMessage(),
+                ]);
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.something_wrong'),
