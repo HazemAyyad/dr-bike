@@ -22,7 +22,7 @@ class InventoryCostingService
     public function currentMethod(): string
     {
         $value = AppSetting::query()
-            ->where('key', 'inventory_costing_method')
+            ->where('key', AppSetting::KEY_INVENTORY_COSTING_METHOD)
             ->value('value');
 
         return $value === self::METHOD_MOVING_AVERAGE
@@ -37,12 +37,12 @@ class InventoryCostingService
             : self::METHOD_FIFO;
 
         AppSetting::query()->updateOrCreate(
-            ['key' => 'inventory_costing_method'],
+            ['key' => AppSetting::KEY_INVENTORY_COSTING_METHOD],
             ['value' => $method]
         );
 
         AppSetting::query()->updateOrCreate(
-            ['key' => 'inventory_costing_method_effective_from'],
+            ['key' => AppSetting::KEY_INVENTORY_COSTING_METHOD_EFFECTIVE_FROM],
             ['value' => now()->toDateTimeString()]
         );
     }

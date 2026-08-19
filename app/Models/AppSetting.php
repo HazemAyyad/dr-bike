@@ -43,6 +43,9 @@ class AppSetting extends Model
     /** JSON array of preset size labels for product add/edit dropdown. */
     public const KEY_PRODUCT_SIZE_OPTIONS = 'product_size_options';
 
+    public const KEY_INVENTORY_COSTING_METHOD = 'inventory_costing_method';
+    public const KEY_INVENTORY_COSTING_METHOD_EFFECTIVE_FROM = 'inventory_costing_method_effective_from';
+
   /** Sales daily drawer: alert when |physical − system| ≥ this amount. */
     public const KEY_SALES_DAILY_VARIANCE_ALERT_THRESHOLD = 'sales_daily_variance_alert_threshold';
 
