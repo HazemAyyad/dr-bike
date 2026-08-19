@@ -21,10 +21,8 @@ return new class extends Migration
         }
 
         $row = [
-            'id' => self::PERMISSION_ID,
             'name' => self::NAME,
             'name_en' => self::NAME_EN,
-            'created_at' => now(),
             'updated_at' => now(),
         ];
 
@@ -32,7 +30,10 @@ return new class extends Migration
             $row['grant_policy'] = 'permissions_manage';
         }
 
-        DB::table('permissions')->insert($row);
+        DB::table('permissions')->updateOrInsert(
+            ['id' => self::PERMISSION_ID],
+            array_merge($row, ['created_at' => now()])
+        );
     }
 
     public function down(): void

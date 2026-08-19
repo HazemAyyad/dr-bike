@@ -11,6 +11,10 @@ class ProductStockMovement extends Model
 
     public const TYPE_PURCHASE = 'purchase';
 
+    public const TYPE_PURCHASE_RETURN = 'purchase_return';
+
+    public const TYPE_MAINTENANCE = 'maintenance';
+
     public const TYPE_BILL_QUANTITY = 'bill_quantity';
 
     public const TYPE_SALE = 'sale';

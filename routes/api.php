@@ -1103,6 +1103,11 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
 Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section','refresh.token.expiry']] , function() {
       //bills
     Route::post('/add/bill' , [Bills::class,'createBill']);
+    Route::post('/purchase/receive' , [Bills::class,'receivePurchase']);
+    Route::post('/purchase/finalize' , [Bills::class,'finalizePurchase']);
+    Route::post('/purchase/payment' , [Bills::class,'payPurchase']);
+    Route::post('/purchase/amanat/purchase' , [Bills::class,'purchaseAmanat']);
+    Route::get('/purchase/price-intelligence' , [Bills::class,'purchasePriceIntelligence']);
     Route::get('/unfinished/bills' , [Bills::class,'getUnfinishedBills']);
     Route::post('/change/product/status' , [Bills::class,'changeProductStatus']);
     Route::post('/get/bill/details' , [Bills::class,'getBillDetails']);

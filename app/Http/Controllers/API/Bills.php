@@ -8,7 +8,9 @@ use App\Models\BillItem;
 use App\Models\BillQuantity;
 use App\Models\Debt;
 use App\Models\Product;
+use App\Models\PurchaseAmanatStock;
 use App\Models\PurchaseProduct;
+use App\Services\PurchasingService;
 use App\Services\StoreManageItemService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -24,68 +26,29 @@ class Bills extends Controller
     public function createBill(Request $request){
         try{
             $data = $request->validate([
-                'seller_id'=>['required','integer','exists:sellers,id'],
+                'seller_id'=>['nullable','integer','exists:sellers,id','required_without:customer_id'],
+                'customer_id'=>['nullable','integer','exists:customers,id','required_without:seller_id'],
                 'products.*'=>['required','array'],
 
                 'products.*.product_id'=>['required','integer','exists:products,id'],
                 'products.*.quantity'=>['required','numeric','min:1'],
                 'products.*.purchase_price'=>['required','numeric','min:1'],
+                'products.*.manual_override'=>['nullable','boolean'],
 
-                'total'=>'required|numeric|min:1',
+                'total'=>'nullable|numeric|min:1',
+                'currency'=>'nullable|string',
+                'notes'=>'nullable|string',
             ]);
-            $bill = Bill::create([
-                'seller_id' => $request->seller_id,
-                'total' => $request->total
-
-            ]);
-            $storeSyncWarnings = [];
-            foreach($request->products as $item){
-                $product = Product::findOrFail($item['product_id']);
-
-                $product->stock += $item['quantity'];
-                $product->save();
-
-
-                $purchasePro = PurchaseProduct::where('seller_id',$request->seller_id)
-                ->where('product_id',$item['product_id'])->first();
-                if($purchasePro){
-                    $purchasePro->update(['price'=>$item['purchase_price']]);
-                }
-                else{
-                PurchaseProduct::create([
-                    'product_id'=> $product->id,
-                    'seller_id' => $request->seller_id,
-                    'price' => $item['purchase_price'],
-                ]); }
-
-
-                BillItem::create([
-                    'bill_id' => $bill->id,
-                    'product_id' => $product->id,
-                    'quantity'=> $item['quantity'],
-                    'price' => $item['purchase_price'],
-                ]);
-
-                $sync = app(StoreManageItemService::class)->syncProductStockToStore($product->fresh());
-                if (! ($sync['ok'] ?? false)) {
-                    $storeSyncWarnings[] = ($sync['error'] ?? __('messages.something_wrong')).' (منتج '.$product->id.')';
-                }
-                
-            }
-
-
-
+            $bill = app(PurchasingService::class)->createPurchase($data, $request->user()?->id);
 
             Logs::createLog('انشاء فاتورة جديدة','انشاء فاتورة جديدة للتاجر'.' '
-            .$bill->seller->name.' '.'بقيمة'.' '.$bill->total,'bills');
+            .($bill->seller?->name ?? $bill->customer?->name ?? '').' '.'بقيمة'.' '.$bill->total,'bills');
 
             $payload = [
                 'status'=>'success',
                 'message'=> __('messages.bill_added'),
+                'bill_id' => $bill->id,
             ];
-            if (count($storeSyncWarnings) > 0) {
-                $payload['store_sync_warnings'] = $storeSyncWarnings;
-            }
 
             return response()->json($payload,200);
             
@@ -114,6 +77,140 @@ class Bills extends Controller
                     'message' => __('messages.something_wrong'),
                 ], 200);
             }
+    }
+
+    public function receivePurchase(Request $request, PurchasingService $purchases)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+                'receipt_number' => ['nullable', 'string', 'max:120'],
+                'received_at' => ['nullable', 'date'],
+                'notes' => ['nullable', 'string'],
+                'items' => ['required', 'array', 'min:1'],
+                'items.*.bill_item_id' => ['required', 'integer', 'exists:bill_items,id'],
+                'items.*.accepted_quantity' => ['nullable', 'numeric', 'min:0'],
+                'items.*.missing_quantity' => ['nullable', 'numeric', 'min:0'],
+                'items.*.extra_quantity' => ['nullable', 'numeric', 'min:0'],
+                'items.*.damaged_quantity' => ['nullable', 'numeric', 'min:0'],
+                'items.*.mismatched_quantity' => ['nullable', 'numeric', 'min:0'],
+                'items.*.unit_price' => ['nullable', 'numeric', 'min:0'],
+                'items.*.resolution' => ['nullable', 'string', 'max:60'],
+                'items.*.reason' => ['nullable', 'string'],
+                'items.*.notes' => ['nullable', 'string'],
+            ]);
+
+            $receipt = $purchases->receive(Bill::findOrFail($data['bill_id']), $data, $request->user()?->id);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.product_was_delivered'),
+                'receipt' => $receipt,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function finalizePurchase(Request $request, PurchasingService $purchases)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+                'initial_payment' => ['nullable', 'numeric', 'min:0'],
+                'box_id' => ['nullable', 'integer', 'exists:boxes,id'],
+            ]);
+
+            $bill = $purchases->finalize(
+                Bill::findOrFail($data['bill_id']),
+                (float) ($data['initial_payment'] ?? 0),
+                $data['box_id'] ?? null,
+                $request->user()?->id
+            );
+
+            return response()->json(['status' => 'success', 'message' => __('messages.bill_was_delivered'), 'bill' => $bill], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function payPurchase(Request $request, PurchasingService $purchases)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+                'amount' => ['required', 'numeric', 'min:0.01'],
+                'box_id' => ['required', 'integer', 'exists:boxes,id'],
+                'note' => ['nullable', 'string'],
+            ]);
+
+            $payment = $purchases->recordPayment(
+                Bill::findOrFail($data['bill_id']),
+                (float) $data['amount'],
+                (int) $data['box_id'],
+                'payment',
+                $data['note'] ?? null,
+                $request->user()?->id
+            );
+
+            return response()->json(['status' => 'success', 'message' => __('messages.data_added_successfully'), 'payment' => $payment], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function purchaseAmanat(Request $request, PurchasingService $purchases)
+    {
+        try {
+            $data = $request->validate([
+                'amanat_id' => ['required', 'integer', 'exists:purchase_amanat_stocks,id'],
+                'quantity' => ['required', 'numeric', 'min:0.01'],
+                'unit_price' => ['required', 'numeric', 'min:0'],
+            ]);
+
+            $amanat = $purchases->purchaseAmanat(
+                PurchaseAmanatStock::findOrFail($data['amanat_id']),
+                (float) $data['quantity'],
+                (float) $data['unit_price'],
+                $request->user()?->id
+            );
+
+            return response()->json(['status' => 'success', 'message' => __('messages.product_extra_was_purchased'), 'amanat' => $amanat], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function purchasePriceIntelligence(Request $request, PurchasingService $purchases)
+    {
+        try {
+            $data = $request->validate([
+                'product_id' => ['required', 'integer', 'exists:products,id'],
+                'seller_id' => ['nullable', 'integer', 'exists:sellers,id'],
+                'customer_id' => ['nullable', 'integer', 'exists:customers,id'],
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'price_intelligence' => $purchases->priceIntelligence(
+                    (int) $data['product_id'],
+                    $data['seller_id'] ?? null,
+                    $data['customer_id'] ?? null
+                ),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
     }
 
 private function getBills($statuses)
