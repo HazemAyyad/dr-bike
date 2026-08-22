@@ -9,6 +9,7 @@ use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\PurchaseAmanatStock;
 use App\Models\PurchasePayment;
+use App\Models\PurchasePaymentAllocation;
 use App\Models\PurchaseReturn;
 use App\Models\ReturnModel;
 use Illuminate\Support\Facades\DB;
@@ -93,7 +94,16 @@ class PurchaseAccountService
                 'created_by' => $userId,
             ]);
 
-            $this->allocatePayment($payment, (bool) ($data['allocate_oldest_first'] ?? false));
+            $allocations = $data['allocations'] ?? [];
+            if (! empty($allocations) && ! empty($data['allocate_oldest_first'])) {
+                throw new \RuntimeException(__('messages.validation_failed'));
+            }
+
+            if (! empty($allocations)) {
+                $this->allocatePaymentManually($payment, $allocations, $userId);
+            } else {
+                $this->allocatePayment($payment, (bool) ($data['allocate_oldest_first'] ?? false), $userId);
+            }
 
             return $payment->fresh();
         });
@@ -208,7 +218,7 @@ class PurchaseAccountService
         });
     }
 
-    private function allocatePayment(PurchasePayment $payment, bool $oldestFirst): void
+    private function allocatePayment(PurchasePayment $payment, bool $oldestFirst, ?int $userId = null): void
     {
         if (! $oldestFirst) {
             return;
@@ -240,7 +250,55 @@ class PurchaseAccountService
             $paid = (float) $bill->fresh()->paid_amount;
             $total = (float) $bill->final_total;
             $bill->update(['payment_status' => $paid + 0.0001 >= $total ? 'paid' : 'partially_paid']);
+            PurchasePaymentAllocation::create([
+                'purchase_payment_id' => $payment->id,
+                'bill_id' => $bill->id,
+                'amount' => $apply,
+                'created_by' => $userId,
+            ]);
             $remainingPayment -= $apply;
+        }
+    }
+
+    private function allocatePaymentManually(PurchasePayment $payment, array $allocations, ?int $userId = null): void
+    {
+        $seen = [];
+        $totalAllocated = 0.0;
+        foreach ($allocations as $row) {
+            $billId = (int) $row['bill_id'];
+            if (isset($seen[$billId])) {
+                throw new \RuntimeException(__('messages.validation_failed'));
+            }
+            $seen[$billId] = true;
+            $amount = (float) $row['amount'];
+            $totalAllocated += $amount;
+            if ($totalAllocated > (float) $payment->amount + 0.0001) {
+                throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
+            }
+
+            $bill = Bill::query()
+                ->where('id', $billId)
+                ->where('workflow_status', 'finalized')
+                ->where('currency', $payment->currency)
+                ->when($payment->seller_id, fn ($q) => $q->where('seller_id', $payment->seller_id))
+                ->when($payment->customer_id, fn ($q) => $q->where('customer_id', $payment->customer_id))
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $due = max(0, (float) $bill->final_total - (float) $bill->paid_amount);
+            if ($amount > $due + 0.0001) {
+                throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
+            }
+
+            $bill->update(['paid_amount' => (float) $bill->paid_amount + $amount]);
+            $paid = (float) $bill->fresh()->paid_amount;
+            $bill->update(['payment_status' => $paid + 0.0001 >= (float) $bill->final_total ? 'paid' : 'partially_paid']);
+            PurchasePaymentAllocation::create([
+                'purchase_payment_id' => $payment->id,
+                'bill_id' => $bill->id,
+                'amount' => $amount,
+                'created_by' => $userId,
+            ]);
         }
     }
 }

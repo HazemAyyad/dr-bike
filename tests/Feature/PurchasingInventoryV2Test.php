@@ -256,6 +256,48 @@ class PurchasingInventoryV2Test extends TestCase
             'type' => 'account_payment',
             'amount' => 600,
         ]);
+        $this->assertDatabaseHas('purchase_payment_allocations', [
+            'bill_id' => $bill->id,
+            'amount' => 600,
+        ]);
+    }
+
+    public function test_supplier_account_payment_can_be_manually_allocated_to_selected_invoices(): void
+    {
+        $seller = Seller::create(['name' => 'Supplier Manual', 'phone' => '05934']);
+        $productA = $this->product(1034, 0);
+        $productB = $this->product(1035, 0);
+        $box = Box::create(['name' => 'Manual Box', 'total' => 20000, 'currency' => 'شيكل']);
+
+        $billA = $this->finalizedPurchaseBill($seller->id, $productA, 1000);
+        $billB = $this->finalizedPurchaseBill($seller->id, $productB, 2500);
+
+        $payment = app(PurchaseAccountService::class)->paySupplierOnAccount([
+            'seller_id' => $seller->id,
+            'amount' => 3000,
+            'box_id' => $box->id,
+            'currency' => 'شيكل',
+            'allocations' => [
+                ['bill_id' => $billA->id, 'amount' => 1000],
+                ['bill_id' => $billB->id, 'amount' => 2000],
+            ],
+        ], $this->user->id);
+
+        $this->assertEquals(17000, (float) $box->fresh()->total);
+        $this->assertSame('paid', $billA->fresh()->payment_status);
+        $this->assertEquals(1000, (float) $billA->fresh()->paid_amount);
+        $this->assertSame('partially_paid', $billB->fresh()->payment_status);
+        $this->assertEquals(2000, (float) $billB->fresh()->paid_amount);
+        $this->assertDatabaseHas('purchase_payment_allocations', [
+            'purchase_payment_id' => $payment->id,
+            'bill_id' => $billA->id,
+            'amount' => 1000,
+        ]);
+        $this->assertDatabaseHas('purchase_payment_allocations', [
+            'purchase_payment_id' => $payment->id,
+            'bill_id' => $billB->id,
+            'amount' => 2000,
+        ]);
     }
 
     public function test_purchase_return_updates_stock_cost_layers_ledger_and_cash_refund_box(): void
@@ -411,5 +453,23 @@ class PurchasingInventoryV2Test extends TestCase
             'normailPrice' => 10,
             'wholesalePrice' => 8,
         ]));
+    }
+
+    private function finalizedPurchaseBill(int $sellerId, Product $product, float $price): Bill
+    {
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $sellerId,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 1, 'purchase_price' => $price],
+            ],
+        ], $this->user->id);
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $bill->items()->first()->id, 'accepted_quantity' => 1, 'unit_price' => $price],
+            ],
+        ], $this->user->id);
+
+        return app(PurchasingService::class)->finalize($bill, 0, null, $this->user->id);
     }
 }

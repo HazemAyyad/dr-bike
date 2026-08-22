@@ -228,11 +228,56 @@ class Bills extends Controller
                 'paid_at' => ['nullable', 'date'],
                 'note' => ['nullable', 'string'],
                 'allocate_oldest_first' => ['nullable', 'boolean'],
+                'allocations' => ['nullable', 'array'],
+                'allocations.*.bill_id' => ['required_with:allocations', 'integer', 'exists:bills,id'],
+                'allocations.*.amount' => ['required_with:allocations', 'numeric', 'min:0.01'],
             ]);
 
             $payment = $accounts->paySupplierOnAccount($data, $request->user()?->id);
 
             return response()->json(['status' => 'success', 'message' => __('messages.data_added_successfully'), 'payment' => $payment], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function purchaseAccountOpenBills(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'seller_id' => ['nullable', 'integer', 'exists:sellers,id', 'required_without:customer_id'],
+                'customer_id' => ['nullable', 'integer', 'exists:customers,id', 'required_without:seller_id'],
+                'currency' => ['nullable', 'string'],
+            ]);
+
+            $currency = $data['currency'] ?? 'شيكل';
+            $bills = Bill::query()
+                ->with(['seller:id,name', 'customer:id,name'])
+                ->where('workflow_status', 'finalized')
+                ->where('payment_status', '!=', 'paid')
+                ->where('currency', $currency)
+                ->when($data['seller_id'] ?? null, fn ($q, $sellerId) => $q->where('seller_id', $sellerId))
+                ->when($data['customer_id'] ?? null, fn ($q, $customerId) => $q->where('customer_id', $customerId))
+                ->orderBy('finalized_at')
+                ->orderBy('id')
+                ->limit(200)
+                ->get()
+                ->map(fn (Bill $bill) => [
+                    'id' => $bill->id,
+                    'source_type' => $bill->seller_id ? 'seller' : 'customer',
+                    'source_id' => $bill->seller_id ?: $bill->customer_id,
+                    'source_name' => $bill->seller?->name ?? $bill->customer?->name,
+                    'currency' => $bill->currency,
+                    'final_total' => (float) $bill->final_total,
+                    'paid_amount' => (float) $bill->paid_amount,
+                    'remaining_amount' => max(0, (float) $bill->final_total - (float) $bill->paid_amount),
+                    'finalized_at' => optional($bill->finalized_at)->toDateTimeString(),
+                    'created_at' => optional($bill->created_at)->toDateTimeString(),
+                ]);
+
+            return response()->json(['status' => 'success', 'bills' => $bills], 200);
         } catch (ValidationException $e) {
             return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
         } catch (\Throwable $e) {

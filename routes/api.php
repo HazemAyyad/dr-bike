@@ -1107,6 +1107,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
     Route::post('/purchase/finalize' , [Bills::class,'finalizePurchase']);
     Route::post('/purchase/payment' , [Bills::class,'payPurchase']);
     Route::post('/purchase/account/payment' , [Bills::class,'paySupplierAccount']);
+    Route::get('/purchase/account/open-bills' , [Bills::class,'purchaseAccountOpenBills']);
     Route::post('/purchase/attachments' , [Bills::class,'uploadPurchaseAttachment']);
     Route::post('/purchase/amanat/purchase' , [Bills::class,'purchaseAmanat']);
     Route::post('/purchase/amanat/return' , [Bills::class,'returnAmanat']);
