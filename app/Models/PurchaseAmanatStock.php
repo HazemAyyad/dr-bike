@@ -26,4 +26,19 @@ class PurchaseAmanatStock extends Model
         'negotiated_unit_price' => 'float',
         'resolved_at' => 'datetime',
     ];
+
+    public function bill()
+    {
+        return $this->belongsTo(Bill::class);
+    }
+
+    public function billItem()
+    {
+        return $this->belongsTo(BillItem::class);
+    }
+
+    public function product()
+    {
+        return $this->belongsTo(Product::class);
+    }
 }

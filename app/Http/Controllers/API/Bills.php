@@ -318,6 +318,105 @@ class Bills extends Controller
         }
     }
 
+    public function purchaseAmanatIndex(Request $request)
+    {
+        $status = $request->input('status');
+        $search = trim((string) $request->input('search', ''));
+
+        $rows = PurchaseAmanatStock::query()
+            ->with(['product:id,nameAr', 'bill:id,seller_id,customer_id,created_at,status,workflow_status', 'bill.seller:id,name', 'bill.customer:id,name'])
+            ->when($status, fn ($q) => $q->where('status', $status))
+            ->when($search !== '', function ($q) use ($search) {
+                $q->whereHas('product', fn ($p) => $p->where('nameAr', 'like', "%{$search}%"))
+                    ->orWhereHas('bill.seller', fn ($s) => $s->where('name', 'like', "%{$search}%"))
+                    ->orWhereHas('bill.customer', fn ($c) => $c->where('name', 'like', "%{$search}%"));
+            })
+            ->latest('id')
+            ->limit(200)
+            ->get()
+            ->map(function (PurchaseAmanatStock $row) {
+                $bill = $row->bill;
+                $source = $bill?->seller ?: $bill?->customer;
+                return [
+                    'id' => $row->id,
+                    'bill_id' => $row->bill_id,
+                    'bill_item_id' => $row->bill_item_id,
+                    'product_id' => $row->product_id,
+                    'product_name' => $row->product?->nameAr ?? '',
+                    'source_type' => $bill?->seller_id ? 'seller' : 'customer',
+                    'source_id' => $bill?->seller_id ?: $bill?->customer_id,
+                    'source_name' => $source?->name ?? '',
+                    'quantity' => (float) $row->quantity,
+                    'remaining_quantity' => (float) $row->remaining_quantity,
+                    'status' => $row->status,
+                    'negotiated_unit_price' => $row->negotiated_unit_price,
+                    'received_at' => optional($row->created_at)->toDateTimeString(),
+                    'age_days' => $row->created_at ? $row->created_at->diffInDays(now()) : null,
+                    'notes' => $row->notes,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'amanat' => $rows,
+        ], 200);
+    }
+
+    public function purchaseDiscrepanciesIndex(Request $request)
+    {
+        $type = $request->input('type');
+        $search = trim((string) $request->input('search', ''));
+
+        $rows = BillItem::query()
+            ->with(['product:id,nameAr', 'bill:id,seller_id,customer_id,created_at,status,workflow_status', 'bill.seller:id,name', 'bill.customer:id,name'])
+            ->where(function ($q) {
+                $q->where('missing_amount', '>', 0)
+                    ->orWhere('custody_quantity', '>', 0)
+                    ->orWhere('damaged_quantity', '>', 0)
+                    ->orWhere('mismatched_quantity', '>', 0)
+                    ->orWhere('not_compatible_amount', '>', 0);
+            })
+            ->when($type === 'missing', fn ($q) => $q->where('missing_amount', '>', 0))
+            ->when($type === 'extra', fn ($q) => $q->where('custody_quantity', '>', 0))
+            ->when($type === 'damaged', fn ($q) => $q->where('damaged_quantity', '>', 0))
+            ->when($type === 'mismatched', fn ($q) => $q->where(function ($m) {
+                $m->where('mismatched_quantity', '>', 0)->orWhere('not_compatible_amount', '>', 0);
+            }))
+            ->when($search !== '', function ($q) use ($search) {
+                $q->whereHas('product', fn ($p) => $p->where('nameAr', 'like', "%{$search}%"))
+                    ->orWhereHas('bill.seller', fn ($s) => $s->where('name', 'like', "%{$search}%"))
+                    ->orWhereHas('bill.customer', fn ($c) => $c->where('name', 'like', "%{$search}%"));
+            })
+            ->latest('id')
+            ->limit(200)
+            ->get()
+            ->map(function (BillItem $item) {
+                $bill = $item->bill;
+                $source = $bill?->seller ?: $bill?->customer;
+                return [
+                    'bill_id' => $item->bill_id,
+                    'bill_item_id' => $item->id,
+                    'product_id' => $item->product_id,
+                    'product_name' => $item->product?->nameAr ?? '',
+                    'source_type' => $bill?->seller_id ? 'seller' : 'customer',
+                    'source_id' => $bill?->seller_id ?: $bill?->customer_id,
+                    'source_name' => $source?->name ?? '',
+                    'missing_quantity' => (float) ($item->missing_amount ?? 0),
+                    'extra_quantity' => (float) ($item->custody_quantity ?? 0),
+                    'damaged_quantity' => (float) ($item->damaged_quantity ?? 0),
+                    'mismatched_quantity' => (float) (($item->mismatched_quantity ?? 0) ?: ($item->not_compatible_amount ?? 0)),
+                    'status' => $item->status,
+                    'description' => $item->not_compatible_description,
+                    'created_at' => optional($bill?->created_at)->toDateTimeString(),
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'discrepancies' => $rows,
+        ], 200);
+    }
+
 private function getBills($statuses)
 {
     try {

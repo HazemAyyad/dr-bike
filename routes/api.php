@@ -1112,6 +1112,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
     Route::post('/purchase/amanat/return' , [Bills::class,'returnAmanat']);
     Route::get('/purchase/timeline' , [Bills::class,'purchaseTimeline']);
     Route::get('/purchase/price-intelligence' , [Bills::class,'purchasePriceIntelligence']);
+    Route::get('/purchase/amanat' , [Bills::class,'purchaseAmanatIndex']);
+    Route::get('/purchase/discrepancies' , [Bills::class,'purchaseDiscrepanciesIndex']);
     Route::get('/unfinished/bills' , [Bills::class,'getUnfinishedBills']);
     Route::post('/change/product/status' , [Bills::class,'changeProductStatus']);
     Route::post('/get/bill/details' , [Bills::class,'getBillDetails']);
