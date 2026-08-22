@@ -23,6 +23,7 @@ Backend:
 - `1848825` - Phase 08 - harden costing snapshots and expand purchasing tests
 - `582ccb7` - Phase 10 - document purchasing v2 completion status
 - `2ce64f9` - Phase 11 - add purchase issue resolution workflow
+- `8677ee0` - Phase 12 - update purchasing completion report
 
 Flutter:
 
@@ -35,11 +36,12 @@ Flutter:
 - `f2478f4` - Phase 07 - rebuild purchase return creation UX
 - `feb76a9` - Phase 09 - fix release build navigation tile
 - `94544a2` - Phase 11 - add purchase issue resolution UI
+- `9fbb7fa` - Phase 12 - add contextual purchase evidence uploads
 
-Current HEADs:
+Implementation HEADs before this report-only update:
 
-- Backend: `2ce64f9`
-- Flutter: `94544a2`
+- Backend: `8677ee0`
+- Flutter: `9fbb7fa`
 
 ## Backend Changes
 
@@ -86,6 +88,7 @@ Current HEADs:
   - accept at negotiated price
   - accept with discount
   - other settlement
+- Added contextual evidence upload entry points for damaged/mismatched resolutions, Amanat purchase/return actions, initial purchase payments, later purchase payments, and source/account payments.
 - Fixed an unrelated release-build blocker in Financial Affairs where `MainPageWidget` no longer existed.
 
 ## Database Changes
@@ -125,7 +128,7 @@ Backend:
 Flutter:
 
 - `dart format` was run on changed Flutter files.
-- `flutter analyze lib\features\admin\buying`: passed, no issues found.
+- `flutter analyze lib\features\admin\buying`: passed after the contextual evidence upload changes, no issues found.
 - `dart analyze lib\features\admin\financial_affairs\presentation\views\financial_affairs_screen.dart`: passed, no issues found.
 - `flutter analyze`: attempted, timed out; not counted as passed.
 - `flutter test`: attempted, timed out; not counted as passed.
@@ -134,8 +137,8 @@ Flutter:
 
 ## Known Limitations
 
-- Contextual attachments are still mostly invoice/action-generic in the Flutter UX; the backend supports attachable links, but not every action flow has first-class evidence upload yet.
-- Damaged and mismatched resolution decisions now exist in backend and Flutter, including negotiated acceptance into owned stock. More detailed evidence-first UI per issue can still be improved.
+- Contextual evidence upload is now exposed for issue resolution, Amanat actions, and payment actions. Receiving rows, purchase returns, refunds, and settlement review screens can still be deepened with richer inline attachment galleries.
+- Damaged and mismatched resolution decisions now exist in backend and Flutter, including negotiated acceptance into owned stock. More detailed evidence review per issue can still be improved.
 - Purchase details were improved with workflow sections and sheets, but not fully refactored into a tabbed information architecture.
 - Full project Laravel tests, full Flutter analyze, and full Flutter tests did not complete within command timeouts and should be rerun in a longer CI/local session before deployment confidence is considered complete.
 
