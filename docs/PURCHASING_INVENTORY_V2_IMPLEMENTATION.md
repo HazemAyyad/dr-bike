@@ -1,6 +1,6 @@
 # DR BIKE Purchasing V2 Completion Report
 
-Date: 2026-08-22
+Date: 2026-08-23
 
 ## Repositories And Rollback
 
@@ -21,6 +21,8 @@ Backend:
 - `e95367b` - Phase 04 - expose purchase amanat and discrepancies APIs
 - `f7e5e32` - Phase 06 - add manual purchase payment allocation
 - `1848825` - Phase 08 - harden costing snapshots and expand purchasing tests
+- `582ccb7` - Phase 10 - document purchasing v2 completion status
+- `2ce64f9` - Phase 11 - add purchase issue resolution workflow
 
 Flutter:
 
@@ -32,11 +34,12 @@ Flutter:
 - `87c3b1c` - Phase 06 - add manual purchase payment allocation UI
 - `f2478f4` - Phase 07 - rebuild purchase return creation UX
 - `feb76a9` - Phase 09 - fix release build navigation tile
+- `94544a2` - Phase 11 - add purchase issue resolution UI
 
 Current HEADs:
 
-- Backend: `1848825f49aeea090f292a4261735252cbb004c0`
-- Flutter: `feb76a97b14f7bbd6c27ba9692f5cc9876181b0c`
+- Backend: `2ce64f9`
+- Flutter: `94544a2`
 
 ## Backend Changes
 
@@ -47,7 +50,10 @@ Current HEADs:
 - Extended supplier/person account payments with explicit manual allocations.
 - Preserved oldest-first allocation, now with allocation records.
 - Hardened outbound costing snapshots in `ProductStockService`; costing errors are no longer silently swallowed when cost layers exist and should be consumed.
-- Extended backend coverage for partial receiving, mixed receiving issues, manual allocation, customer-as-purchase-source, supplier credit returns, cash refund returns, FIFO, moving weighted average, and instant-sale cost snapshots.
+- Added `purchase_issue_resolutions` and `POST /purchase/issue/resolve` for explicit damaged/mismatched settlement decisions.
+- Prevented finalization while damaged or mismatched quantities remain unresolved.
+- Hardened receiving validation so accepted + missing cannot exceed remaining ordered quantity.
+- Extended backend coverage for partial receiving, mixed receiving issues, issue resolution, manual allocation, customer-as-purchase-source, supplier credit returns, cash refund returns, FIFO, moving weighted average, and instant-sale cost snapshots.
 
 ## Flutter Changes
 
@@ -74,6 +80,12 @@ Current HEADs:
   - return cart
   - supplier credit vs cash refund
   - required refund box for cash refund
+- Added Purchase Details actions for damaged/mismatched issue settlement:
+  - return to supplier
+  - replacement expected
+  - accept at negotiated price
+  - accept with discount
+  - other settlement
 - Fixed an unrelated release-build blocker in Financial Affairs where `MainPageWidget` no longer existed.
 
 ## Database Changes
@@ -82,6 +94,10 @@ Current HEADs:
   - creates `purchase_payment_allocations`
   - links account payments to selected purchase invoices
   - preserves allocation audit records
+- `database/migrations/2026_08_23_091500_create_purchase_issue_resolutions_table.php`
+  - creates `purchase_issue_resolutions`
+  - records damaged/mismatched settlement decisions
+  - links issue decisions to bill, bill item, optional receipt item, product, actor, and audit timeline
 
 The migration was executed with:
 
@@ -97,10 +113,13 @@ Backend:
 
 - `php -l app\Http\Controllers\API\Bills.php`: passed
 - `php -l app\Services\PurchaseAccountService.php`: passed
+- `php -l app\Services\PurchasingService.php`: passed
 - `php -l app\Models\PurchasePaymentAllocation.php`: passed
+- `php -l app\Models\PurchaseIssueResolution.php`: passed
 - `php -l app\Services\ProductStockService.php`: passed
 - `php -l tests\Feature\PurchasingInventoryV2Test.php`: passed
-- `php artisan test --filter=PurchasingInventoryV2Test`: passed, 12 tests, 63 assertions
+- `php artisan migrate`: passed after rerun; many pending project migrations were applied, including the new Purchasing V2 migrations
+- `php artisan test --filter=PurchasingInventoryV2Test`: passed, 13 tests, 72 assertions
 - `php artisan test`: attempted, timed out after a long run; no failure was reached in the visible output, but this is not counted as passed
 
 Flutter:
@@ -116,7 +135,7 @@ Flutter:
 ## Known Limitations
 
 - Contextual attachments are still mostly invoice/action-generic in the Flutter UX; the backend supports attachable links, but not every action flow has first-class evidence upload yet.
-- Damaged and mismatched resolution options are captured as receiving issue quantities/reason/notes, but a complete settlement workflow for every resolution type remains a future hardening area.
+- Damaged and mismatched resolution decisions now exist in backend and Flutter, including negotiated acceptance into owned stock. More detailed evidence-first UI per issue can still be improved.
 - Purchase details were improved with workflow sections and sheets, but not fully refactored into a tabbed information architecture.
 - Full project Laravel tests, full Flutter analyze, and full Flutter tests did not complete within command timeouts and should be rerun in a longer CI/local session before deployment confidence is considered complete.
 
