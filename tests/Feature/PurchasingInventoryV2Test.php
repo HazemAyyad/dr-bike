@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Bill;
 use App\Models\Box;
+use App\Models\Customer;
 use App\Models\DebtTransaction;
 use App\Models\InstantSale;
 use App\Models\InventoryCostLayer;
@@ -103,6 +104,58 @@ class PurchasingInventoryV2Test extends TestCase
             'product_id' => $product->id,
             'quantity' => 2,
             'unit_cost' => 3,
+        ]);
+    }
+
+    public function test_partial_and_mixed_receiving_keeps_remaining_quantities_and_separates_issues(): void
+    {
+        $seller = Seller::create(['name' => 'Supplier Mixed', 'phone' => '05925']);
+        $product = $this->product(1025, 0);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 10, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+        $item = $bill->items()->first();
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $item->id, 'accepted_quantity' => 5, 'unit_price' => 5],
+            ],
+        ], $this->user->id);
+
+        $this->assertEquals(5, (float) $item->fresh()->received_owned_quantity);
+        $this->assertSame(5, (int) $product->fresh()->stock);
+
+        app(PurchasingService::class)->receive($bill->fresh(), [
+            'items' => [
+                [
+                    'bill_item_id' => $item->id,
+                    'accepted_quantity' => 3,
+                    'missing_quantity' => 1,
+                    'extra_quantity' => 2,
+                    'damaged_quantity' => 1,
+                    'mismatched_quantity' => 1,
+                    'unit_price' => 5,
+                    'reason' => 'mixed receiving',
+                ],
+            ],
+        ], $this->user->id);
+
+        $item = $item->fresh();
+        $this->assertEquals(8, (float) $item->received_owned_quantity);
+        $this->assertEquals(1, (float) $item->missing_amount);
+        $this->assertEquals(1, (float) $item->damaged_quantity);
+        $this->assertEquals(1, (float) $item->mismatched_quantity);
+        $this->assertEquals(2, (float) $item->custody_quantity);
+        $this->assertSame(8, (int) $product->fresh()->stock);
+        $this->assertDatabaseHas('purchase_amanat_stocks', [
+            'bill_id' => $bill->id,
+            'bill_item_id' => $item->id,
+            'quantity' => 2,
+            'remaining_quantity' => 2,
         ]);
     }
 
@@ -339,6 +392,52 @@ class PurchasingInventoryV2Test extends TestCase
             'source' => 'purchase_refund',
             'source_id' => $return->id,
             'amount' => 10,
+        ]);
+    }
+
+    public function test_customer_can_act_as_purchase_source_through_receiving_payment_and_return_credit(): void
+    {
+        $customer = Customer::create(['name' => 'Customer Supplier', 'phone' => '05966']);
+        $product = $this->product(1066, 0);
+        $box = Box::create(['name' => 'Customer Source Box', 'total' => 10000, 'currency' => 'شيكل']);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'customer_id' => $customer->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 4, 'purchase_price' => 100],
+            ],
+        ], $this->user->id);
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $bill->items()->first()->id, 'accepted_quantity' => 4, 'unit_price' => 100],
+            ],
+        ], $this->user->id);
+        app(PurchasingService::class)->finalize($bill, 150, $box->id, $this->user->id);
+        app(PurchasingService::class)->recordPayment($bill->fresh(), 50, $box->id, 'payment', null, $this->user->id);
+
+        $return = app(PurchaseAccountService::class)->createPurchaseReturn([
+            'customer_id' => $customer->id,
+            'bill_id' => $bill->id,
+            'resolution' => 'supplier_credit',
+            'products' => [
+                ['product_id' => $product->id, 'bill_item_id' => $bill->items()->first()->id, 'quantity' => 1, 'purchase_price' => 100],
+            ],
+        ], $this->user->id);
+        app(PurchaseAccountService::class)->deliverPurchaseReturn($return, null, $this->user->id);
+
+        $this->assertSame(3, (int) $product->fresh()->stock);
+        $this->assertEquals(9800, (float) $box->fresh()->total);
+        $this->assertDatabaseHas('bills', [
+            'id' => $bill->id,
+            'customer_id' => $customer->id,
+            'paid_amount' => 200,
+            'payment_status' => 'partially_paid',
+        ]);
+        $this->assertDatabaseHas('debt_transactions', [
+            'customer_id' => $customer->id,
+            'source' => 'purchase_return',
+            'source_id' => $return->id,
+            'amount' => 100,
         ]);
     }
 

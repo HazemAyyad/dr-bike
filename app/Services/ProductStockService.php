@@ -10,6 +10,7 @@ use App\Models\Size;
 use App\Models\SizeColor;
 use App\Support\ApiImageUrl;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class ProductStockService
@@ -596,8 +597,18 @@ class ProductStockService
                 'unit_cost' => (float) $cost['unit_cost'],
                 'total_cost' => (float) $cost['total_cost'],
             ];
-        } catch (\Throwable) {
-            return null;
+        } catch (\Throwable $e) {
+            Log::error('Inventory costing failed while creating outbound stock snapshot.', [
+                'product_id' => $product->id,
+                'quantity' => $quantity,
+                'reference_type' => $referenceType,
+                'reference_id' => $referenceId,
+                'available_cost_quantity' => $available,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw $e;
         }
     }
 
