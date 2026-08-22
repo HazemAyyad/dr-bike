@@ -1111,6 +1111,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
     Route::post('/purchase/attachments' , [Bills::class,'uploadPurchaseAttachment']);
     Route::post('/purchase/amanat/purchase' , [Bills::class,'purchaseAmanat']);
     Route::post('/purchase/amanat/return' , [Bills::class,'returnAmanat']);
+    Route::post('/purchase/issue/resolve' , [Bills::class,'resolvePurchaseIssue']);
     Route::get('/purchase/timeline' , [Bills::class,'purchaseTimeline']);
     Route::get('/purchase/price-intelligence' , [Bills::class,'purchasePriceIntelligence']);
     Route::get('/purchase/amanat' , [Bills::class,'purchaseAmanatIndex']);

@@ -8,6 +8,7 @@ use App\Models\Box;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\PurchaseAmanatStock;
+use App\Models\PurchaseIssueResolution;
 use App\Models\PurchasePayment;
 use App\Models\PurchasePaymentAllocation;
 use App\Models\PurchaseReturn;
@@ -16,6 +17,9 @@ use Illuminate\Support\Facades\DB;
 
 class PurchaseAccountService
 {
+    private const ISSUE_TYPES = ['damaged', 'mismatched'];
+    private const ISSUE_RESOLUTIONS = ['return_to_supplier', 'replacement_expected', 'accept_with_discount', 'accept_negotiated_price', 'other_settlement'];
+
     public function __construct(
         private InventoryCostingService $costing,
         private DebtLedgerService $ledger,
@@ -218,6 +222,90 @@ class PurchaseAccountService
         });
     }
 
+    public function resolvePurchaseIssue(array $data, ?int $userId = null): PurchaseIssueResolution
+    {
+        return DB::transaction(function () use ($data, $userId) {
+            $issueType = $data['issue_type'];
+            $resolution = $data['resolution'];
+            if (! in_array($issueType, self::ISSUE_TYPES, true) || ! in_array($resolution, self::ISSUE_RESOLUTIONS, true)) {
+                throw new \RuntimeException(__('messages.validation_failed'));
+            }
+
+            $bill = Bill::query()->lockForUpdate()->findOrFail($data['bill_id']);
+            if ($bill->workflow_status === 'finalized') {
+                throw new \RuntimeException(__('messages.something_wrong'));
+            }
+
+            $item = BillItem::query()
+                ->where('bill_id', $bill->id)
+                ->lockForUpdate()
+                ->findOrFail($data['bill_item_id']);
+
+            $quantity = (float) $data['quantity'];
+            $available = $issueType === 'damaged'
+                ? (float) $item->damaged_quantity
+                : (float) $item->mismatched_quantity;
+            if ($quantity <= 0 || $quantity > $available + 0.0001) {
+                throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
+            }
+
+            $unitPrice = array_key_exists('negotiated_unit_price', $data)
+                ? (float) $data['negotiated_unit_price']
+                : null;
+            $financialAdjustment = (float) ($data['financial_adjustment'] ?? 0);
+
+            if (in_array($resolution, ['accept_with_discount', 'accept_negotiated_price'], true)) {
+                if ($unitPrice === null || $unitPrice < 0) {
+                    throw new \RuntimeException(__('messages.validation_failed'));
+                }
+
+                $this->costing->addOwnedStock(
+                    product: $item->product,
+                    quantity: $quantity,
+                    unitCost: $unitPrice,
+                    currency: $bill->currency,
+                    sourceType: 'purchase_issue_resolution',
+                    sourceId: $item->id,
+                    sizeColorId: $item->size_color_id,
+                    sizeId: $item->size_id,
+                    userId: $userId,
+                    note: 'تسوية مشكلة استلام لفاتورة #'.$bill->id,
+                );
+
+                $item->update([
+                    'received_owned_quantity' => (float) $item->received_owned_quantity + $quantity,
+                    'final_unit_price' => $unitPrice,
+                ]);
+                $this->recordIssuePriceHistory($bill, $item, $unitPrice, $quantity, $userId);
+            }
+
+            $remainingIssueQuantity = max(0, $available - $quantity);
+            $item->update([
+                $issueType === 'damaged' ? 'damaged_quantity' : 'mismatched_quantity' => $remainingIssueQuantity,
+                'status' => $remainingIssueQuantity <= 0.0001 ? 'reviewed' : $item->status,
+            ]);
+
+            $issue = PurchaseIssueResolution::create([
+                'bill_id' => $bill->id,
+                'bill_item_id' => $item->id,
+                'purchase_receipt_item_id' => $data['purchase_receipt_item_id'] ?? null,
+                'product_id' => $item->product_id,
+                'issue_type' => $issueType,
+                'resolution' => $resolution,
+                'quantity' => $quantity,
+                'negotiated_unit_price' => $unitPrice,
+                'financial_adjustment' => $financialAdjustment,
+                'reason' => $data['reason'] ?? null,
+                'notes' => $data['notes'] ?? null,
+                'created_by' => $userId,
+            ]);
+
+            $this->activity->log($bill, 'purchase_issue_resolved', 'تسوية مشكلة استلام', 'تم تسجيل قرار تسوية لمشكلة '.$issueType, null, $issue->toArray(), null, 'purchase_issue_resolution', $issue->id, $userId);
+
+            return $issue->fresh();
+        });
+    }
+
     private function allocatePayment(PurchasePayment $payment, bool $oldestFirst, ?int $userId = null): void
     {
         if (! $oldestFirst) {
@@ -300,5 +388,22 @@ class PurchaseAccountService
                 'created_by' => $userId,
             ]);
         }
+    }
+
+    private function recordIssuePriceHistory(Bill $bill, BillItem $item, float $price, float $quantity, ?int $userId): void
+    {
+        \App\Models\PurchasePriceHistory::create([
+            'product_id' => $item->product_id,
+            'seller_id' => $bill->seller_id,
+            'customer_id' => $bill->customer_id,
+            'bill_id' => $bill->id,
+            'bill_item_id' => $item->id,
+            'unit_price' => $price,
+            'quantity' => $quantity,
+            'currency' => $bill->currency,
+            'priced_at' => now()->toDateString(),
+            'manual_override' => true,
+            'created_by' => $userId,
+        ]);
     }
 }

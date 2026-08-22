@@ -159,6 +159,72 @@ class PurchasingInventoryV2Test extends TestCase
         ]);
     }
 
+    public function test_damaged_issue_requires_resolution_and_can_be_accepted_at_negotiated_price(): void
+    {
+        $seller = Seller::create(['name' => 'Supplier Damaged', 'phone' => '05926']);
+        $product = $this->product(1026, 0);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 1, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+        $item = $bill->items()->first();
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $item->id, 'damaged_quantity' => 1, 'unit_price' => 5, 'reason' => 'broken'],
+            ],
+        ], $this->user->id);
+
+        $this->assertSame(0, (int) $product->fresh()->stock);
+        $this->assertEquals(1, (float) $item->fresh()->damaged_quantity);
+
+        $finalizeFailed = false;
+        try {
+            app(PurchasingService::class)->finalize($bill->fresh(), 0, null, $this->user->id);
+        } catch (\RuntimeException) {
+            $finalizeFailed = true;
+        }
+        $this->assertTrue($finalizeFailed);
+
+        app(PurchaseAccountService::class)->resolvePurchaseIssue([
+            'bill_id' => $bill->id,
+            'bill_item_id' => $item->id,
+            'issue_type' => 'damaged',
+            'resolution' => 'accept_negotiated_price',
+            'quantity' => 1,
+            'negotiated_unit_price' => 4,
+            'reason' => 'accepted after discount',
+        ], $this->user->id);
+
+        $this->assertSame(1, (int) $product->fresh()->stock);
+        $this->assertEquals(0, (float) $item->fresh()->damaged_quantity);
+        $this->assertDatabaseHas('purchase_issue_resolutions', [
+            'bill_id' => $bill->id,
+            'bill_item_id' => $item->id,
+            'issue_type' => 'damaged',
+            'resolution' => 'accept_negotiated_price',
+            'quantity' => 1,
+            'negotiated_unit_price' => 4,
+        ]);
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'quantity' => 1,
+            'unit_cost' => 4,
+            'source_type' => 'purchase_issue_resolution',
+        ]);
+        $this->assertDatabaseHas('purchase_price_histories', [
+            'product_id' => $product->id,
+            'bill_id' => $bill->id,
+            'unit_price' => 4,
+            'manual_override' => 1,
+        ]);
+        $finalized = app(PurchasingService::class)->finalize($bill->fresh(), 0, null, $this->user->id);
+        $this->assertEquals(4, (float) $finalized->final_total);
+    }
+
     public function test_amanat_can_be_returned_without_becoming_owned_stock(): void
     {
         $seller = Seller::create(['name' => 'Supplier', 'phone' => '05922']);

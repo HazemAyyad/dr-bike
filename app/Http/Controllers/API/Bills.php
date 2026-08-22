@@ -216,6 +216,36 @@ class Bills extends Controller
         }
     }
 
+    public function resolvePurchaseIssue(Request $request, PurchaseAccountService $accounts)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+                'bill_item_id' => ['required', 'integer', 'exists:bill_items,id'],
+                'purchase_receipt_item_id' => ['nullable', 'integer', 'exists:purchase_receipt_items,id'],
+                'issue_type' => ['required', 'string', 'in:damaged,mismatched'],
+                'resolution' => ['required', 'string', 'in:return_to_supplier,replacement_expected,accept_with_discount,accept_negotiated_price,other_settlement'],
+                'quantity' => ['required', 'numeric', 'min:0.01'],
+                'negotiated_unit_price' => ['nullable', 'numeric', 'min:0'],
+                'financial_adjustment' => ['nullable', 'numeric'],
+                'reason' => ['nullable', 'string'],
+                'notes' => ['nullable', 'string'],
+            ]);
+
+            $issue = $accounts->resolvePurchaseIssue($data, $request->user()?->id);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.data_added_successfully'),
+                'issue_resolution' => $issue,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
     public function paySupplierAccount(Request $request, PurchaseAccountService $accounts)
     {
         try {
