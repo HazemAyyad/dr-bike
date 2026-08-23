@@ -252,6 +252,9 @@ class GoalCalculationService
                     ->where('goal_id', $goal->id)
                     ->pluck('sub_category_id'))
                 ->pluck('product_id')),
+            'store_sections' => $query->whereIn('products.store_section_id', DB::table('goal_store_sections')
+                ->where('goal_id', $goal->id)
+                ->pluck('store_section_id')),
             default => $query,
         };
     }

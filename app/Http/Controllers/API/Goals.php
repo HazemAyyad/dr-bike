@@ -8,6 +8,7 @@ use App\Models\GoalCategory;
 use App\Models\GoalLog;
 use App\Models\GoalPeople;
 use App\Models\GoalProduct;
+use App\Models\GoalStoreSection;
 use App\Models\GoalSubCategory;
 use App\Services\Goals\GoalCalculationService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -143,6 +144,13 @@ class Goals extends Controller
                 'sub_category_id' => $row->subCategory?->id,
                 'sub_category_name' => $row->subCategory?->nameAr,
             ]);
+            $goal['store_sections'] = GoalStoreSection::where('goal_id', $goal->id)
+                ->leftJoin('store_sections', 'store_sections.id', '=', 'goal_store_sections.store_section_id')
+                ->get(['goal_store_sections.store_section_id', 'store_sections.name as store_section_name'])
+                ->map(fn ($row) => [
+                    'store_section_id' => $row->store_section_id,
+                    'store_section_name' => $row->store_section_name,
+                ]);
             $goal['products'] = GoalProduct::where('goal_id', $goal->id)->get()->map(fn ($row) => [
                 'product_id' => $row->product?->id,
                 'product_name' => $row->product?->nameAr,
@@ -288,7 +296,7 @@ class Goals extends Controller
             'name' => 'required|string|max:255',
             'type' => 'required|string|in:'.self::GOAL_TYPES,
             'calculation_mode' => 'nullable|string|in:total,detailed',
-            'form' => 'nullable|string|in:main_categories,sub_categories,products,employee,people,box',
+            'form' => 'nullable|string|in:main_categories,sub_categories,products,store_sections,employee,people,box',
             'targeted_value' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
             'scope' => 'nullable|string|in:public,private',
@@ -303,6 +311,8 @@ class Goals extends Controller
             'main_categories.*.main_category_id' => 'required|integer|exists:categories,id',
             'sub_categories' => 'nullable|array',
             'sub_categories.*.sub_category_id' => 'required|integer|exists:sub_categories,id',
+            'store_sections' => 'nullable|array',
+            'store_sections.*.store_section_id' => 'required|integer|exists:store_sections,id',
             'employee_id' => 'nullable|exists:employee_details,id',
             'box_id' => 'nullable|exists:boxes,id',
         ]);
@@ -338,7 +348,7 @@ class Goals extends Controller
 
     private function validateDetailedProductGoal(Request $request, string $type): void
     {
-        $allowed = ['main_categories', 'sub_categories', 'products'];
+        $allowed = ['main_categories', 'sub_categories', 'products', 'store_sections'];
         if ($type === 'total_purchase_values') {
             $allowed[] = 'people';
         }
@@ -394,6 +404,7 @@ class Goals extends Controller
         GoalCategory::where('goal_id', $goal->id)->delete();
         GoalSubCategory::where('goal_id', $goal->id)->delete();
         GoalProduct::where('goal_id', $goal->id)->delete();
+        GoalStoreSection::where('goal_id', $goal->id)->delete();
         GoalPeople::where('goal_id', $goal->id)->delete();
 
         if ($goal->calculation_mode !== 'detailed') {
@@ -406,6 +417,10 @@ class Goals extends Controller
 
         foreach ($request->sub_categories ?? [] as $row) {
             GoalSubCategory::create(['goal_id' => $goal->id, 'sub_category_id' => $row['sub_category_id']]);
+        }
+
+        foreach ($request->store_sections ?? [] as $row) {
+            GoalStoreSection::create(['goal_id' => $goal->id, 'store_section_id' => $row['store_section_id']]);
         }
 
         foreach ($request->products ?? [] as $row) {
