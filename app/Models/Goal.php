@@ -12,8 +12,9 @@ class Goal extends Model
     protected $fillable = [
         'name',
         'type',
+        'calculation_mode',
         'achievement_percentage',
-        'current_value', //
+        'current_value',
         'targeted_value',
         'notes',
         'customer_id',
@@ -28,12 +29,17 @@ class Goal extends Model
 
         'scope', // values : main_categories / sub_categories / product / employee / person / box
         'seller_id','box_id',
+        'start_date',
         'due_date',
     ];
 
     protected $casts = [
     'created_at' => 'datetime:Y-m-d',
+    'start_date' => 'datetime:Y-m-d',
     'due_date' => 'datetime:Y-m-d',
+    'current_value' => 'float',
+    'targeted_value' => 'float',
+    'achievement_percentage' => 'float',
 
 ];
 

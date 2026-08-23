@@ -9,839 +9,443 @@ use App\Models\GoalLog;
 use App\Models\GoalPeople;
 use App\Models\GoalProduct;
 use App\Models\GoalSubCategory;
-use Illuminate\Http\Request;
+use App\Services\Goals\GoalCalculationService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
-
-use function PHPUnit\Framework\isNull;
 
 class Goals extends Controller
 {
-private function validateGoalForm(Request $request)
-{
-    $type = $request->type;
-    $form = $request->form;
+    private const GOAL_TYPES = 'total_sell_values,net_profit,sell_pieces,purchase_pieces,total_purchase_values,finish_tasks,pay_person,deposit_to_box';
 
-    /**
-     * === 1. TYPE: finish_tasks ===
-     */
-    if ($type === 'finish_tasks') {
-        if (is_null($request->employee_id)) {
-            return __('messages.must_select_employee');
-        }
-
-        // if ($form !== 'employee') {
-        //     return __('messages.form_must_be_employee');
-        // }
-    }
-
-    /**
-     * === 2. TYPE: pay_person ===
-     */
-    elseif ($type === 'pay_person') {
-
-        $hasPeople = $request->filled('people');
-        $hasEmployee = $request->filled('employee_id');
-
-        // Must select one
-        if (!$hasPeople && !$hasEmployee) {
-            return __('messages.must_select_perosn');
-        }
-
-        // Cannot select both
-        if ($hasPeople && $hasEmployee) {
-            return __('messages.must_select_one_perosn');
-        }
-
-        // If people provided → must have either customer_id or seller_id and form = person
-        if ($hasPeople) {
-            if (count($request->people) > 1) {
-                return __('messages.must_select_one_person');
-            }
-
-            $person = $request->people[0] ?? null;
-            if (empty($person['customer_id']) && empty($person['seller_id'])) {
-                return __('messages.must_select_customer_or_seller');
-            }
-
-            // if ($form !== 'people') {
-            //     return __('messages.form_must_be_people');
-            // }
-        }
-
-        // If employee selected → form must be employee
-        // if ($hasEmployee && $form !== 'employee') {
-        //     return __('messages.form_must_be_employee');
-        // }
-    }
-
-    /**
-     * === 3. TYPE: deposit_to_box ===
-     */
-    elseif ($type === 'deposit_to_box') {
-        if (!$request->filled('box_id')) {
-            return __('messages.must_select_box');
-        }
-
-        // if ($form !== 'box') {
-        //     return __('messages.form_must_be_box');
-        // }
-    }
-
-    /**
-     * === 4. TYPES: total_sell_values / net_profit / sell_pieces / purchase_pieces / total_purchase_values ===
-     */
-    elseif (in_array($type, ['total_sell_values', 'net_profit', 'sell_pieces', 'purchase_pieces', 'total_purchase_values'])) {
-
-        $fieldsToCheck = ['main_categories', 'sub_categories', 'products'];
-
-        if ($type === 'total_purchase_values') {
-            $fieldsToCheck[] = 'people';
-        }
-
-        // Determine which ones are filled
-        $filledFields = collect($fieldsToCheck)->filter(fn($f) => $request->filled($f))->values();
-
-        // None filled
-        if ($filledFields->isEmpty()) {
-            return __('messages.must_select_choice');
-        }
-
-        // More than one filled → only one allowed
-        if ($filledFields->count() > 1) {
-            return __('messages.must_select_one_choice');
-        }
-
-        // Get the only filled one
-        $selectedField = $filledFields->first();
-
-        // Check form consistency
-        if ($type === 'total_sell_values') {
-            if (!in_array($form, ['main_categories', 'sub_categories', 'products'])) {
-                return __('messages.invalid_form_for_sell_type');
-            }
-        } elseif ($type === 'total_purchase_values') {
-            if (!in_array($form, ['main_categories', 'sub_categories', 'products', 'people'])) {
-                return __('messages.invalid_form_for_purchase_type');
-            }
-        } else {
-            if (!in_array($form, ['main_categories', 'sub_categories', 'products'])) {
-                return __('messages.invalid_form_for_general_type');
-            }
-        }
-
-        // Ensure form matches the filled list
-        if ($selectedField !== $form) {
-            return __('messages.form_does_not_match_selected_field');
-        }
-    }
-
-    return null; // No error
-}
-
-
-public function createGoal(Request $request)
-{
-    try {
-        $data = $request->validate([
-            'name'            => 'required|string|max:255',
-            'type'            => 'required|string|in:total_sell_values,net_profit,sell_pieces,purchase_pieces,total_purchase_values,finish_tasks,pay_person,deposit_to_box',
- //           'form'            => 'required|string|in:main_categories,sub_categories,products,employee,people,box',
-            'form' => 'nullable|string|in:main_categories,sub_categories,products,employee,people,box|required_unless:type,finish_tasks,deposit_to_box,pay_person',
-
-            'targeted_value'  => 'required|numeric|min:0',
-            'notes'           => 'nullable|string',
-            'scope'           => 'nullable|string|in:public,private',
-            'due_date'        => 'nullable|date',
-
-            // Relations
-            'people'                     => 'nullable|array',
-            'people.*.customer_id'       => 'nullable|integer|exists:customers,id',
-            'people.*.seller_id'         => 'nullable|integer|exists:sellers,id',
-
-            'products'                   => 'nullable|array',
-            'products.*.product_id'      => 'required|integer|exists:products,id',
-
-            'main_categories'            => 'nullable|array',
-            'main_categories.*.main_category_id' => 'required|integer|exists:categories,id',
-
-            'sub_categories'             => 'nullable|array',
-            'sub_categories.*.sub_category_id'   => 'required|integer|exists:sub_categories,id',
-
-            'employee_id'  => 'nullable|exists:employee_details,id',
-            'box_id'       => 'nullable|exists:boxes,id',
-        ]);
-
-        if ($error = $this->validateGoalForm($request)) {
-            return response()->json([
-                'status'  => 'error',
-                'message' => $error
-            ], 200);
-        }
-        if($request->type ==='deposit_to_box'){
-            $data['form'] = 'box';
-        }
-        elseif($request->type ==='finish_tasks'){
-            $data['form'] = 'employee';
-        }
-        elseif($request->type ==='pay_person'){
-            if($request->employee_id){
-                $data['form'] = 'employee';
-            }
-            elseif($request->filled('people')){
-                $data['form'] = 'people';
-
-            }
-        }
-
-        if ($request->filled('people')) {
-            foreach ($request->people as $index => $person) {
-                $customer = $person['customer_id'] ?? null;
-                $seller   = $person['seller_id'] ?? null;
-
-                // Allow only one of them to be filled
-                if (($customer && $seller) || (!$customer && !$seller)) {
-                    return response()->json([
-                        'status'  => 'error',
-                        'message' => __('messages.must_select_either_customer_or_seller'),
-                    ], 200);
-                }
-            }
-}
-
-
-        $goal = Goal::create($data);
-
-        /**
-         * === 1. Handle Relations by Form ===
-         */
-        switch ($goal->form) {
-
-            case 'main_categories':
-                foreach ($request->main_categories ?? [] as $mainCategory) {
-                    GoalCategory::create([
-                        'goal_id'     => $goal->id,
-                        'category_id' => $mainCategory['main_category_id'],
-                    ]);
-                }
-                break;
-
-            case 'sub_categories':
-                foreach ($request->sub_categories ?? [] as $subCategory) {
-                    GoalSubCategory::create([
-                        'goal_id'        => $goal->id,
-                        'sub_category_id'=> $subCategory['sub_category_id'],
-                    ]);
-                }
-                break;
-
-            case 'products':
-                foreach ($request->products ?? [] as $product) {
-                    GoalProduct::create([
-                        'goal_id'    => $goal->id,
-                        'product_id' => $product['product_id'],
-                    ]);
-                }
-                break;
-
-
-            case 'people':
-                foreach ($request->people ?? [] as $person) {
-                    GoalPeople::create([
-                        'goal_id'     => $goal->id,
-                        'customer_id' => $person['customer_id'] ?? null,
-                        'seller_id'   => $person['seller_id'] ?? null,
-                    ]);
-                }
-                break;
-
-
-        }
-
-        $translated = $this->translateTypeAndForm();
-        GoalLog::create([
-            'title'=>'اضافة هدف جديد',
-            'description'=>'تم اضافة هدف جديد باسم'.' '.$goal->name.
-            ' '.'نوعه'.' '.$translated[$goal->type].' '.'بصيغة'.' '.$translated[$goal->form],
-            'goal_id' => $goal->id,
-        ]);
-
-        return response()->json([
-            'status'  => 'success',
-            'message' => __('messages.goal_created_successfully')
-        ], 200);
-    }
-
-    // === Error handling ===
-    catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-            'errors'  => $e->errors()
-        ], 200);
-    } catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.create_data_error')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.failed_to_create_goal')
-        ], 200);
-    }
-}
-
-    private function translateTypeAndForm()
+    public function __construct(private GoalCalculationService $calculator)
     {
-        return [
-            // 🔹 Types
-            'total_sell_values'     => 'مجموع قيم البيع',
-            'net_profit'            => 'صافي الربح',
-            'sell_pieces'           => ' بيع عدد معين من القطع',
-            'purchase_pieces'       => 'شراء عدد معين من القطع ',
-            'total_purchase_values' => 'مجموع قيم الشراء',
-            'finish_tasks'          => 'انجاز مهمات اساسية ',
-            'pay_person'            => 'دفع قيمة مالية لشخص',
-            'deposit_to_box'        => 'ترصيد في صندوق',
-
-            // 🔹 Forms
-            'main_categories' => 'الأقسام الرئيسية',
-            'sub_categories'  => 'الأقسام الفرعية',
-            'products'        => 'المنتجات',
-            'employee'        => 'الموظف',
-            'people'          => 'الأشخاص',
-            'box'             => 'الصندوق',
-        ];
     }
 
+    public function createGoal(Request $request)
+    {
+        try {
+            $data = $this->validatedGoalData($request);
+            $data['current_value'] = 0;
+            $data['achievement_percentage'] = 0;
 
-    public function showGoal(Request $request){
-        try{
-        $request->validate(['goal_id'=>'required|exists:goals,id']);
+            $goal = DB::transaction(function () use ($request, $data) {
+                $goal = Goal::create($data);
+                $this->syncGoalRelations($goal, $request);
 
+                GoalLog::create([
+                    'title' => 'اضافة هدف جديد',
+                    'description' => 'تم اضافة هدف جديد باسم '.$goal->name,
+                    'goal_id' => $goal->id,
+                ]);
 
-        $goal = Goal::with('box:id,name')
-        ->with('employee.user:id,name')
-        ->findOrFail($request->goal_id);
-
-        if($goal->employee_id){
-        $goal['employee'] = [
-            'id' => $goal->employee_id,
-            'name' => $goal->employee->user->name,
-        ];
-        $goal->unsetRelation('employee');
-      }
-
-        $mainGategoriesList = [];
-        $subCategoriesList  = [];
-        $productsList = [];
-        $peopleList = [];
-
-        $categories = GoalCategory::where('goal_id', $goal->id)->get();
-        if($categories){
-            $mainGategoriesList = $categories->map(function($goalCategory){
-                return [
-                    'category_id'=> $goalCategory->category->id,
-                    'category_name' => $goalCategory->category->nameAr
-                ];
+                return $this->calculator->recalculate($goal);
             });
-        }
 
-        $subCategories = GoalSubCategory::where('goal_id', $goal->id)->get();
-        if($subCategories){
-            $subCategoriesList = $subCategories->map(function($goalsubCategory){
-                return [
-                    'sub_category_id'=> $goalsubCategory->subCategory->id,
-                    'sub_category_name' => $goalsubCategory->subCategory->nameAr
-                ];
-            });
-        }
-
-        $products = GoalProduct::where('goal_id', $goal->id)->get();
-        if($products){
-            $productsList = $products->map(function($productGoal){
-                return [
-                    'product_id'=> $productGoal->product->id,
-                    'product_name' => $productGoal->product->nameAr
-                ];
-            });
-        }
-
-        $people = GoalPeople::where('goal_id', $goal->id)->get();
-        if($people){
-            $peopleList = $people->map(function($peopleGoal){
-                return [
-                    'customer_id'=> $peopleGoal->customer_id? $peopleGoal->customer_id:null,
-                    'customer_name' => $peopleGoal->customer_id? $peopleGoal->customer->name:null,
-
-                    'seller_id'=> $peopleGoal->seller_id? $peopleGoal->seller_id:null,
-                    'seller_name' => $peopleGoal->seller_id? $peopleGoal->seller->name:null,
-
-                ];
-            });
-        }
-
-        $goal['main_categories']= $mainGategoriesList;
-        $goal['sub_categories']= $subCategoriesList;
-        $goal['products']= $productsList;
-        $goal['people']= $peopleList; 
-        $goalLogs = $goal->logs()->get(['title','description']);
-        
-      $goal->makeHidden(['product_id','customer_id','employee_id','seller_id','box_id']);
-                return response()->json([
+            return response()->json([
                 'status' => 'success',
+                'message' => __('messages.goal_created_successfully'),
                 'goal' => $goal,
-                'goal_logs'=> $goalLogs,
-               
             ], 200);
-        
-    }
-    catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.create_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_create_goal'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 200);
+        }
+    }
+
+    public function editGoal(Request $request)
+    {
+        try {
+            $request->validate(['goal_id' => 'required|integer|exists:goals,id']);
+            $goal = Goal::findOrFail((int) $request->goal_id);
+            $data = $this->validatedGoalData($request, true);
+            unset($data['current_value'], $data['achievement_percentage']);
+
+            $goal = DB::transaction(function () use ($request, $goal, $data) {
+                $goal->update($data);
+                $this->syncGoalRelations($goal->fresh(), $request);
+
+                GoalLog::create([
+                    'title' => 'تعديل بيانات هدف ',
+                    'description' => 'تم تعديل بيانات هدف باسم '.$goal->name,
+                    'goal_id' => $goal->id,
+                ]);
+
+                return $this->calculator->recalculate($goal->fresh());
+            });
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.goal_updated_successfully'),
+                'goal' => $goal,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
             ], 200);
         } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.goal_not_found')
+                'message' => __('messages.goal_not_found'),
             ], 200);
-        } 
-        catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.update_data_error'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_update_goal'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ], 200);
         }
-        
-        catch (\Exception $e) {
+    }
+
+    public function showGoal(Request $request)
+    {
+        try {
+            $request->validate(['goal_id' => 'required|exists:goals,id']);
+            $goal = $this->calculator->recalculate(Goal::findOrFail((int) $request->goal_id));
+            $goal->load(['box:id,name', 'employee.user:id,name']);
+
+            if ($goal->employee_id && $goal->employee?->user) {
+                $goal['employee'] = [
+                    'id' => $goal->employee_id,
+                    'name' => $goal->employee->user->name,
+                ];
+                $goal->unsetRelation('employee');
+            }
+
+            $goal['main_categories'] = GoalCategory::where('goal_id', $goal->id)->get()->map(fn ($row) => [
+                'category_id' => $row->category?->id,
+                'category_name' => $row->category?->nameAr,
+            ]);
+            $goal['sub_categories'] = GoalSubCategory::where('goal_id', $goal->id)->get()->map(fn ($row) => [
+                'sub_category_id' => $row->subCategory?->id,
+                'sub_category_name' => $row->subCategory?->nameAr,
+            ]);
+            $goal['products'] = GoalProduct::where('goal_id', $goal->id)->get()->map(fn ($row) => [
+                'product_id' => $row->product?->id,
+                'product_name' => $row->product?->nameAr,
+            ]);
+            $goal['people'] = GoalPeople::where('goal_id', $goal->id)->get()->map(fn ($row) => [
+                'customer_id' => $row->customer_id,
+                'customer_name' => $row->customer?->name,
+                'seller_id' => $row->seller_id,
+                'seller_name' => $row->seller?->name,
+            ]);
+
+            $goalLogs = $goal->logs()->get(['title', 'description']);
+            $goal->makeHidden(['product_id', 'customer_id', 'employee_id', 'seller_id', 'box_id']);
+
+            return response()->json([
+                'status' => 'success',
+                'goal' => $goal,
+                'goal_logs' => $goalLogs,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed')], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.goal_not_found')], 200);
+        } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.failed_to_load_goal'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ], 200);
         }
-
     }
 
-public function editGoal(Request $request)
-{
-    try {
-        // 🔹 Validate input
+    public function getGoals()
+    {
+        try {
+            $goals = Goal::orderByDesc('created_at')->get([
+                'id',
+                'scope',
+                'calculation_mode',
+                'name',
+                'type',
+                'achievement_percentage',
+                'targeted_value',
+                'current_value',
+                'is_canceled',
+                'created_at',
+                'start_date',
+                'due_date',
+            ])->map(fn (Goal $goal) => $this->calculator->recalculate($goal));
+
+            return response()->json([
+                'status' => 'success',
+                'goals' => $goals,
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.retrieve_data_error')], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.failed_to_load_goals'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 200);
+        }
+    }
+
+    public function recalculateGoal(Request $request)
+    {
+        try {
+            $request->validate(['goal_id' => 'required|exists:goals,id']);
+            $goal = $this->calculator->recalculate(Goal::findOrFail((int) $request->goal_id));
+
+            return response()->json([
+                'status' => 'success',
+                'goal' => $goal,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed')], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.goal_not_found')], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 200);
+        }
+    }
+
+    public function cancelGoal(Request $request)
+    {
+        return $this->changeGoal($request, 'is_canceled', 1, 'الغاء هدف', 'تم الغاء هدف باسم', 'cancelled');
+    }
+
+    public function transferGoal(Request $request)
+    {
+        try {
+            $request->validate(['goal_id' => 'required|exists:goals,id']);
+            $goal = Goal::findOrFail((int) $request->goal_id);
+            $newScope = $goal->scope === 'private' ? 'public' : 'private';
+            $goal->update(['scope' => $newScope]);
+
+            GoalLog::create([
+                'title' => 'نقل هدف ',
+                'description' => 'تم نقل هدف باسم '.$goal->name.' الى '.($newScope === 'public' ? 'عام' : 'خاص'),
+                'goal_id' => $goal->id,
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.goal_transferred_successfully'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed')], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.goal_not_found')], 200);
+        } catch (\Exception $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function deleteGoal(Request $request)
+    {
+        try {
+            $request->validate(['goal_id' => 'required|integer|exists:goals,id']);
+            Goal::findOrFail((int) $request->goal_id)->delete();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.goal_deleted'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed')], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.goal_not_found')], 200);
+        } catch (\Exception $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
+    private function validatedGoalData(Request $request, bool $editing = false): array
+    {
         $data = $request->validate([
-            'goal_id'         => 'required|integer|exists:goals,id',
-            'name'            => 'required|string|max:255',
-            'type'            => 'required|string|in:total_sell_values,net_profit,sell_pieces,purchase_pieces,total_purchase_values,finish_tasks,pay_person,deposit_to_box',
-            'form' => 'nullable|string|in:main_categories,sub_categories,products,employee,people,box|required_unless:type,finish_tasks,deposit_to_box,pay_person',
-            'targeted_value'  => 'required|numeric|min:0',
-            'current_value'   => 'nullable|numeric|min:0',
-            'notes'           => 'nullable|string',
-            'scope'           => 'nullable|string|in:public,private',
-            'due_date'        => 'nullable|date',
-
-            // Relations
-            'people'                     => 'nullable|array',
-            'people.*.customer_id'       => 'nullable|integer|exists:customers,id',
-            'people.*.seller_id'         => 'nullable|integer|exists:sellers,id',
-
-            'products'                   => 'nullable|array',
-            'products.*.product_id'      => 'required|integer|exists:products,id',
-
-            'main_categories'            => 'nullable|array',
+            'name' => 'required|string|max:255',
+            'type' => 'required|string|in:'.self::GOAL_TYPES,
+            'calculation_mode' => 'nullable|string|in:total,detailed',
+            'form' => 'nullable|string|in:main_categories,sub_categories,products,employee,people,box',
+            'targeted_value' => 'required|numeric|min:0',
+            'notes' => 'nullable|string',
+            'scope' => 'nullable|string|in:public,private',
+            'start_date' => 'nullable|date',
+            'due_date' => 'nullable|date|after_or_equal:start_date',
+            'people' => 'nullable|array',
+            'people.*.customer_id' => 'nullable|integer|exists:customers,id',
+            'people.*.seller_id' => 'nullable|integer|exists:sellers,id',
+            'products' => 'nullable|array',
+            'products.*.product_id' => 'required|integer|exists:products,id',
+            'main_categories' => 'nullable|array',
             'main_categories.*.main_category_id' => 'required|integer|exists:categories,id',
-
-            'sub_categories'             => 'nullable|array',
-            'sub_categories.*.sub_category_id'   => 'required|integer|exists:sub_categories,id',
-
-            'employee_id'  => 'nullable|exists:employee_details,id',
-            'box_id'       => 'nullable|exists:boxes,id',
+            'sub_categories' => 'nullable|array',
+            'sub_categories.*.sub_category_id' => 'required|integer|exists:sub_categories,id',
+            'employee_id' => 'nullable|exists:employee_details,id',
+            'box_id' => 'nullable|exists:boxes,id',
         ]);
 
-        // 🔹 Find goal
-        $goal = Goal::find($request->goal_id);
-        if (!$goal) {
-            return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.goal_not_found')
-            ], 200);
+        $data['scope'] = $data['scope'] ?? 'public';
+        $data['calculation_mode'] = $data['calculation_mode'] ?? 'total';
+
+        if (in_array($data['type'], ['finish_tasks', 'pay_person', 'deposit_to_box'], true)) {
+            $data['calculation_mode'] = 'detailed';
         }
 
-        // 🔹 Logical validation (same as create)
-        if ($error = $this->validateGoalForm($request)) {
-            return response()->json([
-                'status'  => 'error',
-                'message' => $error
-            ], 200);
-        }
-
-        if($request->type ==='deposit_to_box'){
-            $data['form'] = 'box';
-        }
-        elseif($request->type ==='finish_tasks'){
+        if ($data['type'] === 'finish_tasks') {
+            if (! $request->filled('employee_id')) {
+                throw ValidationException::withMessages(['employee_id' => [__('messages.must_select_employee')]]);
+            }
             $data['form'] = 'employee';
-        }
-        elseif($request->type ==='pay_person'){
-            if($request->employee_id){
-                $data['form'] = 'employee';
+        } elseif ($data['type'] === 'pay_person') {
+            $this->validatePeoplePayload($request);
+            $data['form'] = $request->filled('employee_id') ? 'employee' : 'people';
+        } elseif ($data['type'] === 'deposit_to_box') {
+            if (! $request->filled('box_id')) {
+                throw ValidationException::withMessages(['box_id' => [__('messages.must_select_box')]]);
             }
-            elseif($request->filled('people')){
-                $data['form'] = 'people';
-
-            }
-        }
-
-        // 🔹 Validate people input (only one of customer/seller allowed)
-        if ($request->filled('people')) {
-            foreach ($request->people as $person) {
-                $customer = $person['customer_id'] ?? null;
-                $seller   = $person['seller_id'] ?? null;
-
-                if (($customer && $seller) || (!$customer && !$seller)) {
-                    return response()->json([
-                        'status'  => 'error',
-                        'message' => __('messages.must_select_either_customer_or_seller'),
-                    ], 200);
-                }
-            }
+            $data['form'] = 'box';
+        } elseif ($data['calculation_mode'] === 'detailed') {
+            $this->validateDetailedProductGoal($request, $data['type']);
+        } else {
+            $data['form'] = null;
         }
 
-        // 🔹 Recalculate achievement percentage
-        $achievement_percentage = $data['targeted_value'] > 0
-            ? (($data['current_value'] ?? 0) / $data['targeted_value']) * 100
-            : 0;
-        $data['achievement_percentage'] = $achievement_percentage;
+        return $data;
+    }
 
-        // 🔹 Update goal
-        $goal->update($data);
+    private function validateDetailedProductGoal(Request $request, string $type): void
+    {
+        $allowed = ['main_categories', 'sub_categories', 'products'];
+        if ($type === 'total_purchase_values') {
+            $allowed[] = 'people';
+        }
 
-        // 🔹 Clear old relations before reattaching
+        $filled = collect($allowed)->filter(fn ($field) => $request->filled($field))->values();
+
+        if ($filled->isEmpty()) {
+            throw ValidationException::withMessages(['form' => [__('messages.must_select_choice')]]);
+        }
+
+        if ($filled->count() > 1) {
+            throw ValidationException::withMessages(['form' => [__('messages.must_select_one_choice')]]);
+        }
+
+        if ($request->input('form') !== $filled->first()) {
+            throw ValidationException::withMessages(['form' => [__('messages.form_does_not_match_selected_field')]]);
+        }
+    }
+
+    private function validatePeoplePayload(Request $request): void
+    {
+        $hasPeople = $request->filled('people');
+        $hasEmployee = $request->filled('employee_id');
+
+        if (! $hasPeople && ! $hasEmployee) {
+            throw ValidationException::withMessages(['people' => [__('messages.must_select_perosn')]]);
+        }
+
+        if ($hasPeople && $hasEmployee) {
+            throw ValidationException::withMessages(['people' => [__('messages.must_select_one_perosn')]]);
+        }
+
+        if (! $hasPeople) {
+            return;
+        }
+
+        if (count($request->people) > 1) {
+            throw ValidationException::withMessages(['people' => [__('messages.must_select_one_person')]]);
+        }
+
+        foreach ($request->people as $person) {
+            $customer = $person['customer_id'] ?? null;
+            $seller = $person['seller_id'] ?? null;
+
+            if (($customer && $seller) || (! $customer && ! $seller)) {
+                throw ValidationException::withMessages(['people' => [__('messages.must_select_either_customer_or_seller')]]);
+            }
+        }
+    }
+
+    private function syncGoalRelations(Goal $goal, Request $request): void
+    {
         GoalCategory::where('goal_id', $goal->id)->delete();
         GoalSubCategory::where('goal_id', $goal->id)->delete();
         GoalProduct::where('goal_id', $goal->id)->delete();
         GoalPeople::where('goal_id', $goal->id)->delete();
 
-        // 🔹 Reattach new relations
-        switch ($goal->form) {
-            case 'main_categories':
-                foreach ($request->main_categories ?? [] as $mainCategory) {
-                    GoalCategory::create([
-                        'goal_id'     => $goal->id,
-                        'category_id' => $mainCategory['main_category_id'],
-                    ]);
-                }
-                break;
-
-            case 'sub_categories':
-                foreach ($request->sub_categories ?? [] as $subCategory) {
-                    GoalSubCategory::create([
-                        'goal_id'        => $goal->id,
-                        'sub_category_id'=> $subCategory['sub_category_id'],
-                    ]);
-                }
-                break;
-
-            case 'products':
-                foreach ($request->products ?? [] as $product) {
-                    GoalProduct::create([
-                        'goal_id'    => $goal->id,
-                        'product_id' => $product['product_id'],
-                    ]);
-                }
-                break;
-
-            case 'people':
-                foreach ($request->people ?? [] as $person) {
-                    GoalPeople::create([
-                        'goal_id'     => $goal->id,
-                        'customer_id' => $person['customer_id'] ?? null,
-                        'seller_id'   => $person['seller_id'] ?? null,
-                    ]);
-                }
-                break;
+        if ($goal->calculation_mode !== 'detailed') {
+            return;
         }
 
-        GoalLog::create([
-            'title'=>'تعديل بيانات هدف ',
-            'description'=>'تم تعديل بيانات هدف  باسم'.' '.$goal->name.
-            ' '.'نسبة الانجاز الحالية'.' '.'%'.$goal->achievement_percentage,
-            'goal_id' => $goal->id,
-        ]);
-
-        return response()->json([
-            'status'  => 'success',
-            'message' => __('messages.goal_updated_successfully')
-        ], 200);
-
-    } catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-            'errors'  => $e->errors()
-        ], 200);
-    } 
-    catch (ModelNotFoundException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.goal_not_found')
-            ], 200);
-        } 
-    catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.update_data_error')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.failed_to_update_goal')
-        ], 200);
-    }
-}
-
-
-    public function getGoals(){
-        try{
-
-                $goals = Goal::
-                get(['id','scope','name','achievement_percentage','targeted_value','current_value','is_canceled',
-                'created_at','due_date']);
-
-
-           return response()->json([
-                'status' => 'success',
-                'goals' => $goals
-            ], 200);
-        } catch (QueryException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.retrieve_data_error')
-            ], 200);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.failed_to_load_goals')
-            ], 200);
+        foreach ($request->main_categories ?? [] as $row) {
+            GoalCategory::create(['goal_id' => $goal->id, 'category_id' => $row['main_category_id']]);
         }
 
-        
-    }
-    // public function publicGoals(){
-    //     return $this->getGoals('public');
-    // }
+        foreach ($request->sub_categories ?? [] as $row) {
+            GoalSubCategory::create(['goal_id' => $goal->id, 'sub_category_id' => $row['sub_category_id']]);
+        }
 
-    // public function privateGoals(){
-    //     return $this->getGoals('private');
+        foreach ($request->products ?? [] as $row) {
+            GoalProduct::create(['goal_id' => $goal->id, 'product_id' => $row['product_id']]);
+        }
 
-    // }
-
-    //  public function completedGoals(){
-    //     return $this->getGoals('completed');
-
-    // }
-
-    // public function canceledGoals(){
-    //   try{
-    //     $goals = Goal::where('is_canceled',1)
-    //     ->orderBy('created_at','desc')
-    //     ->get(['id','name','achievement_percentage','targeted_value','type']);
-
-    //        return response()->json([
-    //             'status' => 'success',
-    //             'goals' => $goals
-    //         ], 200);
-    //     } catch (QueryException $e) {
-    //         return response()->json([
-    //             'status' => 'error',
-    //             'message' => __('messages.retrieve_data_error')
-    //         ], 200);
-    //     } catch (\Exception $e) {
-    //         return response()->json([
-    //             'status' => 'error',
-    //             'message' => __('messages.failed_to_load_goals')
-    //         ], 200);
-    //     }
-
-    // }
-
-    private function changeGoal(Request $request,$filed,$value, $logTitle, $logMessage,$msgType){
-        try{
-        $request->validate(['goal_id'=>'required|exists:goals,id']);
-
-        $goal = Goal::findOrFail($request->goal_id);
-        $goal->update([$filed=>$value]);
-
-        if($logTitle && $logMessage){
-  
-            GoalLog::create([
-
-                'title'=>$logTitle,
-                'description'=>$logMessage.' '.$goal->name,
+        foreach ($request->people ?? [] as $row) {
+            GoalPeople::create([
                 'goal_id' => $goal->id,
-                 
-                ]
-            
-            );
+                'customer_id' => $row['customer_id'] ?? null,
+                'seller_id' => $row['seller_id'] ?? null,
+            ]);
         }
-            return response()->json([
-                'status' => 'success',
-                'message' => __('messages.goal_'.$msgType.'_successfully')
-            ], 200);
+    }
+
+    private function changeGoal(Request $request, string $field, mixed $value, ?string $logTitle, ?string $logMessage, string $msgType)
+    {
+        try {
+            $request->validate(['goal_id' => 'required|exists:goals,id']);
+            $goal = Goal::findOrFail((int) $request->goal_id);
+            $goal->update([$field => $value]);
+
+            if ($logTitle && $logMessage) {
+                GoalLog::create([
+                    'title' => $logTitle,
+                    'description' => $logMessage.' '.$goal->name,
+                    'goal_id' => $goal->id,
+                ]);
             }
 
-            catch (ValidationException $e) {
             return response()->json([
-                'status' => 'error',
-                'message' => __('messages.validation_failed')
+                'status' => 'success',
+                'message' => __('messages.goal_'.$msgType.'_successfully'),
             ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed')], 200);
         } catch (ModelNotFoundException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.goal_not_found')
-            ], 200);
+            return response()->json(['status' => 'error', 'message' => __('messages.goal_not_found')], 200);
+        } catch (\Exception $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
         }
-            catch (QueryException $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.failed_to_cancel_goal')
-            ], 200); }
-         catch (\Exception $e) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.something_wrong')
-            ], 200);
-        }
-
-    }
-
-
-    public function cancelGoal(Request $request){
-        return $this->changeGoal($request,'is_canceled',1 ,'الغاء هدف','تم الغاء هدف باسم','cancelled');
-
-    }
-
-public function transferGoal(Request $request)
-{
-    try {
-        $request->validate(['goal_id' => 'required|exists:goals,id']);
-
-        $goal = Goal::findOrFail($request->goal_id);
-
-        // Toggle type
-        $newType = $goal->scope === 'private' ? 'public' : 'private';
-
-        // Update type
-        $goal->update(['scope' => $newType]);
-
-        // Log
-
-        GoalLog::create([
-            'title'=>'نقل هدف ',
-            'description'=>'تم نقل هدف  باسم'.' '.$goal->name
-            .' '.'الى'.' '.($newType==='public'?'عام':'خاص'),
-            'goal_id' => $goal->id,
-        ]);
-
-        return response()->json([
-            'status'  => 'success',
-            'message' => __('messages.goal_transferred_successfully')
-        ], 200);
-
-    } catch (ValidationException $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.validation_failed')
-        ], 200);
-    } catch (ModelNotFoundException $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.goal_not_found')
-        ], 200);
-    } catch (QueryException $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.failed_to_transfer_goal')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
-}
-
-
-    //     public function restoreGoal(Request $request){
-    //     try{
-    //     $request->validate(['goal_id'=>'required|exists:goals,id']);
-
-    //     $goal = Goal::findOrFail($request->goal_id);
-    //     $goal->update(['is_canceled'=>0]);
-    //     Logs::createLog('استعادة هدف ','استعادة هدف  باسم'.' '.$goal->name,'goals');
-
-    //         return response()->json([
-    //             'status' => 'success',
-    //             'message' => __('messages.goal_restored_successfully')
-    //         ], 200);
-    //         }
-
-    //         catch (ValidationException $e) {
-    //         return response()->json([
-    //             'status' => 'error',
-    //             'message' => __('messages.validation_failed')
-    //         ], 200);
-    //     } catch (ModelNotFoundException $e) {
-    //         return response()->json([
-    //             'status' => 'error',
-    //             'message' => __('messages.goal_not_found')
-    //         ], 200);
-    //     }
-    //         catch (QueryException $e) {
-    //         return response()->json([
-    //             'status' => 'error',
-    //             'message' => __('messages.failed_to_restore_goal')
-    //         ], 200); }
-    //      catch (\Exception $e) {
-    //         return response()->json([
-    //             'status' => 'error',
-    //             'message' => __('messages.something_wrong')
-    //         ], 200);
-    //     }
-
-    // }
-
-    public function deleteGoal(Request $request){
-        try{
-            $request->validate(['goal_id'=>'required|integer|exists:goals,id']);
-
-            $goal = Goal::findOrFail($request->goal_id);
-            $goal->delete();
-
-            return response()->json([
-                'status'=>'success',
-                'message'=>__('messages.goal_deleted'),
-            ],200);
-        }
-        catch (ValidationException $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.validation_failed')
-        ], 200);
-    } catch (ModelNotFoundException $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.goal_not_found')
-        ], 200);
-    } catch (QueryException $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.failed_to_transfer_goal')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
     }
 }
