@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Goal;
 use App\Models\GoalCategory;
+use App\Models\GoalDailySnapshot;
 use App\Models\GoalEmployeeShare;
 use App\Models\GoalLog;
 use App\Models\GoalPeople;
@@ -177,6 +178,15 @@ class Goals extends Controller
                     'employee_name' => $row->employee?->user?->name,
                 ]);
             $goal['status_meta'] = $this->goalNotifications->decorateGoal($goal);
+            $goal['progress_history'] = GoalDailySnapshot::where('goal_id', $goal->id)
+                ->orderBy('snapshot_date')
+                ->get(['snapshot_date', 'current_value', 'achievement_percentage'])
+                ->map(fn ($row) => [
+                    'date' => optional($row->snapshot_date)->toDateString() ?? (string) $row->snapshot_date,
+                    'current_value' => number_format((float) $row->current_value, 2, '.', ''),
+                    'achievement_percentage' => number_format((float) $row->achievement_percentage, 2, '.', ''),
+                ])
+                ->values();
 
             $goalLogs = $goal->logs()->get(['title', 'description']);
             $goal->makeHidden(['product_id', 'customer_id', 'employee_id', 'seller_id', 'box_id']);
