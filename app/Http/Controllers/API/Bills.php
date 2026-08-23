@@ -496,18 +496,38 @@ private function getBills($statuses)
 {
     try {
         $bills = Bill::whereIn('status', (array) $statuses) 
-            ->with('seller:id,name')
-            ->get(['id','total','created_at','seller_id','status'])
-            ->map(function($bill) {
-                return [
-                    'id'         => $bill->id,
-                    'total'      => $bill->total,
-                    'seller'     => $bill->seller? $bill->seller->name : 'no seller',
-                    'created_at' => $bill->created_at->format('Y-m-d'), 
-                    'status' => $bill->status, 
-                
-                ];
-            });
+            ->with(['seller:id,name', 'customer:id,name'])
+            ->withCount([
+                'items as items_count',
+                'items as receiving_issues_count' => function ($q) {
+                    $q->where(function ($issue) {
+                        $issue->where('missing_amount', '>', 0)
+                            ->orWhere('custody_quantity', '>', 0)
+                            ->orWhere('damaged_quantity', '>', 0)
+                            ->orWhere('mismatched_quantity', '>', 0)
+                            ->orWhere('not_compatible_amount', '>', 0);
+                    });
+                },
+            ])
+            ->withSum('items as missing_quantity_total', 'missing_amount')
+            ->withSum('items as extra_quantity_total', 'custody_quantity')
+            ->withSum('items as damaged_quantity_total', 'damaged_quantity')
+            ->withSum('items as mismatched_quantity_total', 'mismatched_quantity')
+            ->latest('id')
+            ->get([
+                'id',
+                'total',
+                'final_total',
+                'paid_amount',
+                'payment_status',
+                'workflow_status',
+                'created_at',
+                'seller_id',
+                'customer_id',
+                'status',
+                'currency',
+            ])
+            ->map(fn ($bill) => $this->formatBillListItem($bill));
 
             return response()->json([
                 'status'=>'success',
@@ -531,6 +551,33 @@ private function getBills($statuses)
                     'message' => __('messages.something_wrong'),
                 ], 200);
             }
+    }
+
+    private function formatBillListItem(Bill $bill): array
+    {
+        $total = (float) ($bill->final_total ?: $bill->total);
+        $paid = (float) ($bill->paid_amount ?? 0);
+
+        return [
+            'id' => $bill->id,
+            'total' => $bill->total,
+            'final_total' => $total,
+            'paid_amount' => $paid,
+            'remaining_amount' => max(0, $total - $paid),
+            'payment_status' => $bill->payment_status ?: 'unpaid',
+            'workflow_status' => $bill->workflow_status ?: 'awaiting_receiving',
+            'seller' => $bill->seller?->name ?? $bill->customer?->name ?? 'no seller',
+            'source_type' => $bill->seller_id ? 'seller' : ($bill->customer_id ? 'customer' : ''),
+            'created_at' => $bill->created_at->format('Y-m-d'),
+            'status' => $bill->status,
+            'currency' => $bill->currency ?? 'شيكل',
+            'items_count' => (int) ($bill->items_count ?? 0),
+            'receiving_issues_count' => (int) ($bill->receiving_issues_count ?? 0),
+            'missing_quantity_total' => (float) ($bill->missing_quantity_total ?? 0),
+            'extra_quantity_total' => (float) ($bill->extra_quantity_total ?? 0),
+            'damaged_quantity_total' => (float) ($bill->damaged_quantity_total ?? 0),
+            'mismatched_quantity_total' => (float) ($bill->mismatched_quantity_total ?? 0),
+        ];
     }
 
 
@@ -783,18 +830,26 @@ private function getBills($statuses)
         $bills = Bill::whereHas('items', function ($q) {
                     $q->where('status', 'unfinished');
                 })        
-            ->with('seller:id,name')
-            ->get(['id','total','created_at','seller_id','status'])
-            ->map(function($bill) {
-                return [
-                    'id'         => $bill->id,
-                    'total'      => $bill->total,
-                    'seller'     => $bill->seller? $bill->seller->name : 'no seller',
-                    'created_at' => $bill->created_at->format('Y-m-d'), 
-                    'status' => $bill->status, 
-                
-                ];
-            });
+            ->with(['seller:id,name', 'customer:id,name'])
+            ->withCount([
+                'items as items_count',
+                'items as receiving_issues_count' => function ($q) {
+                    $q->where(function ($issue) {
+                        $issue->where('missing_amount', '>', 0)
+                            ->orWhere('custody_quantity', '>', 0)
+                            ->orWhere('damaged_quantity', '>', 0)
+                            ->orWhere('mismatched_quantity', '>', 0)
+                            ->orWhere('not_compatible_amount', '>', 0);
+                    });
+                },
+            ])
+            ->withSum('items as missing_quantity_total', 'missing_amount')
+            ->withSum('items as extra_quantity_total', 'custody_quantity')
+            ->withSum('items as damaged_quantity_total', 'damaged_quantity')
+            ->withSum('items as mismatched_quantity_total', 'mismatched_quantity')
+            ->latest('id')
+            ->get(['id','total','final_total','paid_amount','payment_status','workflow_status','created_at','seller_id','customer_id','status','currency'])
+            ->map(fn ($bill) => $this->formatBillListItem($bill));
 
             return response()->json([
                 'status'=>'success',
@@ -833,18 +888,26 @@ private function getBills($statuses)
                         $q->where('status', 'unfinished');
                     })      
            ->where('status','!=','finished')
-            ->with('seller:id,name')
-            ->get(['id','total','created_at','seller_id','status'])
-            ->map(function($bill) {
-                return [
-                    'id'         => $bill->id,
-                    'total'      => $bill->total,
-                    'seller'     => $bill->seller? $bill->seller->name : 'no seller',
-                    'created_at' => $bill->created_at->format('Y-m-d'), 
-                    'status' => $bill->status, 
-                
-                ];
-            });
+            ->with(['seller:id,name', 'customer:id,name'])
+            ->withCount([
+                'items as items_count',
+                'items as receiving_issues_count' => function ($q) {
+                    $q->where(function ($issue) {
+                        $issue->where('missing_amount', '>', 0)
+                            ->orWhere('custody_quantity', '>', 0)
+                            ->orWhere('damaged_quantity', '>', 0)
+                            ->orWhere('mismatched_quantity', '>', 0)
+                            ->orWhere('not_compatible_amount', '>', 0);
+                    });
+                },
+            ])
+            ->withSum('items as missing_quantity_total', 'missing_amount')
+            ->withSum('items as extra_quantity_total', 'custody_quantity')
+            ->withSum('items as damaged_quantity_total', 'damaged_quantity')
+            ->withSum('items as mismatched_quantity_total', 'mismatched_quantity')
+            ->latest('id')
+            ->get(['id','total','final_total','paid_amount','payment_status','workflow_status','created_at','seller_id','customer_id','status','currency'])
+            ->map(fn ($bill) => $this->formatBillListItem($bill));
 
             return response()->json([
                 'status'=>'success',
@@ -879,18 +942,26 @@ private function getBills($statuses)
                         $q->where('status', 'unfinished');
                     })      
            ->where('status','!=','finished')
-            ->with('seller:id,name')
-            ->get(['id','total','created_at','seller_id','status'])
-            ->map(function($bill) {
-                return [
-                    'id'         => $bill->id,
-                    'total'      => $bill->total,
-                    'seller'     => $bill->seller? $bill->seller->name : 'no seller',
-                    'created_at' => $bill->created_at->format('Y-m-d'), 
-                    'status' => $bill->status, 
-                
-                ];
-            });
+            ->with(['seller:id,name', 'customer:id,name'])
+            ->withCount([
+                'items as items_count',
+                'items as receiving_issues_count' => function ($q) {
+                    $q->where(function ($issue) {
+                        $issue->where('missing_amount', '>', 0)
+                            ->orWhere('custody_quantity', '>', 0)
+                            ->orWhere('damaged_quantity', '>', 0)
+                            ->orWhere('mismatched_quantity', '>', 0)
+                            ->orWhere('not_compatible_amount', '>', 0);
+                    });
+                },
+            ])
+            ->withSum('items as missing_quantity_total', 'missing_amount')
+            ->withSum('items as extra_quantity_total', 'custody_quantity')
+            ->withSum('items as damaged_quantity_total', 'damaged_quantity')
+            ->withSum('items as mismatched_quantity_total', 'mismatched_quantity')
+            ->latest('id')
+            ->get(['id','total','final_total','paid_amount','payment_status','workflow_status','created_at','seller_id','customer_id','status','currency'])
+            ->map(fn ($bill) => $this->formatBillListItem($bill));
 
             return response()->json([
                 'status'=>'success',
