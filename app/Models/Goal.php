@@ -64,4 +64,15 @@ class Goal extends Model
     public function logs(){
         return $this->hasMany(GoalLog::class);
     }
+
+    public function employeeShares()
+    {
+        return $this->hasMany(GoalEmployeeShare::class);
+    }
+
+    public function sharedEmployees()
+    {
+        return $this->belongsToMany(EmployeeDetail::class, 'goal_employee_shares', 'goal_id', 'employee_id')
+            ->withTimestamps();
+    }
 }

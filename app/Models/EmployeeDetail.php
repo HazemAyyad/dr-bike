@@ -96,6 +96,17 @@ class EmployeeDetail extends Model
         return $this->hasMany(Goal::class);
     }
 
+    public function goalShares()
+    {
+        return $this->hasMany(GoalEmployeeShare::class, 'employee_id');
+    }
+
+    public function sharedGoals()
+    {
+        return $this->belongsToMany(Goal::class, 'goal_employee_shares', 'employee_id', 'goal_id')
+            ->withTimestamps();
+    }
+
     public function permissions(){
         return $this->hasMany(EmployeePermission::class,'employee_id');
     }

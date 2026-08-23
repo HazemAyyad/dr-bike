@@ -30,6 +30,16 @@ class Kernel extends ConsoleKernel
             ->dailyAt('10:00')
             ->timezone('Asia/Hebron');
 
+        $schedule->command('goals:send-daily-summary')
+            ->twiceDaily(0, 12)
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping();
+
+        $schedule->command('goals:send-no-progress-reminders')
+            ->dailyAt('23:00')
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping();
+
         $schedule->command('sales-daily:notify-previous-day-open')
             ->everyThirtyMinutes()
             ->timezone('Asia/Hebron')

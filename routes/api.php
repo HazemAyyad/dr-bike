@@ -938,6 +938,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Goal Creation','re
     Route::post('/cancel/goal' , [Goals::class,'cancelGoal']);
     Route::post('/transfer/goal' , [Goals::class,'transferGoal']);
     Route::post('/edit/goal' , [Goals::class,'editGoal']);
+    Route::post('/share/goal' , [Goals::class,'shareGoal']);
     Route::post('/recalculate/goal' , [Goals::class,'recalculateGoal']);
     Route::post('/delete/goal' , [Goals::class,'deleteGoal']);
 

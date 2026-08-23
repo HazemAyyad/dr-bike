@@ -5,12 +5,15 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Goal;
 use App\Models\GoalCategory;
+use App\Models\GoalEmployeeShare;
 use App\Models\GoalLog;
 use App\Models\GoalPeople;
 use App\Models\GoalProduct;
 use App\Models\GoalStoreSection;
 use App\Models\GoalSubCategory;
+use App\Models\EmployeeDetail;
 use App\Services\Goals\GoalCalculationService;
+use App\Services\Goals\GoalNotificationService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -21,7 +24,10 @@ class Goals extends Controller
 {
     private const GOAL_TYPES = 'total_sell_values,net_profit,sell_pieces,purchase_pieces,total_purchase_values,finish_tasks,pay_person,deposit_to_box';
 
-    public function __construct(private GoalCalculationService $calculator)
+    public function __construct(
+        private GoalCalculationService $calculator,
+        private GoalNotificationService $goalNotifications
+    )
     {
     }
 
@@ -35,6 +41,7 @@ class Goals extends Controller
             $goal = DB::transaction(function () use ($request, $data) {
                 $goal = Goal::create($data);
                 $this->syncGoalRelations($goal, $request);
+                $this->syncSharedEmployees($goal, $request);
 
                 GoalLog::create([
                     'title' => 'اضافة هدف جديد',
@@ -81,6 +88,7 @@ class Goals extends Controller
             $goal = DB::transaction(function () use ($request, $goal, $data) {
                 $goal->update($data);
                 $this->syncGoalRelations($goal->fresh(), $request);
+                $this->syncSharedEmployees($goal->fresh(), $request);
 
                 GoalLog::create([
                     'title' => 'تعديل بيانات هدف ',
@@ -161,6 +169,14 @@ class Goals extends Controller
                 'seller_id' => $row->seller_id,
                 'seller_name' => $row->seller?->name,
             ]);
+            $goal['shared_employees'] = GoalEmployeeShare::where('goal_id', $goal->id)
+                ->with('employee.user:id,name')
+                ->get()
+                ->map(fn ($row) => [
+                    'employee_id' => $row->employee_id,
+                    'employee_name' => $row->employee?->user?->name,
+                ]);
+            $goal['status_meta'] = $this->goalNotifications->decorateGoal($goal);
 
             $goalLogs = $goal->logs()->get(['title', 'description']);
             $goal->makeHidden(['product_id', 'customer_id', 'employee_id', 'seller_id', 'box_id']);
@@ -199,7 +215,12 @@ class Goals extends Controller
                 'created_at',
                 'start_date',
                 'due_date',
-            ])->map(fn (Goal $goal) => $this->calculator->recalculate($goal));
+            ])->map(function (Goal $goal) {
+                $goal = $this->calculator->recalculate($goal);
+                $goal['status_meta'] = $this->goalNotifications->decorateGoal($goal);
+
+                return $goal;
+            });
 
             return response()->json([
                 'status' => 'success',
@@ -230,6 +251,44 @@ class Goals extends Controller
             return response()->json(['status' => 'error', 'message' => __('messages.validation_failed')], 200);
         } catch (ModelNotFoundException $e) {
             return response()->json(['status' => 'error', 'message' => __('messages.goal_not_found')], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 200);
+        }
+    }
+
+    public function shareGoal(Request $request)
+    {
+        try {
+            $request->validate([
+                'goal_id' => 'required|integer|exists:goals,id',
+                'employee_ids' => 'nullable|array',
+                'employee_ids.*' => 'integer|exists:employee_details,id',
+            ]);
+
+            $goal = Goal::findOrFail((int) $request->goal_id);
+            $this->syncSharedEmployees($goal, $request, true);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم تحديث مشاركة الهدف بنجاح',
+                'shared_employees' => GoalEmployeeShare::where('goal_id', $goal->id)
+                    ->with('employee.user:id,name')
+                    ->get()
+                    ->map(fn ($row) => [
+                        'employee_id' => $row->employee_id,
+                        'employee_name' => $row->employee?->user?->name,
+                    ]),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -315,6 +374,8 @@ class Goals extends Controller
             'store_sections.*.store_section_id' => 'required|integer|exists:store_sections,id',
             'employee_id' => 'nullable|exists:employee_details,id',
             'box_id' => 'nullable|exists:boxes,id',
+            'shared_employee_ids' => 'nullable|array',
+            'shared_employee_ids.*' => 'integer|exists:employee_details,id',
         ]);
 
         $data['scope'] = $data['scope'] ?? 'public';
@@ -433,6 +494,42 @@ class Goals extends Controller
                 'customer_id' => $row['customer_id'] ?? null,
                 'seller_id' => $row['seller_id'] ?? null,
             ]);
+        }
+    }
+
+    private function syncSharedEmployees(Goal $goal, Request $request, bool $force = false): void
+    {
+        if (! $force && ! $request->has('shared_employee_ids') && ! $request->has('employee_ids')) {
+            return;
+        }
+
+        $employeeIds = collect($request->input('shared_employee_ids', $request->input('employee_ids', [])))
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        GoalEmployeeShare::where('goal_id', $goal->id)
+            ->whereNotIn('employee_id', $employeeIds)
+            ->delete();
+
+        foreach ($employeeIds as $employeeId) {
+            $share = GoalEmployeeShare::firstOrCreate(
+                [
+                    'goal_id' => $goal->id,
+                    'employee_id' => $employeeId,
+                ],
+                [
+                    'shared_by_user_id' => optional($request->user())->id,
+                ]
+            );
+
+            if ($share->wasRecentlyCreated) {
+                $employee = EmployeeDetail::find($employeeId);
+                if ($employee) {
+                    $this->goalNotifications->notifyGoalShared($goal, $employee);
+                }
+            }
         }
     }
 

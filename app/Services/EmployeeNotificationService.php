@@ -59,6 +59,12 @@ class EmployeeNotificationService
 
     public const TYPE_EMPLOYEE_REWARD_EARNED = 'employee_reward_earned';
 
+    public const TYPE_GOAL_DAILY_SUMMARY = 'goal_daily_summary';
+
+    public const TYPE_GOAL_NO_PROGRESS = 'goal_no_progress';
+
+    public const TYPE_GOAL_SHARED = 'goal_shared';
+
     public function __construct(
         protected FirebaseService $firebaseService
     ) {}

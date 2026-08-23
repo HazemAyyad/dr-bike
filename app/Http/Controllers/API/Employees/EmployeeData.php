@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API\Employees;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
 use App\Services\EmployeePointsService;
+use App\Services\Goals\GoalNotificationService;
 use App\Support\DashboardSectionBadges;
 use App\Support\EmployeeVisibleTasks;
 use App\Support\EmployeeWorkingDays;
@@ -40,6 +41,7 @@ class EmployeeData extends Controller
             $employee['points'] = app(EmployeePointsService::class)->getTotalNetPoints((int) $employee->id);
 
             $employee['tasks'] = EmployeeVisibleTasks::dashboardPayload($employee->id);
+            $employee['shared_goals'] = app(GoalNotificationService::class)->employeeGoals((int) $employee->id);
             $employee['today_tasks_summary'] = EmployeeVisibleTasks::todaySummaryForEmployee($employee->id);
             $employee['dashboard_badges'] = DashboardSectionBadges::forUser($user);
 
