@@ -13,6 +13,7 @@ class SmartHomeResource extends JsonResource
             'id' => (int) $this->id,
             'tuya_home_id' => $this->tuya_home_id,
             'name' => $this->name,
+            'type' => $this->type ?? 'home',
             'latitude' => $this->latitude !== null ? (float) $this->latitude : null,
             'longitude' => $this->longitude !== null ? (float) $this->longitude : null,
             'geo_name' => $this->geo_name,

@@ -13,6 +13,7 @@ class SmartDevice extends Model
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
+        'user_id',
         'smart_home_id',
         'smart_room_id',
         'tuya_device_id',
@@ -45,6 +46,11 @@ class SmartDevice extends Model
         return $this->belongsTo(SmartHome::class, 'smart_home_id');
     }
 
+    public function owner(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
     public function room(): BelongsTo
     {
         return $this->belongsTo(SmartRoom::class, 'smart_room_id');
@@ -53,5 +59,10 @@ class SmartDevice extends Model
     public function activityLogs(): HasMany
     {
         return $this->hasMany(SmartDeviceActivityLog::class);
+    }
+
+    public function functions(): HasMany
+    {
+        return $this->hasMany(SmartDeviceFunction::class);
     }
 }

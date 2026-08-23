@@ -14,13 +14,14 @@ class SmartDeviceResource extends JsonResource
 
         return [
             'id' => (int) $this->id,
-            'smart_home_id' => (int) $this->smart_home_id,
+            'smart_home_id' => $this->smart_home_id !== null ? (int) $this->smart_home_id : null,
             'smart_room_id' => $this->smart_room_id !== null ? (int) $this->smart_room_id : null,
             'room' => $this->whenLoaded('room', fn () => $this->room ? [
                 'id' => (int) $this->room->id,
                 'name' => $this->room->name,
                 'tuya_room_id' => $this->room->tuya_room_id,
             ] : null),
+            'functions' => SmartDeviceFunctionResource::collection($this->whenLoaded('functions')),
             'tuya_device_id' => $this->tuya_device_id,
             'tuya_product_id' => $this->tuya_product_id,
             'tuya_uuid' => $this->tuya_uuid,

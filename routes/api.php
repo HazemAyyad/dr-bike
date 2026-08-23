@@ -204,7 +204,10 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         Route::post('/devices/sync', [SmartHomeController::class, 'syncDevices']);
         Route::post('/devices/register', [SmartHomeController::class, 'registerDevice']);
         Route::patch('/devices/{id}', [SmartHomeController::class, 'updateDevice'])->whereNumber('id');
+        Route::patch('/devices/{id}/location', [SmartHomeController::class, 'moveDevice'])->whereNumber('id');
         Route::delete('/devices/{id}', [SmartHomeController::class, 'destroyDevice'])->whereNumber('id');
+        Route::get('/devices/{id}/functions', [SmartHomeController::class, 'deviceFunctions'])->whereNumber('id');
+        Route::patch('/devices/{deviceId}/functions/{functionId}', [SmartHomeController::class, 'updateDeviceFunction'])->whereNumber('deviceId')->whereNumber('functionId');
         Route::post('/devices/{id}/status', [SmartHomeController::class, 'updateDeviceStatus'])->whereNumber('id');
         Route::post('/devices/{id}/activity-log', [SmartHomeController::class, 'storeActivityLog'])->whereNumber('id');
         Route::post('/devices/{id}/control-log', [SmartHomeController::class, 'storeControlLog'])->whereNumber('id');

@@ -14,11 +14,14 @@ class SmartHome extends Model
 
     public const STATUS_ACTIVE = 'active';
     public const STATUS_ARCHIVED = 'archived';
+    public const TYPE_HOME = 'home';
+    public const TYPE_COMPANY = 'company';
 
     protected $fillable = [
         'user_id',
         'tuya_home_id',
         'name',
+        'type',
         'latitude',
         'longitude',
         'geo_name',
