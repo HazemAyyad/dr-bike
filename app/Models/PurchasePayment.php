@@ -25,4 +25,9 @@ class PurchasePayment extends Model
         'amount' => 'float',
         'paid_at' => 'date',
     ];
+
+    public function allocations()
+    {
+        return $this->hasMany(PurchasePaymentAllocation::class);
+    }
 }

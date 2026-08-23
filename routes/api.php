@@ -1107,11 +1107,15 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
     Route::post('/purchase/finalize' , [Bills::class,'finalizePurchase']);
     Route::post('/purchase/payment' , [Bills::class,'payPurchase']);
     Route::post('/purchase/account/payment' , [Bills::class,'paySupplierAccount']);
+    Route::get('/purchase/account/open-bills' , [Bills::class,'purchaseAccountOpenBills']);
     Route::post('/purchase/attachments' , [Bills::class,'uploadPurchaseAttachment']);
     Route::post('/purchase/amanat/purchase' , [Bills::class,'purchaseAmanat']);
     Route::post('/purchase/amanat/return' , [Bills::class,'returnAmanat']);
+    Route::post('/purchase/issue/resolve' , [Bills::class,'resolvePurchaseIssue']);
     Route::get('/purchase/timeline' , [Bills::class,'purchaseTimeline']);
     Route::get('/purchase/price-intelligence' , [Bills::class,'purchasePriceIntelligence']);
+    Route::get('/purchase/amanat' , [Bills::class,'purchaseAmanatIndex']);
+    Route::get('/purchase/discrepancies' , [Bills::class,'purchaseDiscrepanciesIndex']);
     Route::get('/unfinished/bills' , [Bills::class,'getUnfinishedBills']);
     Route::post('/change/product/status' , [Bills::class,'changeProductStatus']);
     Route::post('/get/bill/details' , [Bills::class,'getBillDetails']);

@@ -108,6 +108,9 @@ class PurchasingService
                 if ($accepted > $remainingOrdered + 0.0001) {
                     throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
                 }
+                if ($accepted + $missing > $remainingOrdered + 0.0001) {
+                    throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
+                }
 
                 $receiptItem = $receipt->items()->create([
                     'bill_item_id' => $billItem->id,
@@ -222,6 +225,9 @@ class PurchasingService
             $bill = Bill::query()->with('items')->lockForUpdate()->findOrFail($bill->id);
             if ($bill->workflow_status === 'finalized') {
                 return $bill;
+            }
+            if ($bill->items->contains(fn (BillItem $item) => (float) $item->damaged_quantity > 0 || (float) $item->mismatched_quantity > 0)) {
+                throw new \RuntimeException(__('messages.validation_failed'));
             }
 
             $finalTotal = $bill->items->sum(fn (BillItem $item) => (float) $item->received_owned_quantity * (float) ($item->final_unit_price ?? $item->price));

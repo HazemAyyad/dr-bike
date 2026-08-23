@@ -4,27 +4,27 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class PurchaseAmanatStock extends Model
+class PurchaseIssueResolution extends Model
 {
     protected $fillable = [
         'bill_id',
         'bill_item_id',
-        'product_id',
         'purchase_receipt_item_id',
+        'product_id',
+        'issue_type',
+        'resolution',
         'quantity',
-        'remaining_quantity',
-        'status',
         'negotiated_unit_price',
+        'financial_adjustment',
+        'reason',
         'notes',
         'created_by',
-        'resolved_at',
     ];
 
     protected $casts = [
         'quantity' => 'float',
-        'remaining_quantity' => 'float',
         'negotiated_unit_price' => 'float',
-        'resolved_at' => 'datetime',
+        'financial_adjustment' => 'float',
     ];
 
     public function bill()
@@ -35,6 +35,11 @@ class PurchaseAmanatStock extends Model
     public function billItem()
     {
         return $this->belongsTo(BillItem::class);
+    }
+
+    public function receiptItem()
+    {
+        return $this->belongsTo(PurchaseReceiptItem::class, 'purchase_receipt_item_id');
     }
 
     public function product()
