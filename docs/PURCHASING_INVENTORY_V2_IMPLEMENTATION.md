@@ -24,6 +24,7 @@ Backend:
 - `582ccb7` - Phase 10 - document purchasing v2 completion status
 - `2ce64f9` - Phase 11 - add purchase issue resolution workflow
 - `8677ee0` - Phase 12 - update purchasing completion report
+- `27e65ce` - Phase 14 - harden sanctum token refresh for tests
 
 Flutter:
 
@@ -37,11 +38,12 @@ Flutter:
 - `feb76a9` - Phase 09 - fix release build navigation tile
 - `94544a2` - Phase 11 - add purchase issue resolution UI
 - `9fbb7fa` - Phase 12 - add contextual purchase evidence uploads
+- `b19050a` - Phase 14 - organize purchase details tabs and add model coverage
 
 Implementation HEADs before this report-only update:
 
-- Backend: `8677ee0`
-- Flutter: `9fbb7fa`
+- Backend: `27e65ce`
+- Flutter: `b19050a`
 
 ## Backend Changes
 
@@ -55,6 +57,7 @@ Implementation HEADs before this report-only update:
 - Added `purchase_issue_resolutions` and `POST /purchase/issue/resolve` for explicit damaged/mismatched settlement decisions.
 - Prevented finalization while damaged or mismatched quantities remain unresolved.
 - Hardened receiving validation so accepted + missing cannot exceed remaining ordered quantity.
+- Hardened Sanctum token expiry refresh so test/auth transient tokens do not break protected API tests while real personal access tokens still refresh expiry.
 - Extended backend coverage for partial receiving, mixed receiving issues, issue resolution, manual allocation, customer-as-purchase-source, supplier credit returns, cash refund returns, FIFO, moving weighted average, and instant-sale cost snapshots.
 
 ## Flutter Changes
@@ -89,6 +92,16 @@ Implementation HEADs before this report-only update:
   - accept with discount
   - other settlement
 - Added contextual evidence upload entry points for damaged/mismatched resolutions, Amanat purchase/return actions, initial purchase payments, later purchase payments, and source/account payments.
+- Refactored the purchase details workflow panel into purchase-focused sections/tabs:
+  - summary
+  - items/receiving
+  - discrepancies
+  - Amanat
+  - payments
+  - returns
+  - attachments
+  - activity
+- Added Flutter model coverage for parsing purchase details data that feeds the details tabs, including customer-as-source, item receiving quantities, Amanat, payments, returns, contextual attachments, and timeline entries.
 - Fixed an unrelated release-build blocker in Financial Affairs where `MainPageWidget` no longer existed.
 
 ## Database Changes
@@ -123,24 +136,26 @@ Backend:
 - `php -l tests\Feature\PurchasingInventoryV2Test.php`: passed
 - `php artisan migrate`: passed after rerun; many pending project migrations were applied, including the new Purchasing V2 migrations
 - `php artisan test --filter=PurchasingInventoryV2Test`: passed, 13 tests, 72 assertions
-- `php artisan test`: attempted, timed out after a long run; no failure was reached in the visible output, but this is not counted as passed
+- `php artisan test --filter=DebtLedgerTest`: passed after Sanctum token refresh hardening, 5 tests, 16 assertions
+- `php artisan test`: passed, 28 tests, 99 assertions
 
 Flutter:
 
 - `dart format` was run on changed Flutter files.
-- `flutter analyze lib\features\admin\buying`: passed after the contextual evidence upload changes, no issues found.
+- `flutter analyze lib\features\admin\buying`: passed after the details tab and contextual evidence upload changes, no issues found.
+- `flutter analyze test\purchase_details_model_test.dart lib\features\admin\buying`: passed, no issues found.
 - `dart analyze lib\features\admin\financial_affairs\presentation\views\financial_affairs_screen.dart`: passed, no issues found.
-- `flutter analyze`: attempted, timed out; not counted as passed.
-- `flutter test`: attempted, timed out; not counted as passed.
-- `flutter build apk`: passed.
+- `flutter analyze`: completed and reported 112 existing project issues outside the Buying implementation surface; the targeted Buying/test analysis above passed cleanly.
+- `flutter test test\purchase_details_model_test.dart`: attempted twice and timed out without a visible assertion failure; not counted as passed.
+- `flutter build apk`: passed after the details tab refactor.
 - APK output: `F:\flutter_projects\doctorbike\build\app\outputs\flutter-apk\app-release.apk`
 
 ## Known Limitations
 
 - Contextual evidence upload is now exposed for issue resolution, Amanat actions, and payment actions. Receiving rows, purchase returns, refunds, and settlement review screens can still be deepened with richer inline attachment galleries.
 - Damaged and mismatched resolution decisions now exist in backend and Flutter, including negotiated acceptance into owned stock. More detailed evidence review per issue can still be improved.
-- Purchase details were improved with workflow sections and sheets, but not fully refactored into a tabbed information architecture.
-- Full project Laravel tests, full Flutter analyze, and full Flutter tests did not complete within command timeouts and should be rerun in a longer CI/local session before deployment confidence is considered complete.
+- Purchase details now use focused sections/tabs, but each section can still be evolved into richer standalone sub-screens if the product team wants an even deeper details experience.
+- Full Laravel tests pass. Full Flutter analyze completes but the wider app still has pre-existing warnings/infos outside Buying. Flutter tests still time out in this local environment and should be rerun in CI or with a healthier Flutter test runner before claiming test-suite completion.
 
 ## Rollback
 
