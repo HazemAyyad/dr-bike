@@ -86,7 +86,7 @@ class SmartHomeController extends Controller
         ]);
 
         $home = DB::transaction(function () use ($request, $data) {
-            $userId = (int) $request->user()->id;
+            $userId = $this->requestedOwnerId($request);
             $isDefault = (bool) ($data['is_default'] ?? ! SmartHome::where('user_id', $userId)->exists());
 
             if ($isDefault) {
@@ -134,7 +134,7 @@ class SmartHomeController extends Controller
 
         DB::transaction(function () use ($request, $home, $data) {
             if (($data['is_default'] ?? false) === true) {
-                SmartHome::where('user_id', $request->user()->id)->whereKeyNot($home->id)->update(['is_default' => false]);
+                SmartHome::where('user_id', $this->requestedOwnerId($request))->whereKeyNot($home->id)->update(['is_default' => false]);
             }
             $home->update($data);
         });
@@ -290,7 +290,7 @@ class SmartHomeController extends Controller
 
         $device = DB::transaction(function () use ($request, $data, $home, $roomId) {
             $device = SmartDevice::withTrashed()->where('tuya_device_id', $data['tuya_device_id'])->first();
-            $payload = $this->devicePayload($data, $home->id, $roomId, (int) $request->user()->id);
+            $payload = $this->devicePayload($data, $home->id, $roomId, $this->requestedOwnerId($request));
 
             if ($device) {
                 $device->restore();
@@ -340,7 +340,7 @@ class SmartHomeController extends Controller
             foreach ($data['devices'] as $item) {
                 $roomId = $this->validRoomId($request, $item['smart_room_id'] ?? null, $home->id);
                 $device = SmartDevice::withTrashed()->where('tuya_device_id', $item['tuya_device_id'])->first();
-                $payload = $this->devicePayload($item, $home->id, $roomId, (int) $request->user()->id);
+                $payload = $this->devicePayload($item, $home->id, $roomId, $this->requestedOwnerId($request));
 
                 if ($device) {
                     $device->restore();
@@ -411,7 +411,7 @@ class SmartHomeController extends Controller
         }
 
         $device->update([
-            'user_id' => $request->user()->id,
+            'user_id' => $this->requestedOwnerId($request),
             'smart_home_id' => $homeId,
             'smart_room_id' => $roomId,
         ]);
@@ -682,7 +682,7 @@ class SmartHomeController extends Controller
     private function homeQuery(Request $request, int $id): Builder
     {
         return SmartHome::query()
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $this->requestedOwnerId($request))
             ->whereKey($id)
             ->withCount(['rooms', 'devices'])
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)]);
@@ -717,7 +717,7 @@ class SmartHomeController extends Controller
     private function ownedHome(Request $request, int $id): SmartHome
     {
         return SmartHome::query()
-            ->where('user_id', $request->user()->id)
+            ->where('user_id', $this->requestedOwnerId($request))
             ->whereKey($id)
             ->firstOrFail();
     }
@@ -726,7 +726,7 @@ class SmartHomeController extends Controller
     {
         return SmartRoom::query()
             ->whereKey($id)
-            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $request->user()->id))
+            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request)))
             ->firstOrFail();
     }
 
@@ -743,8 +743,8 @@ class SmartHomeController extends Controller
         return SmartDevice::query()
             ->whereKey($id)
             ->where(fn (Builder $query) => $query
-                ->where('user_id', $request->user()->id)
-                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $request->user()->id)))
+                ->where('user_id', $this->requestedOwnerId($request))
+                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))))
             ->firstOrFail();
     }
 

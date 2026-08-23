@@ -84,7 +84,7 @@ class User extends Authenticatable
 
     public function smartDevices()
     {
-        return $this->hasManyThrough(SmartDevice::class, SmartHome::class);
+        return $this->hasMany(SmartDevice::class);
     }
 
     /**
