@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
 
 class RefreshSanctumTokenExpiry
@@ -17,7 +18,7 @@ class RefreshSanctumTokenExpiry
     {
         $token = $request->user()?->currentAccessToken();
 
-        if ($token) {
+        if ($token instanceof PersonalAccessToken) {
             // Check if expired
             if ($token->expires_at && now()->greaterThan($token->expires_at)) {
                 $token->delete(); // Optional: revoke token
@@ -29,7 +30,8 @@ class RefreshSanctumTokenExpiry
             // Refresh expiry to 7 days from now
             $token->forceFill([
                 'expires_at' => now()->addDays(7),
-            ])->save();
+            ]);
+            $token->save();
         }
 
         return $next($request);
