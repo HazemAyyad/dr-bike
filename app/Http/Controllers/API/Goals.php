@@ -15,6 +15,8 @@ use App\Models\GoalSubCategory;
 use App\Models\EmployeeDetail;
 use App\Services\Goals\GoalCalculationService;
 use App\Services\Goals\GoalNotificationService;
+use Carbon\Carbon;
+use Carbon\CarbonPeriod;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -178,14 +180,33 @@ class Goals extends Controller
                     'employee_name' => $row->employee?->user?->name,
                 ]);
             $goal['status_meta'] = $this->goalNotifications->decorateGoal($goal);
-            $goal['progress_history'] = GoalDailySnapshot::where('goal_id', $goal->id)
+            $snapshots = GoalDailySnapshot::where('goal_id', $goal->id)
                 ->orderBy('snapshot_date')
                 ->get(['snapshot_date', 'current_value', 'achievement_percentage'])
-                ->map(fn ($row) => [
-                    'date' => optional($row->snapshot_date)->toDateString() ?? (string) $row->snapshot_date,
-                    'current_value' => number_format((float) $row->current_value, 2, '.', ''),
-                    'achievement_percentage' => number_format((float) $row->achievement_percentage, 2, '.', ''),
-                ])
+                ->keyBy(fn ($row) => optional($row->snapshot_date)->toDateString() ?? (string) $row->snapshot_date);
+
+            $startDate = $goal->start_date ? Carbon::parse($goal->start_date)->startOfDay() : Carbon::parse($goal->created_at)->startOfDay();
+            $dueDate = $goal->due_date ? Carbon::parse($goal->due_date)->startOfDay() : now()->startOfDay();
+            if ($dueDate->lt($startDate)) {
+                $dueDate = $startDate->copy();
+            }
+            $today = now()->toDateString();
+            $goal['progress_history'] = collect(CarbonPeriod::create($startDate, $dueDate))
+                ->map(function (Carbon $date) use ($snapshots, $goal, $today) {
+                    $key = $date->toDateString();
+                    $snapshot = $snapshots->get($key);
+                    $useCurrentGoal = ! $snapshot && $key === $today;
+                    return [
+                        'date' => $key,
+                        'current_value' => $snapshot || $useCurrentGoal
+                            ? number_format((float) ($snapshot?->current_value ?? $goal->current_value), 2, '.', '')
+                            : '',
+                        'achievement_percentage' => $snapshot || $useCurrentGoal
+                            ? number_format((float) ($snapshot?->achievement_percentage ?? $goal->achievement_percentage), 2, '.', '')
+                            : '',
+                        'has_data' => (bool) ($snapshot || $useCurrentGoal),
+                    ];
+                })
                 ->values();
 
             $goalLogs = $goal->logs()->get(['title', 'description']);
