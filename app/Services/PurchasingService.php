@@ -8,6 +8,7 @@ use App\Models\Box;
 use App\Models\DebtTransaction;
 use App\Models\Product;
 use App\Models\PurchaseAmanatStock;
+use App\Models\PurchaseIssueResolution;
 use App\Models\PurchasePayment;
 use App\Models\PurchasePriceHistory;
 use App\Models\PurchaseProduct;
@@ -412,6 +413,13 @@ class PurchasingService
 
         $latest = (clone $base)->latest('priced_at')->latest('id')->first();
         $lowest = (clone $base)->orderBy('unit_price')->orderByDesc('priced_at')->first();
+        $history = (clone $base)
+            ->with(['seller:id,name', 'customer:id,name', 'receiptItem'])
+            ->latest('priced_at')
+            ->latest('id')
+            ->limit(30)
+            ->get()
+            ->map(fn (PurchasePriceHistory $row) => $this->formatPriceHistoryRow($row));
 
         return [
             'supplier_last_price' => $supplierLast?->unit_price,
@@ -420,8 +428,101 @@ class PurchasingService
             'lowest_seller_id' => $lowest?->seller_id,
             'lowest_customer_id' => $lowest?->customer_id,
             'suggested_price' => $lowest?->unit_price ?? $supplierLast?->unit_price ?? $latest?->unit_price,
-            'history' => (clone $base)->latest('priced_at')->latest('id')->limit(30)->get(),
+            'history' => $history,
         ];
+    }
+
+    private function formatPriceHistoryRow(PurchasePriceHistory $row): array
+    {
+        $partyName = $row->seller?->name ?? $row->customer?->name;
+        $partyType = $row->seller_id ? 'seller' : ($row->customer_id ? 'customer' : null);
+        $partyTypeLabel = $partyType === 'seller' ? 'مورد' : ($partyType === 'customer' ? 'زبون' : null);
+        [$reasonLabel, $contextNote] = $this->priceHistoryReason($row);
+
+        return [
+            'id' => $row->id,
+            'unit_price' => $row->unit_price,
+            'quantity' => $row->quantity,
+            'currency' => $row->currency,
+            'priced_at' => $row->priced_at?->toDateString(),
+            'date_label' => $row->priced_at?->format('Y/m/d') ?? $row->created_at?->format('Y/m/d'),
+            'created_at_label' => $row->created_at?->format('Y/m/d H:i'),
+            'seller_id' => $row->seller_id,
+            'customer_id' => $row->customer_id,
+            'party_type' => $partyType,
+            'party_type_label' => $partyTypeLabel,
+            'party_name' => $partyName,
+            'bill_id' => $row->bill_id,
+            'manual_override' => (bool) $row->manual_override,
+            'reason_label' => $reasonLabel,
+            'context_note' => $contextNote,
+        ];
+    }
+
+    private function priceHistoryReason(PurchasePriceHistory $row): array
+    {
+        $issue = PurchaseIssueResolution::query()
+            ->where('bill_item_id', $row->bill_item_id)
+            ->where('quantity', $row->quantity)
+            ->where('negotiated_unit_price', $row->unit_price)
+            ->latest('id')
+            ->first();
+
+        if ($issue) {
+            $type = match ($issue->issue_type) {
+                'damaged' => 'تالف',
+                'mismatched' => 'غير مطابق',
+                'missing' => 'نقص',
+                default => 'مشكلة استلام',
+            };
+            $resolution = match ($issue->resolution) {
+                'accept_with_discount' => 'قبول بخصم',
+                'accept_negotiated_price' => 'قبول بسعر تفاوضي',
+                'return_to_supplier' => 'إرجاع للمورد',
+                'replacement_expected' => 'بانتظار بديل',
+                default => 'تسوية أخرى',
+            };
+
+            return ["تسوية $type - $resolution", $issue->reason ?: $issue->notes];
+        }
+
+        $amanat = PurchaseAmanatStock::query()
+            ->where('bill_item_id', $row->bill_item_id)
+            ->where('quantity', $row->quantity)
+            ->where('negotiated_unit_price', $row->unit_price)
+            ->latest('id')
+            ->first();
+        if ($amanat) {
+            return ['شراء زيادة/أمانات بسعر متفاوض عليه', $amanat->notes];
+        }
+
+        $receipt = $row->receiptItem;
+        if ($receipt) {
+            $parts = [];
+            if ((float) $receipt->extra_quantity > 0) {
+                $parts[] = 'زيادة';
+            }
+            if ((float) $receipt->damaged_quantity > 0) {
+                $parts[] = 'تالف';
+            }
+            if ((float) $receipt->mismatched_quantity > 0) {
+                $parts[] = 'غير مطابق';
+            }
+            if ((float) $receipt->missing_quantity > 0) {
+                $parts[] = 'نقص';
+            }
+            if (! empty($parts)) {
+                return ['استلام مع '.implode(' / ', $parts), $receipt->reason ?: $receipt->notes];
+            }
+
+            return ['سعر استلام', $receipt->reason ?: $receipt->notes];
+        }
+
+        if ($row->manual_override) {
+            return ['سعر معدل يدويًا', null];
+        }
+
+        return ['سعر فاتورة شراء', null];
     }
 
     private function recordPurchasePrice(Bill $bill, BillItem $item, float $price, float $quantity, string $currency, bool $manualOverride, ?int $userId, ?int $receiptItemId = null): void

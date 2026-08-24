@@ -27,4 +27,29 @@ class PurchasePriceHistory extends Model
         'priced_at' => 'date',
         'manual_override' => 'boolean',
     ];
+
+    public function seller()
+    {
+        return $this->belongsTo(Seller::class);
+    }
+
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function bill()
+    {
+        return $this->belongsTo(Bill::class);
+    }
+
+    public function billItem()
+    {
+        return $this->belongsTo(BillItem::class);
+    }
+
+    public function receiptItem()
+    {
+        return $this->belongsTo(PurchaseReceiptItem::class, 'purchase_receipt_item_id');
+    }
 }
