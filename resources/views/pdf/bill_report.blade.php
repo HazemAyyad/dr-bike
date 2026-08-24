@@ -54,11 +54,15 @@
             width: 100%;
             border-collapse: collapse;
         }
+        .meta-table {
+            direction: ltr;
+        }
         .meta-table td {
             border: none;
             padding: 3px 0 3px 12px;
             vertical-align: top;
             width: 50%;
+            direction: rtl;
         }
         .label {
             font-weight: bold;
@@ -98,6 +102,20 @@
             unicode-bidi: embed;
             text-align: center;
             white-space: nowrap;
+        }
+        .money {
+            direction: ltr;
+            unicode-bidi: isolate;
+            display: inline-block;
+            white-space: nowrap;
+        }
+        .money-amount {
+            direction: ltr;
+            unicode-bidi: embed;
+        }
+        .money-currency {
+            direction: rtl;
+            unicode-bidi: embed;
         }
         .product-name {
             font-weight: bold;
@@ -189,7 +207,7 @@
     $partyPhone = $party?->phone ?: '—';
     $partyAddress = $party?->address ?: ($party?->work_address ?: '—');
     $invoiceNumber = 'PUR-'.str_pad((string) $bill->id, 7, '0', STR_PAD_LEFT);
-    $fmt = fn ($value) => number_format((float) $value, 2).' '.$currency;
+    $money = fn ($value, $activeCurrency = null) => '<span class="money"><span class="money-amount">'.number_format((float) $value, 2).'</span> <span class="money-currency">'.e($activeCurrency ?: $currency).'</span></span>';
     $qty = fn ($value) => rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
     $statusLabel = function (?string $status): string {
         return match ($status) {
@@ -236,20 +254,20 @@
 <div class="meta-box">
     <table class="meta-table">
         <tr>
-            <td><span class="label">رقم الفاتورة: </span><span class="value ltr">{{ $invoiceNumber }}</span></td>
             <td><span class="label">التاريخ: </span><span class="value ltr">{{ optional($bill->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td>
+            <td><span class="label">رقم الفاتورة: </span><span class="value ltr">{{ $invoiceNumber }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">الطرف: </span><span class="value">{{ $partyName }}</span></td>
             <td><span class="label">نوع الطرف: </span><span class="value">{{ $partyType }}</span></td>
+            <td><span class="label">الطرف: </span><span class="value">{{ $partyName }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">الهاتف: </span><span class="value ltr">{{ $partyPhone }}</span></td>
             <td><span class="label">العنوان: </span><span class="value">{{ $partyAddress }}</span></td>
+            <td><span class="label">الهاتف: </span><span class="value ltr">{{ $partyPhone }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">حالة الفاتورة: </span><span class="value">{{ $workflowLabel }}</span></td>
             <td><span class="label">حالة الدفع: </span><span class="value">{{ $paymentLabel }}</span></td>
+            <td><span class="label">حالة الفاتورة: </span><span class="value">{{ $workflowLabel }}</span></td>
         </tr>
     </table>
 </div>
@@ -281,8 +299,8 @@
             @endphp
             <tr>
                 <td class="num"><span class="status-pill">{{ $statusLabel($item->status) }}</span></td>
-                <td class="num">{{ $fmt($lineTotal) }}</td>
-                <td class="num">{{ $fmt($unitPrice) }}</td>
+                <td class="num">{!! $money($lineTotal) !!}</td>
+                <td class="num">{!! $money($unitPrice) !!}</td>
                 <td class="num">{{ $qty($orderedQuantity) }}</td>
                 <td>
                     <div class="product-name">{{ $item->product?->nameAr ?: 'لا يوجد اسم للمنتج' }}</div>
@@ -318,7 +336,7 @@
                 @foreach($bill->payments as $index => $payment)
                     <tr>
                         <td>{{ $payment->note ?: '—' }}</td>
-                        <td class="num">{{ number_format((float) $payment->amount, 2).' '.($payment->currency ?: $currency) }}</td>
+                        <td class="num">{!! $money($payment->amount, $payment->currency ?: $currency) !!}</td>
                         <td>{{ $payment->type === 'initial_payment' ? 'دفعة أولية' : 'دفعة' }}</td>
                         <td class="num">{{ optional($payment->paid_at)->format('Y-m-d') ?: optional($payment->created_at)->format('Y-m-d') }}</td>
                         <td class="num">{{ $index + 1 }}</td>
@@ -332,27 +350,27 @@
 <div class="totals-wrap">
     <table class="totals-table">
         <tr>
-            <td class="num">{{ $fmt($subtotal) }}</td>
+            <td class="num">{!! $money($subtotal) !!}</td>
             <td>الإجمالي الفرعي</td>
         </tr>
         <tr>
-            <td class="num">{{ $fmt($discount) }}</td>
+            <td class="num">{!! $money($discount) !!}</td>
             <td>الخصم</td>
         </tr>
         <tr>
-            <td class="num">0.00 {{ $currency }}</td>
+            <td class="num">{!! $money(0) !!}</td>
             <td>الضريبة</td>
         </tr>
         <tr class="total-row">
-            <td class="num">{{ $fmt($finalTotal) }}</td>
+            <td class="num">{!! $money($finalTotal) !!}</td>
             <td>إجمالي الفاتورة</td>
         </tr>
         <tr>
-            <td class="num paid">{{ $fmt($paidAmount) }}</td>
+            <td class="num paid">{!! $money($paidAmount) !!}</td>
             <td>المبلغ المدفوع</td>
         </tr>
         <tr>
-            <td class="num {{ $remainingAmount > 0 ? 'remaining' : 'paid' }}">{{ $fmt($remainingAmount) }}</td>
+            <td class="num {{ $remainingAmount > 0 ? 'remaining' : 'paid' }}">{!! $money($remainingAmount) !!}</td>
             <td>المتبقي</td>
         </tr>
     </table>
