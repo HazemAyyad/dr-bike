@@ -240,7 +240,7 @@
             vertical-align: middle;
         }
         .footer-text {
-            direction: rtl;
+            direction: ltr;
             unicode-bidi: embed;
             text-align: right;
             white-space: nowrap;
@@ -311,7 +311,7 @@
     </table>
 </div>
 
-<div class="invoice-title">فاتورة شراء {{ $invoiceNumber }}</div>
+<div class="invoice-title">فاتورة مشتريات</div>
 
 <div class="meta-box">
     <table class="meta-table">
@@ -449,7 +449,7 @@
     <table class="footer-table">
         <tr>
             <td class="footer-date"><span dir="ltr">{{ now()->format('Y-m-d H:i') }}</span></td>
-            <td class="footer-text"><span dir="rtl">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك تم انشاؤها بتاريخ</span></td>
+            <td class="footer-text"><span>هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك تم انشاؤها بتاريخ</span></td>
         </tr>
     </table>
 </div>
