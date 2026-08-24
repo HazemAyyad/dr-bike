@@ -449,7 +449,7 @@
     <table class="footer-table">
         <tr>
             <td class="footer-date"><span dir="ltr">{{ now()->format('Y-m-d H:i') }}</span></td>
-            <td class="footer-text"><span dir="rtl">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك، تم انشاؤها بتاريخ</span></td>
+            <td class="footer-text"><span dir="rtl">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك تم انشاؤها بتاريخ</span></td>
         </tr>
     </table>
 </div>
