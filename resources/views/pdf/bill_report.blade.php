@@ -437,7 +437,7 @@
 @endif
 
 <div class="footer">
-    <span class="footer-text">هذه نسخة مطبوعة من فاتورة المشتريات. تم إنشاؤها من نظام دكتور بايك.</span>
+    <span class="footer-text">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك, تم انشاؤها بتاريخ</span>
     <span class="footer-date">{{ now()->format('Y-m-d H:i') }}</span>
 </div>
 </body>
