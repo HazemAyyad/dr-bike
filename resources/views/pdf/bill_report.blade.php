@@ -152,7 +152,7 @@
             unicode-bidi: embed;
         }
         .money-currency {
-            direction: rtl;
+            direction: ltr;
             unicode-bidi: embed;
         }
         .product-name {
@@ -184,7 +184,16 @@
         .totals-table td {
             border: 1px solid #d1d5db;
             padding: 5px;
+        }
+        .totals-table .totals-value {
+            direction: ltr;
+            text-align: left;
+            white-space: nowrap;
+        }
+        .totals-table .totals-label {
             direction: rtl;
+            text-align: right;
+            white-space: nowrap;
         }
         .totals-table .total-row td {
             background: #e5e7eb;
@@ -268,7 +277,7 @@
     $partyPhone = $party?->phone ?: '—';
     $partyAddress = $party?->address ?: ($party?->work_address ?: '—');
     $invoiceNumber = 'PUR-'.str_pad((string) $bill->id, 7, '0', STR_PAD_LEFT);
-    $money = fn ($value, $activeCurrency = null) => '<span class="money"><span class="money-amount">'.number_format((float) $value, 2).'</span> <span class="money-currency">'.e($activeCurrency ?: $currency).'</span></span>';
+    $money = fn ($value, $activeCurrency = null) => '<span class="money"><span class="money-amount">'.number_format((float) $value, 2).'</span>&nbsp;<span class="money-currency">'.e($activeCurrency ?: $currency).'</span></span>';
     $qty = fn ($value) => rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
     $statusLabel = function (?string $status): string {
         return match ($status) {
@@ -412,28 +421,28 @@
 <div class="totals-wrap">
     <table class="totals-table">
         <tr>
-            <td class="num">{!! $money($subtotal) !!}</td>
-            <td>الإجمالي الفرعي</td>
+            <td class="num totals-value">{!! $money($subtotal) !!}</td>
+            <td class="totals-label">الإجمالي الفرعي</td>
         </tr>
         <tr>
-            <td class="num">{!! $money($discount) !!}</td>
-            <td>الخصم</td>
+            <td class="num totals-value">{!! $money($discount) !!}</td>
+            <td class="totals-label">الخصم</td>
         </tr>
         <tr>
-            <td class="num">{!! $money(0) !!}</td>
-            <td>الضريبة</td>
+            <td class="num totals-value">{!! $money(0) !!}</td>
+            <td class="totals-label">الضريبة</td>
         </tr>
         <tr class="total-row">
-            <td class="num">{!! $money($finalTotal) !!}</td>
-            <td>إجمالي الفاتورة</td>
+            <td class="num totals-value">{!! $money($finalTotal) !!}</td>
+            <td class="totals-label">إجمالي الفاتورة</td>
         </tr>
         <tr>
-            <td class="num paid">{!! $money($paidAmount) !!}</td>
-            <td>المبلغ المدفوع</td>
+            <td class="num totals-value paid">{!! $money($paidAmount) !!}</td>
+            <td class="totals-label">المبلغ المدفوع</td>
         </tr>
         <tr>
-            <td class="num {{ $remainingAmount > 0 ? 'remaining' : 'paid' }}">{!! $money($remainingAmount) !!}</td>
-            <td>المتبقي</td>
+            <td class="num totals-value {{ $remainingAmount > 0 ? 'remaining' : 'paid' }}">{!! $money($remainingAmount) !!}</td>
+            <td class="totals-label">المتبقي</td>
         </tr>
     </table>
 </div>
