@@ -25,6 +25,12 @@
             padding: 0;
             width: 100%;
         }
+        .header-table {
+            direction: ltr;
+        }
+        .header-table td {
+            direction: rtl;
+        }
         .brand-title {
             margin: 0;
             color: #6B65BD;
@@ -55,7 +61,7 @@
             border-collapse: collapse;
         }
         .meta-table {
-            direction: ltr;
+            direction: rtl;
         }
         .meta-table td {
             border: none;
@@ -239,11 +245,11 @@
 <div class="header">
     <table class="header-table">
         <tr>
-            <td style="width: 70%; vertical-align: middle;">
-                <h1 class="brand-title">دكتور بايك - فاتورة مشتريات</h1>
-            </td>
             <td style="width: 30%; text-align: left; vertical-align: middle;">
                 <img class="logo" src="{{ public_path('appImages/logo.jpg') }}" alt="DoctorBike">
+            </td>
+            <td style="width: 70%; text-align: right; vertical-align: middle;">
+                <h1 class="brand-title">دكتور بايك - فاتورة مشتريات</h1>
             </td>
         </tr>
     </table>
@@ -254,20 +260,20 @@
 <div class="meta-box">
     <table class="meta-table">
         <tr>
-            <td><span class="label">التاريخ: </span><span class="value ltr">{{ optional($bill->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td>
             <td><span class="label">رقم الفاتورة: </span><span class="value ltr">{{ $invoiceNumber }}</span></td>
+            <td><span class="label">التاريخ: </span><span class="value ltr">{{ optional($bill->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">نوع الطرف: </span><span class="value">{{ $partyType }}</span></td>
             <td><span class="label">الطرف: </span><span class="value">{{ $partyName }}</span></td>
+            <td><span class="label">نوع الطرف: </span><span class="value">{{ $partyType }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">العنوان: </span><span class="value">{{ $partyAddress }}</span></td>
             <td><span class="label">الهاتف: </span><span class="value ltr">{{ $partyPhone }}</span></td>
+            <td><span class="label">العنوان: </span><span class="value">{{ $partyAddress }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">حالة الدفع: </span><span class="value">{{ $paymentLabel }}</span></td>
             <td><span class="label">حالة الفاتورة: </span><span class="value">{{ $workflowLabel }}</span></td>
+            <td><span class="label">حالة الدفع: </span><span class="value">{{ $paymentLabel }}</span></td>
         </tr>
     </table>
 </div>
