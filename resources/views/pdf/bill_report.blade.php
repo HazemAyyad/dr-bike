@@ -85,9 +85,12 @@
             color: #374151;
         }
         .meta-line {
-            width: 100%;
+            width: auto;
             border-collapse: collapse;
             direction: rtl;
+            display: inline-table;
+            margin-left: auto;
+            margin-right: 0;
         }
         .meta-line td {
             border: none;
@@ -96,13 +99,14 @@
             vertical-align: baseline;
         }
         .meta-line .meta-label-cell {
-            width: 1%;
+            width: auto;
             white-space: nowrap;
             text-align: right;
             padding-left: 4px;
         }
         .meta-line .meta-value-cell {
             text-align: right;
+            white-space: nowrap;
         }
         .ltr {
             direction: ltr;
