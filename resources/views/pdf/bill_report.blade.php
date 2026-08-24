@@ -150,10 +150,13 @@
         .money-amount {
             direction: ltr;
             unicode-bidi: embed;
+            display: inline-block;
         }
         .money-currency {
             direction: ltr;
             unicode-bidi: embed;
+            display: inline-block;
+            margin-left: 3px;
         }
         .product-name {
             font-weight: bold;
@@ -278,7 +281,7 @@
     $partyPhone = $party?->phone ?: '—';
     $partyAddress = $party?->address ?: ($party?->work_address ?: '—');
     $invoiceNumber = 'PUR-'.str_pad((string) $bill->id, 7, '0', STR_PAD_LEFT);
-    $money = fn ($value, $activeCurrency = null) => '<span class="money"><span class="money-amount">'.number_format((float) $value, 2).'</span>&nbsp;<span class="money-currency">'.e(($activeCurrency ?: $currency) === 'شيكل' ? $currencyLabel : ($activeCurrency ?: $currency)).'</span></span>';
+    $money = fn ($value, $activeCurrency = null) => '<span class="money" dir="ltr"><span class="money-amount" dir="ltr">'.number_format((float) $value, 2).'</span><span class="money-currency" dir="ltr">'.e(($activeCurrency ?: $currency) === 'شيكل' ? $currencyLabel : ($activeCurrency ?: $currency)).'</span></span>';
     $qty = fn ($value) => rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
     $statusLabel = function (?string $status): string {
         return match ($status) {
