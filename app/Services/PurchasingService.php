@@ -69,6 +69,17 @@ class PurchasingService
                 $this->updateLatestPriceCache($bill, $product->id, $price);
             }
 
+            $initialPayment = (float) ($data['initial_payment'] ?? 0);
+            if ($initialPayment > 0) {
+                $this->recordOpenBillInitialPayment(
+                    $bill->fresh(),
+                    $initialPayment,
+                    $data['box_id'] ?? null,
+                    $total,
+                    $userId
+                );
+            }
+
             $this->activity->log($bill, 'purchase_created', 'إنشاء فاتورة شراء', 'تم إنشاء فاتورة شراء بانتظار الاستلام', null, $bill->toArray(), null, 'bill', $bill->id, $userId);
 
             return $bill->fresh(['items.product', 'seller', 'customer']);
@@ -318,6 +329,55 @@ class PurchasingService
         });
     }
 
+    private function recordOpenBillInitialPayment(Bill $bill, float $amount, mixed $boxId, float $expectedTotal, ?int $userId = null): PurchasePayment
+    {
+        $bill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
+        if ($amount <= 0 || $amount > $expectedTotal + 0.0001) {
+            throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
+        }
+        if (! $boxId) {
+            throw new \RuntimeException(__('messages.must_select_box'));
+        }
+
+        $box = Box::query()->lockForUpdate()->findOrFail($boxId);
+        if ($this->ledger->normalizeCurrency($box->currency) !== $this->ledger->normalizeCurrency($bill->currency)) {
+            throw new \RuntimeException(__('messages.must_be_same_currency_check'));
+        }
+
+        $ledgerTx = $this->ledger->createTransaction([
+            'customer_id' => $bill->customer_id,
+            'seller_id' => $bill->seller_id,
+            'type' => 'given',
+            'amount' => $amount,
+            'currency' => $bill->currency,
+            'transaction_date' => now()->toDateString(),
+            'box_id' => $boxId,
+            'source' => 'purchase_initial_payment',
+            'source_id' => $bill->id,
+            'note' => 'دفعة أولية لفاتورة شراء #'.$bill->id,
+        ], $userId, true);
+
+        $payment = PurchasePayment::create([
+            'bill_id' => $bill->id,
+            'seller_id' => $bill->seller_id,
+            'customer_id' => $bill->customer_id,
+            'box_id' => $boxId,
+            'amount' => $amount,
+            'currency' => $bill->currency,
+            'type' => 'initial_payment',
+            'paid_at' => now()->toDateString(),
+            'note' => 'دفعة أولية عند إنشاء الفاتورة',
+            'debt_transaction_id' => $ledgerTx->id,
+            'created_by' => $userId,
+        ]);
+
+        $bill->update(['paid_amount' => (float) $bill->paid_amount + $amount]);
+        $this->refreshPaymentStatus($bill->fresh());
+        $this->activity->log($bill, 'initial_payment_created', 'تسجيل دفعة أولية', 'تم تسجيل دفعة أولية عند إنشاء فاتورة شراء', null, $payment->toArray(), null, 'purchase_payment', $payment->id, $userId);
+
+        return $payment;
+    }
+
     public function priceIntelligence(int $productId, ?int $sellerId = null, ?int $customerId = null): array
     {
         $base = PurchasePriceHistory::query()->where('product_id', $productId);
@@ -389,7 +449,7 @@ class PurchasingService
     private function refreshPaymentStatus(Bill $bill): void
     {
         $paid = (float) $bill->paid_amount;
-        $total = (float) $bill->final_total;
+        $total = (float) ($bill->final_total ?: $bill->total);
         $status = $paid <= 0.0001 ? 'unpaid' : ($paid + 0.0001 >= $total ? 'paid' : 'partially_paid');
         $bill->update(['payment_status' => $status]);
     }

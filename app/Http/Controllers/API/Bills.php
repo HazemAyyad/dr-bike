@@ -41,6 +41,8 @@ class Bills extends Controller
                 'total'=>'nullable|numeric|min:1',
                 'currency'=>'nullable|string',
                 'notes'=>'nullable|string',
+                'initial_payment' => ['nullable', 'numeric', 'min:0'],
+                'box_id' => ['nullable', 'integer', 'exists:boxes,id'],
             ]);
             $bill = app(PurchasingService::class)->createPurchase($data, $request->user()?->id);
 
@@ -671,6 +673,9 @@ private function getBills($statuses)
                         'amanat_stocks' => $amanat,
                     ];
                 } );
+            $effectiveTotal = (float) ($bill->final_total ?: $bill->total);
+            $paidAmount = (float) ($bill->paid_amount ?? 0);
+
             $formatted =  [
                 'bill_id' => $bill->id,
                 'products'=> $productsFormatted,
@@ -681,9 +686,9 @@ private function getBills($statuses)
                 'total_bill' => $bill->total,
                 'workflow_status' => $bill->workflow_status,
                 'payment_status' => $bill->payment_status,
-                'final_total' => $bill->final_total,
-                'paid_amount' => $bill->paid_amount,
-                'remaining_amount' => max(0, (float) $bill->final_total - (float) $bill->paid_amount),
+                'final_total' => $effectiveTotal,
+                'paid_amount' => $paidAmount,
+                'remaining_amount' => max(0, $effectiveTotal - $paidAmount),
                 'payments' => $bill->payments->map(fn ($payment) => [
                     'id' => (int) $payment->id,
                     'box_id' => $payment->box_id ? (int) $payment->box_id : null,
