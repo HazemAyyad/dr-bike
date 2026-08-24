@@ -75,12 +75,14 @@
         .items-table {
             margin-top: 4px;
             border: 1px solid #d1d5db;
+            direction: ltr;
         }
         .items-table th,
         .items-table td {
             border: 1px solid #d1d5db;
             padding: 5px;
             vertical-align: middle;
+            direction: rtl;
         }
         .items-table th {
             background: #6B65BD;
@@ -121,10 +123,12 @@
         }
         .totals-table {
             border: 1px solid #d1d5db;
+            direction: ltr;
         }
         .totals-table td {
             border: 1px solid #d1d5db;
             padding: 5px;
+            direction: rtl;
         }
         .totals-table .total-row td {
             background: #e5e7eb;
@@ -152,6 +156,10 @@
             border: 1px solid #d1d5db;
             padding: 5px;
             text-align: right;
+            direction: rtl;
+        }
+        .payments-table {
+            direction: ltr;
         }
         .payments-table th {
             background: #6B65BD;
@@ -249,13 +257,13 @@
 <table class="items-table">
     <thead>
         <tr>
-            <th style="width: 7%;">#</th>
-            <th style="width: 13%;">الكود</th>
-            <th>اسم المنتج</th>
-            <th style="width: 12%;">الكمية</th>
-            <th style="width: 16%;">السعر</th>
-            <th style="width: 16%;">الإجمالي</th>
             <th style="width: 14%;">الحالة</th>
+            <th style="width: 16%;">الإجمالي</th>
+            <th style="width: 16%;">السعر</th>
+            <th style="width: 12%;">الكمية</th>
+            <th>اسم المنتج</th>
+            <th style="width: 13%;">الكود</th>
+            <th style="width: 7%;">#</th>
         </tr>
     </thead>
     <tbody>
@@ -272,18 +280,18 @@
                 if ((float) ($item->not_compatible_amount ?? 0) > 0) $issueParts[] = 'غير متوافق '.$qty($item->not_compatible_amount);
             @endphp
             <tr>
-                <td class="num">{{ $index + 1 }}</td>
-                <td class="num">{{ $item->product?->product_code ?: $item->product_id }}</td>
+                <td class="num"><span class="status-pill">{{ $statusLabel($item->status) }}</span></td>
+                <td class="num">{{ $fmt($lineTotal) }}</td>
+                <td class="num">{{ $fmt($unitPrice) }}</td>
+                <td class="num">{{ $qty($orderedQuantity) }}</td>
                 <td>
                     <div class="product-name">{{ $item->product?->nameAr ?: 'لا يوجد اسم للمنتج' }}</div>
                     @if(!empty($issueParts))
                         <div class="muted">{{ implode(' • ', $issueParts) }}</div>
                     @endif
                 </td>
-                <td class="num">{{ $qty($orderedQuantity) }}</td>
-                <td class="num">{{ $fmt($unitPrice) }}</td>
-                <td class="num">{{ $fmt($lineTotal) }}</td>
-                <td class="num"><span class="status-pill">{{ $statusLabel($item->status) }}</span></td>
+                <td class="num">{{ $item->product?->product_code ?: $item->product_id }}</td>
+                <td class="num">{{ $index + 1 }}</td>
             </tr>
         @empty
             <tr>
@@ -299,21 +307,21 @@
         <table class="payments-table">
             <thead>
                 <tr>
-                    <th>#</th>
-                    <th>التاريخ</th>
-                    <th>النوع</th>
-                    <th>المبلغ</th>
                     <th>ملاحظة</th>
+                    <th>المبلغ</th>
+                    <th>النوع</th>
+                    <th>التاريخ</th>
+                    <th>#</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach($bill->payments as $index => $payment)
                     <tr>
-                        <td class="num">{{ $index + 1 }}</td>
-                        <td class="num">{{ optional($payment->paid_at)->format('Y-m-d') ?: optional($payment->created_at)->format('Y-m-d') }}</td>
-                        <td>{{ $payment->type === 'initial_payment' ? 'دفعة أولية' : 'دفعة' }}</td>
-                        <td class="num">{{ number_format((float) $payment->amount, 2).' '.($payment->currency ?: $currency) }}</td>
                         <td>{{ $payment->note ?: '—' }}</td>
+                        <td class="num">{{ number_format((float) $payment->amount, 2).' '.($payment->currency ?: $currency) }}</td>
+                        <td>{{ $payment->type === 'initial_payment' ? 'دفعة أولية' : 'دفعة' }}</td>
+                        <td class="num">{{ optional($payment->paid_at)->format('Y-m-d') ?: optional($payment->created_at)->format('Y-m-d') }}</td>
+                        <td class="num">{{ $index + 1 }}</td>
                     </tr>
                 @endforeach
             </tbody>
