@@ -234,14 +234,19 @@
         .footer-text {
             direction: rtl;
             text-align: right;
-            display: block;
+            display: inline-block;
         }
         .footer-date {
             direction: ltr;
             unicode-bidi: embed;
             text-align: right;
-            display: block;
-            margin-top: 2px;
+            display: inline-block;
+            margin-right: 4px;
+        }
+        .footer-part {
+            direction: rtl;
+            unicode-bidi: embed;
+            display: inline-block;
         }
     </style>
 </head>
@@ -437,8 +442,11 @@
 @endif
 
 <div class="footer">
-    <span class="footer-text">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك, تم انشاؤها بتاريخ</span>
-    <span class="footer-date">{{ now()->format('Y-m-d H:i') }}</span>
+    <div class="footer-text">
+        <span class="footer-part">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك</span>
+        <span class="footer-part">، تم انشاؤها بتاريخ</span>
+    </div>
+    <div class="footer-date">{{ now()->format('Y-m-d H:i') }}</div>
 </div>
 </body>
 </html>
