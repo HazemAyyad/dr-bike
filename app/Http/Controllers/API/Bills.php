@@ -1553,9 +1553,8 @@ private function getBills($statuses)
         $positions = $arabic->arIdentify($reportHtml);
 
         for ($i = count($positions) - 1; $i >= 0; $i -= 2) {
-            $utf8ar = $arabic->utf8Glyphs(
-                substr($reportHtml, $positions[$i - 1], $positions[$i] - $positions[$i - 1])
-            );
+            $arabicText = substr($reportHtml, $positions[$i - 1], $positions[$i] - $positions[$i - 1]);
+            $utf8ar = $arabic->utf8Glyphs($arabicText, mb_strlen($arabicText) + 1);
             $reportHtml = substr_replace($reportHtml, $utf8ar, $positions[$i - 1], $positions[$i] - $positions[$i - 1]);
         }
 
