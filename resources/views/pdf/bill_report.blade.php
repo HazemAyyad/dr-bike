@@ -228,6 +228,8 @@
             border-top: 1px solid #d1d5db;
             color: #6b7280;
             font-size: 10px;
+            direction: rtl;
+            text-align: right;
         }
     </style>
 </head>
@@ -423,7 +425,8 @@
 @endif
 
 <div class="footer">
-    هذه نسخة مطبوعة من فاتورة المشتريات. تم إنشاؤها من نظام DoctorBike بتاريخ {{ now()->format('Y-m-d H:i') }}.
+    هذه نسخة مطبوعة من فاتورة المشتريات. تم إنشاؤها من نظام دكتور بايك بتاريخ
+    <span class="ltr">{{ now()->format('Y-m-d H:i') }}</span>.
 </div>
 </body>
 </html>
