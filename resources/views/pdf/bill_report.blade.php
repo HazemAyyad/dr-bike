@@ -61,7 +61,7 @@
             border-collapse: collapse;
         }
         .meta-table {
-            direction: rtl;
+            direction: ltr;
         }
         .meta-table td {
             border: none;
@@ -231,12 +231,13 @@
         'received' => 'تم الاستلام',
         'ready_for_finalization' => 'جاهزة للاعتماد',
         'finalized' => 'معتمدة',
+        'pending' => 'بانتظار الاستلام',
         'cancelled', 'canceled' => 'ملغاة',
         default => $bill->workflow_status ?: 'غير محدد',
     };
     $paymentLabel = match ($bill->payment_status) {
         'paid' => 'مدفوعة',
-        'partial' => 'مدفوعة جزئياً',
+        'partial', 'partially_paid' => 'مدفوعة جزئياً',
         'unpaid' => 'غير مكتملة الدفع',
         default => $bill->payment_status ?: 'غير مكتملة الدفع',
     };
@@ -260,20 +261,20 @@
 <div class="meta-box">
     <table class="meta-table">
         <tr>
-            <td><span class="label">رقم الفاتورة: </span><span class="value ltr">{{ $invoiceNumber }}</span></td>
             <td><span class="label">التاريخ: </span><span class="value ltr">{{ optional($bill->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td>
+            <td><span class="label">رقم الفاتورة: </span><span class="value ltr">{{ $invoiceNumber }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">الطرف: </span><span class="value">{{ $partyName }}</span></td>
             <td><span class="label">نوع الطرف: </span><span class="value">{{ $partyType }}</span></td>
+            <td><span class="label">الطرف: </span><span class="value">{{ $partyName }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">الهاتف: </span><span class="value ltr">{{ $partyPhone }}</span></td>
             <td><span class="label">العنوان: </span><span class="value">{{ $partyAddress }}</span></td>
+            <td><span class="label">الهاتف: </span><span class="value ltr">{{ $partyPhone }}</span></td>
         </tr>
         <tr>
-            <td><span class="label">حالة الفاتورة: </span><span class="value">{{ $workflowLabel }}</span></td>
             <td><span class="label">حالة الدفع: </span><span class="value">{{ $paymentLabel }}</span></td>
+            <td><span class="label">حالة الفاتورة: </span><span class="value">{{ $workflowLabel }}</span></td>
         </tr>
     </table>
 </div>
