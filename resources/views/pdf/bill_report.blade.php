@@ -231,28 +231,17 @@
             direction: rtl;
             text-align: right;
         }
-        .footer-table {
-            width: auto;
-            border-collapse: collapse;
-            direction: rtl;
-            margin-right: 0;
-            margin-left: auto;
-        }
-        .footer-table td {
-            border: none;
-            padding: 0;
-            vertical-align: baseline;
-            white-space: nowrap;
-        }
         .footer-text {
             direction: rtl;
             text-align: right;
-            padding-left: 4px;
+            display: block;
         }
         .footer-date {
             direction: ltr;
             unicode-bidi: embed;
-            text-align: left;
+            text-align: right;
+            display: block;
+            margin-top: 2px;
         }
     </style>
 </head>
@@ -448,12 +437,8 @@
 @endif
 
 <div class="footer">
-    <table class="footer-table">
-        <tr>
-            <td class="footer-text">هذه نسخة مطبوعة من فاتورة المشتريات. تم إنشاؤها من نظام دكتور بايك بتاريخ</td>
-            <td class="footer-date">{{ now()->format('Y-m-d H:i') }}</td>
-        </tr>
-    </table>
+    <span class="footer-text">هذه نسخة مطبوعة من فاتورة المشتريات. تم إنشاؤها من نظام دكتور بايك.</span>
+    <span class="footer-date">{{ now()->format('Y-m-d H:i') }}</span>
 </div>
 </body>
 </html>
