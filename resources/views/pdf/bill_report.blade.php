@@ -228,25 +228,29 @@
             border-top: 1px solid #d1d5db;
             color: #6b7280;
             font-size: 10px;
-            direction: rtl;
-            text-align: right;
+        }
+        .footer-table {
+            width: 100%;
+            border-collapse: collapse;
+            direction: ltr;
+        }
+        .footer-table td {
+            border: none;
+            padding: 0;
+            vertical-align: middle;
         }
         .footer-text {
             direction: rtl;
+            unicode-bidi: embed;
             text-align: right;
-            display: inline-block;
+            white-space: nowrap;
         }
         .footer-date {
             direction: ltr;
-            unicode-bidi: embed;
-            text-align: right;
-            display: inline-block;
-            margin-right: 4px;
-        }
-        .footer-part {
-            direction: rtl;
-            unicode-bidi: embed;
-            display: inline-block;
+            unicode-bidi: isolate;
+            text-align: left;
+            white-space: nowrap;
+            padding-right: 8px !important;
         }
     </style>
 </head>
@@ -442,11 +446,12 @@
 @endif
 
 <div class="footer">
-    <div class="footer-text">
-        <span class="footer-part">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك</span>
-        <span class="footer-part">، تم انشاؤها بتاريخ</span>
-    </div>
-    <div class="footer-date">{{ now()->format('Y-m-d H:i') }}</div>
+    <table class="footer-table">
+        <tr>
+            <td class="footer-date"><span dir="ltr">{{ now()->format('Y-m-d H:i') }}</span></td>
+            <td class="footer-text"><span dir="rtl">هذه نسخة مطبوعة من فاتورة مشتريات من نظام دكتور بايك، تم انشاؤها بتاريخ</span></td>
+        </tr>
+    </table>
 </div>
 </body>
 </html>
