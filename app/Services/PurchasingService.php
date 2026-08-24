@@ -237,7 +237,7 @@ class PurchasingService
             if ($bill->workflow_status === 'finalized') {
                 return $bill;
             }
-            if ($bill->items->contains(fn (BillItem $item) => (float) $item->damaged_quantity > 0 || (float) $item->mismatched_quantity > 0)) {
+            if ($bill->items->contains(fn (BillItem $item) => (float) ($item->missing_amount ?? 0) > 0 || (float) $item->damaged_quantity > 0 || (float) $item->mismatched_quantity > 0)) {
                 throw new \RuntimeException(__('messages.validation_failed'));
             }
 
@@ -265,6 +265,8 @@ class PurchasingService
                 ], $userId, false);
             }
 
+            $this->syncPendingInitialPaymentsToLedger($bill->fresh(), $userId);
+
             if ($initialPayment > 0) {
                 $this->recordPayment($bill->fresh(), $initialPayment, $boxId, 'initial_payment', 'دفعة أولية لفاتورة شراء #'.$bill->id, $userId);
             } else {
@@ -277,9 +279,9 @@ class PurchasingService
         });
     }
 
-    public function recordPayment(Bill $bill, float $amount, ?int $boxId, string $type = 'payment', ?string $note = null, ?int $userId = null): PurchasePayment
+    public function recordPayment(Bill $bill, float $amount, ?int $boxId, string $type = 'payment', ?string $note = null, ?int $userId = null, array $receiptImages = []): PurchasePayment
     {
-        return DB::transaction(function () use ($bill, $amount, $boxId, $type, $note, $userId) {
+        return DB::transaction(function () use ($bill, $amount, $boxId, $type, $note, $userId, $receiptImages) {
             $bill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
             $remaining = max(0, (float) $bill->final_total - (float) $bill->paid_amount);
             if ($amount <= 0 || $amount > $remaining + 0.0001) {
@@ -305,6 +307,7 @@ class PurchasingService
                 'source' => $type === 'initial_payment' ? 'purchase_initial_payment' : 'purchase_payment',
                 'source_id' => $bill->id,
                 'note' => $note ?? 'دفعة لفاتورة شراء #'.$bill->id,
+                'receipt_images' => ! empty($receiptImages) ? $receiptImages : null,
             ], $userId, true);
 
             $payment = PurchasePayment::create([
@@ -344,19 +347,6 @@ class PurchasingService
             throw new \RuntimeException(__('messages.must_be_same_currency_check'));
         }
 
-        $ledgerTx = $this->ledger->createTransaction([
-            'customer_id' => $bill->customer_id,
-            'seller_id' => $bill->seller_id,
-            'type' => 'given',
-            'amount' => $amount,
-            'currency' => $bill->currency,
-            'transaction_date' => now()->toDateString(),
-            'box_id' => $boxId,
-            'source' => 'purchase_initial_payment',
-            'source_id' => $bill->id,
-            'note' => 'دفعة أولية لفاتورة شراء #'.$bill->id,
-        ], $userId, true);
-
         $payment = PurchasePayment::create([
             'bill_id' => $bill->id,
             'seller_id' => $bill->seller_id,
@@ -367,7 +357,6 @@ class PurchasingService
             'type' => 'initial_payment',
             'paid_at' => now()->toDateString(),
             'note' => 'دفعة أولية عند إنشاء الفاتورة',
-            'debt_transaction_id' => $ledgerTx->id,
             'created_by' => $userId,
         ]);
 
@@ -376,6 +365,36 @@ class PurchasingService
         $this->activity->log($bill, 'initial_payment_created', 'تسجيل دفعة أولية', 'تم تسجيل دفعة أولية عند إنشاء فاتورة شراء', null, $payment->toArray(), null, 'purchase_payment', $payment->id, $userId);
 
         return $payment;
+    }
+
+    private function syncPendingInitialPaymentsToLedger(Bill $bill, ?int $userId = null): void
+    {
+        $bill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
+        $payments = PurchasePayment::query()
+            ->where('bill_id', $bill->id)
+            ->where('type', 'initial_payment')
+            ->whereNull('debt_transaction_id')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($payments as $payment) {
+            $tx = $this->ledger->createTransaction([
+                'customer_id' => $bill->customer_id,
+                'seller_id' => $bill->seller_id,
+                'type' => 'given',
+                'amount' => (float) $payment->amount,
+                'currency' => $payment->currency ?: $bill->currency,
+                'transaction_date' => $payment->paid_at?->format('Y-m-d') ?? now()->toDateString(),
+                'box_id' => $payment->box_id,
+                'source' => 'purchase_initial_payment',
+                'source_id' => $bill->id,
+                'note' => $payment->note ?: 'دفعة أولية لفاتورة شراء #'.$bill->id,
+            ], $userId, true);
+
+            $payment->update(['debt_transaction_id' => $tx->id]);
+            $this->activity->log($bill, 'initial_payment_synced_to_ledger', 'ترحيل دفعة أولية للديون', 'تم ترحيل الدفعة الأولية بعد إثبات أصل فاتورة الشراء', null, $payment->fresh()->toArray(), null, 'purchase_payment', $payment->id, $userId);
+        }
     }
 
     public function priceIntelligence(int $productId, ?int $sellerId = null, ?int $customerId = null): array
@@ -438,7 +457,7 @@ class PurchasingService
     private function refreshWorkflowStatus(Bill $bill): void
     {
         $bill = $bill->fresh('items');
-        $hasRemaining = $bill->items->contains(fn (BillItem $item) => (float) $item->received_owned_quantity < (float) $item->ordered_quantity);
+        $hasRemaining = $bill->items->contains(fn (BillItem $item) => (float) $item->received_owned_quantity + (float) ($item->missing_amount ?? 0) < (float) $item->ordered_quantity);
         $hasCustody = $bill->items->contains(fn (BillItem $item) => (float) $item->custody_quantity > 0);
 
         $bill->update([

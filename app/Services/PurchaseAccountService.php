@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\DB;
 
 class PurchaseAccountService
 {
-    private const ISSUE_TYPES = ['damaged', 'mismatched'];
+    private const ISSUE_TYPES = ['missing', 'damaged', 'mismatched'];
     private const ISSUE_RESOLUTIONS = ['return_to_supplier', 'replacement_expected', 'accept_with_discount', 'accept_negotiated_price', 'other_settlement'];
 
     public function __construct(
@@ -82,6 +82,7 @@ class PurchaseAccountService
                 'source' => 'purchase_account_payment',
                 'source_id' => null,
                 'note' => $data['note'] ?? 'دفعة مورد على الحساب',
+                'receipt_images' => ! empty($data['receipt_images'] ?? []) ? $data['receipt_images'] : null,
             ], $userId, true);
 
             $payment = PurchasePayment::create([
@@ -242,9 +243,11 @@ class PurchaseAccountService
                 ->findOrFail($data['bill_item_id']);
 
             $quantity = (float) $data['quantity'];
-            $available = $issueType === 'damaged'
-                ? (float) $item->damaged_quantity
-                : (float) $item->mismatched_quantity;
+            $available = match ($issueType) {
+                'missing' => (float) ($item->missing_amount ?? 0),
+                'damaged' => (float) $item->damaged_quantity,
+                default => (float) $item->mismatched_quantity,
+            };
             if ($quantity <= 0 || $quantity > $available + 0.0001) {
                 throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
             }
@@ -254,7 +257,7 @@ class PurchaseAccountService
                 : null;
             $financialAdjustment = (float) ($data['financial_adjustment'] ?? 0);
 
-            if (in_array($resolution, ['accept_with_discount', 'accept_negotiated_price'], true)) {
+            if ($issueType !== 'missing' && in_array($resolution, ['accept_with_discount', 'accept_negotiated_price'], true)) {
                 if ($unitPrice === null || $unitPrice < 0) {
                     throw new \RuntimeException(__('messages.validation_failed'));
                 }
@@ -280,10 +283,21 @@ class PurchaseAccountService
             }
 
             $remainingIssueQuantity = max(0, $available - $quantity);
-            $item->update([
-                $issueType === 'damaged' ? 'damaged_quantity' : 'mismatched_quantity' => $remainingIssueQuantity,
+            $updates = [
+                match ($issueType) {
+                    'missing' => 'missing_amount',
+                    'damaged' => 'damaged_quantity',
+                    default => 'mismatched_quantity',
+                } => $remainingIssueQuantity,
                 'status' => $remainingIssueQuantity <= 0.0001 ? 'reviewed' : $item->status,
-            ]);
+            ];
+            if ($issueType === 'missing') {
+                $updates['ordered_quantity'] = max(
+                    (float) $item->received_owned_quantity,
+                    (float) ($item->ordered_quantity ?? $item->quantity) - $quantity
+                );
+            }
+            $item->update($updates);
 
             $issue = PurchaseIssueResolution::create([
                 'bill_id' => $bill->id,

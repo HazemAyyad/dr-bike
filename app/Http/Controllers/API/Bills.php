@@ -151,7 +151,10 @@ class Bills extends Controller
                 'amount' => ['required', 'numeric', 'min:0.01'],
                 'box_id' => ['required', 'integer', 'exists:boxes,id'],
                 'note' => ['nullable', 'string'],
+                'receipt_images' => ['nullable', 'array'],
+                'receipt_images.*' => ['file', 'mimes:jpg,jpeg,png,gif,webp,pdf', 'max:8192'],
             ]);
+            $receiptImages = $this->storeDebtReceiptImages($request);
 
             $payment = $purchases->recordPayment(
                 Bill::findOrFail($data['bill_id']),
@@ -159,7 +162,8 @@ class Bills extends Controller
                 (int) $data['box_id'],
                 'payment',
                 $data['note'] ?? null,
-                $request->user()?->id
+                $request->user()?->id,
+                $receiptImages
             );
 
             return response()->json(['status' => 'success', 'message' => __('messages.data_added_successfully'), 'payment' => $payment], 200);
@@ -225,7 +229,7 @@ class Bills extends Controller
                 'bill_id' => ['required', 'integer', 'exists:bills,id'],
                 'bill_item_id' => ['required', 'integer', 'exists:bill_items,id'],
                 'purchase_receipt_item_id' => ['nullable', 'integer', 'exists:purchase_receipt_items,id'],
-                'issue_type' => ['required', 'string', 'in:damaged,mismatched'],
+                'issue_type' => ['required', 'string', 'in:missing,damaged,mismatched'],
                 'resolution' => ['required', 'string', 'in:return_to_supplier,replacement_expected,accept_with_discount,accept_negotiated_price,other_settlement'],
                 'quantity' => ['required', 'numeric', 'min:0.01'],
                 'negotiated_unit_price' => ['nullable', 'numeric', 'min:0'],
@@ -259,11 +263,14 @@ class Bills extends Controller
                 'currency' => ['nullable', 'string'],
                 'paid_at' => ['nullable', 'date'],
                 'note' => ['nullable', 'string'],
+                'receipt_images' => ['nullable', 'array'],
+                'receipt_images.*' => ['file', 'mimes:jpg,jpeg,png,gif,webp,pdf', 'max:8192'],
                 'allocate_oldest_first' => ['nullable', 'boolean'],
                 'allocations' => ['nullable', 'array'],
                 'allocations.*.bill_id' => ['required_with:allocations', 'integer', 'exists:bills,id'],
                 'allocations.*.amount' => ['required_with:allocations', 'numeric', 'min:0.01'],
             ]);
+            $data['receipt_images'] = $this->storeDebtReceiptImages($request);
 
             $payment = $accounts->paySupplierOnAccount($data, $request->user()?->id);
 
@@ -273,6 +280,31 @@ class Bills extends Controller
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
         }
+    }
+
+    private function storeDebtReceiptImages(Request $request): array
+    {
+        if (! $request->hasFile('receipt_images')) {
+            return [];
+        }
+
+        $path = public_path('DebtsReceipts');
+        if (! is_dir($path)) {
+            mkdir($path, 0775, true);
+        }
+
+        $names = [];
+        foreach ($request->file('receipt_images', []) as $index => $file) {
+            if (! $file || ! $file->isValid()) {
+                continue;
+            }
+            $original = preg_replace('/[^A-Za-z0-9._-]+/', '_', $file->getClientOriginalName());
+            $name = time().'_'.$index.'_'.$original;
+            $file->move($path, $name);
+            $names[] = $name;
+        }
+
+        return $names;
     }
 
     public function purchaseAccountOpenBills(Request $request)
@@ -408,7 +440,8 @@ class Bills extends Controller
                     ->orWhereHas('bill.seller', fn ($s) => $s->where('name', 'like', "%{$search}%"))
                     ->orWhereHas('bill.customer', fn ($c) => $c->where('name', 'like', "%{$search}%"));
             })
-            ->latest('id')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->limit(200)
             ->get()
             ->map(function (PurchaseAmanatStock $row) {
@@ -464,7 +497,8 @@ class Bills extends Controller
                     ->orWhereHas('bill.seller', fn ($s) => $s->where('name', 'like', "%{$search}%"))
                     ->orWhereHas('bill.customer', fn ($c) => $c->where('name', 'like', "%{$search}%"));
             })
-            ->latest('id')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->limit(200)
             ->get()
             ->map(function (BillItem $item) {
@@ -515,7 +549,8 @@ private function getBills($statuses)
             ->withSum('items as extra_quantity_total', 'custody_quantity')
             ->withSum('items as damaged_quantity_total', 'damaged_quantity')
             ->withSum('items as mismatched_quantity_total', 'mismatched_quantity')
-            ->latest('id')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->get([
                 'id',
                 'total',
@@ -660,7 +695,7 @@ private function getBills($statuses)
                         'quantity' => $item->quantity,
                         'ordered_quantity' => $item->ordered_quantity ?? $item->quantity,
                         'received_owned_quantity' => $item->received_owned_quantity ?? 0,
-                        'remaining_quantity' => max(0, (float) ($item->ordered_quantity ?? $item->quantity) - (float) ($item->received_owned_quantity ?? 0)),
+                        'remaining_quantity' => max(0, (float) ($item->ordered_quantity ?? $item->quantity) - (float) ($item->received_owned_quantity ?? 0) - (float) ($item->missing_amount ?? 0)),
                         'custody_quantity' => $item->custody_quantity ?? 0,
                         'price' => $item->price,
                         'product_status' => $item->status,
@@ -852,7 +887,8 @@ private function getBills($statuses)
             ->withSum('items as extra_quantity_total', 'custody_quantity')
             ->withSum('items as damaged_quantity_total', 'damaged_quantity')
             ->withSum('items as mismatched_quantity_total', 'mismatched_quantity')
-            ->latest('id')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
             ->get(['id','total','final_total','paid_amount','payment_status','workflow_status','created_at','seller_id','customer_id','status','currency'])
             ->map(fn ($bill) => $this->formatBillListItem($bill));
 
@@ -886,8 +922,14 @@ private function getBills($statuses)
     public function getUnmatchedBills(){
      try{
         $bills = Bill::whereHas('items', function ($q) {
-                    $q->whereNotNull('missing_amount');
-                })  
+                    $q->where(function ($issue) {
+                        $issue->where('missing_amount', '>', 0)
+                            ->orWhere('custody_quantity', '>', 0)
+                            ->orWhere('damaged_quantity', '>', 0)
+                            ->orWhere('mismatched_quantity', '>', 0)
+                            ->orWhere('not_compatible_amount', '>', 0);
+                    });
+                })
         ->whereDoesntHave('items', function ($q) {
                         // exclude bills with any unfinished items
                         $q->where('status', 'unfinished');
