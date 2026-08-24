@@ -1,87 +1,364 @@
 <!DOCTYPE html>
-<html>
-
-
+<html lang="ar" dir="rtl">
 <head>
     <meta charset="utf-8">
-    <title>Bill Details</title>
+    <title>فاتورة شراء #{{ $bill->id }}</title>
     <style>
-        body { font-family: DejaVu Sans, sans-serif; font-size: 16px; }
-        h2 { text-align: center; margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        table, th, td { border: 1px solid #000; }
-        th, td { padding: 8px; text-align: left; }
-        .summary { margin-top: 20px; }
-
-
+        @page { margin: 26px 28px; }
+        body {
+            font-family: DejaVu Sans, sans-serif;
+            font-size: 12px;
+            color: #111827;
+            direction: rtl;
+            text-align: right;
+        }
+        .header {
+            width: 100%;
+            border-bottom: 1.3px solid #6B65BD;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+        }
+        .header-table,
+        .header-table td {
+            border: none;
+            margin: 0;
+            padding: 0;
+            width: 100%;
+        }
+        .brand-title {
+            margin: 0;
+            color: #6B65BD;
+            font-size: 21px;
+            font-weight: bold;
+        }
+        .logo {
+            height: 88px;
+            width: auto;
+        }
+        .invoice-title {
+            text-align: center;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 10px 0 8px;
+        }
+        .meta-box {
+            border: 1px solid #d1d5db;
+            border-radius: 4px;
+            padding: 8px 10px;
+            margin-bottom: 12px;
+        }
+        .meta-table,
+        .items-table,
+        .totals-table,
+        .payments-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .meta-table td {
+            border: none;
+            padding: 3px 0 3px 12px;
+            vertical-align: top;
+            width: 50%;
+        }
+        .label {
+            font-weight: bold;
+            color: #111827;
+        }
+        .value {
+            color: #374151;
+        }
+        .ltr {
+            direction: ltr;
+            unicode-bidi: embed;
+            text-align: left;
+        }
+        .items-table {
+            margin-top: 4px;
+            border: 1px solid #d1d5db;
+        }
+        .items-table th,
+        .items-table td {
+            border: 1px solid #d1d5db;
+            padding: 5px;
+            vertical-align: middle;
+        }
+        .items-table th {
+            background: #6B65BD;
+            color: #ffffff;
+            font-weight: bold;
+            text-align: center;
+        }
+        .items-table tr:nth-child(even) td {
+            background: #f9fafb;
+        }
+        .num {
+            direction: ltr;
+            unicode-bidi: embed;
+            text-align: center;
+            white-space: nowrap;
+        }
+        .product-name {
+            font-weight: bold;
+        }
+        .muted {
+            color: #6b7280;
+            font-size: 10px;
+        }
+        .status-pill {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 10px;
+            background: #eef2ff;
+            color: #4f46e5;
+            font-size: 10px;
+            font-weight: bold;
+        }
+        .totals-wrap {
+            width: 235px;
+            margin-top: 12px;
+            margin-right: 0;
+            margin-left: auto;
+        }
+        .totals-table {
+            border: 1px solid #d1d5db;
+        }
+        .totals-table td {
+            border: 1px solid #d1d5db;
+            padding: 5px;
+        }
+        .totals-table .total-row td {
+            background: #e5e7eb;
+            font-weight: bold;
+        }
+        .paid {
+            color: #15803d;
+            font-weight: bold;
+        }
+        .remaining {
+            color: #b45309;
+            font-weight: bold;
+        }
+        .notes,
+        .payments {
+            margin-top: 10px;
+        }
+        .section-title {
+            font-weight: bold;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .payments-table th,
+        .payments-table td {
+            border: 1px solid #d1d5db;
+            padding: 5px;
+            text-align: right;
+        }
+        .payments-table th {
+            background: #6B65BD;
+            color: #ffffff;
+            text-align: center;
+        }
+        .footer {
+            margin-top: 14px;
+            padding-top: 8px;
+            border-top: 1px solid #d1d5db;
+            color: #6b7280;
+            font-size: 10px;
+        }
     </style>
 </head>
 <body>
-    <div style="margin-bottom: 25px;">
-        <table style="border: none; width: auto;">
+@php
+    $currency = $bill->currency ?: 'شيكل';
+    $subtotal = (float) ($bill->total ?? 0);
+    $discount = (float) ($bill->discount ?? 0);
+    $finalTotal = (float) (($bill->final_total ?? 0) > 0 ? $bill->final_total : max(0, $subtotal - $discount));
+    $paidAmount = (float) ($bill->paid_amount ?? 0);
+    $remainingAmount = max(0, $finalTotal - $paidAmount);
+    $party = $bill->seller ?: $bill->customer;
+    $partyType = $bill->seller ? 'مورد' : ($bill->customer ? 'زبون' : 'غير محدد');
+    $partyName = $party?->name ?: 'غير محدد';
+    $partyPhone = $party?->phone ?: '—';
+    $partyAddress = $party?->address ?: ($party?->work_address ?: '—');
+    $invoiceNumber = 'PUR-'.str_pad((string) $bill->id, 7, '0', STR_PAD_LEFT);
+    $fmt = fn ($value) => number_format((float) $value, 2).' '.$currency;
+    $qty = fn ($value) => rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
+    $statusLabel = function (?string $status): string {
+        return match ($status) {
+            'unfinished' => 'قيد الاستلام',
+            'finished' => 'مكتملة',
+            'extra' => 'زيادة',
+            'not_compatible' => 'غير مطابق',
+            'cancelled', 'canceled' => 'ملغاة',
+            default => $status ?: 'غير محدد',
+        };
+    };
+    $workflowLabel = match ($bill->workflow_status) {
+        'awaiting_receiving' => 'بانتظار الاستلام',
+        'receiving' => 'جاري الاستلام',
+        'received' => 'تم الاستلام',
+        'ready_for_finalization' => 'جاهزة للاعتماد',
+        'finalized' => 'معتمدة',
+        'cancelled', 'canceled' => 'ملغاة',
+        default => $bill->workflow_status ?: 'غير محدد',
+    };
+    $paymentLabel = match ($bill->payment_status) {
+        'paid' => 'مدفوعة',
+        'partial' => 'مدفوعة جزئياً',
+        'unpaid' => 'غير مكتملة الدفع',
+        default => $bill->payment_status ?: 'غير مكتملة الدفع',
+    };
+@endphp
+
+<div class="header">
+    <table class="header-table">
+        <tr>
+            <td style="width: 70%; vertical-align: middle;">
+                <h1 class="brand-title">دكتور بايك - فاتورة مشتريات</h1>
+            </td>
+            <td style="width: 30%; text-align: left; vertical-align: middle;">
+                <img class="logo" src="{{ public_path('appImages/logo.jpg') }}" alt="DoctorBike">
+            </td>
+        </tr>
+    </table>
+</div>
+
+<div class="invoice-title">فاتورة شراء {{ $invoiceNumber }}</div>
+
+<div class="meta-box">
+    <table class="meta-table">
+        <tr>
+            <td><span class="label">رقم الفاتورة: </span><span class="value ltr">{{ $invoiceNumber }}</span></td>
+            <td><span class="label">التاريخ: </span><span class="value ltr">{{ optional($bill->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td>
+        </tr>
+        <tr>
+            <td><span class="label">الطرف: </span><span class="value">{{ $partyName }}</span></td>
+            <td><span class="label">نوع الطرف: </span><span class="value">{{ $partyType }}</span></td>
+        </tr>
+        <tr>
+            <td><span class="label">الهاتف: </span><span class="value ltr">{{ $partyPhone }}</span></td>
+            <td><span class="label">العنوان: </span><span class="value">{{ $partyAddress }}</span></td>
+        </tr>
+        <tr>
+            <td><span class="label">حالة الفاتورة: </span><span class="value">{{ $workflowLabel }}</span></td>
+            <td><span class="label">حالة الدفع: </span><span class="value">{{ $paymentLabel }}</span></td>
+        </tr>
+    </table>
+</div>
+
+<table class="items-table">
+    <thead>
+        <tr>
+            <th style="width: 7%;">#</th>
+            <th style="width: 13%;">الكود</th>
+            <th>اسم المنتج</th>
+            <th style="width: 12%;">الكمية</th>
+            <th style="width: 16%;">السعر</th>
+            <th style="width: 16%;">الإجمالي</th>
+            <th style="width: 14%;">الحالة</th>
+        </tr>
+    </thead>
+    <tbody>
+        @forelse($bill->items as $index => $item)
+            @php
+                $unitPrice = (float) (($item->final_unit_price ?? 0) > 0 ? $item->final_unit_price : $item->price);
+                $orderedQuantity = (float) ($item->ordered_quantity ?? $item->quantity ?? 0);
+                $lineTotal = $orderedQuantity * $unitPrice;
+                $issueParts = [];
+                if ((float) ($item->missing_amount ?? 0) > 0) $issueParts[] = 'نقص '.$qty($item->missing_amount);
+                if ((float) ($item->custody_quantity ?? 0) > 0) $issueParts[] = 'زيادة '.$qty($item->custody_quantity);
+                if ((float) ($item->damaged_quantity ?? 0) > 0) $issueParts[] = 'تالف '.$qty($item->damaged_quantity);
+                if ((float) ($item->mismatched_quantity ?? 0) > 0) $issueParts[] = 'غير مطابق '.$qty($item->mismatched_quantity);
+                if ((float) ($item->not_compatible_amount ?? 0) > 0) $issueParts[] = 'غير متوافق '.$qty($item->not_compatible_amount);
+            @endphp
             <tr>
-                <td style="border: none; vertical-align: middle; padding-right: 15px;">
-                    <img src="{{ public_path('appImages/logo.jpg') }}" alt="DoctorBike Logo" style="height:60px; width:auto;">
+                <td class="num">{{ $index + 1 }}</td>
+                <td class="num">{{ $item->product?->product_code ?: $item->product_id }}</td>
+                <td>
+                    <div class="product-name">{{ $item->product?->nameAr ?: 'لا يوجد اسم للمنتج' }}</div>
+                    @if(!empty($issueParts))
+                        <div class="muted">{{ implode(' • ', $issueParts) }}</div>
+                    @endif
                 </td>
-                <td style="border: none; vertical-align: middle;">
-                    <h1 style="margin: 0; font-size: 15px; font-weight: bold;">DoctorBike</h1>
-                </td>
+                <td class="num">{{ $qty($orderedQuantity) }}</td>
+                <td class="num">{{ $fmt($unitPrice) }}</td>
+                <td class="num">{{ $fmt($lineTotal) }}</td>
+                <td class="num"><span class="status-pill">{{ $statusLabel($item->status) }}</span></td>
             </tr>
+        @empty
+            <tr>
+                <td colspan="7" class="num">لا توجد منتجات في الفاتورة</td>
+            </tr>
+        @endforelse
+    </tbody>
+</table>
+
+@if($bill->payments->isNotEmpty())
+    <div class="payments">
+        <div class="section-title">تفاصيل الدفعات</div>
+        <table class="payments-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>التاريخ</th>
+                    <th>النوع</th>
+                    <th>المبلغ</th>
+                    <th>ملاحظة</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach($bill->payments as $index => $payment)
+                    <tr>
+                        <td class="num">{{ $index + 1 }}</td>
+                        <td class="num">{{ optional($payment->paid_at)->format('Y-m-d') ?: optional($payment->created_at)->format('Y-m-d') }}</td>
+                        <td>{{ $payment->type === 'initial_payment' ? 'دفعة أولية' : 'دفعة' }}</td>
+                        <td class="num">{{ number_format((float) $payment->amount, 2).' '.($payment->currency ?: $currency) }}</td>
+                        <td>{{ $payment->note ?: '—' }}</td>
+                    </tr>
+                @endforeach
+            </tbody>
         </table>
     </div>
-    <h2>Bill</h2>
+@endif
 
-    <table>
-        <thead>
-            <tr>
-                <th>Product Name</th>
-                <th>Quantity</th>
-                <th>Price</th>
-                <th>Sub Toatal</th>
-                <th>Status</th>
-                <th></th>
-
-            </tr>
-        </thead>
-        <tbody>
-            @foreach($bill->items as $item)
-                <tr>
-                    <td>{{ $item->product->nameAr? $item->product->nameAr : 'لا يوجد اسم للمنتج' }}</td>
-                    <td>{{ $item->quantity? $item->quantity: 0 }}</td>
-                    <td>{{ $item->price? $item->price: 0 }}</td>
-                    <td>{{ $item->price * $item->quantity }}</td>
-                    <td>
-                        {{
-                            match($item->status) {
-                                'unfinished'      => 'غير معالج',
-                                'finished'        => 'مكتمل',
-                                'extra'           => 'مرتجع زيادة',
-                                'not_compatible'  => 'غير متوافق',
-                                default           => $item->status,
-                            }
-                        }}
-                    </td>
-                    <td>
-                        {{
-                            match(true) {
-                                $item->status === 'finished' && !is_null($item->missing_amount) => ($item->missing_amount ?? 0) . ' نقص',
-                                $item->status === 'extra' => $item->extra_amount ?? 0,
-                                $item->status === 'not_compatible' => $item->not_compatible_amount ?? 0,
-                                default => '-',
-                            }
-                        }}
-                    </td>
-
-
-                </tr>
-            @endforeach
-
-
-        </tbody>
+<div class="totals-wrap">
+    <table class="totals-table">
+        <tr>
+            <td class="num">{{ $fmt($subtotal) }}</td>
+            <td>الإجمالي الفرعي</td>
+        </tr>
+        <tr>
+            <td class="num">{{ $fmt($discount) }}</td>
+            <td>الخصم</td>
+        </tr>
+        <tr>
+            <td class="num">0.00 {{ $currency }}</td>
+            <td>الضريبة</td>
+        </tr>
+        <tr class="total-row">
+            <td class="num">{{ $fmt($finalTotal) }}</td>
+            <td>إجمالي الفاتورة</td>
+        </tr>
+        <tr>
+            <td class="num paid">{{ $fmt($paidAmount) }}</td>
+            <td>المبلغ المدفوع</td>
+        </tr>
+        <tr>
+            <td class="num {{ $remainingAmount > 0 ? 'remaining' : 'paid' }}">{{ $fmt($remainingAmount) }}</td>
+            <td>المتبقي</td>
+        </tr>
     </table>
-    <div class="summary">
-        <p>Total Bill: {{$bill->total}}</p>
-    </div>
+</div>
 
+@if(trim((string) $bill->notes) !== '')
+    <div class="notes">
+        <div class="section-title">ملاحظات</div>
+        <div>{{ $bill->notes }}</div>
+    </div>
+@endif
+
+<div class="footer">
+    هذه نسخة مطبوعة من فاتورة المشتريات. تم إنشاؤها من نظام DoctorBike بتاريخ {{ now()->format('Y-m-d H:i') }}.
+</div>
 </body>
 </html>

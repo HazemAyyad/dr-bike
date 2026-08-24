@@ -1536,7 +1536,12 @@ private function getBills($statuses)
                     ]);
 
 
-        $bill = Bill::findOrFail($request->bill_id);
+        $bill = Bill::with([
+            'items.product',
+            'seller',
+            'customer',
+            'payments' => fn ($query) => $query->oldest('paid_at')->oldest('id'),
+        ])->findOrFail($request->bill_id);
    
        // 🔹 First render HTML from the Blade
         $reportHtml = view('pdf.bill_report', [
@@ -1557,7 +1562,9 @@ private function getBills($statuses)
         // 🔹 Load fixed HTML into PDF
         $pdf = Pdf::loadHTML($reportHtml);
 
-        return $pdf->download('bill_report.pdf');
+        $fileName = 'purchase_invoice_'.$bill->id.'.pdf';
+
+        return $pdf->download($fileName);
 
     } catch (ValidationException $e) {
         return response()->json([
