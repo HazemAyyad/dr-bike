@@ -84,6 +84,26 @@
         .value {
             color: #374151;
         }
+        .meta-line {
+            width: 100%;
+            border-collapse: collapse;
+            direction: rtl;
+        }
+        .meta-line td {
+            border: none;
+            padding: 0;
+            width: auto;
+            vertical-align: baseline;
+        }
+        .meta-line .meta-label-cell {
+            width: 1%;
+            white-space: nowrap;
+            text-align: right;
+            padding-left: 4px;
+        }
+        .meta-line .meta-value-cell {
+            text-align: right;
+        }
         .ltr {
             direction: ltr;
             unicode-bidi: embed;
@@ -268,20 +288,20 @@
 <div class="meta-box">
     <table class="meta-table">
         <tr>
-            <td class="meta-right"><span class="label">رقم الفاتورة: </span><span class="value ltr">{{ $invoiceNumber }}</span></td>
-            <td class="meta-left"><span class="label">التاريخ: </span><span class="value ltr">{{ optional($bill->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td>
+            <td class="meta-right"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">رقم الفاتورة:</span></td><td class="meta-value-cell"><span class="value ltr">{{ $invoiceNumber }}</span></td></tr></table></td>
+            <td class="meta-left"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">التاريخ:</span></td><td class="meta-value-cell"><span class="value ltr">{{ optional($bill->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td></tr></table></td>
         </tr>
         <tr>
-            <td class="meta-right"><span class="label">الطرف: </span><span class="value">{{ $partyName }}</span></td>
-            <td class="meta-left"><span class="label">نوع الطرف: </span><span class="value">{{ $partyType }}</span></td>
+            <td class="meta-right"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">الطرف:</span></td><td class="meta-value-cell"><span class="value">{{ $partyName }}</span></td></tr></table></td>
+            <td class="meta-left"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">نوع الطرف:</span></td><td class="meta-value-cell"><span class="value">{{ $partyType }}</span></td></tr></table></td>
         </tr>
         <tr>
-            <td class="meta-right"><span class="label">الهاتف: </span><span class="value ltr">{{ $partyPhone }}</span></td>
-            <td class="meta-left"><span class="label">العنوان: </span><span class="value">{{ $partyAddress }}</span></td>
+            <td class="meta-right"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">الهاتف:</span></td><td class="meta-value-cell"><span class="value ltr">{{ $partyPhone }}</span></td></tr></table></td>
+            <td class="meta-left"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">العنوان:</span></td><td class="meta-value-cell"><span class="value">{{ $partyAddress }}</span></td></tr></table></td>
         </tr>
         <tr>
-            <td class="meta-right"><span class="label">حالة الفاتورة: </span><span class="value">{{ $workflowLabel }}</span></td>
-            <td class="meta-left"><span class="label">حالة الدفع: </span><span class="value">{{ $paymentLabel }}</span></td>
+            <td class="meta-right"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">حالة الفاتورة:</span></td><td class="meta-value-cell"><span class="value">{{ $workflowLabel }}</span></td></tr></table></td>
+            <td class="meta-left"><table class="meta-line"><tr><td class="meta-label-cell"><span class="label">حالة الدفع:</span></td><td class="meta-value-cell"><span class="value">{{ $paymentLabel }}</span></td></tr></table></td>
         </tr>
     </table>
 </div>
