@@ -573,14 +573,23 @@ class DebtLedgerService
         $currency = $this->normalizeCurrency($transaction->currency);
 
         $source = $transaction->source ?? 'manual';
+        $sourceLabel = $source === 'manual' || $source === '' || $source === null
+            ? null
+            : $this->ledgerSourceLabel($source);
+        if (
+            in_array($source, ['purchase_payment', 'purchase_initial_payment'], true)
+            && $transaction->source_id
+        ) {
+            $sourceLabel .= ' - فاتورة شراء #'.$transaction->source_id;
+        } elseif ($source === 'purchase_invoice' && $transaction->source_id) {
+            $sourceLabel .= ' #'.$transaction->source_id;
+        }
 
         return [
             'id' => $transaction->id,
             'type' => $transaction->type,
             'type_label' => $transaction->type === 'taken' ? 'أخذت' : 'أعطيت',
-            'source_label' => $source === 'manual' || $source === '' || $source === null
-                ? null
-                : $this->ledgerSourceLabel($source),
+            'source_label' => $sourceLabel,
             'amount' => (float) $transaction->amount,
             'currency' => $currency,
             'balance_before' => $this->balanceBefore($transaction),
