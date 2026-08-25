@@ -121,6 +121,65 @@ class Bills extends Controller
         }
     }
 
+    public function updateDraftPurchase(Request $request, PurchasingService $purchases)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+                'seller_id' => ['nullable', 'integer', 'exists:sellers,id', 'required_without:customer_id'],
+                'customer_id' => ['nullable', 'integer', 'exists:customers,id', 'required_without:seller_id'],
+                'products' => ['required', 'array', 'min:1'],
+                'products.*.product_id' => ['required', 'integer', 'exists:products,id'],
+                'products.*.quantity' => ['required', 'numeric', 'min:1'],
+                'products.*.purchase_price' => ['required', 'numeric', 'min:1'],
+                'products.*.manual_override' => ['nullable', 'boolean'],
+                'products.*.size_id' => ['nullable', 'integer', 'exists:sizes,id'],
+                'products.*.size_color_id' => ['nullable', 'integer', 'exists:size_colors,id'],
+                'total' => ['nullable', 'numeric', 'min:1'],
+                'currency' => ['nullable', 'string'],
+                'notes' => ['nullable', 'string'],
+            ]);
+
+            $bill = $purchases->updateDraft(
+                Bill::findOrFail($data['bill_id']),
+                $data,
+                $request->user()?->id,
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم تعديل فاتورة المشتريات',
+                'bill_id' => $bill->id,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function deleteDraftPurchase(Request $request, PurchasingService $purchases)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+            ]);
+            $purchases->deleteDraft(
+                Bill::findOrFail($data['bill_id']),
+                $request->user()?->id,
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم حذف فاتورة المشتريات غير المعتمدة',
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
     public function finalizePurchase(Request $request, PurchasingService $purchases)
     {
         try {
@@ -641,6 +700,7 @@ private function getBills($statuses)
                 'items.size',
                 'items.sizeColor',
                 'items.amanatStocks',
+                'receipts',
                 'seller',
                 'customer',
                 'payments',
@@ -748,6 +808,11 @@ private function getBills($statuses)
                 'final_total' => $effectiveTotal,
                 'paid_amount' => $paidAmount,
                 'remaining_amount' => max(0, $effectiveTotal - $paidAmount),
+                'can_edit' => $bill->workflow_status === 'awaiting_receiving'
+                    && $bill->receipts->isEmpty(),
+                'can_delete' => $bill->workflow_status === 'awaiting_receiving'
+                    && $bill->receipts->isEmpty()
+                    && $bill->payments->isEmpty(),
                 'payments' => $bill->payments->map(fn ($payment) => [
                     'id' => (int) $payment->id,
                     'box_id' => $payment->box_id ? (int) $payment->box_id : null,

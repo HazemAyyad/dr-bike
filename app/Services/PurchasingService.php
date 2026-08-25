@@ -16,6 +16,7 @@ use App\Models\PurchaseReceipt;
 use App\Models\Size;
 use App\Models\SizeColor;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class PurchasingService
 {
@@ -191,6 +192,146 @@ class PurchasingService
             $this->activity->log($bill, 'receipt_created', 'تسجيل استلام شراء', 'تم تسجيل استلام على الفاتورة #'.$bill->id, null, $receipt->load('items')->toArray(), null, 'purchase_receipt', $receipt->id, $userId);
 
             return $receipt->fresh('items');
+        });
+    }
+
+    public function updateDraft(Bill $bill, array $data, ?int $userId = null): Bill
+    {
+        return DB::transaction(function () use ($bill, $data, $userId) {
+            $bill = Bill::query()->with(['receipts', 'payments'])->lockForUpdate()->findOrFail($bill->id);
+            $this->assertDraftCanBeChanged($bill);
+
+            $items = collect($data['products'] ?? []);
+            $currency = $this->normalizeCurrency($data['currency'] ?? $bill->currency ?? 'شيكل');
+            $total = (float) ($data['total'] ?? $items->sum(
+                fn ($item) => (float) $item['quantity'] * (float) $item['purchase_price']
+            ));
+            $nextSellerId = isset($data['seller_id']) ? (int) $data['seller_id'] : null;
+            $nextCustomerId = isset($data['customer_id']) ? (int) $data['customer_id'] : null;
+            if ($bill->payments->isNotEmpty()
+                && ((int) $bill->seller_id !== (int) $nextSellerId
+                    || (int) $bill->customer_id !== (int) $nextCustomerId)) {
+                throw ValidationException::withMessages([
+                    'seller_id' => ['لا يمكن تغيير المصدر بعد تسجيل دفعة على الفاتورة.'],
+                ]);
+            }
+            if ((float) $bill->paid_amount > $total + 0.0001) {
+                throw ValidationException::withMessages([
+                    'total' => ['إجمالي الفاتورة لا يمكن أن يكون أقل من الدفعة المسجلة.'],
+                ]);
+            }
+
+            $before = $bill->load('items')->toArray();
+            $previousSellerId = $bill->seller_id ? (int) $bill->seller_id : null;
+            $previousProductIds = $bill->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique();
+            $paidAmount = (float) $bill->paid_amount;
+            $paymentStatus = $paidAmount <= 0.0001
+                ? 'unpaid'
+                : ($paidAmount + 0.0001 >= $total ? 'paid' : 'partially_paid');
+            PurchasePriceHistory::query()->where('bill_id', $bill->id)->delete();
+            $bill->items()->delete();
+            $bill->update([
+                'seller_id' => $data['seller_id'] ?? null,
+                'customer_id' => $data['customer_id'] ?? null,
+                'total' => $total,
+                'currency' => $currency,
+                'notes' => $data['notes'] ?? $bill->notes,
+                'payment_status' => $paymentStatus,
+            ]);
+
+            foreach ($items as $item) {
+                $product = Product::query()->findOrFail($item['product_id']);
+                $quantity = (float) $item['quantity'];
+                $price = (float) $item['purchase_price'];
+                [$sizeId, $sizeColorId] = $this->resolveProductVariant(
+                    $product,
+                    $item['size_id'] ?? null,
+                    $item['size_color_id'] ?? null,
+                );
+                $billItem = BillItem::create([
+                    'bill_id' => $bill->id,
+                    'product_id' => $product->id,
+                    'size_id' => $sizeId,
+                    'size_color_id' => $sizeColorId,
+                    'quantity' => $quantity,
+                    'ordered_quantity' => $quantity,
+                    'received_owned_quantity' => 0,
+                    'custody_quantity' => 0,
+                    'damaged_quantity' => 0,
+                    'mismatched_quantity' => 0,
+                    'price' => $price,
+                    'final_unit_price' => $price,
+                    'status' => 'unfinished',
+                ]);
+                $this->recordPurchasePrice(
+                    $bill,
+                    $billItem,
+                    $price,
+                    $quantity,
+                    $currency,
+                    (bool) ($item['manual_override'] ?? false),
+                    $userId,
+                );
+                $this->updateLatestPriceCache($bill, $product->id, $price);
+            }
+            foreach ($previousProductIds as $productId) {
+                $this->refreshLatestPriceCache($previousSellerId, $productId);
+            }
+
+            $this->activity->log(
+                $bill,
+                'purchase_draft_updated',
+                'تعديل فاتورة شراء غير معتمدة',
+                'تم تعديل بيانات وأصناف فاتورة الشراء قبل الاستلام',
+                $before,
+                $bill->fresh('items')->toArray(),
+                null,
+                'bill',
+                $bill->id,
+                $userId,
+            );
+
+            return $bill->fresh(['items.product', 'items.size', 'items.sizeColor', 'seller', 'customer']);
+        });
+    }
+
+    public function deleteDraft(Bill $bill, ?int $userId = null): Bill
+    {
+        return DB::transaction(function () use ($bill, $userId) {
+            $bill = Bill::query()->with(['receipts', 'payments'])->lockForUpdate()->findOrFail($bill->id);
+            $this->assertDraftCanBeChanged($bill);
+            if ($bill->payments->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'bill_id' => ['لا يمكن حذف الفاتورة بعد تسجيل دفعة عليها.'],
+                ]);
+            }
+            $before = $bill->load('items')->toArray();
+            $sellerId = $bill->seller_id ? (int) $bill->seller_id : null;
+            $productIds = $bill->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique();
+            PurchasePriceHistory::query()->where('bill_id', $bill->id)->delete();
+            foreach ($productIds as $productId) {
+                $this->refreshLatestPriceCache($sellerId, $productId);
+            }
+            $bill->update([
+                'status' => 'cancelled',
+                'workflow_status' => 'cancelled',
+                'paid_amount' => 0,
+                'payment_status' => 'unpaid',
+            ]);
+            $bill->items()->update(['status' => 'cancelled']);
+            $this->activity->log(
+                $bill,
+                'purchase_draft_deleted',
+                'حذف فاتورة شراء غير معتمدة',
+                'تم إلغاء الفاتورة قبل الاستلام دون التأثير على المخزون',
+                $before,
+                $bill->fresh()->toArray(),
+                null,
+                'bill',
+                $bill->id,
+                $userId,
+            );
+            return $bill->fresh();
         });
     }
 
@@ -566,6 +707,30 @@ class PurchasingService
         );
     }
 
+    private function refreshLatestPriceCache(?int $sellerId, int $productId): void
+    {
+        if (! $sellerId) {
+            return;
+        }
+        $latest = PurchasePriceHistory::query()
+            ->where('seller_id', $sellerId)
+            ->where('product_id', $productId)
+            ->latest('priced_at')
+            ->latest('id')
+            ->first();
+        if ($latest) {
+            PurchaseProduct::query()->updateOrCreate(
+                ['seller_id' => $sellerId, 'product_id' => $productId],
+                ['price' => $latest->unit_price],
+            );
+            return;
+        }
+        PurchaseProduct::query()
+            ->where('seller_id', $sellerId)
+            ->where('product_id', $productId)
+            ->delete();
+    }
+
     private function refreshWorkflowStatus(Bill $bill): void
     {
         $bill = $bill->fresh('items');
@@ -608,6 +773,15 @@ class PurchasingService
     private function normalizeCurrency(?string $currency): string
     {
         return $this->ledger->normalizeCurrency($currency);
+    }
+
+    private function assertDraftCanBeChanged(Bill $bill): void
+    {
+        if ($bill->workflow_status !== 'awaiting_receiving' || $bill->receipts->isNotEmpty()) {
+            throw ValidationException::withMessages([
+                'bill_id' => ['يمكن تعديل أو حذف الفاتورة فقط قبل تسجيل أي استلام وقبل اعتمادها.'],
+            ]);
+        }
     }
 
     /** @return array{0:int|null,1:int|null} */
