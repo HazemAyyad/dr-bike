@@ -65,4 +65,9 @@ class SmartDevice extends Model
     {
         return $this->hasMany(SmartDeviceFunction::class);
     }
+
+    public function schedules(): HasMany
+    {
+        return $this->hasMany(SmartDeviceSchedule::class);
+    }
 }

@@ -6,12 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\SmartDeviceActivityLogResource;
 use App\Http\Resources\SmartDeviceFunctionResource;
 use App\Http\Resources\SmartDeviceResource;
+use App\Http\Resources\SmartDeviceScheduleResource;
 use App\Http\Resources\SmartHomeEventLogResource;
 use App\Http\Resources\SmartHomeResource;
 use App\Http\Resources\SmartRoomResource;
 use App\Models\SmartDevice;
 use App\Models\SmartDeviceActivityLog;
 use App\Models\SmartDeviceFunction;
+use App\Models\SmartDeviceSchedule;
 use App\Models\SmartHome;
 use App\Models\SmartHomeEventLog;
 use App\Models\SmartHomeTuyaUser;
@@ -462,6 +464,60 @@ class SmartHomeController extends Controller
         ]);
     }
 
+    public function deviceSchedules(Request $request, int $id)
+    {
+        $device = $this->readableDevice($request, $id);
+
+        return response()->json([
+            'status' => 'success',
+            'schedules' => SmartDeviceScheduleResource::collection(
+                $device->schedules()->orderByDesc('enabled')->orderBy('next_run_at')->get()
+            ),
+        ]);
+    }
+
+    public function storeDeviceSchedule(Request $request, int $id)
+    {
+        $device = $this->ownedDevice($request, $id);
+        $data = $this->validateSchedulePayload($request);
+        $schedule = $device->schedules()->create([
+            ...$data,
+            'user_id' => $this->requestedOwnerId($request),
+            'next_run_at' => $data['enabled'] ? $data['scheduled_at'] : null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تمت إضافة الجدولة',
+            'schedule' => new SmartDeviceScheduleResource($schedule),
+        ], 201);
+    }
+
+    public function updateDeviceSchedule(Request $request, int $deviceId, int $scheduleId)
+    {
+        $device = $this->ownedDevice($request, $deviceId);
+        $schedule = $device->schedules()->whereKey($scheduleId)->firstOrFail();
+        $data = $this->validateSchedulePayload($request);
+        $schedule->update([
+            ...$data,
+            'next_run_at' => $data['enabled'] ? $data['scheduled_at'] : null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم تحديث الجدولة',
+            'schedule' => new SmartDeviceScheduleResource($schedule->fresh()),
+        ]);
+    }
+
+    public function destroyDeviceSchedule(Request $request, int $deviceId, int $scheduleId)
+    {
+        $device = $this->ownedDevice($request, $deviceId);
+        $device->schedules()->whereKey($scheduleId)->firstOrFail()->delete();
+
+        return response()->json(['status' => 'success', 'message' => 'تم حذف الجدولة']);
+    }
+
     public function destroyDevice(Request $request, int $id)
     {
         $device = $this->readableDevice($request, $id);
@@ -792,6 +848,28 @@ class SmartHomeController extends Controller
             'paired_at' => ['nullable', 'date'],
             'last_seen_at' => ['nullable', 'date'],
         ]);
+    }
+
+    private function validateSchedulePayload(Request $request): array
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:191'],
+            'command_code' => ['required', 'string', 'max:120'],
+            'command_value' => ['required', 'array'],
+            'scheduled_at' => ['required', 'date'],
+            'repeat_type' => ['required', Rule::in(['once', 'daily', 'weekly'])],
+            'repeat_days' => ['nullable', 'array'],
+            'repeat_days.*' => ['string', Rule::in(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'])],
+            'enabled' => ['required', 'boolean'],
+        ]);
+
+        if ($data['repeat_type'] === 'weekly' && empty($data['repeat_days'])) {
+            abort(422, 'اختر يومًا واحدًا على الأقل للتكرار الأسبوعي');
+        }
+
+        $data['repeat_days'] = array_values(array_unique($data['repeat_days'] ?? []));
+
+        return $data;
     }
 
     private function devicePayload(array $data, int $homeId, ?int $roomId, int $userId): array
