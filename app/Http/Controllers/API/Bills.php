@@ -690,6 +690,10 @@ private function getBills($statuses)
                         ->orderBy('id')
                         ->value($imageColumn);
                 }
+                $variantImage = trim((string) ($item->sizeColor?->image_url ?? ''));
+                if ($variantImage !== '') {
+                    $image = \App\Support\ApiImageUrl::normalize($variantImage);
+                }
                 $amanat = $item->amanatStocks
                     ->where('remaining_quantity', '>', 0)
                     ->values()
