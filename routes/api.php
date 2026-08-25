@@ -105,6 +105,7 @@ use App\Http\Controllers\API\MetaCatalogController;
 use App\Http\Controllers\API\MetaMessagingWebhookController;
 use App\Http\Controllers\API\SocialCenterController;
 use App\Http\Controllers\API\SmartHomeController;
+use App\Http\Controllers\API\SmartSceneController;
 
 /*
 |--------------------------------------------------------------------------
@@ -218,6 +219,13 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         Route::get('/devices/{id}/activity', [SmartHomeController::class, 'deviceActivity'])->whereNumber('id');
         Route::get('/event-logs', [SmartHomeController::class, 'eventLogs']);
         Route::post('/event-logs', [SmartHomeController::class, 'storeEventLog']);
+
+        Route::get('/scenes', [SmartSceneController::class, 'index']);
+        Route::post('/scenes', [SmartSceneController::class, 'store']);
+        Route::get('/scenes/{id}', [SmartSceneController::class, 'show'])->whereNumber('id');
+        Route::put('/scenes/{id}', [SmartSceneController::class, 'update'])->whereNumber('id');
+        Route::delete('/scenes/{id}', [SmartSceneController::class, 'destroy'])->whereNumber('id');
+        Route::post('/scenes/{id}/executions', [SmartSceneController::class, 'recordExecution'])->whereNumber('id');
     });
 
     // only for customers

@@ -32,4 +32,9 @@ class SmartRoom extends Model
     {
         return $this->hasMany(SmartDevice::class);
     }
+
+    public function scenes(): HasMany
+    {
+        return $this->hasMany(SmartScene::class);
+    }
 }
