@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -67,6 +68,7 @@ class MaintenanceServiceController extends Controller
             $service = DB::transaction(function () use ($request, $data) {
                 $service = MaintenanceService::create([
                     'name' => $data['name'],
+                    'description' => $data['description'] ?? null,
                     'price' => round((float) $data['price'], 2),
                     'is_active' => $request->boolean('is_active', true),
                 ]);
@@ -88,6 +90,10 @@ class MaintenanceServiceController extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Throwable $e) {
+            Log::error('maintenance_service.store_failed', [
+                'exception' => $e,
+            ]);
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'تعذر قراءة ملف الوسائط. تأكد من حجم الملف ونوعه ثم حاول مرة أخرى.',
@@ -122,6 +128,7 @@ class MaintenanceServiceController extends Controller
                 $service = MaintenanceService::with('media')->findOrFail($service);
                 $service->update([
                     'name' => $data['name'],
+                    'description' => $data['description'] ?? null,
                     'price' => round((float) $data['price'], 2),
                     'is_active' => $request->boolean('is_active', true),
                 ]);
@@ -159,6 +166,11 @@ class MaintenanceServiceController extends Controller
                 'message' => 'الخدمة غير موجودة',
             ], 200);
         } catch (\Throwable $e) {
+            Log::error('maintenance_service.update_failed', [
+                'service_id' => $service,
+                'exception' => $e,
+            ]);
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'تعذر قراءة ملف الوسائط. تأكد من حجم الملف ونوعه ثم حاول مرة أخرى.',
@@ -206,6 +218,7 @@ class MaintenanceServiceController extends Controller
 
         return $request->validate([
             'name' => 'required|string|max:255',
+            'description' => 'nullable|string|max:5000',
             'price' => 'required|numeric|min:0',
             'is_active' => 'nullable|boolean',
             'media' => 'nullable|array',
@@ -257,12 +270,20 @@ class MaintenanceServiceController extends Controller
                 ]);
             }
 
+            // Read the MIME type before moving the upload. The original temporary
+            // path no longer exists after move(), so inspecting it afterwards
+            // makes otherwise valid image/video uploads fail.
+            $mimeType = (string) ($file->getMimeType() ?: $file->getClientMimeType());
+            $videoExtensions = ['mp4', 'mov', 'qt', 'avi', 'wmv', 'mkv', 'webm', 'm4v', '3gp', '3g2'];
+            $fileType = str_starts_with($mimeType, 'video/') || in_array($extension, $videoExtensions, true)
+                ? 'video'
+                : 'image';
             $fileName = Str::uuid().'.'.$extension;
             $file->move(public_path(self::MEDIA_DIR), $fileName);
 
             $service->media()->create([
                 'file_name' => $fileName,
-                'file_type' => str_starts_with((string) $file->getMimeType(), 'video/') ? 'video' : 'image',
+                'file_type' => $fileType,
                 'sort_order' => ++$sort,
             ]);
         }
@@ -282,6 +303,7 @@ class MaintenanceServiceController extends Controller
         return [
             'id' => $service->id,
             'name' => $service->name,
+            'description' => (string) ($service->description ?? ''),
             'price' => round((float) $service->price, 2),
             'is_active' => (bool) $service->is_active,
             'media' => $service->media
