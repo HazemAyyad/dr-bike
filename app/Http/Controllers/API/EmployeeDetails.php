@@ -182,7 +182,7 @@ class EmployeeDetails extends Controller
             'Debts', 'Boxes Section', 'Expenses and Financial Affairs', 'Daily Boxes' => 'financial',
             'Checks', 'Checks Incoming View', 'Checks Outgoing View',
             'Checks Incoming Create', 'Checks Outgoing Create' => 'checks',
-            'Maintenance' => 'maintenance',
+            'Maintenance', 'Maintenance Services Settings' => 'maintenance',
             'Messages Section', 'Technical Support' => 'communication',
             'Smart Home' => 'smart_home',
             default => 'general',

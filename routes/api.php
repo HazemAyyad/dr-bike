@@ -680,10 +680,17 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::post('/maintenance/invoice/pdf' , [MaintenanceAPI::class,'invoicePdf']);
     Route::get('/maintenance/services' , [MaintenanceServiceController::class,'index']);
     Route::get('/maintenance/services/search' , [MaintenanceServiceController::class,'search']);
-    Route::post('/maintenance/services' , [MaintenanceServiceController::class,'store']);
-    Route::get('/maintenance/services/{service}' , [MaintenanceServiceController::class,'show'])->whereNumber('service');
-    Route::post('/maintenance/services/{service}' , [MaintenanceServiceController::class,'update'])->whereNumber('service');
-    Route::delete('/maintenance/services/{service}' , [MaintenanceServiceController::class,'destroy'])->whereNumber('service');
+    Route::post('/maintenance/services' , [MaintenanceServiceController::class,'store'])
+        ->middleware('check.permission:Maintenance Services Settings');
+    Route::get('/maintenance/services/{service}' , [MaintenanceServiceController::class,'show'])
+        ->whereNumber('service')
+        ->middleware('check.permission:Maintenance Services Settings');
+    Route::post('/maintenance/services/{service}' , [MaintenanceServiceController::class,'update'])
+        ->whereNumber('service')
+        ->middleware('check.permission:Maintenance Services Settings');
+    Route::delete('/maintenance/services/{service}' , [MaintenanceServiceController::class,'destroy'])
+        ->whereNumber('service')
+        ->middleware('check.permission:Maintenance Services Settings');
     Route::post('/maintenance/daily-box' , [MaintenanceAPI::class,'dailyBox']);
     Route::get('/maintenance/daily-session/current' , [MaintenanceAPI::class,'dailySessionCurrent']);
     Route::post('/maintenance/daily-session/open' , [MaintenanceAPI::class,'dailySessionOpen']);
