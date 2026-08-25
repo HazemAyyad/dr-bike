@@ -37,6 +37,8 @@ class Bills extends Controller
                 'products.*.quantity'=>['required','numeric','min:1'],
                 'products.*.purchase_price'=>['required','numeric','min:1'],
                 'products.*.manual_override'=>['nullable','boolean'],
+                'products.*.size_id'=>['nullable','integer','exists:sizes,id'],
+                'products.*.size_color_id'=>['nullable','integer','exists:size_colors,id'],
 
                 'total'=>'nullable|numeric|min:1',
                 'currency'=>'nullable|string',
@@ -433,7 +435,7 @@ class Bills extends Controller
         $search = trim((string) $request->input('search', ''));
 
         $rows = PurchaseAmanatStock::query()
-            ->with(['product:id,nameAr', 'bill:id,seller_id,customer_id,created_at,status,workflow_status', 'bill.seller:id,name', 'bill.customer:id,name'])
+            ->with(['product:id,nameAr', 'billItem.size:id,size', 'billItem.sizeColor:id,colorAr', 'bill:id,seller_id,customer_id,created_at,status,workflow_status', 'bill.seller:id,name', 'bill.customer:id,name'])
             ->when($status, fn ($q) => $q->where('status', $status))
             ->when($search !== '', function ($q) use ($search) {
                 $q->whereHas('product', fn ($p) => $p->where('nameAr', 'like', "%{$search}%"))
@@ -453,6 +455,10 @@ class Bills extends Controller
                     'bill_item_id' => $row->bill_item_id,
                     'product_id' => $row->product_id,
                     'product_name' => $row->product?->nameAr ?? '',
+                    'size_id' => $row->billItem?->size_id,
+                    'size_color_id' => $row->billItem?->size_color_id,
+                    'size_label' => $row->billItem?->size?->size,
+                    'color_label' => $row->billItem?->sizeColor?->colorAr,
                     'source_type' => $bill?->seller_id ? 'seller' : 'customer',
                     'source_id' => $bill?->seller_id ?: $bill?->customer_id,
                     'source_name' => $source?->name ?? '',
@@ -478,7 +484,7 @@ class Bills extends Controller
         $search = trim((string) $request->input('search', ''));
 
         $rows = BillItem::query()
-            ->with(['product:id,nameAr', 'bill:id,seller_id,customer_id,created_at,status,workflow_status', 'bill.seller:id,name', 'bill.customer:id,name'])
+            ->with(['product:id,nameAr', 'size:id,size', 'sizeColor:id,colorAr', 'bill:id,seller_id,customer_id,created_at,status,workflow_status', 'bill.seller:id,name', 'bill.customer:id,name'])
             ->where(function ($q) {
                 $q->where('missing_amount', '>', 0)
                     ->orWhere('custody_quantity', '>', 0)
@@ -509,6 +515,10 @@ class Bills extends Controller
                     'bill_item_id' => $item->id,
                     'product_id' => $item->product_id,
                     'product_name' => $item->product?->nameAr ?? '',
+                    'size_id' => $item->size_id,
+                    'size_color_id' => $item->size_color_id,
+                    'size_label' => $item->size?->size,
+                    'color_label' => $item->sizeColor?->colorAr,
                     'source_type' => $bill?->seller_id ? 'seller' : 'customer',
                     'source_id' => $bill?->seller_id ?: $bill?->customer_id,
                     'source_name' => $source?->name ?? '',
@@ -628,6 +638,8 @@ private function getBills($statuses)
 
             $bill = Bill::with([
                 'items.product',
+                'items.size',
+                'items.sizeColor',
                 'items.amanatStocks',
                 'seller',
                 'customer',
@@ -644,7 +656,7 @@ private function getBills($statuses)
                 ->values();
             $returns = \App\Models\ReturnModel::query()
                 ->where('bill_id', $bill->id)
-                ->with('items.product')
+                ->with(['items.product', 'items.size', 'items.sizeColor'])
                 ->latest('id')
                 ->get()
                 ->map(fn ($return) => [
@@ -659,6 +671,10 @@ private function getBills($statuses)
                         'id' => (int) $item->id,
                         'product_id' => (int) $item->product_id,
                         'product_name' => $item->product?->nameAr,
+                        'size_id' => $item->size_id,
+                        'size_color_id' => $item->size_color_id,
+                        'size_label' => $item->size?->size,
+                        'color_label' => $item->sizeColor?->colorAr,
                         'quantity' => (float) $item->quantity,
                         'price' => (float) $item->price,
                     ])->values(),
@@ -691,6 +707,10 @@ private function getBills($statuses)
                         'bill_item_id' => $item->id,
                         'product_id' => $item->product->id,
                         'product_name'=> $item->product->nameAr,
+                        'size_id' => $item->size_id,
+                        'size_color_id' => $item->size_color_id,
+                        'size_label' => $item->size?->size,
+                        'color_label' => $item->sizeColor?->colorAr,
                         'product_image' => $image ?: 'no image',
                         'quantity' => $item->quantity,
                         'ordered_quantity' => $item->ordered_quantity ?? $item->quantity,
@@ -1538,6 +1558,8 @@ private function getBills($statuses)
 
         $bill = Bill::with([
             'items.product',
+            'items.size',
+            'items.sizeColor',
             'seller',
             'customer',
             'payments' => fn ($query) => $query->oldest('paid_at')->oldest('id'),

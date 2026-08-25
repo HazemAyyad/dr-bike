@@ -54,4 +54,14 @@ class PurchaseReturn extends Model
     {
         return $this->belongsTo(BillItem::class, 'bill_item_id');
     }
+
+    public function size()
+    {
+        return $this->belongsTo(Size::class, 'size_id');
+    }
+
+    public function sizeColor()
+    {
+        return $this->belongsTo(SizeColor::class, 'size_color_id');
+    }
 }

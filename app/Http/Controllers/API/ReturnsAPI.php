@@ -82,13 +82,17 @@ class ReturnsAPI extends Controller
             $returnProducts = ReturnModel::where('status',$status)
             ->with('seller:id,name')
             ->with('customer:id,name')
-            ->with('items')
+            ->with(['items.product', 'items.size', 'items.sizeColor'])
             ->get();
 
             foreach($returnProducts as $returnProduct){
                 foreach($returnProduct->items as $item){
                     $item->product_name = $item->product->nameAr;
+                    $item->size_label = $item->size?->size;
+                    $item->color_label = $item->sizeColor?->colorAr;
                     $item->unsetRelation('product');
+                    $item->unsetRelation('size');
+                    $item->unsetRelation('sizeColor');
                 }
                 
             }

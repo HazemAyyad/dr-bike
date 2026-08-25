@@ -379,6 +379,9 @@
                 <td class="num">{{ $qty($orderedQuantity) }}</td>
                 <td>
                     <div class="product-name">{{ $item->product?->nameAr ?: 'لا يوجد اسم للمنتج' }}</div>
+                    @if($item->size?->size || $item->sizeColor?->colorAr)
+                        <div class="muted">{{ collect([$item->size?->size, $item->sizeColor?->colorAr])->filter()->implode(' / ') }}</div>
+                    @endif
                     @if(!empty($issueParts))
                         <div class="muted">{{ implode(' • ', $issueParts) }}</div>
                     @endif

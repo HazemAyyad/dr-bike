@@ -13,6 +13,8 @@ use App\Models\PurchasePayment;
 use App\Models\PurchasePriceHistory;
 use App\Models\PurchaseProduct;
 use App\Models\PurchaseReceipt;
+use App\Models\Size;
+use App\Models\SizeColor;
 use Illuminate\Support\Facades\DB;
 
 class PurchasingService
@@ -49,12 +51,17 @@ class PurchasingService
                 $product = Product::query()->findOrFail($item['product_id']);
                 $quantity = (float) $item['quantity'];
                 $price = (float) $item['purchase_price'];
+                [$sizeId, $sizeColorId] = $this->resolveProductVariant(
+                    $product,
+                    $item['size_id'] ?? null,
+                    $item['size_color_id'] ?? null,
+                );
 
                 $billItem = BillItem::create([
                     'bill_id' => $bill->id,
                     'product_id' => $product->id,
-                    'size_id' => $item['size_id'] ?? null,
-                    'size_color_id' => $item['size_color_id'] ?? null,
+                    'size_id' => $sizeId,
+                    'size_color_id' => $sizeColorId,
                     'quantity' => $quantity,
                     'ordered_quantity' => $quantity,
                     'received_owned_quantity' => 0,
@@ -414,7 +421,7 @@ class PurchasingService
         $latest = (clone $base)->latest('priced_at')->latest('id')->first();
         $lowest = (clone $base)->orderBy('unit_price')->orderByDesc('priced_at')->first();
         $history = (clone $base)
-            ->with(['seller:id,name', 'customer:id,name', 'receiptItem'])
+            ->with(['seller:id,name', 'customer:id,name', 'receiptItem', 'billItem.size:id,size', 'billItem.sizeColor:id,colorAr'])
             ->latest('priced_at')
             ->latest('id')
             ->limit(30)
@@ -453,6 +460,10 @@ class PurchasingService
             'party_type_label' => $partyTypeLabel,
             'party_name' => $partyName,
             'bill_id' => $row->bill_id,
+            'size_id' => $row->billItem?->size_id,
+            'size_color_id' => $row->billItem?->size_color_id,
+            'size_label' => $row->billItem?->size?->size,
+            'color_label' => $row->billItem?->sizeColor?->colorAr,
             'manual_override' => (bool) $row->manual_override,
             'reason_label' => $reasonLabel,
             'context_note' => $contextNote,
@@ -597,5 +608,41 @@ class PurchasingService
     private function normalizeCurrency(?string $currency): string
     {
         return $this->ledger->normalizeCurrency($currency);
+    }
+
+    /** @return array{0:int|null,1:int|null} */
+    private function resolveProductVariant(Product $product, mixed $sizeId, mixed $sizeColorId): array
+    {
+        $resolvedSizeId = $sizeId ? (int) $sizeId : null;
+        $resolvedSizeColorId = $sizeColorId ? (int) $sizeColorId : null;
+
+        if ($resolvedSizeColorId) {
+            $variant = SizeColor::query()->with('size')->findOrFail($resolvedSizeColorId);
+            if (! $variant->size || (int) $variant->size->itemId !== (int) $product->id) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'products' => ['اللون/الحجم المحدد لا يتبع المنتج.'],
+                ]);
+            }
+            if ($resolvedSizeId && $resolvedSizeId !== (int) $variant->sizeId) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'products' => ['اللون المحدد لا يتبع الحجم المحدد.'],
+                ]);
+            }
+            return [(int) $variant->sizeId, $resolvedSizeColorId];
+        }
+
+        if ($resolvedSizeId) {
+            $sizeBelongsToProduct = Size::query()
+                ->whereKey($resolvedSizeId)
+                ->where('itemId', $product->id)
+                ->exists();
+            if (! $sizeBelongsToProduct) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'products' => ['الحجم المحدد لا يتبع المنتج.'],
+                ]);
+            }
+        }
+
+        return [$resolvedSizeId, null];
     }
 }
