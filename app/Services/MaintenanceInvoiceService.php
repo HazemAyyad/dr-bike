@@ -104,14 +104,20 @@ class MaintenanceInvoiceService
             ->orderBy('id')
             ->get(['id', 'name', 'price']);
 
+        $matchedServiceLines = collect();
         $services = $catalog
-            ->filter(fn (MaintenanceService $service) => str_contains($description, (string) $service->name))
-            ->map(function (MaintenanceService $service) use ($descriptionLines) {
+            ->map(function (MaintenanceService $service) use ($descriptionLines, $matchedServiceLines) {
+                $pattern = '/^(?:\[SERVICE:\d+\]\s*)?'.preg_quote((string) $service->name, '/').'\s*-\s*([0-9,.]+)\s*$/u';
                 $line = $descriptionLines->first(
-                    fn (string $candidate) => str_contains($candidate, (string) $service->name)
+                    fn (string $candidate) => preg_match($pattern, $candidate) === 1
                 );
+                if (! is_string($line)) {
+                    return null;
+                }
+
+                $matchedServiceLines->push($line);
                 $price = (float) $service->price;
-                if (is_string($line) && preg_match('/-\s*([0-9,.]+)\s*$/u', $line, $matches) === 1) {
+                if (preg_match($pattern, $line, $matches) === 1) {
                     $price = (float) str_replace(',', '', $matches[1]);
                 }
 
@@ -121,14 +127,12 @@ class MaintenanceInvoiceService
                     'price' => round($price, 2),
                 ];
             })
+            ->filter()
             ->values()
             ->all();
 
-        $serviceNames = collect($services)->pluck('name')->filter()->values();
         $notes = $descriptionLines
-            ->reject(fn (string $line) => $serviceNames->contains(
-                fn (string $name) => str_contains($line, $name)
-            ))
+            ->reject(fn (string $line) => $matchedServiceLines->contains($line))
             ->implode("\n");
 
         return [$services, $notes];
