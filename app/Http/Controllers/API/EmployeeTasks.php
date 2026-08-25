@@ -9,6 +9,7 @@ use App\Services\EmployeeTasks\EmployeeLegacyDayInstanceService;
 use App\Services\EmployeeTasks\EmployeeTaskDetailsService;
 use App\Services\EmployeeTasks\EmployeeTaskListService;
 use App\Services\EmployeeTasks\EmployeeTaskAssigneeService;
+use App\Services\EmployeeTasks\EmployeeTaskCancellationService;
 use App\Services\EmployeeTasks\EmployeeTaskNotificationService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
 use App\Services\EmployeeTasks\EmployeeTaskWorkflowService;
@@ -40,7 +41,8 @@ class EmployeeTasks extends Controller
     public function __construct(
         private readonly EmployeeTaskListService $listService,
         private readonly EmployeeTaskWorkflowService $workflow,
-        private readonly EmployeeTaskTimelineService $timeline
+        private readonly EmployeeTaskTimelineService $timeline,
+        private readonly EmployeeTaskCancellationService $cancellationService
     ) {}
 
     private function employeeProfilePhoto($employee): string
@@ -852,9 +854,7 @@ private function getTasks($status)
         }
 
         if ($request->filled('occurrence_id')) {
-            $occurrence = EmployeeTaskOccurrence::with('employee.user', 'template')
-                ->findOrFail($request->occurrence_id);
-            $occurrence->update(['is_canceled' => 1]);
+            $occurrence = $this->cancellationService->cancelOccurrence((int) $request->occurrence_id);
 
             Logs::createLog(
                 'الغاء مهمة موظف',
@@ -869,11 +869,9 @@ private function getTasks($status)
             ], 200);
         }
 
-        $ongoingTask = EmployeeTask::with('employee.user')->findOrFail($request->employee_task_id);
-       
-        $ongoingTask->update(['is_canceled'=>1]);
+        $ongoingTask = $this->cancellationService->cancelLegacyTask((int) $request->employee_task_id);
         Logs::createLog('الغاء مهمة موظف',' الغاء مهمة موظف باسم'.' '.$ongoingTask->name
-        .' '.'التابعة للموظف'.' '. ($ongoingTask->employee->user->name ?? '')
+        .' '.'التابعة للموظف'.' '.($ongoingTask->employee?->user?->name ?? '')
         
         ,'employee_tasks');
             return response()->json([
@@ -942,12 +940,14 @@ private function getTasks($status)
         ]);
 
         if ($request->filled('occurrence_id')) {
-            $occurrence = EmployeeTaskOccurrence::findOrFail($request->occurrence_id);
-            $templateId = $occurrence->template_id;
-            EmployeeTaskOccurrence::where('template_id', $templateId)
-                ->update(['is_canceled' => 1]);
-            EmployeeTask::where('template_id', $templateId)
-                ->update(['is_canceled' => 1]);
+            $occurrence = $this->cancellationService->cancelOccurrenceSeries((int) $request->occurrence_id);
+
+            Logs::createLog(
+                'الغاء مهمة مع التكرار',
+                ' الغاء مهمة موظف مع التكرار باسم '.$occurrence->name
+                    .' التابعة للموظف '.($occurrence->employee?->user?->name ?? ''),
+                'employee_tasks'
+            );
 
             return response()->json([
                 'status' => 'success',
@@ -957,25 +957,12 @@ private function getTasks($status)
 
         $request->validate(['employee_task_id' => 'required|exists:employee_tasks,id']);
 
-        $ongoingTask = EmployeeTask::findOrFail($request->employee_task_id);
-
-        $ongoingTask->update(['is_canceled'=>1]);
-        
-        if(!$ongoingTask->parent_id){
-            EmployeeTask::where('parent_id', $ongoingTask->id)
-            ->update(['is_canceled' => 1]);    
-            }
-            else{
-               $parent = EmployeeTask::where('id', $ongoingTask->parent_id)->first();
-               $parent->update(['is_canceled' => 1]);
-               EmployeeTask::where('parent_id', $parent->id)->update(['is_canceled' => 1]);
-
-            } 
+        $ongoingTask = $this->cancellationService->cancelLegacySeries((int) $request->employee_task_id);
 
 
         Logs::createLog('الغاء مهمة مع التكرار',' الغاء مهمة موظف مع التكرار باسم'.' '.$ongoingTask->name
         
-        .' '.'التابعة للموظف'.' '.$ongoingTask->employee->user->name
+        .' '.'التابعة للموظف'.' '.($ongoingTask->employee?->user?->name ?? '')
         
         ,
         'employee_tasks');

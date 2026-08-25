@@ -9,6 +9,7 @@ use App\Models\EmployeeTaskTemplate;
 use App\Models\EmployeeTaskTimeline;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class EmployeeTaskRecurrenceService
 {
@@ -25,24 +26,34 @@ class EmployeeTaskRecurrenceService
      */
     public function ensureOccurrences(EmployeeTaskTemplate $template, ?Carbon $from = null, ?Carbon $to = null): Collection
     {
-        if (in_array($template->recurrence_type, ['noRepeat', self::ONE_TIME_PERSISTENT], true)) {
-            return $this->ensureSingleOccurrence($template);
-        }
+        return DB::transaction(function () use ($template, $from, $to) {
+            $lockedTemplate = EmployeeTaskTemplate::query()
+                ->lockForUpdate()
+                ->find($template->id);
 
-        $from = ($from ?? now())->startOfDay();
-        $to = ($to ?? $from->copy()->addDays(self::HORIZON_DAYS))->endOfDay();
-
-        $dates = $this->resolveDatesInRange($template, $from, $to);
-        $created = collect();
-
-        foreach ($dates as $date) {
-            $occurrence = $this->findOrCreateOccurrenceForDate($template, $date);
-            if ($occurrence) {
-                $created->push($occurrence);
+            if (! $lockedTemplate || ! $lockedTemplate->is_active) {
+                return collect();
             }
-        }
 
-        return $created;
+            if (in_array($lockedTemplate->recurrence_type, ['noRepeat', self::ONE_TIME_PERSISTENT], true)) {
+                return $this->ensureSingleOccurrence($lockedTemplate);
+            }
+
+            $rangeStart = ($from ?? now())->copy()->startOfDay();
+            $rangeEnd = ($to ?? $rangeStart->copy()->addDays(self::HORIZON_DAYS))->copy()->endOfDay();
+
+            $dates = $this->resolveDatesInRange($lockedTemplate, $rangeStart, $rangeEnd);
+            $created = collect();
+
+            foreach ($dates as $date) {
+                $occurrence = $this->findOrCreateOccurrenceForDate($lockedTemplate, $date);
+                if ($occurrence) {
+                    $created->push($occurrence);
+                }
+            }
+
+            return $created;
+        });
     }
 
     public function ensureSingleOccurrence(EmployeeTaskTemplate $template): Collection
