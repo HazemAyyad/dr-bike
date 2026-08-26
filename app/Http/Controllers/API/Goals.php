@@ -5,7 +5,6 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Goal;
 use App\Models\GoalCategory;
-use App\Models\GoalDailySnapshot;
 use App\Models\GoalEmployeeShare;
 use App\Models\GoalLog;
 use App\Models\GoalPeople;
@@ -180,31 +179,31 @@ class Goals extends Controller
                     'employee_name' => $row->employee?->user?->name,
                 ]);
             $goal['status_meta'] = $this->goalNotifications->decorateGoal($goal);
-            $snapshots = GoalDailySnapshot::where('goal_id', $goal->id)
-                ->orderBy('snapshot_date')
-                ->get(['snapshot_date', 'current_value', 'achievement_percentage'])
-                ->keyBy(fn ($row) => optional($row->snapshot_date)->toDateString() ?? (string) $row->snapshot_date);
-
             $startDate = $goal->start_date ? Carbon::parse($goal->start_date)->startOfDay() : Carbon::parse($goal->created_at)->startOfDay();
             $dueDate = $goal->due_date ? Carbon::parse($goal->due_date)->startOfDay() : now()->startOfDay();
             if ($dueDate->lt($startDate)) {
                 $dueDate = $startDate->copy();
             }
-            $today = now()->toDateString();
+            $today = now(config('app.timezone'))->startOfDay();
+            $targetedValue = (float) ($goal->targeted_value ?? 0);
             $goal['progress_history'] = collect(CarbonPeriod::create($startDate, $dueDate))
-                ->map(function (Carbon $date) use ($snapshots, $goal, $today) {
+                ->map(function (Carbon $date) use ($goal, $today, $targetedValue) {
                     $key = $date->toDateString();
-                    $snapshot = $snapshots->get($key);
-                    $useCurrentGoal = $key === $today;
+                    $hasData = $date->lte($today);
+                    $currentValue = 0.0;
+                    if ($hasData) {
+                        $historyGoal = clone $goal;
+                        $historyGoal->setAttribute('due_date', $key);
+                        $currentValue = round($this->calculator->calculate($historyGoal), 4);
+                    }
+
                     return [
                         'date' => $key,
-                        'current_value' => $snapshot || $useCurrentGoal
-                            ? number_format((float) ($snapshot?->current_value ?? $goal->current_value), 2, '.', '')
-                            : '',
-                        'achievement_percentage' => $snapshot || $useCurrentGoal
-                            ? number_format((float) ($snapshot?->achievement_percentage ?? $goal->achievement_percentage), 2, '.', '')
-                            : '',
-                        'has_data' => (bool) ($snapshot || $useCurrentGoal),
+                        'current_value' => $hasData ? number_format($currentValue, 2, '.', '') : '',
+                        'achievement_percentage' => $hasData && $targetedValue > 0
+                            ? number_format(round(($currentValue / $targetedValue) * 100, 2), 2, '.', '')
+                            : ($hasData ? '0.00' : ''),
+                        'has_data' => $hasData,
                     ];
                 })
                 ->values();
