@@ -65,4 +65,8 @@ class BillItem extends Model
     public function amanatStocks(){
         return $this->hasMany(PurchaseAmanatStock::class);
     }
+
+    public function purchaseReturnItems(){
+        return $this->hasMany(PurchaseReturn::class, 'bill_item_id');
+    }
 }

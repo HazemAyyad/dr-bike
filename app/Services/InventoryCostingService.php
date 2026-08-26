@@ -58,12 +58,13 @@ class InventoryCostingService
         ?int $sizeId = null,
         ?int $userId = null,
         ?string $note = null,
+        string $movementType = ProductStockMovement::TYPE_PURCHASE,
     ): InventoryCostLayer {
         if ($quantity <= 0) {
             throw new \InvalidArgumentException('Quantity must be positive.');
         }
 
-        return DB::transaction(function () use ($product, $quantity, $unitCost, $currency, $sourceType, $sourceId, $sizeColorId, $sizeId, $userId, $note) {
+        return DB::transaction(function () use ($product, $quantity, $unitCost, $currency, $sourceType, $sourceId, $sizeColorId, $sizeId, $userId, $note, $movementType) {
             $layer = InventoryCostLayer::create([
                 'product_id' => $product->id,
                 'size_id' => $sizeId,
@@ -80,7 +81,7 @@ class InventoryCostingService
             $this->stockService->adjustStock(
                 product: $product,
                 quantityDelta: (int) round($quantity),
-                type: ProductStockMovement::TYPE_PURCHASE,
+                type: $movementType,
                 sizeColorId: $sizeColorId,
                 referenceType: $sourceType,
                 referenceId: $sourceId,

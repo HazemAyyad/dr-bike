@@ -724,8 +724,9 @@ private function getBills($statuses)
                     'total' => (float) $return->total,
                     'currency' => $return->currency,
                     'status' => $return->status,
-                    'resolution' => $return->resolution,
-                    'refund_box_id' => $return->refund_box_id ? (int) $return->refund_box_id : null,
+                    'number' => $return->number,
+                    'settled_amount' => (float) $return->settled_amount,
+                    'reason' => $return->reason,
                     'created_at' => $return->created_at?->format('Y-m-d H:i:s'),
                     'items' => $return->items->map(fn ($item) => [
                         'id' => (int) $item->id,
@@ -737,6 +738,7 @@ private function getBills($statuses)
                         'color_label' => $item->sizeColor?->colorAr,
                         'quantity' => (float) $item->quantity,
                         'price' => (float) $item->price,
+                        'line_total' => (float) $item->line_total,
                     ])->values(),
                 ])->values();
 

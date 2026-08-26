@@ -55,4 +55,8 @@ class Bill extends Model
     public function activityLogs(){
         return $this->hasMany(PurchaseActivityLog::class,'bill_id');
     }
+
+    public function purchaseReturns(){
+        return $this->hasMany(ReturnModel::class, 'bill_id');
+    }
 }

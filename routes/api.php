@@ -1160,11 +1160,20 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
 
     Route::post('/add/quantity/bill' , [Bills::class,'createBillQuantity']);
    
-    // returns
-    Route::post('/add/return/purchase' , [ReturnsAPI::class,'createReturnPurchase']);
-    Route::get('/get/pending/return/purchases' , [ReturnsAPI::class,'getPendingReturns']);
-    Route::get('/get/delivered/return/purchases' , [ReturnsAPI::class,'getDeliveredReturns']);
-    Route::post('/change/return/purchase/to/delivered' , [ReturnsAPI::class,'changeToDelivered']);
+    // Purchase returns workflow
+    Route::get('/purchase/returns', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'index']);
+    Route::post('/purchase/returns', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'store']);
+    Route::get('/purchase/returns/returnable-bills', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'returnableBills']);
+    Route::get('/purchase/returns/bills/{bill}/available-items', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'availableItems']);
+    Route::get('/purchase/returns/{purchaseReturn}', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'show']);
+    Route::put('/purchase/returns/{purchaseReturn}', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'update']);
+    Route::delete('/purchase/returns/{purchaseReturn}', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'destroy']);
+    Route::post('/purchase/returns/{purchaseReturn}/confirm', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'confirm']);
+    Route::post('/purchase/returns/{purchaseReturn}/deliver', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'deliver']);
+    Route::post('/purchase/returns/{purchaseReturn}/settle', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'settle']);
+    Route::post('/purchase/returns/{purchaseReturn}/cancel', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'cancel']);
+    Route::post('/purchase/returns/{purchaseReturn}/attachments', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'uploadAttachments']);
+    Route::get('/purchase/returns/{purchaseReturn}/print', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'print']);
 
 });
 

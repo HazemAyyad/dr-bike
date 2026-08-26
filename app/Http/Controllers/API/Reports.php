@@ -77,7 +77,7 @@ class Reports extends Controller
         $totalBills = Bill::where('status','finished')->sum('total'); // قيمة المشتريات
         $totalOngoingProjects = Project::where('status','ongoing')->count(); // عدد المشاريع
         $totalExpenses = Expense::sum('price'); // اجمالي المصاريف
-        $totalReturns = ReturnModel::sum('total'); // مردودات المشتريات
+        $totalReturns = ReturnModel::whereIn('status', ['confirmed', 'pending', 'delivered', 'settled'])->sum('total'); // مردودات المشتريات
 
         $totalChecksOnUs = OutgoingCheck::sum('total'); // شيكات علينا
 
@@ -736,7 +736,8 @@ class Reports extends Controller
             })
             ->sum('total_cost');
         $purchases = (float) Bill::whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])->sum('total');
-        $purchaseReturns = (float) ReturnModel::whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])->sum('total');
+        $purchaseReturns = (float) ReturnModel::whereIn('status', ['confirmed', 'pending', 'delivered', 'settled'])
+            ->whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])->sum('total');
         $earnedDiscount = (float) Bill::whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])->sum('discount');
         $expenses = (float) Expense::whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])->sum('price');
         $inventory = $this->inventoryReportPayload($from, $to);
