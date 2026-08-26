@@ -44,14 +44,18 @@ class GoalCalculationService
 
     private function salesValue(Goal $goal): float
     {
-        return (float) $this->salesItemsQuery($goal)
+        $salesOrdersValue = (float) $this->salesItemsQuery($goal)
             ->sum(DB::raw($this->netSoldQuantityExpression().' * sales_order_items.unit_price'));
+
+        return $salesOrdersValue + $this->instantSalesValue($goal);
     }
 
     private function salesPieces(Goal $goal): float
     {
-        return (float) $this->salesItemsQuery($goal)
+        $salesOrdersPieces = (float) $this->salesItemsQuery($goal)
             ->sum(DB::raw($this->netSoldQuantityExpression()));
+
+        return $salesOrdersPieces + $this->instantSalesPieces($goal);
     }
 
     private function netProfit(Goal $goal): float
@@ -95,7 +99,7 @@ class GoalCalculationService
             });
         });
 
-        return $revenue - (float) $cost;
+        return $revenue - ((float) $cost + $this->instantSalesCost($goal));
     }
 
     private function purchasePieces(Goal $goal): float
@@ -204,6 +208,92 @@ class GoalCalculationService
         return $this->applyProductFilters($query, $goal, 'sales_order_items.product_id');
     }
 
+    private function instantSalesValue(Goal $goal): float
+    {
+        if (! Schema::hasTable('instant_sales')) {
+            return 0.0;
+        }
+
+        if ($this->usesDetailedProductFilters($goal)) {
+            return (float) $this->instantSaleLinesQuery($goal)
+                ->sum(DB::raw('COALESCE(instant_sales.cost, 0) * COALESCE(instant_sales.quantity, 0)'));
+        }
+
+        return (float) $this->instantSaleRootsQuery($goal)
+            ->sum(DB::raw('COALESCE(instant_sales.total_cost, COALESCE(instant_sales.cost, 0) * COALESCE(instant_sales.quantity, 0), 0)'));
+    }
+
+    private function instantSalesPieces(Goal $goal): float
+    {
+        if (! Schema::hasTable('instant_sales')) {
+            return 0.0;
+        }
+
+        return (float) $this->instantSaleLinesQuery($goal)
+            ->sum(DB::raw('COALESCE(instant_sales.quantity, 0)'));
+    }
+
+    private function instantSalesCost(Goal $goal): float
+    {
+        if (! Schema::hasTable('instant_sales') || ! Schema::hasTable('product_stock_movements')) {
+            return 0.0;
+        }
+
+        $lineIds = $this->instantSaleLinesQuery($goal)
+            ->pluck('instant_sales.id');
+
+        if ($lineIds->isEmpty()) {
+            return 0.0;
+        }
+
+        return (float) DB::table('product_stock_movements')
+            ->where('reference_type', 'instant_sale')
+            ->whereIn('reference_id', $lineIds)
+            ->sum(DB::raw('ABS(COALESCE(total_cost, 0))'));
+    }
+
+    private function instantSaleRootsQuery(Goal $goal): Builder
+    {
+        [$start, $end] = $this->dateRange($goal);
+
+        return DB::table('instant_sales')
+            ->whereNull('instant_sales.parent_id')
+            ->whereBetween('instant_sales.created_at', [$start, $end])
+            ->where(function ($query) {
+                $query->whereNull('instant_sales.status')
+                    ->orWhere('instant_sales.status', '!=', 'cancelled');
+            })
+            ->whereNull('instant_sales.cancelled_at')
+            ->where(function ($query) {
+                $query->whereNull('instant_sales.sale_kind')
+                    ->orWhere('instant_sales.sale_kind', '!=', 'adjustment');
+            })
+            ->whereNull('instant_sales.sales_order_id');
+    }
+
+    private function instantSaleLinesQuery(Goal $goal): Builder
+    {
+        [$start, $end] = $this->dateRange($goal);
+
+        $query = DB::table('instant_sales')
+            ->leftJoin('instant_sales as parent_sales', 'parent_sales.id', '=', 'instant_sales.parent_id')
+            ->leftJoin('products', 'products.id', '=', 'instant_sales.product_id')
+            ->whereNotNull('instant_sales.product_id')
+            ->whereBetween(DB::raw('COALESCE(parent_sales.created_at, instant_sales.created_at)'), [$start, $end])
+            ->where(function ($query) {
+                $query->whereNull('instant_sales.status')
+                    ->orWhere('instant_sales.status', '!=', 'cancelled');
+            })
+            ->whereNull('instant_sales.cancelled_at')
+            ->where(function ($query) {
+                $query->whereNull('instant_sales.sale_kind')
+                    ->orWhere('instant_sales.sale_kind', '!=', 'adjustment');
+            })
+            ->whereNull(DB::raw('COALESCE(parent_sales.sales_order_id, instant_sales.sales_order_id)'));
+
+        return $this->applyProductFilters($query, $goal, 'instant_sales.product_id');
+    }
+
     private function purchaseReceiptItemsQuery(Goal $goal): Builder
     {
         [$start, $end] = $this->dateRange($goal);
@@ -257,6 +347,12 @@ class GoalCalculationService
                 ->pluck('store_section_id')),
             default => $query,
         };
+    }
+
+    private function usesDetailedProductFilters(Goal $goal): bool
+    {
+        return $goal->calculation_mode === 'detailed'
+            && in_array($goal->form, ['products', 'main_categories', 'sub_categories', 'store_sections'], true);
     }
 
     private function dateRange(Goal $goal): array
