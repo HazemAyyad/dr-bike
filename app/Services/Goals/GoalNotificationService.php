@@ -265,7 +265,7 @@ class GoalNotificationService
     private function ensureTodaySnapshots(Collection $goals, Carbon $now): void
     {
         foreach ($goals as $goal) {
-            GoalDailySnapshot::firstOrCreate(
+            GoalDailySnapshot::updateOrCreate(
                 [
                     'goal_id' => $goal->id,
                     'snapshot_date' => $now->toDateString(),

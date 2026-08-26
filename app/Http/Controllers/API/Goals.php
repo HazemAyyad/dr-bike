@@ -195,7 +195,7 @@ class Goals extends Controller
                 ->map(function (Carbon $date) use ($snapshots, $goal, $today) {
                     $key = $date->toDateString();
                     $snapshot = $snapshots->get($key);
-                    $useCurrentGoal = ! $snapshot && $key === $today;
+                    $useCurrentGoal = $key === $today;
                     return [
                         'date' => $key,
                         'current_value' => $snapshot || $useCurrentGoal
