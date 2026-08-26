@@ -912,8 +912,17 @@ class EmployeeTaskOperationsController extends Controller
             $request->validate(['sub_task_id' => 'required|exists:employee_task_occurrence_subtasks,id']);
             $sub = EmployeeTaskOccurrenceSubtask::findOrFail($request->sub_task_id);
 
-            $actorId = (int) (auth()->user()?->employee?->id ?? 0);
-            if ($actorId <= 0 || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) {
+            $user = $request->user();
+            $actorId = (int) ($user?->employee?->id ?? 0);
+            $canReviewEmployeeTasks = $user?->type === 'admin';
+            if (! $canReviewEmployeeTasks && $user?->employee) {
+                $canReviewEmployeeTasks = (bool) $user->employee->permissions()
+                    ->whereHas('permission', fn ($q) => $q
+                        ->where('name_en', 'Employee Tasks')
+                        ->orWhere('id', 7))
+                    ->exists();
+            }
+            if (! $sub->occurrence || ((! $actorId || ! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($sub->occurrence, $actorId)) && ! $canReviewEmployeeTasks)) {
                 return response()->json(['status' => 'error', 'message' => __('messages.unauthorized')], 200);
             }
 

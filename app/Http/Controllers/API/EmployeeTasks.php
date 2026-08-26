@@ -2204,9 +2204,18 @@ public function updateEmployeeTask(Request $request)
             ]);
 
             $subTask = EmployeeSubTask::with('employeeTask')->findOrFail($request->sub_task_id);
-            $actorId = (int) (auth()->user()->employee->id ?? 0);
+            $user = $request->user();
+            $actorId = (int) ($user?->employee?->id ?? 0);
+            $canReviewEmployeeTasks = $user?->type === 'admin';
+            if (! $canReviewEmployeeTasks && $user?->employee) {
+                $canReviewEmployeeTasks = (bool) $user->employee->permissions()
+                    ->whereHas('permission', fn ($q) => $q
+                        ->where('name_en', 'Employee Tasks')
+                        ->orWhere('id', 7))
+                    ->exists();
+            }
             $parent = $subTask->employeeTask;
-            if (! $parent || ! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, $actorId)) {
+            if (! $parent || (! app(EmployeeTaskAssigneeService::class)->isAssignee($parent, $actorId) && ! $canReviewEmployeeTasks)) {
                 return response()->json([
                     'status' => 'error',
                     'message' => __('messages.unauthorized'),

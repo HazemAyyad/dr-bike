@@ -535,7 +535,7 @@ class EmployeeTaskWorkflowService
 
     public function undoSubtaskCompletion(EmployeeSubTask $subTask): EmployeeSubTask
     {
-        if ($subTask->status !== EmployeeTaskStatus::Completed->value) {
+        if (! in_array($subTask->status, [EmployeeTaskStatus::Completed->value, 'rejected'], true)) {
             throw new \RuntimeException(__('messages.subtask_not_completed'));
         }
 
@@ -545,6 +545,9 @@ class EmployeeTaskWorkflowService
         }
 
         $payload = ['status' => EmployeeTaskStatus::Pending->value];
+        if (Schema::hasColumn('sub_employee_tasks', 'rejection_reason')) {
+            $payload['rejection_reason'] = null;
+        }
         if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
             $payload['completed_by_employee_id'] = null;
         }
@@ -566,7 +569,7 @@ class EmployeeTaskWorkflowService
     public function undoOccurrenceSubtaskCompletion(
         EmployeeTaskOccurrenceSubtask $subTask
     ): EmployeeTaskOccurrenceSubtask {
-        if ($subTask->status !== EmployeeTaskStatus::Completed->value) {
+        if (! in_array($subTask->status, [EmployeeTaskStatus::Completed->value, 'rejected'], true)) {
             throw new \RuntimeException(__('messages.subtask_not_completed'));
         }
 
@@ -576,6 +579,9 @@ class EmployeeTaskWorkflowService
         }
 
         $payload = ['status' => EmployeeTaskStatus::Pending->value];
+        if (Schema::hasColumn('employee_task_occurrence_subtasks', 'rejection_reason')) {
+            $payload['rejection_reason'] = null;
+        }
         if (Schema::hasColumn('employee_task_occurrence_subtasks', 'completed_by_employee_id')) {
             $payload['completed_by_employee_id'] = null;
         }
