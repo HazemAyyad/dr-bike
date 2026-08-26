@@ -13,6 +13,8 @@ use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class PurchaseReturnsController extends Controller
 {
@@ -44,20 +46,35 @@ class PurchaseReturnsController extends Controller
             });
         }
 
-        return response()->json(['status' => 'success', 'purchase_returns' => $query->paginate($data['per_page'] ?? 25)]);
+        $page = $query->paginate($data['per_page'] ?? 25);
+        $page->getCollection()->transform(fn ($return) => $this->withProductImages($return));
+        return response()->json(['status' => 'success', 'purchase_returns' => $page]);
     }
 
     public function show(ReturnModel $purchaseReturn)
     {
         $purchaseReturn->load([
-            'bill', 'seller', 'customer', 'items.product', 'items.size', 'items.sizeColor', 'settlements',
+            'bill', 'seller', 'customer', 'items.product', 'items.size', 'items.sizeColor', 'settlements', 'activityLogs',
         ]);
         $attachmentService = app(PurchaseAttachmentService::class);
         $attachments = PurchaseAttachment::query()
             ->where('attachable_type', 'purchase_return')
             ->where('attachable_id', $purchaseReturn->id)
             ->latest('id')->get()->map(fn ($item) => $attachmentService->format($item))->values();
-        return response()->json(['status' => 'success', 'purchase_return' => $purchaseReturn, 'attachments' => $attachments]);
+        $this->withProductImages($purchaseReturn);
+        return response()->json([
+            'status' => 'success',
+            'purchase_return' => $purchaseReturn,
+            'attachments' => $attachments,
+            'timeline' => $purchaseReturn->activityLogs->map(fn ($log) => [
+                'id' => $log->id,
+                'event' => $log->event,
+                'title' => $log->title,
+                'description' => $log->description,
+                'created_by' => $log->created_by,
+                'created_at' => $log->created_at?->format('Y-m-d H:i:s'),
+            ])->values(),
+        ]);
     }
 
     public function availableItems(Bill $bill, PurchaseReturnService $service)
@@ -65,7 +82,10 @@ class PurchaseReturnsController extends Controller
         return response()->json([
             'status' => 'success',
             'bill' => $bill->load(['seller:id,name', 'customer:id,name']),
-            'items' => $service->availableItems($bill),
+            'items' => collect($service->availableItems($bill))->map(function ($item) {
+                $item['product_image'] = $this->productImage($item['product_id'], $item['size_color_id'] ?? null);
+                return $item;
+            })->values(),
         ]);
     }
 
@@ -182,5 +202,26 @@ class PurchaseReturnsController extends Controller
             'items.*.reason' => ['nullable', 'string', 'max:60'],
             'items.*.notes' => ['nullable', 'string', 'max:1000'],
         ]);
+    }
+
+    private function withProductImages(ReturnModel $return): ReturnModel
+    {
+        $return->items->each(function ($item) {
+            $item->setAttribute('product_image', $this->productImage($item->product_id, $item->size_color_id));
+        });
+        return $return;
+    }
+
+    private function productImage($productId, $sizeColorId = null): ?string
+    {
+        if ($sizeColorId) {
+            $variant = DB::table('size_colors')->where('id', $sizeColorId)->value('image_url');
+            if (trim((string) $variant) !== '') return \App\Support\ApiImageUrl::normalize($variant);
+        }
+        if (! Schema::hasTable('normal_image_products')) return null;
+        $productColumn = Schema::hasColumn('normal_image_products', 'itemId') ? 'itemId' : 'product_id';
+        $imageColumn = Schema::hasColumn('normal_image_products', 'imageUrl') ? 'imageUrl' : 'image_url';
+        $image = DB::table('normal_image_products')->where($productColumn, $productId)->orderBy('id')->value($imageColumn);
+        return trim((string) $image) === '' ? null : \App\Support\ApiImageUrl::normalize($image);
     }
 }

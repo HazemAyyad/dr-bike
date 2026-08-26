@@ -52,4 +52,11 @@ class ReturnModel extends Model
         return $this->hasMany(PurchaseReturnSettlement::class, 'return_id');
     }
 
+    public function activityLogs()
+    {
+        return $this->hasMany(PurchaseActivityLog::class, 'source_id')
+            ->where('source_type', 'purchase_return')
+            ->latest('id');
+    }
+
 }
