@@ -191,15 +191,22 @@ class Goals extends Controller
                     $key = $date->toDateString();
                     $hasData = $date->lte($today);
                     $currentValue = 0.0;
+                    $dailyValue = 0.0;
                     if ($hasData) {
                         $historyGoal = clone $goal;
                         $historyGoal->setAttribute('due_date', $key);
                         $currentValue = round($this->calculator->calculate($historyGoal), 4);
+
+                        $dayGoal = clone $goal;
+                        $dayGoal->setAttribute('start_date', $key);
+                        $dayGoal->setAttribute('due_date', $key);
+                        $dailyValue = round($this->calculator->calculate($dayGoal), 4);
                     }
 
                     return [
                         'date' => $key,
                         'current_value' => $hasData ? number_format($currentValue, 2, '.', '') : '',
+                        'daily_value' => $hasData ? number_format($dailyValue, 2, '.', '') : '',
                         'achievement_percentage' => $hasData && $targetedValue > 0
                             ? number_format(round(($currentValue / $targetedValue) * 100, 2), 2, '.', '')
                             : ($hasData ? '0.00' : ''),
@@ -236,12 +243,16 @@ class Goals extends Controller
                 'id',
                 'scope',
                 'calculation_mode',
+                'form',
                 'name',
                 'type',
                 'achievement_percentage',
                 'targeted_value',
                 'current_value',
                 'is_canceled',
+                'employee_id',
+                'seller_id',
+                'box_id',
                 'created_at',
                 'start_date',
                 'due_date',
