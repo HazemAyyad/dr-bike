@@ -5,8 +5,10 @@ namespace Tests\Feature;
 use App\Models\Customer;
 use App\Models\Debt;
 use App\Models\DebtTransaction;
+use App\Models\InstantSale;
 use App\Models\Seller;
 use App\Models\User;
+use App\Services\DebtLedgerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Laravel\Sanctum\Sanctum;
@@ -188,5 +190,49 @@ class DebtLedgerTest extends TestCase
 
         $transaction = DebtTransaction::where('source_id', $debt->id)->first();
         $this->assertEquals('taken', $transaction->type);
+    }
+
+    public function test_instant_sale_debt_moves_when_customer_is_changed(): void
+    {
+        $oldCustomer = Customer::create(['name' => 'Osama Amer', 'phone' => '0599000101', 'is_canceled' => false]);
+        $newCustomer = Customer::create(['name' => 'Anas Amer', 'phone' => '0599000102', 'is_canceled' => false]);
+
+        $oldCustomerTransaction = DebtTransaction::create([
+            'customer_id' => $oldCustomer->id,
+            'type' => 'taken',
+            'amount' => 100,
+            'currency' => 'شيكل',
+            'balance_after' => 100,
+            'transaction_date' => '2026-08-01',
+            'source' => 'manual',
+        ]);
+
+        $sale = InstantSale::create([
+            'total_cost' => 40,
+            'buyer_type' => 'customer',
+            'buyer_id' => $oldCustomer->id,
+            'buyer_name' => $oldCustomer->name,
+            'status' => 'active',
+        ]);
+
+        $ledger = app(DebtLedgerService::class);
+        $ledger->syncInstantSaleToLedger($sale);
+
+        $sale->update([
+            'buyer_id' => $newCustomer->id,
+            'buyer_name' => $newCustomer->name,
+        ]);
+        $ledger->syncInstantSaleToLedger($sale->fresh());
+
+        $this->assertDatabaseHas('debt_transactions', [
+            'source' => 'instant_sale',
+            'source_id' => $sale->id,
+            'customer_id' => $newCustomer->id,
+            'seller_id' => null,
+            'type' => 'given',
+            'amount' => 40,
+            'balance_after' => -40,
+        ]);
+        $this->assertSame(100.0, (float) $oldCustomerTransaction->fresh()->balance_after);
     }
 }

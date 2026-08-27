@@ -1575,6 +1575,8 @@ class DebtLedgerService
     ): DebtTransaction {
         return DB::transaction(function () use ($transaction, $data, $logActivity) {
             $before = $this->activity()->transactionSnapshot($transaction);
+            $oldCustomerId = $transaction->customer_id ? (int) $transaction->customer_id : null;
+            $oldSellerId = $transaction->seller_id ? (int) $transaction->seller_id : null;
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
                 $this->reverseBoxMovement(
                     $transaction,
@@ -1600,13 +1602,28 @@ class DebtLedgerService
                 $updatePayload['box_id'] = $data['box_id'];
             }
 
+            if (array_key_exists('customer_id', $data)) {
+                $updatePayload['customer_id'] = $data['customer_id'];
+            }
+
+            if (array_key_exists('seller_id', $data)) {
+                $updatePayload['seller_id'] = $data['seller_id'];
+            }
+
             $transaction->update($updatePayload);
 
             if (array_key_exists('receipt_images', $data) && $data['receipt_images'] !== null) {
                 $transaction->update(['receipt_images' => $data['receipt_images']]);
             }
 
-            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+            // A source document may be reassigned to another person. Recalculate
+            // both ledgers so the debt is removed from the old owner and added to
+            // the new one with correct running balances.
+            $this->recalculateBalances($oldCustomerId, $oldSellerId);
+            if ($oldCustomerId !== ($transaction->customer_id ? (int) $transaction->customer_id : null)
+                || $oldSellerId !== ($transaction->seller_id ? (int) $transaction->seller_id : null)) {
+                $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+            }
 
             $transaction = $transaction->fresh(['customer', 'seller']);
 
