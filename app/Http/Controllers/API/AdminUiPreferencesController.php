@@ -19,6 +19,7 @@ class AdminUiPreferencesController extends Controller
                     'hidden_button_keys' => $preferences['admin_dashboard']['hidden_button_keys']
                         ?? $preferences['admin_dashboard']['hidden_button_ids']
                         ?? [],
+                    'button_order_keys' => $preferences['admin_dashboard']['button_order_keys'] ?? [],
                 ],
             ],
         ], 200);
@@ -31,14 +32,19 @@ class AdminUiPreferencesController extends Controller
                 'admin_dashboard' => ['sometimes', 'array'],
                 'admin_dashboard.hidden_button_keys' => ['sometimes', 'array'],
                 'admin_dashboard.hidden_button_keys.*' => ['string', 'max:128'],
+                'admin_dashboard.button_order_keys' => ['sometimes', 'array'],
+                'admin_dashboard.button_order_keys.*' => ['string', 'max:128'],
             ]);
 
             $user = $request->user();
             $preferences = $user->ui_preferences ?? [];
             $hiddenButtonKeys = $data['admin_dashboard']['hidden_button_keys'] ?? [];
+            $buttonOrderKeys = $data['admin_dashboard']['button_order_keys']
+                ?? ($preferences['admin_dashboard']['button_order_keys'] ?? []);
 
             $preferences['admin_dashboard'] = [
                 'hidden_button_keys' => array_values(array_unique($hiddenButtonKeys)),
+                'button_order_keys' => array_values(array_unique($buttonOrderKeys)),
             ];
 
             $user->forceFill(['ui_preferences' => $preferences])->save();

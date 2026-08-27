@@ -4,7 +4,6 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
-use App\Models\Debt;
 use App\Models\DebtTransaction;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
@@ -13,9 +12,12 @@ use App\Models\InstantSale;
 use App\Models\Log;
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
+use App\Models\ContactCategory;
+use App\Models\ContactCategoryAssignment;
 use App\Models\Product;
 use App\Models\Seller;
 use App\Support\DashboardSectionBadges;
+use App\Services\DebtLedgerService;
 use Carbon\Carbon;
 use Exception;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -258,12 +260,30 @@ public function getEmployeesLogs()
     public function homeData(Request $request){
         try{
 
-        $totalDebtsWeOwe = Debt::where('type','we owe')
-        ->where('status','unpaid')
-        ->sum('total'); // ديون علينا
-        $totalDebtsOwedToUs = Debt::where('type','owed to us')
-        ->where('status','unpaid')
-        ->sum('total'); // ديون لنا
+        // Match the default view in the debt ledger: customers, in shekels.
+        // The ledger summary reflects payments, settlements and archived entries.
+        $privateCategoryId = ContactCategory::query()
+            ->where('name', 'خاص')
+            ->value('id');
+        $privateCustomerIds = $privateCategoryId
+            ? ContactCategoryAssignment::query()
+                ->where('contact_category_id', $privateCategoryId)
+                ->whereNotNull('customer_id')
+                ->pluck('customer_id')
+                ->all()
+            : [];
+        $customerBalances = collect(
+            app(DebtLedgerService::class)->getPeopleList(
+                'customers',
+                currency: 'شيكل'
+            )
+        )->reject(fn (array $person) => in_array($person['id'], $privateCustomerIds));
+        $totalDebtsOwedToUs = $customerBalances
+            ->where('balance', '>', 0)
+            ->sum('balance');
+        $totalDebtsWeOwe = $customerBalances
+            ->where('balance', '<', 0)
+            ->sum(fn (array $person) => abs((float) $person['balance']));
    
         $totalProducts = Product::count();
         $numberOfEmployees = EmployeeDetail::count(); // عدد الموظفين
