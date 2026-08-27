@@ -8,7 +8,7 @@ use App\Models\PurchaseActivityLog;
 class PurchaseActivityService
 {
     public function log(
-        Bill $bill,
+        ?Bill $bill,
         string $event,
         string $title,
         ?string $description = null,
@@ -20,7 +20,7 @@ class PurchaseActivityService
         ?int $userId = null,
     ): PurchaseActivityLog {
         return PurchaseActivityLog::create([
-            'bill_id' => $bill->id,
+            'bill_id' => $bill?->id,
             'event' => $event,
             'title' => $title,
             'description' => $description,

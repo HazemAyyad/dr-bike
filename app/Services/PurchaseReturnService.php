@@ -53,13 +53,16 @@ class PurchaseReturnService
     public function createDraft(array $data, ?int $userId): ReturnModel
     {
         return DB::transaction(function () use ($data, $userId) {
-            $bill = Bill::query()->lockForUpdate()->findOrFail($data['bill_id']);
+            $bill = ! empty($data['bill_id'])
+                ? Bill::query()->lockForUpdate()->findOrFail($data['bill_id'])
+                : null;
             $return = ReturnModel::create([
                 'number' => 'TEMP-'.uniqid(),
-                'bill_id' => $bill->id,
-                'seller_id' => $bill->seller_id,
-                'customer_id' => $bill->customer_id,
-                'currency' => $this->ledger->normalizeCurrency($bill->currency),
+                'bill_id' => $bill?->id,
+                'source_type' => $bill ? 'invoice' : 'direct',
+                'seller_id' => $bill?->seller_id ?? ($data['seller_id'] ?? null),
+                'customer_id' => $bill?->customer_id ?? ($data['customer_id'] ?? null),
+                'currency' => $this->ledger->normalizeCurrency($bill?->currency ?? $data['currency']),
                 'status' => PurchaseReturnStatus::Draft->value,
                 'reason' => $data['reason'] ?? null,
                 'notes' => $data['notes'] ?? null,
@@ -98,10 +101,12 @@ class PurchaseReturnService
             }
 
             foreach ($return->items as $line) {
-                $billItem = BillItem::query()->lockForUpdate()->findOrFail($line->bill_item_id);
-                $available = $this->availableQuantity($billItem, $return->id);
-                if ((float) $line->quantity > $available + 0.0001) {
-                    throw ValidationException::withMessages(['items' => ['الكمية المتاحة للصنف #'.$line->product_id.' هي '.$available.'.']]);
+                if ($line->bill_item_id) {
+                    $billItem = BillItem::query()->lockForUpdate()->findOrFail($line->bill_item_id);
+                    $available = $this->availableQuantity($billItem, $return->id);
+                    if ((float) $line->quantity > $available + 0.0001) {
+                        throw ValidationException::withMessages(['items' => ['الكمية المتاحة للصنف #'.$line->product_id.' هي '.$available.'.']]);
+                    }
                 }
                 $cost = $this->costing->consumeOwnedStock(
                     Product::query()->lockForUpdate()->findOrFail($line->product_id),
@@ -166,6 +171,9 @@ class PurchaseReturnService
             }
 
             $type = $data['type'];
+            if ($type === 'debt_credit' && abs($amount - $remaining) > 0.0001) {
+                throw ValidationException::withMessages(['amount' => ['ترك المرتجع دينًا يتطلب إغلاق كامل الرصيد المتبقي وهو '.$remaining.'.']]);
+            }
             $boxId = $type === 'cash_refund' ? (int) $data['box_id'] : null;
             $billId = null;
             if ($type === 'bill_allocation') {
@@ -185,7 +193,7 @@ class PurchaseReturnService
                 $billId = $bill->id;
             }
 
-            $transaction = $this->ledger->createTransaction([
+            $transaction = $type === 'debt_credit' ? null : $this->ledger->createTransaction([
                 'seller_id' => $return->seller_id,
                 'customer_id' => $return->customer_id,
                 'type' => 'taken',
@@ -205,7 +213,7 @@ class PurchaseReturnService
                 'currency' => $return->currency,
                 'bill_id' => $billId,
                 'box_id' => $boxId,
-                'debt_transaction_id' => $transaction->id,
+                'debt_transaction_id' => $transaction?->id,
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $userId,
             ]);
@@ -217,7 +225,10 @@ class PurchaseReturnService
                 'settled_by' => $isComplete ? $userId : null,
                 'settled_at' => $isComplete ? now() : null,
             ]);
-            $this->activity->log($return->bill, 'purchase_return_settlement', 'تسوية مرتجع شراء', 'تمت تسوية '.$amount.' '.$return->currency.' من '.$return->number, null, $return->fresh('settlements')->toArray(), null, 'purchase_return', $return->id, $userId);
+            $description = $type === 'debt_credit'
+                ? 'تم إغلاق '.$return->number.' وترك '.$amount.' '.$return->currency.' رصيدًا على المورد في دفتر الديون'
+                : 'تمت تسوية '.$amount.' '.$return->currency.' من '.$return->number;
+            $this->activity->log($return->bill, 'purchase_return_settlement', 'تسوية مرتجع شراء', $description, null, $return->fresh('settlements')->toArray(), null, 'purchase_return', $return->id, $userId);
 
             return $return->fresh($this->relations());
         });
@@ -288,25 +299,37 @@ class PurchaseReturnService
         $total = 0.0;
         $seen = [];
         foreach ($rows as $row) {
-            $billItem = BillItem::query()->where('bill_id', $return->bill_id)->findOrFail($row['bill_item_id']);
-            if (isset($seen[$billItem->id])) {
+            $billItem = $return->bill_id
+                ? BillItem::query()->where('bill_id', $return->bill_id)->findOrFail($row['bill_item_id'])
+                : null;
+            $productId = $billItem?->product_id ?? $row['product_id'];
+            $sizeId = $billItem?->size_id ?? ($row['size_id'] ?? null);
+            $sizeColorId = $billItem?->size_color_id ?? ($row['size_color_id'] ?? null);
+            $key = $billItem?->id ?? implode(':', [$productId, $sizeId, $sizeColorId]);
+            if (isset($seen[$key])) {
                 throw ValidationException::withMessages(['items' => ['لا يمكن تكرار الصنف نفسه.']]);
             }
-            $seen[$billItem->id] = true;
+            $seen[$key] = true;
             $quantity = (float) $row['quantity'];
-            $available = $this->availableQuantity($billItem, $return->id);
-            if ($quantity <= 0 || $quantity > $available + 0.0001) {
-                throw ValidationException::withMessages(['items' => ['كمية الصنف #'.$billItem->product_id.' غير صالحة؛ المتاح '.$available.'.']]);
+            if ($billItem) {
+                $available = $this->availableQuantity($billItem, $return->id);
+                if ($quantity <= 0 || $quantity > $available + 0.0001) {
+                    throw ValidationException::withMessages(['items' => ['كمية الصنف #'.$billItem->product_id.' غير صالحة؛ المتاح '.$available.'.']]);
+                }
+            } else {
+                Product::query()->findOrFail($productId);
             }
-            $unitPrice = (float) ($billItem->final_unit_price ?? $billItem->price);
+            $unitPrice = $billItem
+                ? (float) ($billItem->final_unit_price ?? $billItem->price)
+                : (float) $row['unit_price'];
             $lineTotal = round($quantity * $unitPrice, 4);
             PurchaseReturn::create([
                 'return_id' => $return->id,
                 'bill_id' => $return->bill_id,
-                'bill_item_id' => $billItem->id,
-                'product_id' => $billItem->product_id,
-                'size_id' => $billItem->size_id,
-                'size_color_id' => $billItem->size_color_id,
+                'bill_item_id' => $billItem?->id,
+                'product_id' => $productId,
+                'size_id' => $sizeId,
+                'size_color_id' => $sizeColorId,
                 'quantity' => $quantity,
                 'price' => $unitPrice,
                 'line_total' => $lineTotal,

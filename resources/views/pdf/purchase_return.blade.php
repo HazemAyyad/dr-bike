@@ -96,7 +96,7 @@
             <td class="meta-left"><table class="meta-line"><tr><td class="meta-value-cell"><span class="value ltr">{{ optional($return->created_at)->format('Y-m-d H:i') ?: '—' }}</span></td><td class="meta-label-cell"><span class="label">: التاريخ</span></td></tr></table></td>
         </tr>
         <tr>
-            <td class="meta-right"><table class="meta-line"><tr><td class="meta-value-cell"><span class="value ltr">PUR-{{ str_pad((string) $return->bill_id, 7, '0', STR_PAD_LEFT) }}</span></td><td class="meta-label-cell"><span class="label">: فاتورة الشراء</span></td></tr></table></td>
+            <td class="meta-right"><table class="meta-line"><tr><td class="meta-value-cell"><span class="value ltr">{{ $return->bill_id ? 'PUR-'.str_pad((string) $return->bill_id, 7, '0', STR_PAD_LEFT) : 'مرتجع مباشر' }}</span></td><td class="meta-label-cell"><span class="label">: مصدر المرتجع</span></td></tr></table></td>
             <td class="meta-left"><table class="meta-line"><tr><td class="meta-value-cell"><span class="status-pill">{{ $statusLabel }}</span></td><td class="meta-label-cell"><span class="label">: الحالة</span></td></tr></table></td>
         </tr>
         <tr>
@@ -133,7 +133,7 @@
 <div class="settlements"><div class="section-title">تفاصيل التسويات</div>
     <table class="settlements-table"><thead><tr><th>ملاحظة</th><th>المبلغ</th><th>النوع</th><th>التاريخ</th><th>#</th></tr></thead><tbody>
     @foreach($return->settlements as $index => $settlement)
-        <tr><td>{{ $settlement->notes ?: '—' }}</td><td class="num">{!! $money($settlement->amount) !!}</td><td>{{ $settlement->type === 'cash_refund' ? 'استرداد نقدي' : 'خصم من فاتورة' }}</td><td class="num">{{ optional($settlement->created_at)->format('Y-m-d') }}</td><td class="num">{{ $index + 1 }}</td></tr>
+        <tr><td>{{ $settlement->notes ?: '—' }}</td><td class="num">{!! $money($settlement->amount) !!}</td><td>{{ $settlement->type === 'cash_refund' ? 'استرداد نقدي' : ($settlement->type === 'bill_allocation' ? 'خصم من فاتورة' : 'دين على المورد') }}</td><td class="num">{{ optional($settlement->created_at)->format('Y-m-d') }}</td><td class="num">{{ $index + 1 }}</td></tr>
     @endforeach
     </tbody></table>
 </div>

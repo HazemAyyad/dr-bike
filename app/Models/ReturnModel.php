@@ -11,7 +11,7 @@ class ReturnModel extends Model
     protected $table = 'returns';
 
     protected $fillable = [
-        'number', 'bill_id', 'seller_id', 'customer_id',
+        'number', 'bill_id', 'source_type', 'seller_id', 'customer_id',
         'total',
         'currency',
         'status',

@@ -1164,6 +1164,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
     Route::get('/purchase/returns', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'index']);
     Route::post('/purchase/returns', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'store']);
     Route::get('/purchase/returns/returnable-bills', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'returnableBills']);
+    Route::get('/purchase/returns/direct-options', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'directOptions']);
     Route::get('/purchase/returns/bills/{bill}/available-items', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'availableItems']);
     Route::get('/purchase/returns/{purchaseReturn}', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'show']);
     Route::put('/purchase/returns/{purchaseReturn}', [\App\Http\Controllers\API\PurchaseReturnsController::class, 'update']);

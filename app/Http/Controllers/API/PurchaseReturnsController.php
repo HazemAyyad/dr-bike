@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Bill;
 use App\Models\ReturnModel;
 use App\Models\PurchaseAttachment;
+use App\Models\Product;
 use App\Services\PurchaseReturnService;
 use App\Services\PurchaseAttachmentService;
 use ArPHP\I18N\Arabic;
@@ -111,6 +112,40 @@ class PurchaseReturnsController extends Controller
         return response()->json(['status' => 'success', 'bills' => $bills]);
     }
 
+    public function directOptions(Request $request)
+    {
+        $search = trim((string) $request->query('search', ''));
+        $products = Product::query()
+            ->with(['normalImages', 'sizes.colorSizes'])
+            ->when($search !== '', fn ($q) => $q->where(function ($inner) use ($search) {
+                $inner->where('nameAr', 'like', "%{$search}%")
+                    ->orWhere('nameEng', 'like', "%{$search}%")
+                    ->orWhere('id', $search);
+            }))
+            ->orderByDesc('id')->limit(100)->get()->map(function (Product $product) {
+                return [
+                    'product_id' => $product->id,
+                    'product_name' => $product->nameAr,
+                    'product_image' => $this->productImage($product->id),
+                    'stock' => (float) $product->stock,
+                    'unit_price' => (float) ($product->price ?? $product->normailPrice ?? 0),
+                    'variants' => $product->sizes->flatMap(fn ($size) => $size->colorSizes->map(fn ($color) => [
+                        'size_id' => $size->id,
+                        'size_label' => $size->size,
+                        'size_color_id' => $color->id,
+                        'color_label' => $color->colorAr,
+                        'stock' => (float) $color->stock,
+                        'unit_price' => (float) ($color->normailPrice ?? $product->price ?? $product->normailPrice ?? 0),
+                        'product_image' => trim((string) $color->image_url) !== ''
+                            ? \App\Support\ApiImageUrl::normalize($color->image_url)
+                            : $this->productImage($product->id),
+                    ]))->values(),
+                ];
+            })->values();
+
+        return response()->json(['status' => 'success', 'products' => $products]);
+    }
+
     public function store(Request $request, PurchaseReturnService $service)
     {
         $data = $this->validateDraft($request);
@@ -120,7 +155,7 @@ class PurchaseReturnsController extends Controller
     public function update(Request $request, ReturnModel $purchaseReturn, PurchaseReturnService $service)
     {
         $data = $this->validateDraft($request);
-        if ((int) $data['bill_id'] !== (int) $purchaseReturn->bill_id) abort(422, 'لا يمكن تغيير فاتورة المرتجع.');
+        if ((int) ($data['bill_id'] ?? 0) !== (int) ($purchaseReturn->bill_id ?? 0)) abort(422, 'لا يمكن تغيير مصدر المرتجع.');
         return response()->json(['status' => 'success', 'message' => 'تم تعديل المسودة.', 'purchase_return' => $service->updateDraft($purchaseReturn, $data, $request->user()?->id)]);
     }
 
@@ -144,7 +179,7 @@ class PurchaseReturnsController extends Controller
     public function settle(Request $request, ReturnModel $purchaseReturn, PurchaseReturnService $service)
     {
         $data = $request->validate([
-            'type' => ['required', Rule::in(['cash_refund', 'bill_allocation'])],
+            'type' => ['required', Rule::in(['cash_refund', 'bill_allocation', 'debt_credit'])],
             'amount' => ['required', 'numeric', 'gt:0'],
             'box_id' => ['required_if:type,cash_refund', 'nullable', 'integer', 'exists:boxes,id'],
             'bill_id' => ['required_if:type,bill_allocation', 'nullable', 'integer', 'exists:bills,id'],
@@ -193,11 +228,18 @@ class PurchaseReturnsController extends Controller
     private function validateDraft(Request $request): array
     {
         return $request->validate([
-            'bill_id' => ['required', 'integer', 'exists:bills,id'],
+            'bill_id' => ['nullable', 'integer', 'exists:bills,id', 'required_without_all:seller_id,customer_id'],
+            'seller_id' => ['nullable', 'integer', 'exists:sellers,id', 'required_without_all:bill_id,customer_id'],
+            'customer_id' => ['nullable', 'integer', 'exists:customers,id', 'required_without_all:bill_id,seller_id'],
+            'currency' => ['required_without:bill_id', 'nullable', 'string', 'max:20'],
             'reason' => ['nullable', 'string', 'max:60'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'items' => ['required', 'array', 'min:1'],
-            'items.*.bill_item_id' => ['required', 'integer', 'exists:bill_items,id'],
+            'items.*.bill_item_id' => ['nullable', 'integer', 'exists:bill_items,id', 'required_with:bill_id'],
+            'items.*.product_id' => ['nullable', 'required_without:bill_id', 'exists:products,id'],
+            'items.*.size_id' => ['nullable', 'exists:sizes,id'],
+            'items.*.size_color_id' => ['nullable', 'exists:size_colors,id'],
+            'items.*.unit_price' => ['nullable', 'required_without:bill_id', 'numeric', 'gt:0'],
             'items.*.quantity' => ['required', 'numeric', 'gt:0'],
             'items.*.reason' => ['nullable', 'string', 'max:60'],
             'items.*.notes' => ['nullable', 'string', 'max:1000'],

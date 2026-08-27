@@ -18,7 +18,7 @@ class PurchaseAttachmentService
      * @return array<int, PurchaseAttachment>
      */
     public function store(
-        Bill $bill,
+        ?Bill $bill,
         array $files,
         string $category,
         ?string $attachableType = null,
@@ -31,9 +31,9 @@ class PurchaseAttachmentService
                 continue;
             }
 
-            $path = $file->store('purchase-evidence/'.$bill->id, 'public');
+            $path = $file->store('purchase-evidence/'.($bill?->id ?? 'direct-returns'), 'public');
             $created[] = PurchaseAttachment::create([
-                'bill_id' => $bill->id,
+                'bill_id' => $bill?->id,
                 'attachable_type' => $attachableType,
                 'attachable_id' => $attachableId,
                 'category' => $category,
@@ -51,7 +51,7 @@ class PurchaseAttachmentService
                 $bill,
                 'attachment_uploaded',
                 'رفع مرفقات شراء',
-                'تم رفع '.count($created).' مرفق للفاتورة',
+                'تم رفع '.count($created).' مرفق للشراء أو المرتجع',
                 null,
                 array_map(fn (PurchaseAttachment $attachment) => $attachment->toArray(), $created),
                 ['category' => $category],
@@ -68,7 +68,7 @@ class PurchaseAttachmentService
     {
         return [
             'id' => (int) $attachment->id,
-            'bill_id' => (int) $attachment->bill_id,
+            'bill_id' => $attachment->bill_id ? (int) $attachment->bill_id : null,
             'attachable_type' => $attachment->attachable_type,
             'attachable_id' => $attachment->attachable_id ? (int) $attachment->attachable_id : null,
             'category' => $attachment->category,
