@@ -272,18 +272,53 @@ public function getEmployeesLogs()
                 ->pluck('customer_id')
                 ->all()
             : [];
-        $customerBalances = collect(
-            app(DebtLedgerService::class)->getPeopleList(
-                'customers',
-                currency: 'شيكل'
-            )
-        )->reject(fn (array $person) => in_array($person['id'], $privateCustomerIds));
-        $totalDebtsOwedToUs = $customerBalances
-            ->where('balance', '>', 0)
-            ->sum('balance');
-        $totalDebtsWeOwe = $customerBalances
-            ->where('balance', '<', 0)
-            ->sum(fn (array $person) => abs((float) $person['balance']));
+        $privateSellerIds = $privateCategoryId
+            ? ContactCategoryAssignment::query()
+                ->where('contact_category_id', $privateCategoryId)
+                ->whereNotNull('seller_id')
+                ->pluck('seller_id')
+                ->all()
+            : [];
+        $ledger = app(DebtLedgerService::class);
+        $allCustomers = collect($ledger->getPeopleList('customers'));
+        $allSellers = collect($ledger->getPeopleList('sellers'));
+        $customerBalances = $allCustomers
+            ->reject(fn (array $person) => in_array($person['id'], $privateCustomerIds));
+        $sellerBalances = $allSellers
+            ->reject(fn (array $person) => in_array($person['id'], $privateSellerIds));
+        $privateBalances = $allCustomers
+            ->filter(fn (array $person) => in_array($person['id'], $privateCustomerIds))
+            ->concat($allSellers->filter(
+                fn (array $person) => in_array($person['id'], $privateSellerIds)
+            ));
+
+        $summarizeBalances = function ($people): array {
+            $summary = [];
+            foreach (DebtLedgerService::CURRENCIES as $currency) {
+                $receivable = 0.0;
+                $payable = 0.0;
+                foreach ($people as $person) {
+                    $balance = (float) ($person['balances'][$currency]['balance'] ?? 0);
+                    if ($balance > 0) {
+                        $receivable += $balance;
+                    } elseif ($balance < 0) {
+                        $payable += abs($balance);
+                    }
+                }
+                $summary[$currency] = [
+                    'receivable' => $receivable,
+                    'payable' => $payable,
+                ];
+            }
+            return $summary;
+        };
+        $debtSummary = [
+            'customers' => $summarizeBalances($customerBalances),
+            'sellers' => $summarizeBalances($sellerBalances),
+            'private' => $summarizeBalances($privateBalances),
+        ];
+        $totalDebtsOwedToUs = $debtSummary['customers']['شيكل']['receivable'];
+        $totalDebtsWeOwe = $debtSummary['customers']['شيكل']['payable'];
    
         $totalProducts = Product::count();
         $numberOfEmployees = EmployeeDetail::count(); // عدد الموظفين
@@ -344,6 +379,7 @@ public function getEmployeesLogs()
                 'total_completed_tasks' => $totalCompletedTasks,
                 'total_incompleted_tasks' => $totalIncompletedTasks,
                 'dashboard_badges' => DashboardSectionBadges::forUser($request->user()),
+                'debt_summary' => $debtSummary,
                 'upcoming_incoming_checks' => $upcomingIncomingChecks,
                 'upcoming_outgoing_checks' => $upcomingOutgoingChecks,
             ],
