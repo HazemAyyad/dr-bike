@@ -11,6 +11,8 @@ use App\Models\EmployeeTask;
 use App\Models\Expense;
 use App\Models\InstantSale;
 use App\Models\Log;
+use App\Models\IncomingCheck;
+use App\Models\OutgoingCheck;
 use App\Models\Product;
 use App\Models\Seller;
 use App\Support\DashboardSectionBadges;
@@ -273,6 +275,44 @@ public function getEmployeesLogs()
             ->count();
         $totalExpenses = Expense::sum('price'); // اجمالي المصاريف
 
+        $upcomingIncomingChecks = IncomingCheck::query()
+            ->with(['fromCustomer:id,name', 'fromSeller:id,name'])
+            ->where('status', 'not_cashed')
+            ->whereDate('due_date', '>=', now()->toDateString())
+            ->orderBy('due_date')
+            ->orderBy('id')
+            ->limit(5)
+            ->get()
+            ->map(fn (IncomingCheck $check) => [
+                'id' => $check->id,
+                'check_id' => $check->check_id,
+                'bank_name' => $check->bank_name,
+                'person_name' => $check->fromCustomer?->name ?? $check->fromSeller?->name,
+                'total' => $check->total,
+                'currency' => $check->currency,
+                'due_date' => $check->due_date,
+                'notes' => $check->notes,
+            ]);
+
+        $upcomingOutgoingChecks = OutgoingCheck::query()
+            ->with(['customer:id,name', 'seller:id,name'])
+            ->where('status', 'not_cashed')
+            ->whereDate('due_date', '>=', now()->toDateString())
+            ->orderBy('due_date')
+            ->orderBy('id')
+            ->limit(5)
+            ->get()
+            ->map(fn (OutgoingCheck $check) => [
+                'id' => $check->id,
+                'check_id' => $check->check_id,
+                'bank_name' => $check->bank_name,
+                'person_name' => $check->customer?->name ?? $check->seller?->name,
+                'total' => $check->total,
+                'currency' => $check->currency,
+                'due_date' => $check->due_date,
+                'notes' => $check->notes,
+            ]);
+
      return response()->json([
             'status'=>'success',
             'data' => [
@@ -284,6 +324,8 @@ public function getEmployeesLogs()
                 'total_completed_tasks' => $totalCompletedTasks,
                 'total_incompleted_tasks' => $totalIncompletedTasks,
                 'dashboard_badges' => DashboardSectionBadges::forUser($request->user()),
+                'upcoming_incoming_checks' => $upcomingIncomingChecks,
+                'upcoming_outgoing_checks' => $upcomingOutgoingChecks,
             ],
         ],200);
         }
