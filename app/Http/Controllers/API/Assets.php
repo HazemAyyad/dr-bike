@@ -6,11 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\AssetResource;
 use App\Models\Asset;
 use App\Models\AssetLog;
+use App\Services\MonthlyAssetDepreciationService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Str;
 
 class Assets extends Controller
 {
@@ -22,7 +25,8 @@ class Assets extends Controller
                 $mimeType = $file->getMimeType();
                 $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
 
-                $fullName = $file->getClientOriginalName();
+                $extension = strtolower($file->getClientOriginalExtension());
+                $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
                 $file->move(public_path($this->assetMediaPath.'/'.$folder), $fullName);
                 $files[] = $fullName;
             }
@@ -39,8 +43,8 @@ class Assets extends Controller
                 'notes' => 'nullable|string',
                 'depreciation_rate' => 'required|numeric|min:0',
                 'months_number' => 'required|numeric|min:1',
-                'media' => 'nullable|array',
-                'media.*' => 'file|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
+                'media' => 'nullable|array|max:15',
+                'media.*' => 'file|max:30720|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
 
             ]);
 
@@ -87,18 +91,39 @@ class Assets extends Controller
     }
 
 
-    public function getAssets(){
+    public function getAssets(Request $request){
         try{
-
-            $assets = Asset::all();
+            $filters = $request->validate([
+                'search' => 'nullable|string|max:255',
+                'from' => 'nullable|date',
+                'to' => 'nullable|date|after_or_equal:from',
+                'status' => 'nullable|string|in:active,fully_depreciated,depreciated_this_month,pending_this_month',
+                'min_value' => 'nullable|numeric|min:0',
+                'max_value' => 'nullable|numeric|gte:min_value',
+            ]);
+            $period = now()->format('Y-m');
+            $query = Asset::query()
+                ->when($filters['search'] ?? null, fn (Builder $q, string $search) => $q->where('name', 'like', "%{$search}%"))
+                ->when($filters['from'] ?? null, fn (Builder $q, string $from) => $q->whereDate('created_at', '>=', $from))
+                ->when($filters['to'] ?? null, fn (Builder $q, string $to) => $q->whereDate('created_at', '<=', $to))
+                ->when(isset($filters['min_value']), fn (Builder $q) => $q->where('depreciation_price', '>=', $filters['min_value']))
+                ->when(isset($filters['max_value']), fn (Builder $q) => $q->where('depreciation_price', '<=', $filters['max_value']))
+                ->when(($filters['status'] ?? null) === 'active', fn (Builder $q) => $q->where('depreciation_price', '>', 0))
+                ->when(($filters['status'] ?? null) === 'fully_depreciated', fn (Builder $q) => $q->where('depreciation_price', '<=', 0))
+                ->when(($filters['status'] ?? null) === 'depreciated_this_month', fn (Builder $q) => $q->whereHas('logs', fn (Builder $log) => $log->where('depreciation_period', $period)))
+                ->when(($filters['status'] ?? null) === 'pending_this_month', fn (Builder $q) => $q->where('depreciation_price', '>', 0)->whereDoesntHave('logs', fn (Builder $log) => $log->where('depreciation_period', $period)));
+            $assets = $query->latest('id')->get();
             $formatted = AssetResource::collection($assets);
 
             return response()->json([
                 'status'=>'success',
                 'assets' => $formatted,
-                'total_assets_original_prices' => Asset::assetsCurrentDepricationSum(),
-                'total_assets_depreciate_prices' => Asset::assetsCurrentDepricationSum(),
-                'average_depreciation_rate' => Asset::depreciateAverage(),
+                'total_assets_original_prices' => round((float) (clone $query)->sum('price'), 2),
+                'total_assets_depreciate_prices' => round((float) (clone $query)->sum('depreciation_price'), 2),
+                'accumulated_depreciation' => round((float) ((clone $query)->sum('price') - (clone $query)->sum('depreciation_price')), 2),
+                'average_depreciation_rate' => round((float) (clone $query)->avg('depreciation_rate'), 4),
+                'assets_count' => $assets->count(),
+                'depreciation_period' => $period,
             ],200);
         }
 
@@ -116,37 +141,19 @@ class Assets extends Controller
     }
 
 
-    private function commonDepreciate(Asset $asset){
-            if($asset->depreciation_price >0){
-                    $depreciation_value = $asset->depreciation_price * $asset->depreciation_rate;
-                    $asset->depreciation_price -= $depreciation_value;
-                    $asset->save();
-
-                    AssetLog::create([
-                        'asset_id' => $asset->id,
-                        'total' => $asset->depreciation_price,
-                        'type' =>'depreciate',
-
-                    ]);
-
-                return response()->json([
-                'status'=>'success',
-                'message' => __('messages.asset_depreciated'),
-            ],200);
-    }
-    else{
-        return response()->json([
-            'status'=>'error',
-            'message'=>__('messages.cannot_depreciate'),
-        ],200);
-    }
-}
-    public function depreciateOneAsset(Request $request){
+    public function depreciateOneAsset(Request $request, MonthlyAssetDepreciationService $service){
         try{
             $request->validate(['asset_id'=>'required|integer|exists:assets,id']);
 
-            $asset = Asset::findOrFail($request->asset_id);
-           return $this->commonDepreciate($asset);
+            $result = $service->run(now()->format('Y-m'), $request->user()?->id, (int) $request->asset_id);
+            return response()->json([
+                'status' => $result['processed'] > 0 ? 'success' : 'error',
+                'message' => $result['processed'] > 0
+                    ? __('messages.asset_depreciated')
+                    : 'تم تنفيذ إهلاك هذا الأصل مسبقًا لهذا الشهر أو أن قيمته صفر.',
+                'depreciation_period' => now()->format('Y-m'),
+                'result' => $result,
+            ]);
 
 
         }
@@ -176,29 +183,15 @@ class Assets extends Controller
             ], 200);
         }
     }
-    public function depreciatAllAssets(){
+    public function depreciatAllAssets(Request $request, MonthlyAssetDepreciationService $service){
         try{
-            $assets = Asset::all();
-            foreach($assets as $asset){
-                if($asset->depreciation_price >0){
-                        $depreciation_value = $asset->depreciation_price * $asset->depreciation_rate;
-                        $asset->depreciation_price -= $depreciation_value;
-                        $asset->save();
-
-                        AssetLog::create([
-                            'asset_id' => $asset->id,
-                            'total' => $asset->depreciation_price,
-                            'type' =>'depreciate',
-
-                        ]);
-                }
-
-
-        }
+            $result = $service->run(now()->format('Y-m'), $request->user()?->id);
 
             return response()->json([
                 'status'=>'success',
                 'message' => __('messages.asset_depreciated'),
+                'depreciation_period' => now()->format('Y-m'),
+                'result' => $result,
             ],200);
 
      } catch (QueryException $e) {
@@ -278,7 +271,7 @@ class Assets extends Controller
                 'price'=>'required|numeric|min:1',
                 'notes' => 'nullable|string',
                 'depreciation_rate' => 'required|numeric|min:0',
-                'media' => 'nullable|array',
+                'media' => 'nullable|array|max:15',
                 'media.*' => [
                     'nullable',
                     function ($attribute, $value, $fail) {
@@ -288,6 +281,10 @@ class Assets extends Controller
                         }
 
                         if ($value instanceof \Illuminate\Http\UploadedFile) {
+                            if ($value->getSize() > 30 * 1024 * 1024) {
+                                $fail("The {$attribute} may not be greater than 30 MB.");
+                                return;
+                            }
                              $allowed = ['image/jpeg','image/png','image/jpg','image/gif','image/tiff','image/webp','image/avif','image/svg+xml','video/mp4','video/quicktime','video/x-msvideo','video/x-ms-wmv','video/x-matroska','video/webm'];
                             if (! in_array($value->getMimeType(), $allowed)) {
                                 $fail("The {$attribute} must be a valid image or video file.");
@@ -362,7 +359,8 @@ class Assets extends Controller
                 $mimeType = $file->getMimeType();
                 $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
 
-                $fileName = $file->getClientOriginalName();
+                $extension = strtolower($file->getClientOriginalExtension());
+                $fileName = (string) Str::uuid().($extension ? '.'.$extension : '');
                 $file->move(public_path($basePath.'/'.$folder), $fileName);
 
                 // Store full relative path (same style as you send in request)

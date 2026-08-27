@@ -11,7 +11,8 @@ class AssetLog extends Model
         protected $table = 'asset_logs';
 
     protected $fillable = [
-      'asset_id','total','type',
+      'asset_id','total','type','depreciation_period','value_before',
+      'depreciation_amount','processed_by_user_id',
     ];
 
     public function asset(){

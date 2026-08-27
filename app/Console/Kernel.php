@@ -13,6 +13,12 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
+        $schedule->command('assets:run-monthly-depreciation')
+            ->monthlyOn(1, '00:05')
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping()
+            ->onOneServer();
+
         $schedule->command('checks:send-due-reminders')
             ->dailyAt('00:00')
             ->timezone('Asia/Hebron');

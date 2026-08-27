@@ -5,15 +5,43 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Box;
 use App\Models\Expense;
+use App\Services\ExpenseBoxAccessService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Database\Eloquent\Builder;
+use Barryvdh\DomPDF\Facade\Pdf;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Csv;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Illuminate\Support\Str;
 class ExpensesAPI extends Controller
 {
     private $expensesMediaPath = 'Expenses/ExpensesMedia';
     private $invoiceImagesPath = 'Expenses/InvoiceImages';
+
+    public function availableBoxes(Request $request, ExpenseBoxAccessService $access)
+    {
+        $openDailyIds = $access->openDailyBoxIds();
+        $boxes = $access->availableBoxes($request->user())->map(function (Box $box) use ($openDailyIds) {
+            $isDailyOpen = $openDailyIds->contains((int) $box->id);
+
+            return [
+                'box_id' => $box->id,
+                'box_name' => $box->name,
+                'total_balance' => $box->total,
+                'currency' => $box->currency,
+                'type' => $box->type,
+                'is_daily_open' => $isDailyOpen,
+                'access_source' => $isDailyOpen ? 'open_daily_session' : 'permission',
+            ];
+        })->values();
+
+        return response()->json(['status' => 'success', 'boxes' => $boxes]);
+    }
 
     private function mediaStorage(Request $request,$type,$fileName,$path){
 
@@ -25,7 +53,8 @@ class ExpensesAPI extends Controller
             foreach ($request->file($fileName) as $file) {
                 $mimeType = $file->getMimeType();
                 $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
-                $fullName = $file->getClientOriginalName();
+                $extension = strtolower($file->getClientOriginalExtension());
+                $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
                 $file->move(public_path($path . '/' . $folder), $fullName);
                 $files[] = $fullName;
               }
@@ -38,7 +67,8 @@ class ExpensesAPI extends Controller
         //    }
             elseif($type==='multiImages'){
                 foreach($request->file($fileName) as $imageFile){
-                    $imageName = $imageFile->getClientOriginalName();
+                    $extension = strtolower($imageFile->getClientOriginalExtension());
+                    $imageName = (string) Str::uuid().($extension ? '.'.$extension : '');
                     $imageFile->move(public_path($path), $imageName);
                     $files[] = $imageName;
                 }
@@ -52,21 +82,33 @@ class ExpensesAPI extends Controller
 
     }
 
-    public function store(Request $request){
+    public function store(Request $request, ExpenseBoxAccessService $access){
         try{
             $data = $request->validate([
                 'name'=>'required|string|max:255',
+                'expense_type' => 'nullable|string|in:general,salary,destruction',
+                'expense_date' => 'nullable|date',
                 'price'=>'required|numeric|min:1',
                 'notes' => 'nullable|string',
 //                'payment_method' => 'required|string|max:255',
-                'invoice_img' => 'nullable|array',
-                'invoice_img.*' => 'nullable|file',
+                'invoice_img' => 'nullable|array|max:10',
+                'invoice_img.*' => 'nullable|file|image|max:10240',
 
-                'media' => 'nullable|array',
-                'media.*' => 'file|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
+                'media' => 'nullable|array|max:15',
+                'media.*' => 'file|max:30720|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
 
                 'box_id' => 'required|integer|exists:boxes,id',
             ]);
+
+            if (! $access->canUse($request->user(), (int) $request->box_id)) {
+                throw ValidationException::withMessages([
+                    'box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.'],
+                ]);
+            }
+
+            $data['expense_type'] = $data['expense_type'] ?? 'general';
+            $data['expense_date'] = $data['expense_date'] ?? now()->toDateString();
+            $data['created_by_user_id'] = $request->user()->id;
 
             $box = Box::findOrFail($request->box_id);
             if(!$box->currency || $box->currency !== 'شيكل'){
@@ -76,28 +118,29 @@ class ExpensesAPI extends Controller
                 ],200);
             }
 
-            if($request->price > $box->total){
-                return response()->json([
-                    'status'=>'error',
-                    'message'=>__('messages.box_out_of_money'),
-                ],200);  
-            }
-
             $files = $this->mediaStorage($request,'media','media',$this->expensesMediaPath);
             $invoice_img = $this->mediaStorage($request,'multiImages','invoice_img',$this->invoiceImagesPath);
             $data['media'] = $files;
             $data['invoice_img'] = $invoice_img;
 
-            Expense::create($data);
-            $box->total-= $request->price;
-            $box->save();
-            Logs::createLog('اضافة مصروف جديد','تم اضافة المصروف'.' '.$request->name.' '.'بسعر'.
-            ' '. $request->price
-        
-            ,'expenses');
+            DB::transaction(function () use ($data, $request) {
+                $lockedBox = Box::query()->lockForUpdate()->findOrFail($request->box_id);
+                if ((float) $request->price > (float) $lockedBox->total) {
+                    throw ValidationException::withMessages([
+                        'price' => [__('messages.box_out_of_money')],
+                    ]);
+                }
 
-            BoxLogs::createBoxLog($box,'تم سحب رصيد من الصندوق لصرف مصروف باسم '.' '.$request->name
-            ,'minus',$request->price);
+                Expense::create($data);
+                $lockedBox->decrement('total', $request->price);
+                $lockedBox->refresh();
+
+                Logs::createLog('اضافة مصروف جديد','تم اضافة المصروف'.' '.$request->name.' '.'بسعر'.
+                    ' '. $request->price, 'expenses');
+
+                BoxLogs::createBoxLog($lockedBox,'تم سحب رصيد من الصندوق لصرف مصروف باسم '.' '.$request->name,
+                    'minus',$request->price);
+            });
 
             return response()->json([
                 'status'=>'success',
@@ -262,9 +305,127 @@ class ExpensesAPI extends Controller
         }
     }
 
-    public function getExpenses(){
+    private function filteredExpensesQuery(Request $request): Builder
+    {
+        $data = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'expense_type' => 'nullable|string|in:general,salary,destruction',
+            'box_id' => 'nullable|integer|exists:boxes,id',
+            'employee_id' => 'nullable|integer|exists:employee_details,id',
+            'from' => 'nullable|date',
+            'to' => 'nullable|date|after_or_equal:from',
+            'min_price' => 'nullable|numeric|min:0',
+            'max_price' => 'nullable|numeric|gte:min_price',
+        ]);
+
+        return Expense::query()
+            ->with('box:id,name,currency,type')
+            ->when($data['search'] ?? null, function (Builder $query, string $search) {
+                $query->where(function (Builder $nested) use ($search) {
+                    $nested->where('name', 'like', "%{$search}%")
+                        ->orWhere('notes', 'like', "%{$search}%");
+                });
+            })
+            ->when($data['expense_type'] ?? null, fn (Builder $query, string $type) => $query->where('expense_type', $type))
+            ->when($data['box_id'] ?? null, fn (Builder $query, int $boxId) => $query->where('box_id', $boxId))
+            ->when($data['employee_id'] ?? null, fn (Builder $query, int $employeeId) => $query->where('employee_id', $employeeId))
+            ->when($data['from'] ?? null, fn (Builder $query, string $from) => $query->whereDate(DB::raw('COALESCE(expense_date, created_at)'), '>=', $from))
+            ->when($data['to'] ?? null, fn (Builder $query, string $to) => $query->whereDate(DB::raw('COALESCE(expense_date, created_at)'), '<=', $to))
+            ->when(isset($data['min_price']), fn (Builder $query) => $query->where('price', '>=', $data['min_price']))
+            ->when(isset($data['max_price']), fn (Builder $query) => $query->where('price', '<=', $data['max_price']));
+    }
+
+    public function report(Request $request)
+    {
+        $query = $this->filteredExpensesQuery($request);
+        $rows = (clone $query)->get(['id', 'expense_type', 'price', 'box_id', 'employee_id', 'expense_date', 'created_at']);
+        $byType = $rows->groupBy(fn (Expense $expense) => $expense->expense_type ?: 'general')
+            ->map(fn ($items, $type) => [
+                'type' => $type,
+                'count' => $items->count(),
+                'total' => round((float) $items->sum('price'), 2),
+                'average' => round((float) $items->avg('price'), 2),
+            ])->values();
+
+        return response()->json([
+            'status' => 'success',
+            'summary' => [
+                'count' => $rows->count(),
+                'total' => round((float) $rows->sum('price'), 2),
+                'average' => round((float) $rows->avg('price'), 2),
+                'by_type' => $byType,
+            ],
+        ]);
+    }
+
+    public function exportReport(Request $request, string $format)
+    {
+        $rows = $this->filteredExpensesQuery($request)
+            ->latest('id')
+            ->get();
+        $summary = [
+            'count' => $rows->count(),
+            'total' => round((float) $rows->sum('price'), 2),
+            'by_type' => $rows->groupBy(fn (Expense $expense) => $expense->expense_type ?: 'general')
+                ->map(fn ($items) => round((float) $items->sum('price'), 2)),
+        ];
+        $filename = 'expenses-report-'.now()->format('Ymd-His');
+
+        if ($format === 'pdf') {
+            return Pdf::loadView('pdf.expenses-report', [
+                'expenses' => $rows,
+                'summary' => $summary,
+                'filters' => $request->only([
+                    'expense_type', 'box_id', 'from', 'to', 'min_price', 'max_price',
+                ]),
+            ])->setPaper('a4', 'landscape')->download($filename.'.pdf');
+        }
+
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setRightToLeft(true);
+        $sheet->fromArray([
+            ['الرقم', 'التاريخ', 'النوع', 'اسم المصروف', 'القيمة', 'الصندوق', 'العملة', 'ملاحظات'],
+        ], null, 'A1');
+
+        $typeLabels = ['general' => 'عمومي', 'salary' => 'راتب', 'destruction' => 'إتلاف بضاعة'];
+        $rowNumber = 2;
+        foreach ($rows as $expense) {
+            $sheet->fromArray([[
+                $expense->id,
+                $expense->expense_date?->format('Y-m-d') ?? $expense->created_at?->format('Y-m-d'),
+                $typeLabels[$expense->expense_type ?: 'general'] ?? $expense->expense_type,
+                $expense->name,
+                (float) $expense->price,
+                $expense->box?->name,
+                $expense->box?->currency,
+                $expense->notes,
+            ]], null, 'A'.$rowNumber++);
+        }
+        $sheet->fromArray([['', '', '', 'الإجمالي', $summary['total']]], null, 'A'.$rowNumber);
+        foreach (range('A', 'H') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+
+        return response()->streamDownload(function () use ($spreadsheet, $format) {
+            $writer = $format === 'csv' ? new Csv($spreadsheet) : new Xlsx($spreadsheet);
+            if ($writer instanceof Csv) {
+                $writer->setUseBOM(true)->setDelimiter(',');
+            }
+            $writer->save('php://output');
+            $spreadsheet->disconnectWorksheets();
+        }, $filename.'.'.$format, [
+            'Content-Type' => $format === 'csv'
+                ? 'text/csv; charset=UTF-8'
+                : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    public function getExpenses(Request $request){
         try{
-            $expenses = Expense::all();
+            $expenses = $this->filteredExpensesQuery($request)
+                ->latest('id')
+                ->paginate(min(max((int) $request->input('per_page', 25), 1), 100));
             $formatted = $expenses->map(function($expense){
 
                     $imagePath = null;
@@ -284,13 +445,27 @@ class ExpensesAPI extends Controller
                     'id'=>$expense->id,
                     'name' => $expense->name,
                     'price' => $expense->price,
-                    'created_at' => $expense->created_at? $expense->created_at->format('Y-m-d') : 'no date',
+                    'expense_type' => $expense->expense_type ?: 'general',
+                    'created_at' => $expense->expense_date?->format('Y-m-d')
+                        ?? ($expense->created_at?->format('Y-m-d') ?: 'no date'),
                     'image'=> $imagePath,
+                    'box' => $expense->box ? [
+                        'id' => $expense->box->id,
+                        'name' => $expense->box->name,
+                        'currency' => $expense->box->currency,
+                        'type' => $expense->box->type,
+                    ] : null,
                 ];
             });
             return response()->json([
                 'status'=>'success',
                 'expenses' => $formatted,
+                'pagination' => [
+                    'current_page' => $expenses->currentPage(),
+                    'last_page' => $expenses->lastPage(),
+                    'per_page' => $expenses->perPage(),
+                    'total' => $expenses->total(),
+                ],
   
             ]);
         }

@@ -15,12 +15,13 @@ class Expense extends Model
         'payment_method',
         'notes',
         'invoice_img',
-        'media','box_id'
+        'media','box_id','created_by_user_id','employee_id','expense_type','expense_date','destruction_id'
     ];
 
     protected $casts = [
         'media' => 'array', // Cast JSON column to array
         'invoice_img' =>'array',
+        'expense_date' => 'date',
     ];
 
     public function box(){

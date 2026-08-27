@@ -14,9 +14,28 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 class AssetLogs extends Controller
 {
-    public function getAllLogs(){
+    private function filteredLogs(Request $request)
+    {
+        $filters = $request->validate([
+            'asset_id' => 'nullable|integer|exists:assets,id',
+            'type' => 'nullable|string|in:create,depreciate',
+            'period' => ['nullable', 'string', 'regex:/^\d{4}-(0[1-9]|1[0-2])$/'],
+            'from' => 'nullable|date',
+            'to' => 'nullable|date|after_or_equal:from',
+        ]);
+
+        return AssetLog::query()
+            ->with('asset:id,name,depreciation_rate')
+            ->when($filters['asset_id'] ?? null, fn ($q, $id) => $q->where('asset_id', $id))
+            ->when($filters['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
+            ->when($filters['period'] ?? null, fn ($q, $period) => $q->where('depreciation_period', $period))
+            ->when($filters['from'] ?? null, fn ($q, $from) => $q->whereDate('created_at', '>=', $from))
+            ->when($filters['to'] ?? null, fn ($q, $to) => $q->whereDate('created_at', '<=', $to));
+    }
+
+    public function getAllLogs(Request $request){
         try{
-        $logs = AssetLog::all();
+        $logs = $this->filteredLogs($request)->latest('id')->get();
         $formatted =  AssetLogsResource::collection($logs);
 
 
@@ -81,14 +100,19 @@ class AssetLogs extends Controller
   }
 
 
-     public function getAllLogsReport(){
+     public function getAllLogsReport(Request $request){
         try{
 
 
-        $logs = AssetLog::all();
+        $logs = $this->filteredLogs($request)->latest('id')->get();
 
         $reportHtml = view('pdf.asset-logs', [
             'logs' => $logs,
+            'summary' => [
+                'count' => $logs->count(),
+                'depreciation_total' => round((float) $logs->sum('depreciation_amount'), 2),
+                'period' => $request->input('period'),
+            ],
         ])->render();
 
         $arabic = new Arabic();

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class CommonUse extends Controller
 {
@@ -28,7 +29,8 @@ class CommonUse extends Controller
     if ($request->hasFile($field)) {
         foreach ($request->file($field) as $file) {
             if ($file instanceof \Illuminate\Http\UploadedFile) {
-                $imageName =  $file->getClientOriginalName();
+                $extension = strtolower($file->getClientOriginalExtension());
+                $imageName = (string) Str::uuid().($extension ? '.'.$extension : '');
                 $file->move(public_path($path), $imageName);
                 $newFiles[] = $imageName;
             }

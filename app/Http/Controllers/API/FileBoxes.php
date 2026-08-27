@@ -52,15 +52,25 @@ class FileBoxes extends Controller
         }
 }
 
-    public function allFileBoxes(){
+    public function allFileBoxes(Request $request){
         try{
-
-        $fileBoxes = FileBox::where('is_cancelled', 0)
+        $filters = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'treasury_id' => 'nullable|integer|exists:treasuries,id',
+            'status' => 'nullable|string|in:active,archived,all',
+        ]);
+        $status = $filters['status'] ?? 'active';
+        $fileBoxes = FileBox::query()
+            ->when($status === 'active', fn ($q) => $q->where('is_cancelled', 0))
+            ->when($status === 'archived', fn ($q) => $q->where('is_cancelled', 1))
+            ->when($filters['treasury_id'] ?? null, fn ($q, $id) => $q->where('treasury_id', $id))
+            ->when($filters['search'] ?? null, fn ($q, $search) => $q->where('name', 'like', "%{$search}%"))
             ->with(['files' => function($q) {
                 $q->where('is_canceled', 0)
                 ->select('id', 'file_box_id', 'name');
             }])
-            ->get(['id', 'name']);
+            ->with('treasury:id,name')
+            ->get(['id', 'treasury_id', 'name', 'is_cancelled']);
 
             return response()->json([
                 'status'=>'success',
@@ -97,7 +107,7 @@ class FileBoxes extends Controller
                     'file_id'=> $file->id,
                     'file_name'=> $file->name,
                     'treasury_id' => $fileBox->treasury_id,
-                    'treasury_name' => $fileBox->treasury->name,
+                    'treasury_name' => $fileBox->treasury?->name,
 
                 ];
             });

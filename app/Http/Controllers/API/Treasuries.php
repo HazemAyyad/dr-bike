@@ -43,9 +43,17 @@ class Treasuries extends Controller
         }
     }
 
-    public function getTreasuries(){
+    public function getTreasuries(Request $request){
         try{
-            $treasuries = Treasury::where('is_canceled',0)
+            $filters = $request->validate([
+                'search' => 'nullable|string|max:255',
+                'status' => 'nullable|string|in:active,archived,all',
+            ]);
+            $status = $filters['status'] ?? 'active';
+            $treasuries = Treasury::query()
+            ->when($status === 'active', fn ($q) => $q->where('is_canceled', 0))
+            ->when($status === 'archived', fn ($q) => $q->where('is_canceled', 1))
+            ->when($filters['search'] ?? null, fn ($q, $search) => $q->where('name', 'like', "%{$search}%"))
             ->with([
             'fileBoxes'=> function($q){
                 $q->where('is_cancelled',0)->select('id','treasury_id','name');
@@ -55,7 +63,7 @@ class Treasuries extends Controller
                     ->select('id', 'file_box_id', 'name');
             }
         ])
-        ->get(['id', 'name']);
+        ->get(['id', 'name', 'is_canceled']);
 
             return response()->json([
                 'status'=>'success',

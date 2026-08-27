@@ -97,10 +97,23 @@ class Files extends Controller
     }
 
 
-        public function allFiles(){
+        public function allFiles(Request $request){
         try{
-
-            $files = File::where('is_canceled',0)->get();
+            $filters = $request->validate([
+                'search' => 'nullable|string|max:255',
+                'file_box_id' => 'nullable|integer|exists:file_boxes,id',
+                'treasury_id' => 'nullable|integer|exists:treasuries,id',
+                'status' => 'nullable|string|in:active,archived,all',
+            ]);
+            $status = $filters['status'] ?? 'active';
+            $files = File::query()
+                ->with('fileBox.treasury:id,name')
+                ->when($status === 'active', fn ($q) => $q->where('is_canceled', 0))
+                ->when($status === 'archived', fn ($q) => $q->where('is_canceled', 1))
+                ->when($filters['file_box_id'] ?? null, fn ($q, $id) => $q->where('file_box_id', $id))
+                ->when($filters['treasury_id'] ?? null, fn ($q, $id) => $q->whereHas('fileBox', fn ($box) => $box->where('treasury_id', $id)))
+                ->when($filters['search'] ?? null, fn ($q, $search) => $q->where('name', 'like', "%{$search}%"))
+                ->get();
             return response()->json([
                 'status'=>'success',
                 'files' => $files,
@@ -136,8 +149,8 @@ class Files extends Controller
                     'paper_id'=> $paper->id,
                     'paper_name'=> $paper->name,
                     'paper_image' => $paper->img? 'public/Papers/'.$paper->img[0]: 'no img',
-                    'file_box_name' => $file->fileBox->name,
-                    'treasury_name' => $file->fileBox->treasury->name,
+                    'file_box_name' => $file->fileBox?->name,
+                    'treasury_name' => $file->fileBox?->treasury?->name,
 
                 ];
             });

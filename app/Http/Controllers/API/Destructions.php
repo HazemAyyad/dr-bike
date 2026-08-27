@@ -6,9 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Models\Destruction;
 use App\Http\Resources\DestructionResource;
 use App\Models\Product;
+use App\Models\Expense;
+use App\Models\InventoryCostLayer;
+use App\Models\ProductStockMovement;
+use App\Services\InventoryCostingService;
+use App\Services\ProductStockService;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 class Destructions extends Controller
 {
 
@@ -24,7 +32,8 @@ class Destructions extends Controller
 
                 $destinationPath = public_path($this->destructionMediaPath . '/' . $folder);
 
-                $fullName =  $file->getClientOriginalName();
+                $extension = strtolower($file->getClientOriginalExtension());
+                $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
                 $file->move($destinationPath, $fullName);
                 $files[] = $fullName;
             }
@@ -39,8 +48,8 @@ class Destructions extends Controller
                 'product_id' => 'required|exists:products,id',
                 'pieces_number' => 'required|integer|min:1',
                 'destruction_reason' => 'nullable|string',
-                'media' => 'nullable|array',
-                'media.*' => 'file|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
+                'media' => 'nullable|array|max:15',
+                'media.*' => 'file|max:30720|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
             ]);
 
             $files = $this->fileStorage($request);
@@ -52,17 +61,69 @@ class Destructions extends Controller
                     'message'=>__('messages.stcok_failed'),
                 ],200);
             }
-            $destruction = Destruction::create($data);
-            $newStock = $product->stock - $request->pieces_number;
-            $product->update(['stock'=> $newStock ]);
-            if ($product->stock === 0) {
-                $closeout = $product->closeout;
+            $destruction = DB::transaction(function () use ($data, $product, $request) {
+                $destruction = Destruction::create(array_merge($data, [
+                    'created_by_user_id' => $request->user()?->id,
+                ]));
 
-                if ($closeout) { // check if it exists
-                    $closeout->status = 'archived'; 
-                    $closeout->save();
+                $quantity = (int) $request->pieces_number;
+                $hasCostLayers = Schema::hasTable('inventory_cost_layers')
+                    && Schema::hasTable('inventory_cost_allocations')
+                    && (float) InventoryCostLayer::query()
+                        ->where('product_id', $product->id)
+                        ->where('remaining_quantity', '>', 0)
+                        ->sum('remaining_quantity') >= $quantity;
+
+                if ($hasCostLayers) {
+                    $cost = app(InventoryCostingService::class)->consumeOwnedStock(
+                        product: $product,
+                        quantity: $quantity,
+                        movementType: ProductStockMovement::TYPE_DESTRUCTION,
+                        referenceType: 'destruction',
+                        referenceId: $destruction->id,
+                        userId: $request->user()?->id,
+                        note: $request->destruction_reason,
+                    );
+                } else {
+                    $unitCost = (float) ($product->price ?? 0);
+                    $cost = [
+                        'method' => 'legacy_product_price_estimate',
+                        'unit_cost' => $unitCost,
+                        'total_cost' => $unitCost * $quantity,
+                    ];
+                    app(ProductStockService::class)->adjustStock(
+                        product: $product,
+                        quantityDelta: -$quantity,
+                        type: ProductStockMovement::TYPE_DESTRUCTION,
+                        referenceType: 'destruction',
+                        referenceId: $destruction->id,
+                        note: $request->destruction_reason,
+                        userId: $request->user()?->id,
+                        unitCost: $cost['unit_cost'],
+                        totalCost: $cost['total_cost'],
+                    );
                 }
-            }
+
+                $destruction->update([
+                    'cost_method' => $cost['method'],
+                    'unit_cost' => round((float) $cost['unit_cost'], 6),
+                    'total_cost' => round((float) $cost['total_cost'], 6),
+                ]);
+
+                Expense::create([
+                    'name' => 'إتلاف بضاعة - '.($product->nameAr ?: $product->nameEng),
+                    'price' => round((float) $cost['total_cost'], 2),
+                    'expense_type' => 'destruction',
+                    'expense_date' => now()->toDateString(),
+                    'notes' => $request->destruction_reason,
+                    'destruction_id' => $destruction->id,
+                    'created_by_user_id' => $request->user()?->id,
+                    'media' => $data['media'] ?? [],
+                    'invoice_img' => [],
+                ]);
+
+                return $destruction;
+            });
 
             Logs::createLog(
                 'اضافة اتلاف بضاعة جديد',

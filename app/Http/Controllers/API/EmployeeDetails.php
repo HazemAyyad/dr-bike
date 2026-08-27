@@ -15,6 +15,7 @@ use App\Support\EmployeeAttendanceToday;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeWifiPresenceLog;
 use App\Models\EmployeeOrder;
+use App\Models\Expense;
 use App\Models\EmployeePermission;
 use App\Models\FingerprintRawLog;
 use App\Models\Permission;
@@ -22,6 +23,7 @@ use App\Models\User;
 use App\Services\AttendanceSalaryService;
 use App\Services\EmployeePointsService;
 use App\Services\FingerprintAttendanceProcessor;
+use App\Services\ExpenseBoxAccessService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -1430,31 +1432,43 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
     }
 }
 
-    public function paySalary(Request $request){
+    public function paySalary(Request $request, ExpenseBoxAccessService $boxAccess){
      try{
         $request->validate([
             'employee_id' => 'required|exists:employee_details,id',
             'salary_to_pay' =>'required|numeric|min:1',
+            'box_id' => 'nullable|integer|exists:boxes,id',
         ]);
 
         $employee = EmployeeDetail::findOrFail($request->employee_id);
         $data = $this->getEmployeeFinancialData($employee->id);
         $salary_to_pay = $request->salary_to_pay;
 
-
-        if($data['total'] <=0){
-            $employee->update([
-                'total_work_hours' => 0,
-                'salary' => 0 ,
-                'debts' => ($data['debts'] - $data['salary']) + $request->salary_to_pay,
+        if ($request->filled('box_id') && ! $boxAccess->canUse($request->user(), (int) $request->box_id)) {
+            throw ValidationException::withMessages([
+                'box_id' => ['الصندوق غير مسموح أو أن جلسته اليومية مغلقة.'],
             ]);
-
-            return response()->json([
-                'status'=>'success',
-                'message' => __('messages.salary_paid')
-            ],200);
         }
-        
+
+        DB::transaction(function () use ($request, $employee, $data, $salary_to_pay) {
+            $box = null;
+            if ($request->filled('box_id')) {
+                $box = Box::query()->lockForUpdate()->findOrFail($request->box_id);
+                if ($box->currency !== 'شيكل') {
+                    throw ValidationException::withMessages(['box_id' => [__('messages.box_must_be_shekel')]]);
+                }
+                if ((float) $box->total < (float) $salary_to_pay) {
+                    throw ValidationException::withMessages(['salary_to_pay' => [__('messages.box_out_of_money')]]);
+                }
+            }
+
+            if($data['total'] <=0){
+                $employee->update([
+                    'total_work_hours' => 0,
+                    'salary' => 0,
+                    'debts' => ($data['debts'] - $data['salary']) + $salary_to_pay,
+                ]);
+            } else {
             $employee->update([
                 'debts'=> 0 ,
                 'total_work_hours' => 0,
@@ -1462,6 +1476,32 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             ]); 
             $employee->debts -= ($data['total'] - $salary_to_pay);
             $employee->save();
+            }
+
+            Expense::create([
+                'name' => 'راتب الموظف - '.($employee->user?->name ?? $employee->id),
+                'price' => $salary_to_pay,
+                'expense_type' => 'salary',
+                'expense_date' => now()->toDateString(),
+                'employee_id' => $employee->id,
+                'box_id' => $box?->id,
+                'created_by_user_id' => $request->user()?->id,
+                'notes' => 'دفع راتب موظف',
+                'media' => [],
+                'invoice_img' => [],
+            ]);
+
+            if ($box) {
+                $box->decrement('total', $salary_to_pay);
+                $box->refresh();
+                BoxLogs::createBoxLog(
+                    $box,
+                    'دفع راتب الموظف '.($employee->user?->name ?? $employee->id),
+                    'minus',
+                    $salary_to_pay
+                );
+            }
+        }, 3);
 
             return response()->json([
                 'status'=>'success',

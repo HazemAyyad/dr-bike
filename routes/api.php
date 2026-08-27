@@ -893,6 +893,10 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Expenses and Finan
 
 
     // expenses
+      Route::get('/expenses/available-boxes' , [ExpensesAPI::class,'availableBoxes']);
+      Route::get('/expenses/report' , [ExpensesAPI::class,'report']);
+      Route::get('/expenses/report/export/{format}' , [ExpensesAPI::class,'exportReport'])
+          ->whereIn('format', ['pdf', 'xlsx', 'csv']);
       Route::post('/store/expense' , [ExpensesAPI::class,'store']);
       Route::get('/get/all/expenses' , [ExpensesAPI::class,'getExpenses']);
       Route::post('/show/expense' , [ExpensesAPI::class,'showExpense']);

@@ -21,6 +21,9 @@ class AssetLogsResource extends JsonResource
                 'depreciation_rate' => $this->asset->depreciation_rate?? 0,
                 'total' => $this->total?? null,
                 'type' => $this->type?? null,
+                'depreciation_period' => $this->depreciation_period,
+                'value_before' => $this->value_before,
+                'depreciation_amount' => $this->depreciation_amount,
             ];
     }
 }
