@@ -26,14 +26,26 @@ class DebtLedgerShareWebController extends Controller
         $customerId = $payload['customer_id'] ?? null;
         $sellerId = $payload['seller_id'] ?? null;
         $detailLevel = $payload['report_detail_level'] ?? 'summary';
+        $startDate = $payload['start_date'] ?? null;
+        $endDate = $payload['end_date'] ?? null;
+        $currency = $this->ledger->normalizeCurrency($payload['currency'] ?? null);
 
         $person = $this->ledger->getPersonInfo($customerId, $sellerId);
-        $transactions = $this->ledger->baseQuery($customerId, $sellerId)
+        $transactionsQuery = $this->ledger->baseQuery($customerId, $sellerId)
+            ->where('currency', $currency);
+        $this->ledger->applyDateFilter($transactionsQuery, $startDate, $endDate);
+        $transactions = $transactionsQuery
             ->orderByDesc('transaction_date')
             ->orderByDesc('id')
             ->get();
 
-        $totals = $this->ledger->calculateTotals($customerId, $sellerId);
+        $totals = $this->ledger->calculateTotals(
+            $customerId,
+            $sellerId,
+            $startDate,
+            $endDate,
+            $currency
+        );
 
         return view('debt-ledger.public-share', [
             'person' => $person,
@@ -41,6 +53,10 @@ class DebtLedgerShareWebController extends Controller
             'total_taken' => $totals['total_taken'],
             'total_given' => $totals['total_given'],
             'balance' => $totals['balance'],
+            'currency' => $currency,
+            'period_label' => $startDate && $endDate
+                ? ($startDate === $endDate ? $startDate : $startDate.' إلى '.$endDate)
+                : 'جميع المعاملات',
             'detail_level' => $detailLevel,
             'source_details' => $this->reportSourceDetails($transactions, $detailLevel),
         ]);

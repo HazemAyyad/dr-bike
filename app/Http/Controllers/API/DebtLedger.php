@@ -624,6 +624,10 @@ class DebtLedger extends Controller
             $request->validate([
                 'customer_id' => 'nullable|exists:customers,id',
                 'seller_id' => 'nullable|exists:sellers,id',
+                'start_date' => 'nullable|date',
+                'end_date' => 'nullable|date',
+                'period' => 'nullable|in:all,today,yesterday,current_week,last_week,current_month,last_month,custom',
+                'currency' => 'nullable|string|in:شيكل,دولار,دينار',
                 'report_detail_level' => 'nullable|in:summary,detailed,detailed_with_images',
             ]);
 
@@ -631,10 +635,26 @@ class DebtLedger extends Controller
                 return response()->json(['status' => 'error', 'message' => $error], 200);
             }
 
+            [$startDate, $endDate] = $this->ledger->resolvePeriodDates(
+                $request->input('period', 'all'),
+                $request->start_date,
+                $request->end_date
+            );
+
+            if ($request->input('period') === 'custom' && (! $startDate || ! $endDate)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.validation_failed'),
+                ], 200);
+            }
+
             $token = Str::uuid()->toString();
             Cache::put('debt_ledger_share:' . $token, [
                 'customer_id' => $request->customer_id,
                 'seller_id' => $request->seller_id,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'currency' => $this->ledger->normalizeCurrency($request->currency),
                 'report_detail_level' => $request->input('report_detail_level', 'summary'),
             ], now()->addDays(90));
 

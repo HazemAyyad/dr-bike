@@ -218,7 +218,7 @@
         <section class="meta">
             <p><strong>الاسم:</strong> {{ $person['name'] ?? '—' }}</p>
             <p><strong>الهاتف:</strong> {{ $person['phone'] ?? '—' }}</p>
-            <p><strong>الفترة:</strong> جميع المعاملات</p>
+            <p><strong>الفترة:</strong> {{ $period_label ?? 'جميع المعاملات' }}</p>
             <p><strong>تاريخ الإنشاء:</strong> {{ now()->format('Y-m-d H:i') }}</p>
             <p><strong>عدد المعاملات:</strong> {{ $transactions->count() }}</p>
         </section>
@@ -226,16 +226,16 @@
         <section class="summary">
             <div class="summary-item">
                 <span class="summary-label">إجمالي أخذت</span>
-                <span class="summary-value taken">{{ number_format($total_taken, 2) }} ₪</span>
+                <span class="summary-value taken">{{ number_format($total_taken, 2) }} {{ $currency ?? 'شيكل' }}</span>
             </div>
             <div class="summary-item">
                 <span class="summary-label">إجمالي أعطيت</span>
-                <span class="summary-value given">{{ number_format($total_given, 2) }} ₪</span>
+                <span class="summary-value given">{{ number_format($total_given, 2) }} {{ $currency ?? 'شيكل' }}</span>
             </div>
             <div class="summary-item">
                 <span class="summary-label">الرصيد النهائي</span>
                 <span class="summary-value {{ $balance >= 0 ? 'taken' : 'given' }}">
-                    {{ number_format($balance, 2) }} ₪
+                    {{ number_format($balance, 2) }} {{ $currency ?? 'شيكل' }}
                 </span>
             </div>
         </section>
@@ -268,14 +268,14 @@
                                 <td class="num">{{ $transaction->transaction_date?->format('Y-m-d') }}</td>
                                 <td class="note">{{ $transaction->note ?? '—' }}</td>
                                 <td class="num given">
-                                    {{ $transaction->type === 'given' ? number_format($transaction->amount, 2) . ' ₪' : '—' }}
+                                    {{ $transaction->type === 'given' ? number_format($transaction->amount, 2) . ' ' . ($currency ?? 'شيكل') : '—' }}
                                 </td>
                                 <td class="num taken">
-                                    {{ $transaction->type === 'taken' ? number_format($transaction->amount, 2) . ' ₪' : '—' }}
+                                    {{ $transaction->type === 'taken' ? number_format($transaction->amount, 2) . ' ' . ($currency ?? 'شيكل') : '—' }}
                                 </td>
-                                <td class="num">{{ number_format($before, 2) }} ₪</td>
+                                <td class="num">{{ number_format($before, 2) }} {{ $currency ?? 'شيكل' }}</td>
                                 <td class="num {{ $transaction->balance_after >= 0 ? 'taken' : 'given' }}">
-                                    {{ number_format($transaction->balance_after, 2) }} ₪
+                                    {{ number_format($transaction->balance_after, 2) }} {{ $currency ?? 'شيكل' }}
                                 </td>
                             </tr>
                             @php

@@ -116,6 +116,57 @@ class DebtLedgerTest extends TestCase
             ->assertJsonPath('report.transactions_count', 1);
     }
 
+    public function test_public_share_uses_the_selected_period_and_currency(): void
+    {
+        $customer = Customer::create(['name' => 'Amro Amer', 'phone' => '0599000099', 'is_canceled' => false]);
+
+        DebtTransaction::create([
+            'customer_id' => $customer->id,
+            'type' => 'taken',
+            'amount' => 40,
+            'currency' => 'دولار',
+            'balance_after' => 40,
+            'transaction_date' => '2026-08-01',
+            'source' => 'manual',
+        ]);
+        DebtTransaction::create([
+            'customer_id' => $customer->id,
+            'type' => 'taken',
+            'amount' => 90,
+            'currency' => 'دولار',
+            'balance_after' => 130,
+            'transaction_date' => '2026-08-20',
+            'source' => 'manual',
+        ]);
+        DebtTransaction::create([
+            'customer_id' => $customer->id,
+            'type' => 'taken',
+            'amount' => 500,
+            'currency' => 'شيكل',
+            'balance_after' => 500,
+            'transaction_date' => '2026-08-20',
+            'source' => 'manual',
+        ]);
+
+        $shareResponse = $this->postJson('/api/debt-ledger/person/share-link', [
+            'customer_id' => $customer->id,
+            'period' => 'custom',
+            'start_date' => '2026-08-10',
+            'end_date' => '2026-08-25',
+            'currency' => 'دولار',
+            'report_detail_level' => 'summary',
+        ]);
+
+        $shareResponse->assertStatus(200)->assertJsonPath('status', 'success');
+
+        $page = $this->get($shareResponse->json('share_url'));
+        $page->assertOk()
+            ->assertSee('2026-08-10 إلى 2026-08-25')
+            ->assertSee('90.00 دولار')
+            ->assertDontSee('40.00 دولار')
+            ->assertDontSee('500.00 شيكل');
+    }
+
     public function test_migration_command_does_not_duplicate_rows(): void
     {
         $customer = Customer::create(['name' => 'Test Customer', 'phone' => '0599000001', 'is_canceled' => false]);
