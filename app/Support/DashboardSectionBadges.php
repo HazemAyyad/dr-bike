@@ -43,7 +43,8 @@ class DashboardSectionBadges
         }
 
         $salesQuery = SuspendedInstantSale::query()
-            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED);
+            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED)
+            ->where('save_type', SuspendedInstantSale::SAVE_TYPE_MANUAL);
         if (! self::canViewAllSuspendedSales($user)) {
             $salesQuery->where('created_by_user_id', $user->id);
         }

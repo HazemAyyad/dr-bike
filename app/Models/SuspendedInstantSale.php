@@ -7,6 +7,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class SuspendedInstantSale extends Model
 {
+    public const SAVE_TYPE_MANUAL = 'manual';
+
+    public const SAVE_TYPE_AUTO = 'auto';
+
     public const STATUS_SUSPENDED = 'suspended';
 
     public const STATUS_COMPLETED = 'completed';
@@ -23,6 +27,7 @@ class SuspendedInstantSale extends Model
         'employee_id',
         'reference_code',
         'current_step',
+        'save_type',
         'payload',
         'note_log',
         'summary_label',
@@ -78,5 +83,10 @@ class SuspendedInstantSale extends Model
     public function isSuspended(): bool
     {
         return $this->status === self::STATUS_SUSPENDED;
+    }
+
+    public function isAutoSaved(): bool
+    {
+        return $this->save_type === self::SAVE_TYPE_AUTO;
     }
 }

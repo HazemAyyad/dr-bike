@@ -46,6 +46,7 @@ class SuspendedInstantSaleController extends Controller
             $filters = $request->validate([
                 'search' => 'nullable|string|max:255',
                 'created_by_user_id' => 'nullable|integer|exists:users,id',
+                'save_type' => 'nullable|string|in:manual,auto',
             ]);
 
             $items = $this->service->listForUser($request->user(), $filters);
@@ -54,7 +55,8 @@ class SuspendedInstantSaleController extends Controller
                 'status' => 'success',
                 'suspended_instant_sales' => $items,
                 'suspended_count' => count($items),
-                'can_view_all' => $this->service->isAdmin($request->user()),
+                'can_view_all' => ($filters['save_type'] ?? 'manual') === 'manual'
+                    && $this->service->canViewAllSuspendedSales($request->user()),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -219,9 +221,16 @@ class SuspendedInstantSaleController extends Controller
     public function count(Request $request)
     {
         try {
+            $data = $request->validate([
+                'save_type' => 'nullable|string|in:manual,auto',
+            ]);
+
             return response()->json([
                 'status' => 'success',
-                'suspended_count' => $this->service->suspendedCountForUser($request->user()),
+                'suspended_count' => $this->service->suspendedCountForUser(
+                    $request->user(),
+                    $data['save_type'] ?? 'manual'
+                ),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([

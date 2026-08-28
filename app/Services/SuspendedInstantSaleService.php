@@ -47,6 +47,10 @@ class SuspendedInstantSaleService
 
     public function canView(User $user, SuspendedInstantSale $suspended): bool
     {
+        if ($suspended->isAutoSaved()) {
+            return (int) $suspended->created_by_user_id === (int) $user->id;
+        }
+
         return $this->canViewAllSuspendedSales($user)
             || (int) $suspended->created_by_user_id === (int) $user->id;
     }
@@ -172,12 +176,14 @@ class SuspendedInstantSaleService
     {
         $data = $request->validate([
             'current_step' => 'required|string|in:product_picker,checkout',
+            'save_type' => 'nullable|string|in:manual,auto',
             'payload' => 'required|array',
             'suspended_instant_sale_id' => 'nullable|integer|exists:suspended_instant_sales,id',
             'note' => 'nullable|string|max:2000',
         ]);
 
         $payload = $this->validatePayload($data['payload']);
+        $saveType = $data['save_type'] ?? SuspendedInstantSale::SAVE_TYPE_MANUAL;
         if (! empty($payload['source_instant_sale_id'])) {
             throw ValidationException::withMessages([
                 'payload' => [__('messages.suspended_instant_sale_cannot_suspend_edit')],
@@ -199,14 +205,23 @@ class SuspendedInstantSaleService
                     'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_forbidden')],
                 ]);
             }
+            if ($saveType === SuspendedInstantSale::SAVE_TYPE_AUTO
+                && (int) $existing->created_by_user_id !== (int) $user->id) {
+                throw ValidationException::withMessages([
+                    'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_forbidden')],
+                ]);
+            }
             if (! $existing->isSuspended()) {
                 throw ValidationException::withMessages([
                     'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_not_active')],
                 ]);
             }
 
+            $wasAutoSaved = $existing->isAutoSaved();
             $existing->update([
                 'current_step' => $data['current_step'],
+                'save_type' => $saveType,
+                'reference_code' => ($saveType === SuspendedInstantSale::SAVE_TYPE_AUTO ? 'م-' : 'ع-').$existing->id,
                 'payload' => $payload,
                 'summary_label' => $this->buildSummaryLabel($payload),
                 'total_cost' => $this->resolveTotalCost($payload),
@@ -216,14 +231,19 @@ class SuspendedInstantSaleService
                 $this->appendNote($existing, $user, $noteText);
             }
 
-            $this->logSuspendedActivity(
-                $existing->fresh(),
-                $user,
-                'suspended_sale_updated',
-                'تحديث فاتورة معلقة',
-                'تم تحديث الفاتورة المعلقة '.($existing->reference_code ?? '#'.$existing->id),
-                ['note' => $noteText !== '' ? $noteText : null]
-            );
+            if ($saveType === SuspendedInstantSale::SAVE_TYPE_MANUAL) {
+                $this->logSuspendedActivity(
+                    $existing->fresh(),
+                    $user,
+                    'suspended_sale_updated',
+                    'تحديث فاتورة معلقة',
+                    'تم تحديث الفاتورة المعلقة '.($existing->reference_code ?? '#'.$existing->id),
+                    ['note' => $noteText !== '' ? $noteText : null]
+                );
+                if ($wasAutoSaved) {
+                    $this->notifyAdminSuspendedCreated($existing->fresh());
+                }
+            }
 
             return $existing->fresh(['createdByUser:id,name', 'employee.user']);
         }
@@ -234,6 +254,7 @@ class SuspendedInstantSaleService
             'created_by_user_id' => $user->id,
             'employee_id' => $owner['employee_id'],
             'current_step' => $data['current_step'],
+            'save_type' => $saveType,
             'payload' => $payload,
             'note_log' => $noteLog,
             'summary_label' => $this->buildSummaryLabel($payload),
@@ -243,19 +264,22 @@ class SuspendedInstantSaleService
         ]);
 
         $record->update([
-            'reference_code' => 'ع-'.$record->id,
+            'reference_code' => ($saveType === SuspendedInstantSale::SAVE_TYPE_AUTO ? 'م-' : 'ع-').$record->id,
         ]);
 
         $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
 
-        $this->logSuspendedActivity(
-            $record,
-            $user,
-            'suspended_sale_created',
-            'تعليق فاتورة',
-            'تم تعليق فاتورة '.$record->reference_code,
-            ['summary_label' => $record->summary_label]
-        );
+        if ($saveType === SuspendedInstantSale::SAVE_TYPE_MANUAL) {
+            $this->logSuspendedActivity(
+                $record,
+                $user,
+                'suspended_sale_created',
+                'تعليق فاتورة',
+                'تم تعليق فاتورة '.$record->reference_code,
+                ['summary_label' => $record->summary_label]
+            );
+            $this->notifyAdminSuspendedCreated($record);
+        }
 
         return $record;
     }
@@ -265,13 +289,18 @@ class SuspendedInstantSaleService
      */
     public function listForUser(User $user, array $filters = []): array
     {
+        $saveType = ($filters['save_type'] ?? null) === SuspendedInstantSale::SAVE_TYPE_AUTO
+            ? SuspendedInstantSale::SAVE_TYPE_AUTO
+            : SuspendedInstantSale::SAVE_TYPE_MANUAL;
         $query = SuspendedInstantSale::query()
             ->with(['createdByUser:id,name', 'employee.user:id,name'])
             ->where('status', SuspendedInstantSale::STATUS_SUSPENDED)
+            ->where('save_type', $saveType)
             ->orderByDesc('suspended_at')
             ->orderByDesc('id');
 
-        if (! $this->canViewAllSuspendedSales($user)) {
+        if ($saveType === SuspendedInstantSale::SAVE_TYPE_AUTO
+            || ! $this->canViewAllSuspendedSales($user)) {
             $query->where('created_by_user_id', $user->id);
         } elseif (! empty($filters['created_by_user_id'])) {
             $query->where('created_by_user_id', (int) $filters['created_by_user_id']);
@@ -328,13 +357,15 @@ class SuspendedInstantSaleService
             'cancelled_at' => now(),
         ]);
 
-        $this->logSuspendedActivity(
-            $record->fresh(),
-            $user,
-            'suspended_sale_cancelled',
-            'إلغاء فاتورة معلقة',
-            'تم إلغاء الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id)
-        );
+        if (! $record->isAutoSaved()) {
+            $this->logSuspendedActivity(
+                $record->fresh(),
+                $user,
+                'suspended_sale_cancelled',
+                'إلغاء فاتورة معلقة',
+                'تم إلغاء الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id)
+            );
+        }
 
         return $record->fresh(['createdByUser:id,name', 'employee.user']);
     }
@@ -357,14 +388,16 @@ class SuspendedInstantSaleService
 
         $this->appendNote($record, $user, $note);
 
-        $this->logSuspendedActivity(
-            $record,
-            $user,
-            'suspended_sale_note_added',
-            'تعليق على فاتورة معلقة',
-            'تمت إضافة ملاحظة على الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id),
-            ['note' => trim($note)]
-        );
+        if (! $record->isAutoSaved()) {
+            $this->logSuspendedActivity(
+                $record,
+                $user,
+                'suspended_sale_note_added',
+                'تعليق على فاتورة معلقة',
+                'تمت إضافة ملاحظة على الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id),
+                ['note' => trim($note)]
+            );
+        }
 
         return $record->fresh(['createdByUser:id,name', 'employee.user']);
     }
@@ -465,17 +498,19 @@ class SuspendedInstantSaleService
             ]);
 
             $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
-            $this->notifyAdminSuspendedCompleted($record, $user);
-            $this->logSuspendedActivity(
-                $record,
-                $user,
-                'suspended_sale_completed',
-                'إتمام فاتورة معلقة',
-                'تم إتمام الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id),
-                ['instant_sale_id' => $instantSaleId],
-                $instantSaleId ? 'instant_sale' : 'suspended_instant_sale',
-                $instantSaleId ?: (int) $record->id
-            );
+            if (! $record->isAutoSaved()) {
+                $this->notifyAdminSuspendedCompleted($record, $user);
+                $this->logSuspendedActivity(
+                    $record,
+                    $user,
+                    'suspended_sale_completed',
+                    'إتمام فاتورة معلقة',
+                    'تم إتمام الفاتورة المعلقة '.($record->reference_code ?? '#'.$record->id),
+                    ['instant_sale_id' => $instantSaleId],
+                    $instantSaleId ? 'instant_sale' : 'suspended_instant_sale',
+                    $instantSaleId ?: (int) $record->id
+                );
+            }
 
             return [
                 'response' => response()->json([
@@ -600,8 +635,10 @@ class SuspendedInstantSaleService
 
         return [
             'id' => $item->id,
-            'reference_code' => $item->reference_code ?? ('ع-'.$item->id),
+            'reference_code' => $item->reference_code
+                ?? (($item->isAutoSaved() ? 'م-' : 'ع-').$item->id),
             'current_step' => $item->current_step,
+            'save_type' => $item->save_type ?? SuspendedInstantSale::SAVE_TYPE_MANUAL,
             'summary_label' => $item->summary_label,
             'total_cost' => $item->total_cost,
             'status' => $item->status,
@@ -630,12 +667,19 @@ class SuspendedInstantSaleService
         ]);
     }
 
-    public function suspendedCountForUser(User $user): int
-    {
+    public function suspendedCountForUser(
+        User $user,
+        string $saveType = SuspendedInstantSale::SAVE_TYPE_MANUAL
+    ): int {
+        $saveType = $saveType === SuspendedInstantSale::SAVE_TYPE_AUTO
+            ? SuspendedInstantSale::SAVE_TYPE_AUTO
+            : SuspendedInstantSale::SAVE_TYPE_MANUAL;
         $query = SuspendedInstantSale::query()
-            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED);
+            ->where('status', SuspendedInstantSale::STATUS_SUSPENDED)
+            ->where('save_type', $saveType);
 
-        if (! $this->canViewAllSuspendedSales($user)) {
+        if ($saveType === SuspendedInstantSale::SAVE_TYPE_AUTO
+            || ! $this->canViewAllSuspendedSales($user)) {
             $query->where('created_by_user_id', $user->id);
         }
 
