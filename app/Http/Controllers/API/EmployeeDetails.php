@@ -168,7 +168,8 @@ class EmployeeDetails extends Controller
     private function permissionGroupKey(?string $nameEn): string
     {
         return match ($nameEn) {
-            'Sales', 'Sales Daily Close Review', 'Sales Cancel Closed Review' => 'sales',
+            'Sales', 'Sales Daily Close Review', 'Sales Cancel Closed Review',
+            'Sales Settings', 'Delivery Company Accounts' => 'sales',
             'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings', 'Product Quick Edit' => 'stock',
             'Employees Section', 'Employee Impersonation',
             'Employees View', 'Employees Create', 'Employees Edit Basic', 'Employees Delete',

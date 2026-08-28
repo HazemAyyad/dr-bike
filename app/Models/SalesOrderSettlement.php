@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class SalesOrderSettlement extends Model
 {
     protected $fillable = [
-        'sales_order_id', 'sales_daily_session_id', 'box_id', 'source', 'amount',
+        'delivery_company_settlement_batch_id', 'sales_order_id', 'sales_daily_session_id', 'box_id', 'source', 'amount',
         'customer_debt_before', 'customer_debt_after', 'carrier_receivable_before',
         'carrier_receivable_after', 'idempotency_key', 'notes', 'created_by',
     ];
@@ -25,4 +25,9 @@ class SalesOrderSettlement extends Model
     public function session(): BelongsTo { return $this->belongsTo(SalesDailySession::class, 'sales_daily_session_id'); }
     public function box(): BelongsTo { return $this->belongsTo(Box::class); }
     public function createdBy(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
+
+    public function deliveryCompanyBatch(): BelongsTo
+    {
+        return $this->belongsTo(DeliveryCompanySettlementBatch::class, 'delivery_company_settlement_batch_id');
+    }
 }

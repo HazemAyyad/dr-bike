@@ -63,6 +63,8 @@ use App\Http\Controllers\API\ShiplyController;
 use App\Http\Controllers\API\ShiplyWebhookController;
 use App\Http\Controllers\API\CitiesController;
 use App\Http\Controllers\API\SalesDailySessionController;
+use App\Http\Controllers\API\SalesSettingsController;
+use App\Http\Controllers\API\DeliveryCompanyAccountsController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
 use App\Http\Controllers\API\LegacyStoreImageController;
@@ -556,6 +558,17 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:General Data,Data 
 });
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.token.expiry']] , function() {
+
+      Route::get('/sales/settings', [SalesSettingsController::class, 'show'])
+          ->middleware('check.permission:Sales Settings');
+      Route::put('/sales/settings', [SalesSettingsController::class, 'update'])
+          ->middleware('check.permission:Sales Settings');
+      Route::get('/sales/delivery-company-accounts', [DeliveryCompanyAccountsController::class, 'index'])
+          ->middleware('check.permission:Delivery Company Accounts');
+      Route::get('/sales/delivery-company-account', [DeliveryCompanyAccountsController::class, 'show'])
+          ->middleware('check.permission:Delivery Company Accounts');
+      Route::post('/sales/delivery-company-account/settle', [DeliveryCompanyAccountsController::class, 'settle'])
+          ->middleware('check.permission:Delivery Company Accounts');
 
 
        // deposits

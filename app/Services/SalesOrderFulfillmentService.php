@@ -90,8 +90,18 @@ class SalesOrderFulfillmentService
             $data['tracking_number'] = $parcelCode;
         }
 
-        return DB::transaction(function () use ($user, $order, $data, $isShiply, $shiplyMode, $employeeEmail, $parcelCode, $qrCode, $deliveryCompanyId) {
+        return DB::transaction(function () use ($user, $order, $data, $isShiply, $shiplyMode, $employeeEmail, $parcelCode, $qrCode, $deliveryCompanyId, $companyCode) {
             $companyName = $data['delivery_company_name'] ?? null;
+            if (! $companyName && $companyCode === 'office') {
+                $companyName = trim((string) ($data['carrier_office_name'] ?? '')) ?: null;
+            }
+            if (! $companyName && $companyCode === 'taxi') {
+                $taxiDetails = array_filter([
+                    trim((string) ($data['carrier_contact_name'] ?? '')),
+                    trim((string) ($data['carrier_vehicle_number'] ?? '')),
+                ]);
+                $companyName = $taxiDetails ? 'تكسي — '.implode(' — ', $taxiDetails) : null;
+            }
             if ($deliveryCompanyId && ! $companyName) {
                 $companyName = DeliveryCompany::query()->find($deliveryCompanyId)?->name;
             }
@@ -399,7 +409,7 @@ class SalesOrderFulfillmentService
                 $this->debtLedgerService->syncSalesOrderToLedger($locked, (float) $locked->total, (float) $locked->total - $customerAfter);
             }
 
-            $totalSettled = round((float) $locked->settlements()->sum('amount') + $amount, 2);
+            $totalSettled = round((float) $locked->settlements()->sum('amount'), 2);
             $locked->update([
                 'customer_debt_balance' => $customerAfter,
                 'carrier_receivable_balance' => $carrierAfter,
