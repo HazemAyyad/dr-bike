@@ -67,6 +67,11 @@ class Customer extends Model
         return $this->hasMany(Goal::class);
     }
 
+    public function addresses()
+    {
+        return $this->morphMany(PartnerAddress::class, 'addressable');
+    }
+
     public function draws(){
         return $this->hasMany(Draw::class);
     }

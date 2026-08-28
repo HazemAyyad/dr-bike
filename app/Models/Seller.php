@@ -58,6 +58,11 @@ class Seller extends Model
         return $this->hasMany(Bill::class);
     }
 
+    public function addresses()
+    {
+        return $this->morphMany(PartnerAddress::class, 'addressable');
+    }
+
     public function debts(){
         return $this->hasMany(Debt::class);
     }

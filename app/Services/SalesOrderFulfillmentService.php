@@ -11,6 +11,7 @@ use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
 use App\Models\SalesOrderItem;
 use App\Models\SalesOrderMedia;
+use App\Models\SalesOrderSettlement;
 use App\Models\SalesOrderStatusLog;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
@@ -34,6 +35,7 @@ class SalesOrderFulfillmentService
         protected ShiplyService $shiplyService,
         protected SalesOrderShiplyTrackingService $shiplyTracking,
         protected SalesOrderMediaRequirementService $mediaRequirements,
+        protected SalesOrdersDailyBoxService $ordersDailyBoxes,
     ) {}
 
     public function handoverToDelivery(User $user, int $orderId, array $payload): SalesOrder
@@ -199,6 +201,8 @@ class SalesOrderFulfillmentService
                 'payment_box_id' => $financials['payment_box_id'],
                 'payment_amount' => $financials['paid_amount'],
                 'sales_daily_session_id' => $financials['sales_daily_session_id'],
+                'customer_debt_balance' => $financials['customer_debt_balance'],
+                'carrier_receivable_balance' => $financials['carrier_receivable_balance'],
                 'updated_by' => $financialActor->id,
             ]);
 
@@ -263,6 +267,7 @@ class SalesOrderFulfillmentService
         $data = validator($payload, [
             'payment_amount' => 'nullable|numeric|min:0',
             'payment_box_id' => 'nullable|integer|exists:boxes,id',
+            'customer_debt_amount' => 'nullable|numeric|min:0',
         ])->validate();
 
         if (! empty($data['payment_amount'])) {
@@ -291,6 +296,8 @@ class SalesOrderFulfillmentService
                 'payment_box_id' => $financials['payment_box_id'],
                 'payment_amount' => $financials['paid_amount'],
                 'sales_daily_session_id' => $financials['sales_daily_session_id'],
+                'customer_debt_balance' => $financials['customer_debt_balance'],
+                'carrier_receivable_balance' => $financials['carrier_receivable_balance'],
                 'updated_by' => $user->id,
             ]);
 
@@ -307,50 +314,90 @@ class SalesOrderFulfillmentService
         $this->assertTransition($order, [SalesOrderStatus::Delivered]);
 
         $data = validator($payload, [
-            'delivery_settled_amount' => 'required|numeric|min:0',
+            'delivery_settled_amount' => 'required|numeric|gt:0',
             'payment_box_id' => 'nullable|integer|exists:boxes,id',
+            'source' => 'nullable|string|in:carrier,customer_debt',
+            'idempotency_key' => 'nullable|string|max:100',
+            'notes' => 'nullable|string|max:2000',
         ])->validate();
 
         $amount = (float) $data['delivery_settled_amount'];
-        $boxId = isset($data['payment_box_id']) ? (int) $data['payment_box_id'] : null;
+        $source = $data['source'] ?? 'carrier';
+        $resolvedBox = $this->ordersDailyBoxes->resolve(
+            $user,
+            isset($data['payment_box_id']) ? (int) $data['payment_box_id'] : null
+        );
 
-        if ($amount > 0 && ! $boxId) {
-            throw ValidationException::withMessages([
-                'payment_box_id' => [__('messages.sales_order_settlement_box_required')],
-            ]);
-        }
-
-        return DB::transaction(function () use ($user, $order, $amount, $boxId) {
-            if ($amount > 0 && $boxId) {
-                $box = Box::lockForUpdate()->findOrFail($boxId);
-                $box->total = round((float) $box->total + $amount, 2);
-                $box->save();
-
-                BoxLogs::createBoxLog(
-                    $box,
-                    'تسوية شركة توصيل — '.$order->serial_number,
-                    'add',
-                    $amount,
-                    'طلبية #'.$order->id.' — '.$order->serial_number
-                );
+        return DB::transaction(function () use ($user, $order, $amount, $source, $resolvedBox, $data) {
+            $locked = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
+            if (! empty($data['idempotency_key'])) {
+                $existing = SalesOrderSettlement::query()
+                    ->where('idempotency_key', $data['idempotency_key'])->first();
+                if ($existing) {
+                    return $locked->fresh();
+                }
             }
 
-            $order->update([
-                'delivery_settled_at' => now(),
-                'delivery_settled_amount' => $amount,
-                'delivery_settled_box_id' => $boxId,
+            $customerBefore = (float) $locked->customer_debt_balance;
+            $carrierBefore = (float) $locked->carrier_receivable_balance;
+            $available = $source === 'customer_debt' ? $customerBefore : $carrierBefore;
+            if ($amount > round($available, 2)) {
+                throw ValidationException::withMessages([
+                    'delivery_settled_amount' => ['مبلغ التسوية أكبر من الرصيد المستحق ('.number_format($available, 2).').'],
+                ]);
+            }
+
+            $customerAfter = $source === 'customer_debt' ? round($customerBefore - $amount, 2) : $customerBefore;
+            $carrierAfter = $source === 'carrier' ? round($carrierBefore - $amount, 2) : $carrierBefore;
+            $session = $this->sessionService->assertCanCreateSale($user);
+            $box = Box::lockForUpdate()->findOrFail($resolvedBox['id']);
+            $box->total = round((float) $box->total + $amount, 2);
+            $box->save();
+
+            BoxLogs::createBoxLog(
+                $box,
+                $source === 'carrier' ? 'تسوية شركة توصيل — '.$locked->serial_number : 'تحصيل دين طلبية — '.$locked->serial_number,
+                'add', $amount, 'طلبية #'.$locked->id.' — '.$locked->serial_number
+            );
+
+            SalesOrderSettlement::create([
+                'sales_order_id' => $locked->id,
+                'sales_daily_session_id' => $session->id,
+                'box_id' => $box->id,
+                'source' => $source,
+                'amount' => $amount,
+                'customer_debt_before' => $customerBefore,
+                'customer_debt_after' => $customerAfter,
+                'carrier_receivable_before' => $carrierBefore,
+                'carrier_receivable_after' => $carrierAfter,
+                'idempotency_key' => $data['idempotency_key'] ?? null,
+                'notes' => $data['notes'] ?? null,
+                'created_by' => $user->id,
+            ]);
+
+            if ($source === 'customer_debt') {
+                $this->debtLedgerService->syncSalesOrderToLedger($locked, (float) $locked->total, (float) $locked->total - $customerAfter);
+            }
+
+            $totalSettled = round((float) $locked->settlements()->sum('amount') + $amount, 2);
+            $locked->update([
+                'customer_debt_balance' => $customerAfter,
+                'carrier_receivable_balance' => $carrierAfter,
+                'delivery_settled_at' => ($customerAfter <= 0 && $carrierAfter <= 0) ? now() : null,
+                'delivery_settled_amount' => $totalSettled,
+                'delivery_settled_box_id' => $box->id,
                 'updated_by' => $user->id,
             ]);
 
             $this->logStatus(
-                $order,
-                $order->status,
+                $locked,
+                $locked->status,
                 SalesOrderStatus::Delivered->value,
-                'تسوية مع شركة التوصيل',
+                ($source === 'carrier' ? 'تسوية جزئية/كاملة مع شركة التوصيل' : 'تحصيل دين طلبية').' — '.$amount,
                 $user->id
             );
 
-            return $order->fresh();
+            return $locked->fresh();
         });
     }
 
@@ -359,7 +406,7 @@ class SalesOrderFulfillmentService
         $order = SalesOrder::query()->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::Delivered]);
 
-        if (! $order->delivery_settled_at) {
+        if ((float) $order->customer_debt_balance > 0 || (float) $order->carrier_receivable_balance > 0) {
             throw ValidationException::withMessages([
                 'order' => [__('messages.sales_order_settlement_required')],
             ]);
@@ -499,7 +546,7 @@ class SalesOrderFulfillmentService
      * Post cash box and debt ledger entries when a sales order is delivered.
      *
      * @param  array<string, mixed>  $payload
-     * @return array{paid_amount: float, payment_box_id: int|null, sales_daily_session_id: int|null}
+     * @return array{paid_amount: float, payment_box_id: int|null, sales_daily_session_id: int|null, customer_debt_balance: float, carrier_receivable_balance: float}
      */
     public function postDeliveryFinancials(
         SalesOrder $order,
@@ -512,12 +559,19 @@ class SalesOrderFulfillmentService
                 'paid_amount' => (float) $order->payment_amount,
                 'payment_box_id' => $order->payment_box_id,
                 'sales_daily_session_id' => $order->sales_daily_session_id,
+                'customer_debt_balance' => (float) $order->customer_debt_balance,
+                'carrier_receivable_balance' => (float) $order->carrier_receivable_balance,
             ];
         }
 
         $session = $this->sessionService->assertCanCreateSale($user);
 
         $paidAmount = $this->resolvePaidAmountForTotal($order, $recognizedTotal, $payload);
+        $companyCode = $this->resolveDeliveryCompanyCode($order->delivery_company_id);
+        $isExternalCarrier = $companyCode !== null && ! in_array($companyCode, ['doctor_bike', 'self', 'pickup'], true);
+        if ($isExternalCarrier && ! array_key_exists('payment_amount', $payload)) {
+            $paidAmount = min((float) $order->payment_amount, $recognizedTotal);
+        }
         $paymentBox = $this->resolvePaymentBox($user, $paidAmount, $payload);
 
         if ($paidAmount > 0 && $paymentBox) {
@@ -538,12 +592,24 @@ class SalesOrderFulfillmentService
             $order->payment_box_id = $paymentBox['id'];
         }
 
-        $this->debtLedgerService->syncSalesOrderToLedger($order, $recognizedTotal, $paidAmount);
+        $remaining = round(max(0, $recognizedTotal - $paidAmount), 2);
+        $requestedCustomerDebt = min((float) ($payload['customer_debt_amount'] ?? 0), $remaining);
+        $customerDebt = $isExternalCarrier ? round($requestedCustomerDebt, 2) : $remaining;
+        $carrierReceivable = $isExternalCarrier
+            ? round(max(0, $remaining - $customerDebt), 2)
+            : 0.0;
+        $this->debtLedgerService->syncSalesOrderToLedger(
+            $order,
+            $recognizedTotal,
+            round($recognizedTotal - $customerDebt, 2)
+        );
 
         return [
             'paid_amount' => $paidAmount,
             'payment_box_id' => $paymentBox['id'] ?? $order->payment_box_id,
             'sales_daily_session_id' => $session->id,
+            'customer_debt_balance' => $customerDebt,
+            'carrier_receivable_balance' => $carrierReceivable,
         ];
     }
 
@@ -717,12 +783,6 @@ class SalesOrderFulfillmentService
             ]);
         }
 
-        if (trim((string) $order->customer_address) === '') {
-            throw ValidationException::withMessages([
-                'customer_address' => [__('messages.sales_order_handover_address_required')],
-            ]);
-        }
-
         if ($isShiply) {
             if (! $order->shiply_city_id) {
                 throw ValidationException::withMessages([
@@ -744,14 +804,11 @@ class SalesOrderFulfillmentService
     {
         if ($companyCode === 'taxi') {
             $errors = [];
-            if (trim((string) ($data['tracking_number'] ?? '')) === '') {
-                $errors['tracking_number'] = [__('messages.sales_order_taxi_number_required')];
-            }
             if (trim((string) ($data['carrier_contact_name'] ?? '')) === '') {
                 $errors['carrier_contact_name'] = [__('messages.sales_order_taxi_driver_required')];
             }
-            if (trim((string) ($data['carrier_contact_phone'] ?? '')) === '') {
-                $errors['carrier_contact_phone'] = [__('messages.sales_order_taxi_phone_required')];
+            if (trim((string) ($data['carrier_vehicle_number'] ?? $data['tracking_number'] ?? '')) === '') {
+                $errors['carrier_vehicle_number'] = [__('messages.sales_order_office_vehicle_required')];
             }
             if ($errors !== []) {
                 throw ValidationException::withMessages($errors);
@@ -767,12 +824,6 @@ class SalesOrderFulfillmentService
         $errors = [];
         if (trim((string) ($data['carrier_office_name'] ?? '')) === '') {
             $errors['carrier_office_name'] = [__('messages.sales_order_office_name_required')];
-        }
-        if (trim((string) ($data['carrier_contact_name'] ?? '')) === '') {
-            $errors['carrier_contact_name'] = [__('messages.sales_order_office_driver_required')];
-        }
-        if (trim((string) ($data['carrier_contact_phone'] ?? '')) === '') {
-            $errors['carrier_contact_phone'] = [__('messages.sales_order_office_phone_required')];
         }
         if (trim((string) ($data['carrier_vehicle_number'] ?? '')) === '') {
             $errors['carrier_vehicle_number'] = [__('messages.sales_order_office_vehicle_required')];
@@ -805,25 +856,10 @@ class SalesOrderFulfillmentService
             return null;
         }
 
-        if ((bool) config('sales_orders.payment_box.enabled', true)) {
-            $ordersBox = $this->resolveSalesOrdersBox();
-            if ($ordersBox) {
-                return ['id' => (int) $ordersBox->id, 'name' => (string) $ordersBox->name];
-            }
-        }
-
-        if (! empty($payload['payment_box_id'])) {
-            $box = Box::query()->find($payload['payment_box_id']);
-            if ($box) {
-                return ['id' => (int) $box->id, 'name' => (string) $box->name];
-            }
-        }
-
-        $dailyBox = $this->sessionService->ensureDailyBoxes($user)->first();
-
-        return $dailyBox
-            ? ['id' => (int) $dailyBox->id, 'name' => (string) $dailyBox->name]
-            : null;
+        return $this->ordersDailyBoxes->resolve(
+            $user,
+            ! empty($payload['payment_box_id']) ? (int) $payload['payment_box_id'] : null
+        );
     }
 
     private function resolveSalesOrdersBox(): ?Box

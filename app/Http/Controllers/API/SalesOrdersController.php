@@ -30,6 +30,10 @@ class SalesOrdersController extends Controller
                 'from_date' => 'nullable|date',
                 'to_date' => 'nullable|date',
                 'include_hidden' => 'nullable|boolean',
+                'has_stock_shortage' => 'nullable|boolean',
+                'has_customer_debt' => 'nullable|boolean',
+                'has_carrier_receivable' => 'nullable|boolean',
+                'stuck_assigned_to' => 'nullable|integer|exists:users,id',
             ]);
 
             return response()->json([
@@ -378,13 +382,17 @@ class SalesOrdersController extends Controller
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
                 'postponed_until' => 'required|date|after:now',
                 'reason' => 'nullable|string|max:500',
+                'stuck_type' => 'nullable|string|in:customer,address,phone,delivery,collection,stock,other',
+                'stuck_assigned_to' => 'nullable|integer|exists:users,id',
+                'stuck_follow_up_at' => 'nullable|date|after:now',
             ]);
 
             $order = $this->service->postpone(
                 $request->user(),
                 (int) $data['sales_order_id'],
                 $data['postponed_until'],
-                $data['reason'] ?? null
+                $data['reason'] ?? null,
+                $data
             );
             $this->logSalesOrderActivity($request, $order, 'postponed_sales_order', 'تأجيل طلبية مبيعات');
 
@@ -404,6 +412,30 @@ class SalesOrdersController extends Controller
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
             ], 200);
+        }
+    }
+
+    public function resolveStuck(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_order_id' => 'required|integer|exists:sales_orders,id',
+                'target_status' => 'nullable|string|in:ready,with_delivery,review,returned,canceled',
+                'note' => 'nullable|string|max:2000',
+            ]);
+            $order = $this->service->resolveStuck(
+                $request->user(), (int) $data['sales_order_id'],
+                $data['target_status'] ?? null, $data['note'] ?? null
+            );
+            $this->logSalesOrderActivity($request, $order, 'resolved_sales_order_stuck', 'معالجة طلبية عالقة');
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تمت معالجة الطلبية العالقة بنجاح.',
+                'sales_order' => $this->service->formatDetail($order),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
         }
     }
 

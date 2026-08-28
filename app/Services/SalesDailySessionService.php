@@ -973,6 +973,12 @@ class SalesDailySessionService
         $dailyBoxes = $session ? $this->ensureDailyBoxes($boxOwner) : collect();
         $salesCollected = $session ? $this->salesCollectedByCurrency($session) : [];
         $openingBalances = $session?->opening_balances ?? [];
+        if ($session && $session->allowsSales()) {
+            app(SalesOrdersDailyBoxService::class)->ensureBoxes($boxOwner);
+        }
+        $ordersCurrencies = $session
+            ? app(SalesOrdersDailyBoxService::class)->summary($session)
+            : [];
 
         $currencies = [];
         foreach ($dailyBoxes as $box) {
@@ -1069,6 +1075,7 @@ class SalesDailySessionService
             'manageable_session_id' => $canManageOther ? (int) $globalOpen->id : null,
             'can_finalize_closing' => $this->canReviewAllSessions($user),
             'currencies' => $currencies,
+            'sales_orders_currencies' => $ordersCurrencies,
             'instant_sales_count' => $instantCount,
             'profit_sales_count' => $profitCount,
             'pending_closing_request_id' => $pendingClosing?->id,
@@ -1248,6 +1255,7 @@ class SalesDailySessionService
 
         $owner = User::query()->findOrFail($session->user_id);
         $currencies = $this->buildCurrenciesForSession($session, $owner);
+        $ordersCurrencies = app(SalesOrdersDailyBoxService::class)->summary($session);
         $counts = $this->salesCountsForSession($session);
         $pendingClosing = $session->closingRequests()
             ->where('status', 'pending')
@@ -1281,6 +1289,7 @@ class SalesDailySessionService
             ],
             'can_finalize_closing' => $this->canReviewAllSessions($viewer),
             'currencies' => $currencies,
+            'sales_orders_currencies' => $ordersCurrencies,
             'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],

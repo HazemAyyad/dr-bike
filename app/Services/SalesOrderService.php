@@ -33,6 +33,7 @@ class SalesOrderService
         protected SalesOrderShiplyTrackingService $shiplyTracking,
         protected ShiplyService $shiplyService,
         protected SalesOrderMediaRequirementService $mediaRequirements,
+        protected SalesOrderStockShortageService $shortages,
     ) {}
 
     /**
@@ -89,7 +90,7 @@ class SalesOrderService
     /**
      * @param  array<string, mixed>  $data
      */
-    private function applyUnconfirmedStockReservation(SalesOrder $order, array $data): void
+    private function applyUnconfirmedStockReservation(SalesOrder $order, array $data, User $user): void
     {
         if (! $order->statusEnum()->reservesStock() || $order->stock_deducted_at) {
             return;
@@ -98,6 +99,14 @@ class SalesOrderService
         $allowNegative = $this->shouldAllowNegativeStock($data, $order);
 
         $this->stockService->reserveOrder($order, $allowNegative);
+
+        if ($allowNegative) {
+            $this->shortages->syncAndNotify(
+                $order->fresh(['items']),
+                $this->stockService->analyzeOrderStockImpact($order),
+                $user
+            );
+        }
     }
 
     /**
@@ -157,6 +166,19 @@ class SalesOrderService
             $query->whereDate('created_at', '<=', $filters['to_date']);
         }
 
+        if (! empty($filters['has_stock_shortage'])) {
+            $query->whereHas('stockShortages', fn ($q) => $q->where('status', 'open'));
+        }
+        if (! empty($filters['has_customer_debt'])) {
+            $query->where('customer_debt_balance', '>', 0);
+        }
+        if (! empty($filters['has_carrier_receivable'])) {
+            $query->where('carrier_receivable_balance', '>', 0);
+        }
+        if (! empty($filters['stuck_assigned_to'])) {
+            $query->where('stuck_assigned_to', (int) $filters['stuck_assigned_to']);
+        }
+
         return $query->limit(500)->get()
             ->map(fn (SalesOrder $order) => $this->formatListItem($order))
             ->values()
@@ -191,9 +213,13 @@ class SalesOrderService
 
             $order = SalesOrder::create([
                 'customer_id' => $customerSnapshot['customer_id'],
+                'partner_type' => $data['partner_type'] ?? ($customerSnapshot['customer_id'] ? 'customer' : null),
+                'partner_id' => $data['partner_id'] ?? $customerSnapshot['customer_id'],
                 'customer_name' => $customerSnapshot['customer_name'],
                 'customer_phone' => $customerSnapshot['customer_phone'],
-                'customer_address' => $customerSnapshot['customer_address'],
+                'customer_address' => $this->normalizeStreetAddress($customerSnapshot['customer_address']),
+                'partner_address_id' => $data['partner_address_id'] ?? null,
+                'address_snapshot' => $this->addressSnapshot($data, $customerSnapshot),
                 'city_id' => $data['city_id'] ?? null,
                 'shiply_city_id' => $data['shiply_city_id'] ?? null,
                 'shiply_village_id' => $data['shiply_village_id'] ?? null,
@@ -236,7 +262,7 @@ class SalesOrderService
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
                 $freshOrder = $order->fresh(['items.product']);
                 $this->guardReservedStockConflicts($freshOrder, $data);
-                $this->applyUnconfirmedStockReservation($freshOrder, $data);
+                $this->applyUnconfirmedStockReservation($freshOrder, $data, $user);
             }
 
             $this->logStatus($order, null, SalesOrderStatus::Unconfirmed->value, 'إنشاء طلبية', $user->id);
@@ -270,9 +296,14 @@ class SalesOrderService
         return DB::transaction(function () use ($user, $order, $data, $totals, $customerSnapshot) {
             $order->update([
                 'customer_id' => $customerSnapshot['customer_id'],
+                'partner_type' => $data['partner_type'] ?? $order->partner_type,
+                'partner_id' => $data['partner_id'] ?? $order->partner_id,
                 'customer_name' => $customerSnapshot['customer_name'],
                 'customer_phone' => $customerSnapshot['customer_phone'],
-                'customer_address' => $customerSnapshot['customer_address'],
+                'customer_address' => $this->normalizeStreetAddress($customerSnapshot['customer_address']),
+                'partner_address_id' => array_key_exists('partner_address_id', $data)
+                    ? $data['partner_address_id'] : $order->partner_address_id,
+                'address_snapshot' => $this->addressSnapshot($data, $customerSnapshot, $order),
                 'city_id' => $data['city_id'] ?? $order->city_id,
                 'shiply_city_id' => $data['shiply_city_id'] ?? $order->shiply_city_id,
                 'shiply_village_id' => $data['shiply_village_id'] ?? $order->shiply_village_id,
@@ -312,6 +343,13 @@ class SalesOrderService
                 (int) $user->id,
                 $this->shouldAllowNegativeStock($data, $freshOrder)
             );
+            if ((bool) ($data['acknowledge_negative_stock'] ?? false)) {
+                $this->shortages->syncAndNotify(
+                    $freshOrder->fresh(['items']),
+                    $this->stockService->analyzeOrderStockImpact($freshOrder),
+                    $user
+                );
+            }
 
             return $order->fresh($this->detailRelations());
         });
@@ -349,11 +387,17 @@ class SalesOrderService
 
         return DB::transaction(function () use ($user, $order) {
             $order->loadMissing('items.product', 'media');
-            foreach ($order->items as $item) {
-                if ($item->is_hidden) {
-                    continue;
-                }
-                $this->stockService->assertItemCanReserve($item, (int) $order->id);
+            $conflicts = $this->stockService->analyzeOrderStockImpact($order);
+            $negativeStockWasAcknowledged = $order->stockShortages()
+                ->where('status', 'open')->exists();
+
+            if ($conflicts !== [] && ! $negativeStockWasAcknowledged) {
+                throw ValidationException::withMessages([
+                    'acknowledge_negative_stock' => [__('messages.sales_order_reserved_stock_conflict')],
+                ]);
+            }
+            if ($conflicts !== []) {
+                $this->shortages->syncAndNotify($order, $conflicts, $user);
             }
 
             $this->stockService->dispatchOrder($order, (int) $user->id);
@@ -535,6 +579,10 @@ class SalesOrderService
             'serial_number' => $order->serial_number,
             'status' => $order->status,
             'customer_id' => $order->customer_id,
+            'partner_type' => $order->partner_type,
+            'partner_id' => $order->partner_id,
+            'partner_address_id' => $order->partner_address_id,
+            'address_snapshot' => $order->address_snapshot,
             'customer_name' => $order->customer_name,
             'customer_phone' => $order->customer_phone,
             'customer_address' => $order->customer_address,
@@ -587,6 +635,23 @@ class SalesOrderService
             'postponed_until' => $order->postponed_until?->toDateTimeString(),
             'postpone_reason' => $order->postpone_reason,
             'notes' => $order->notes,
+            'stuck_previous_status' => $order->stuck_previous_status,
+            'stuck_type' => $order->stuck_type,
+            'stuck_reason' => $order->stuck_reason,
+            'stuck_assigned_to' => $order->stuck_assigned_to,
+            'stuck_follow_up_at' => $order->stuck_follow_up_at?->toIso8601String(),
+            'stuck_resolved_at' => $order->stuck_resolved_at?->toIso8601String(),
+            'customer_debt_balance' => (float) $order->customer_debt_balance,
+            'carrier_receivable_balance' => (float) $order->carrier_receivable_balance,
+            'settlements' => $order->settlements->map(fn ($settlement) => [
+                'id' => $settlement->id,
+                'source' => $settlement->source,
+                'amount' => (float) $settlement->amount,
+                'box_id' => $settlement->box_id,
+                'created_at' => $settlement->created_at?->toIso8601String(),
+                'created_by' => $settlement->createdBy?->name,
+                'notes' => $settlement->notes,
+            ])->values(),
             'parent_order_id' => $order->parent_order_id,
             'root_order_id' => $order->root_order_id,
             'created_by' => $order->createdByUser ? [
@@ -739,6 +804,7 @@ class SalesOrderService
             'deliveries',
             'childOrders:id,parent_order_id,serial_number,status,total,created_at',
             'createdByUser:id,name',
+            'settlements.createdBy:id,name',
         ];
     }
 
@@ -781,6 +847,9 @@ class SalesOrderService
     {
         $rules = [
             'customer_id' => 'nullable|integer|exists:customers,id',
+            'partner_type' => 'nullable|string|in:customer,seller',
+            'partner_id' => 'nullable|integer|min:1',
+            'partner_address_id' => 'nullable|integer|exists:partner_addresses,id',
             'customer_name' => 'nullable|string|max:255',
             'customer_phone' => 'nullable|string|max:50',
             'customer_address' => 'nullable|string|max:500',
@@ -819,6 +888,41 @@ class SalesOrderService
         ];
 
         $data = $request->validate($rules);
+
+        if (! empty($data['partner_type']) && ! empty($data['partner_id'])) {
+            $partnerClass = $data['partner_type'] === 'customer' ? Customer::class : \App\Models\Seller::class;
+            $selectedPartner = $partnerClass::query()->find($data['partner_id']);
+            if (! $selectedPartner) {
+                throw ValidationException::withMessages(['partner_id' => [__('validation.exists')]]);
+            }
+            $data['customer_name'] = $data['customer_name'] ?? $selectedPartner->name;
+            $data['customer_phone'] = $data['customer_phone'] ?? $selectedPartner->phone;
+            $data['customer_address'] = $data['customer_address'] ?? $selectedPartner->address;
+            if ($data['partner_type'] === 'customer') {
+                $data['customer_id'] = $data['customer_id'] ?? $selectedPartner->id;
+            }
+            if (! empty($data['partner_address_id'])) {
+                $selectedAddress = \App\Models\PartnerAddress::query()
+                    ->whereKey($data['partner_address_id'])
+                    ->where('addressable_type', $partnerClass)
+                    ->where('addressable_id', $data['partner_id'])
+                    ->first();
+                if (! $selectedAddress) {
+                    throw ValidationException::withMessages([
+                        'partner_address_id' => ['العنوان المختار لا يتبع الزبون أو المورد المحدد.'],
+                    ]);
+                }
+                $data['customer_address'] = $this->normalizeStreetAddress(
+                    $data['customer_address'] ?? $selectedAddress->street_address
+                );
+                $data['customer_phone'] = $data['customer_phone'] ?? $selectedAddress->phone;
+                $data['city_id'] = $data['city_id'] ?? $selectedAddress->city_id;
+                $data['shiply_city_id'] = $data['shiply_city_id'] ?? $selectedAddress->shiply_city_id;
+                $data['shiply_village_id'] = $data['shiply_village_id'] ?? $selectedAddress->shiply_village_id;
+                $data['shiply_city_name'] = $data['shiply_city_name'] ?? $selectedAddress->shiply_city_name;
+                $data['shiply_village_name'] = $data['shiply_village_name'] ?? $selectedAddress->shiply_village_name;
+            }
+        }
 
         $data = $this->enrichShiplyAddressNames($data);
 
@@ -867,6 +971,40 @@ class SalesOrderService
             'customer_name' => $data['customer_name'] ?? $order?->customer_name,
             'customer_phone' => $data['customer_phone'] ?? $order?->customer_phone,
             'customer_address' => $data['customer_address'] ?? $order?->customer_address,
+        ];
+    }
+
+    private function normalizeStreetAddress(mixed $value): string
+    {
+        $address = trim((string) $value);
+
+        return $address !== '' ? $address : '----';
+    }
+
+    private function addressSnapshot(array $data, array $customer, ?SalesOrder $order = null): array
+    {
+        if (empty($data['partner_address_id']) && $order && ! array_key_exists('customer_address', $data)) {
+            return $order->address_snapshot ?? [];
+        }
+
+        $address = ! empty($data['partner_address_id'])
+            ? \App\Models\PartnerAddress::query()->find($data['partner_address_id'])
+            : null;
+
+        return [
+            'label' => $address?->label,
+            'city_id' => $data['city_id'] ?? $address?->city_id ?? $order?->city_id,
+            'shiply_city_id' => $data['shiply_city_id'] ?? $address?->shiply_city_id ?? $order?->shiply_city_id,
+            'shiply_village_id' => $data['shiply_village_id'] ?? $address?->shiply_village_id ?? $order?->shiply_village_id,
+            'shiply_city_name' => $data['shiply_city_name'] ?? $address?->shiply_city_name ?? $order?->shiply_city_name,
+            'shiply_village_name' => $data['shiply_village_name'] ?? $address?->shiply_village_name ?? $order?->shiply_village_name,
+            'street_address' => $this->normalizeStreetAddress(
+                $data['customer_address'] ?? $address?->street_address ?? $customer['customer_address'] ?? null
+            ),
+            'phone' => $address?->phone ?? $customer['customer_phone'] ?? null,
+            'latitude' => $address?->latitude,
+            'longitude' => $address?->longitude,
+            'delivery_notes' => $address?->delivery_notes,
         ];
     }
 
@@ -1047,7 +1185,7 @@ class SalesOrderService
         return strtolower((string) $code) === 'shiply';
     }
 
-    public function markStuck(User $user, int $orderId, ?string $reason = null): SalesOrder
+    public function markStuck(User $user, int $orderId, ?string $reason = null, array $meta = []): SalesOrder
     {
         $order = SalesOrder::query()->findOrFail($orderId);
         $this->assertTransition($order, [
@@ -1057,10 +1195,16 @@ class SalesOrderService
             SalesOrderStatus::PartialReturn,
         ]);
 
-        return DB::transaction(function () use ($user, $order, $reason) {
+        return DB::transaction(function () use ($user, $order, $reason, $meta) {
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Stuck->value,
+                'stuck_previous_status' => $from,
+                'stuck_type' => $meta['stuck_type'] ?? 'other',
+                'stuck_reason' => $reason,
+                'stuck_assigned_to' => $meta['stuck_assigned_to'] ?? $user->id,
+                'stuck_follow_up_at' => $meta['stuck_follow_up_at'] ?? null,
+                'stuck_resolved_at' => null,
                 'notes' => trim(($order->notes ? $order->notes."\n" : '').($reason ?? 'عالق')),
                 'updated_by' => $user->id,
             ]);
@@ -1078,6 +1222,35 @@ class SalesOrderService
                 $user,
                 $reason
             );
+
+            return $order->fresh($this->detailRelations());
+        });
+    }
+
+    public function resolveStuck(User $user, int $orderId, ?string $targetStatus = null, ?string $note = null): SalesOrder
+    {
+        $order = SalesOrder::query()->findOrFail($orderId);
+        $this->assertTransition($order, [SalesOrderStatus::Stuck]);
+        $target = SalesOrderStatus::tryFrom((string) ($targetStatus ?: $order->stuck_previous_status));
+        $allowed = [SalesOrderStatus::Ready, SalesOrderStatus::WithDelivery, SalesOrderStatus::Review,
+            SalesOrderStatus::Returned, SalesOrderStatus::Canceled];
+
+        if (! $target || ! in_array($target, $allowed, true)) {
+            throw ValidationException::withMessages([
+                'target_status' => ['الحالة المختارة غير مسموحة لمعالجة الطلبية العالقة.'],
+            ]);
+        }
+
+        return DB::transaction(function () use ($user, $order, $target, $note) {
+            $from = $order->status;
+            $message = $note ?: 'تم حل مشكلة الطلبية العالقة';
+            $order->update([
+                'status' => $target->value,
+                'stuck_resolved_at' => now(),
+                'updated_by' => $user->id,
+            ]);
+            $this->logStatus($order, $from, $target->value, $message, $user->id);
+            $this->notifications->notifyStatusChange($order->fresh(), $from, $target->value, $user, $message);
 
             return $order->fresh($this->detailRelations());
         });

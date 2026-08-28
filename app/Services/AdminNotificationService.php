@@ -78,6 +78,7 @@ class AdminNotificationService
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
 
     public const TYPE_NEGATIVE_INSTANT_SALE_STOCK = 'negative_instant_sale_stock';
+    public const TYPE_NEGATIVE_SALES_ORDER_STOCK = 'negative_sales_order_stock';
 
     public const TYPE_APP_DEVELOPMENT_TASK = 'app_development_task';
 

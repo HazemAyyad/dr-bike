@@ -18,6 +18,7 @@ class SalesDailyClosingRequest extends Model
         'instant_sales_count',
         'profit_sales_count',
         'cash_counts',
+        'sales_orders_cash_counts',
         'late_close_reason',
         'transfers',
     ];
@@ -26,6 +27,7 @@ class SalesDailyClosingRequest extends Model
         'requested_at' => 'datetime',
         'reviewed_at' => 'datetime',
         'cash_counts' => 'array',
+        'sales_orders_cash_counts' => 'array',
         'transfers' => 'array',
     ];
 

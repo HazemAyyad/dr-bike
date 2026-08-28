@@ -13,15 +13,25 @@ class SalesOrder extends Model
     protected $fillable = [
         'serial_number',
         'customer_id',
+        'partner_type',
+        'partner_id',
         'customer_name',
         'customer_phone',
         'customer_address',
+        'partner_address_id',
+        'address_snapshot',
         'city_id',
         'shiply_city_id',
         'shiply_village_id',
         'shiply_city_name',
         'shiply_village_name',
         'status',
+        'stuck_previous_status',
+        'stuck_type',
+        'stuck_reason',
+        'stuck_assigned_to',
+        'stuck_follow_up_at',
+        'stuck_resolved_at',
         'parent_order_id',
         'root_order_id',
         'payment_type',
@@ -37,6 +47,8 @@ class SalesOrder extends Model
         'discount',
         'calculated_total',
         'total',
+        'customer_debt_balance',
+        'carrier_receivable_balance',
         'debt_id',
         'instant_sale_id',
         'hidden_until',
@@ -64,6 +76,9 @@ class SalesOrder extends Model
         'discount' => 'float',
         'calculated_total' => 'float',
         'total' => 'float',
+        'customer_debt_balance' => 'float',
+        'carrier_receivable_balance' => 'float',
+        'address_snapshot' => 'array',
         'payment_amount' => 'float',
         'delivery_settled_amount' => 'float',
         'is_debt_collection' => 'boolean',
@@ -73,6 +88,8 @@ class SalesOrder extends Model
         'stock_deducted_at' => 'datetime',
         'financial_posted_at' => 'datetime',
         'archived_at' => 'datetime',
+        'stuck_follow_up_at' => 'datetime',
+        'stuck_resolved_at' => 'datetime',
     ];
 
     public function statusEnum(): SalesOrderStatus
@@ -158,6 +175,21 @@ class SalesOrder extends Model
     public function salesReturns(): HasMany
     {
         return $this->hasMany(SalesReturn::class);
+    }
+
+    public function partnerAddress(): BelongsTo
+    {
+        return $this->belongsTo(PartnerAddress::class);
+    }
+
+    public function settlements(): HasMany
+    {
+        return $this->hasMany(SalesOrderSettlement::class);
+    }
+
+    public function stockShortages(): HasMany
+    {
+        return $this->hasMany(SalesOrderStockShortage::class);
     }
 
     public function createdByUser(): BelongsTo
