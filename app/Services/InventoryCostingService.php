@@ -205,6 +205,64 @@ class InventoryCostingService
         });
     }
 
+    /** Consume a quantity from one explicitly selected cost layer. */
+    public function consumeOwnedStockFromLayer(
+        Product $product,
+        InventoryCostLayer $selectedLayer,
+        float $quantity,
+        string $movementType,
+        string $referenceType,
+        ?int $referenceId,
+        ?int $userId = null,
+        ?string $note = null,
+    ): array {
+        if ($quantity <= 0) {
+            throw new \InvalidArgumentException('Quantity must be positive.');
+        }
+
+        return DB::transaction(function () use ($product, $selectedLayer, $quantity, $movementType, $referenceType, $referenceId, $userId, $note) {
+            $layer = InventoryCostLayer::query()->lockForUpdate()->findOrFail($selectedLayer->id);
+            if ((int) $layer->product_id !== (int) $product->id || (float) $layer->remaining_quantity < $quantity) {
+                throw new \RuntimeException('الكمية المطلوبة غير متاحة ضمن طبقة التكلفة المختارة.');
+            }
+
+            $unitCost = (float) $layer->unit_cost;
+            $totalCost = $quantity * $unitCost;
+            $layer->decrement('remaining_quantity', $quantity);
+
+            $allocation = InventoryCostAllocation::create([
+                'inventory_cost_layer_id' => $layer->id,
+                'product_id' => $product->id,
+                'quantity' => $quantity,
+                'unit_cost' => $unitCost,
+                'total_cost' => $totalCost,
+                'method' => 'manual_layer',
+                'reference_type' => $referenceType,
+                'reference_id' => $referenceId,
+            ]);
+
+            $this->stockService->adjustStock(
+                product: $product,
+                quantityDelta: -1 * (int) round($quantity),
+                type: $movementType,
+                sizeColorId: $layer->size_color_id,
+                referenceType: $referenceType,
+                referenceId: $referenceId,
+                note: $note,
+                userId: $userId,
+                unitCost: $unitCost,
+                totalCost: $totalCost,
+            );
+
+            return [
+                'method' => 'manual_layer',
+                'total_cost' => $totalCost,
+                'unit_cost' => $unitCost,
+                'allocations' => [$allocation],
+            ];
+        });
+    }
+
     private function movingAverageUnitCost(int $productId): float
     {
         $layers = InventoryCostLayer::query()

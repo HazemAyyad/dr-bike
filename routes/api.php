@@ -58,6 +58,7 @@ use App\Http\Controllers\API\PersonProfileController;
 use App\Http\Controllers\API\PersonProductSettingsController;
 use App\Http\Controllers\API\SuspendedInstantSaleController;
 use App\Http\Controllers\API\SalesOrdersController;
+use App\Http\Controllers\API\PartnerAddressesController;
 use App\Http\Controllers\API\ShiplyController;
 use App\Http\Controllers\API\ShiplyWebhookController;
 use App\Http\Controllers\API\CitiesController;
@@ -604,8 +605,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/sales/order/partial-return', [SalesOrdersController::class, 'partialReturn']);
       Route::post('/sales/order/alternative-return', [SalesOrdersController::class, 'alternativeReturn']);
       Route::post('/sales/order/mark-stuck', [SalesOrdersController::class, 'markStuck']);
+      Route::post('/sales/order/resolve-stuck', [SalesOrdersController::class, 'resolveStuck']);
       Route::post('/sales/orders/bulk-status', [SalesOrdersController::class, 'bulkStatus']);
       Route::get('/sales/order/statement', [SalesOrdersController::class, 'statement']);
+      Route::get('/partner/addresses', [PartnerAddressesController::class, 'index']);
+      Route::post('/partner/address', [PartnerAddressesController::class, 'store']);
+      Route::post('/partner/address/update', [PartnerAddressesController::class, 'update']);
+      Route::post('/partner/address/delete', [PartnerAddressesController::class, 'destroy']);
       Route::get('/cities', [CitiesController::class, 'index']);
       Route::get('/delivery/companies', [CitiesController::class, 'deliveryCompanies']);
       Route::get('/shiply/address-options', [ShiplyController::class, 'addressOptions']);
@@ -904,8 +910,11 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Expenses and Finan
 
     // destructions
       Route::post('/store/destruction' , [Destructions::class,'store']);
+      Route::post('/store/destructions/batch' , [Destructions::class,'storeBatch']);
+      Route::get('/destructions/cost-layers' , [Destructions::class,'costLayers']);
       Route::get('/get/all/destructions' , [Destructions::class,'getDestructions']);
       Route::post('/show/destruction' , [Destructions::class,'showDestruction']);
+      Route::post('/edit/destruction' , [Destructions::class,'editDestruction']);
 
    
    
