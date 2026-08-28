@@ -26,11 +26,13 @@ class SpecialTask extends Model
         'force_employee_to_add_img',
         'audio',
         'parent_id',
+        'moved_to_no_date_at',
 
     ];
     protected $casts = [
         'task_recurrence_time'=>'array',
         'admin_img' => 'array',
+        'moved_to_no_date_at' => 'datetime',
     ];
 
     public function subTasks(){

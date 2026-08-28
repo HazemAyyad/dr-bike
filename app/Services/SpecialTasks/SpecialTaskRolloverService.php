@@ -21,6 +21,7 @@ class SpecialTaskRolloverService
         $tasks = SpecialTask::query()
             ->where('status', 'ongoing')
             ->where('is_canceled', 0)
+            ->whereNull('moved_to_no_date_at')
             ->whereBetween('start_date', [
                 $weekStart->format('Y-m-d H:i:s'),
                 $weekEnd->format('Y-m-d H:i:s'),
@@ -30,6 +31,7 @@ class SpecialTaskRolloverService
         foreach ($tasks as $task) {
             $task->update([
                 'end_date' => $weekEnd->format('Y-m-d H:i:s'),
+                'moved_to_no_date_at' => $now,
             ]);
 
             $count++;

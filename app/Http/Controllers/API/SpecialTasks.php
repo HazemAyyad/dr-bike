@@ -184,15 +184,10 @@ class SpecialTasks extends Controller
 public function ongoingSpecialTasks()
 {
     return $this->commonGetData('ongoing','ongoing', function() {
-        $now = now();
-
- 
-
-        // Return only those still ongoing and not expired
         return $this->specialTasksWithSubtaskCounts()
             ->where('status', 'ongoing')
             ->where('is_canceled', 0)
-            ->where('end_date', '>=', $now)
+            ->whereNull('moved_to_no_date_at')
             ->get();
     });
 }
@@ -201,13 +196,9 @@ public function ongoingSpecialTasks()
     public function noDateTasks()
     {
         return $this->commonGetData('ongoing','no_date', function() {
-            $now = now();
-
             return $this->specialTasksWithSubtaskCounts()
-                ->where(function ($query) use ($now) {
-                    $query->where('end_date', '<', $now)
-                        ->where('status', '!=', 'completed');
-                })
+                ->whereNotNull('moved_to_no_date_at')
+                ->where('status', '!=', 'completed')
                 ->where('is_canceled', 0)
                 ->get();
 
@@ -939,6 +930,7 @@ if ($request->has('sub_special_tasks')) {
         $updatePayload = [
             'start_date' => $newStartDate->format('Y-m-d H:i:s'),
             'end_date' => $newEndDate->format('Y-m-d H:i:s'),
+            'moved_to_no_date_at' => null,
         ];
 
         if ($task->task_recurrence === 'weekly') {
@@ -1054,6 +1046,7 @@ public function updateTask(Request $request)
         }
 
         $finalData = $request->except(['special_task_id','sub_special_tasks']);
+        $finalData['moved_to_no_date_at'] = null;
 
         if($request->task_recurrence === 'daily'){
             $finalData['task_recurrence_time'] = ['saturday','sunday','monday','tuesday','wednesday','thursday','friday'];
