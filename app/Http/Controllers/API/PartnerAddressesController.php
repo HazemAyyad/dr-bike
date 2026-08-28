@@ -99,8 +99,8 @@ class PartnerAddressesController extends Controller
         return $request->validate([
             'label' => $sometimes.'string|max:100',
             'city_id' => 'nullable|integer|exists:cities,id',
-            'shiply_city_id' => 'nullable|integer|min:1',
-            'shiply_village_id' => 'nullable|integer|min:1',
+            'shiply_city_id' => 'required|integer|min:1',
+            'shiply_village_id' => 'required|integer|min:1',
             'shiply_city_name' => 'nullable|string|max:255',
             'shiply_village_name' => 'nullable|string|max:255',
             'street_address' => 'nullable|string|max:500',

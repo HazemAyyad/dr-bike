@@ -892,6 +892,8 @@ class SalesOrderService
         $data = $request->validate($rules);
 
         if (! empty($data['partner_type']) && ! empty($data['partner_id'])) {
+            $customerAddressProvided = array_key_exists('customer_address', $data);
+            $customerPhoneProvided = array_key_exists('customer_phone', $data);
             $partnerClass = $data['partner_type'] === 'customer' ? Customer::class : \App\Models\Seller::class;
             $selectedPartner = $partnerClass::query()->find($data['partner_id']);
             if (! $selectedPartner) {
@@ -914,10 +916,12 @@ class SalesOrderService
                         'partner_address_id' => ['العنوان المختار لا يتبع الزبون أو المورد المحدد.'],
                     ]);
                 }
-                $data['customer_address'] = $this->normalizeStreetAddress(
-                    $data['customer_address'] ?? $selectedAddress->street_address
-                );
-                $data['customer_phone'] = $data['customer_phone'] ?? $selectedAddress->phone;
+                if (! $customerAddressProvided) {
+                    $data['customer_address'] = $this->normalizeStreetAddress($selectedAddress->street_address);
+                }
+                if (! $customerPhoneProvided && filled($selectedAddress->phone)) {
+                    $data['customer_phone'] = $selectedAddress->phone;
+                }
                 $data['city_id'] = $data['city_id'] ?? $selectedAddress->city_id;
                 $data['shiply_city_id'] = $data['shiply_city_id'] ?? $selectedAddress->shiply_city_id;
                 $data['shiply_village_id'] = $data['shiply_village_id'] ?? $selectedAddress->shiply_village_id;
