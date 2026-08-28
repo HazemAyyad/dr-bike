@@ -420,8 +420,8 @@ class SalesOrdersController extends Controller
         try {
             $data = $request->validate([
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
-                'target_status' => 'nullable|string|in:ready,with_delivery,review,returned,canceled',
-                'note' => 'nullable|string|max:2000',
+                'target_status' => 'required|string|in:ready,with_delivery,review,partial_delivered,partial_return,returned,canceled',
+                'note' => 'required|string|max:2000',
             ]);
             $order = $this->service->resolveStuck(
                 $request->user(), (int) $data['sales_order_id'],
@@ -588,13 +588,17 @@ class SalesOrdersController extends Controller
         try {
             $data = $request->validate([
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
-                'reason' => 'nullable|string|max:500',
+                'reason' => 'required|string|max:500',
+                'stuck_type' => 'required|string|in:customer,address,phone,delivery,collection,stock,other',
+                'stuck_assigned_to' => 'nullable|integer|exists:users,id',
+                'stuck_follow_up_at' => 'nullable|date|after:now',
             ]);
 
             $order = $this->service->markStuck(
                 $request->user(),
                 (int) $data['sales_order_id'],
-                $data['reason'] ?? null
+                $data['reason'],
+                $data
             );
             $this->logSalesOrderActivity($request, $order, 'marked_sales_order_stuck', 'تعليم طلبية عالقة');
 

@@ -639,6 +639,7 @@ class SalesOrderService
             'stuck_type' => $order->stuck_type,
             'stuck_reason' => $order->stuck_reason,
             'stuck_assigned_to' => $order->stuck_assigned_to,
+            'stuck_assigned_to_name' => $order->stuckAssignedUser?->name,
             'stuck_follow_up_at' => $order->stuck_follow_up_at?->toIso8601String(),
             'stuck_resolved_at' => $order->stuck_resolved_at?->toIso8601String(),
             'customer_debt_balance' => (float) $order->customer_debt_balance,
@@ -804,6 +805,7 @@ class SalesOrderService
             'deliveries',
             'childOrders:id,parent_order_id,serial_number,status,total,created_at',
             'createdByUser:id,name',
+            'stuckAssignedUser:id,name',
             'settlements.createdBy:id,name',
         ];
     }
@@ -1192,6 +1194,7 @@ class SalesOrderService
             SalesOrderStatus::Returned,
             SalesOrderStatus::Review,
             SalesOrderStatus::WithDelivery,
+            SalesOrderStatus::PartialDelivered,
             SalesOrderStatus::PartialReturn,
         ]);
 
@@ -1232,8 +1235,15 @@ class SalesOrderService
         $order = SalesOrder::query()->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::Stuck]);
         $target = SalesOrderStatus::tryFrom((string) ($targetStatus ?: $order->stuck_previous_status));
-        $allowed = [SalesOrderStatus::Ready, SalesOrderStatus::WithDelivery, SalesOrderStatus::Review,
-            SalesOrderStatus::Returned, SalesOrderStatus::Canceled];
+        $allowed = [
+            SalesOrderStatus::Ready,
+            SalesOrderStatus::WithDelivery,
+            SalesOrderStatus::Review,
+            SalesOrderStatus::PartialDelivered,
+            SalesOrderStatus::PartialReturn,
+            SalesOrderStatus::Returned,
+            SalesOrderStatus::Canceled,
+        ];
 
         if (! $target || ! in_array($target, $allowed, true)) {
             throw ValidationException::withMessages([

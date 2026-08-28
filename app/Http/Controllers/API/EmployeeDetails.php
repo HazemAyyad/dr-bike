@@ -1057,6 +1057,7 @@ class EmployeeDetails extends Controller
 
             return [
                 'id' => $employee->id,
+                'user_id' => $employee->user_id,
                 'employee_name' => $employee->user?->name,
                 'hour_work_price' => $employee->hour_work_price,
                 'points' => (string) $summary['net_points'],

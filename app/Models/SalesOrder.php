@@ -196,4 +196,9 @@ class SalesOrder extends Model
     {
         return $this->belongsTo(User::class, 'created_by');
     }
+
+    public function stuckAssignedUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'stuck_assigned_to');
+    }
 }
