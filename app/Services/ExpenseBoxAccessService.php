@@ -27,11 +27,17 @@ class ExpenseBoxAccessService
             ->where(function (Builder $query) use ($regularIds, $dailyIds) {
                 if ($regularIds === null) {
                     $query->where(function (Builder $regular) {
-                        $regular->whereNull('type')
-                            ->orWhereNotIn('type', $this->dailyTypes());
+                        $regular->where('is_shown', 1)
+                            ->where(function (Builder $type) {
+                                $type->whereNull('type')
+                                    ->orWhereNotIn('type', $this->dailyTypes());
+                            });
                     });
                 } elseif ($regularIds->isNotEmpty()) {
-                    $query->whereIn('id', $regularIds);
+                    $query->where(function (Builder $regular) use ($regularIds) {
+                        $regular->where('is_shown', 1)
+                            ->whereIn('id', $regularIds);
+                    });
                 } else {
                     $query->whereRaw('1 = 0');
                 }
