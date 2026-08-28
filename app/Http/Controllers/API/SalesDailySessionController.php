@@ -68,11 +68,13 @@ class SalesDailySessionController extends Controller
     private function normalizeCashCountInput(Request $request): void
     {
         $this->normalizeCountRowsInput($request, 'cash_counts');
+        $this->normalizeCountRowsInput($request, 'sales_orders_cash_counts');
     }
 
     private function normalizeOpeningCountInput(Request $request): void
     {
         $this->normalizeCountRowsInput($request, 'opening_counts');
+        $this->normalizeCountRowsInput($request, 'sales_orders_opening_counts');
     }
 
     public function current(Request $request)
@@ -101,6 +103,9 @@ class SalesDailySessionController extends Controller
                 'opening_counts' => 'nullable|array',
                 'opening_counts.*.currency' => 'required|string',
                 'opening_counts.*.physical_count' => 'required|numeric|min:0',
+                'sales_orders_opening_counts' => 'nullable|array',
+                'sales_orders_opening_counts.*.currency' => 'required|string',
+                'sales_orders_opening_counts.*.physical_count' => 'required|numeric|min:0',
                 'confirm_opening_variance' => 'nullable|boolean',
             ]);
 
@@ -108,7 +113,8 @@ class SalesDailySessionController extends Controller
                 $request->user(),
                 null,
                 $data['opening_counts'] ?? [],
-                (bool) ($data['confirm_opening_variance'] ?? false)
+                (bool) ($data['confirm_opening_variance'] ?? false),
+                $data['sales_orders_opening_counts'] ?? []
             );
             $payload = $this->sessionService->buildSessionPayload($request->user());
 
@@ -279,6 +285,11 @@ class SalesDailySessionController extends Controller
                 'cash_counts.*.physical_count' => 'required|numeric|min:0',
                 'cash_counts.*.float_to_keep' => 'required|numeric|min:0',
                 'cash_counts.*.employee_note' => 'nullable|string|max:1000',
+                'sales_orders_cash_counts' => 'nullable|array',
+                'sales_orders_cash_counts.*.currency' => 'required|string',
+                'sales_orders_cash_counts.*.physical_count' => 'required|numeric|min:0',
+                'sales_orders_cash_counts.*.float_to_keep' => 'required|numeric|min:0',
+                'sales_orders_cash_counts.*.employee_note' => 'nullable|string|max:1000',
                 'late_close_reason' => 'nullable|string|max:2000',
                 'session_id' => 'nullable|integer|exists:sales_daily_sessions,id',
                 'transfers' => 'nullable|array',
@@ -415,6 +426,11 @@ class SalesDailySessionController extends Controller
                 'cash_counts.*.physical_count' => 'required|numeric|min:0',
                 'cash_counts.*.float_to_keep' => 'required|numeric|min:0',
                 'cash_counts.*.employee_note' => 'nullable|string|max:1000',
+                'sales_orders_cash_counts' => 'nullable|array',
+                'sales_orders_cash_counts.*.currency' => 'required|string',
+                'sales_orders_cash_counts.*.physical_count' => 'required|numeric|min:0',
+                'sales_orders_cash_counts.*.float_to_keep' => 'required|numeric|min:0',
+                'sales_orders_cash_counts.*.employee_note' => 'nullable|string|max:1000',
                 'session_id' => 'required|integer|exists:sales_daily_sessions,id',
                 'transfers' => 'nullable|array',
                 'transfers.*.currency' => 'required|string',
@@ -427,7 +443,8 @@ class SalesDailySessionController extends Controller
                 $data['cash_counts'],
                 (int) $data['session_id'],
                 $data['transfers'] ?? [],
-                $data['review_notes'] ?? null
+                $data['review_notes'] ?? null,
+                $data['sales_orders_cash_counts'] ?? []
             );
 
             return response()->json([
@@ -474,7 +491,8 @@ class SalesDailySessionController extends Controller
             $closingRequest = $this->sessionService->rejectClosing(
                 $request->user(),
                 (int) $data['closing_request_id'],
-                $data['review_notes'] ?? null
+                $data['review_notes'] ?? null,
+                $data['sales_orders_cash_counts'] ?? []
             );
 
             return response()->json([

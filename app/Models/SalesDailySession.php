@@ -15,6 +15,7 @@ class SalesDailySession extends Model
         'business_date',
         'status',
         'opening_balances',
+        'sales_orders_opening_balances',
         'opened_at',
         'closed_at',
         'opened_by_user_id',
@@ -25,6 +26,7 @@ class SalesDailySession extends Model
     protected $casts = [
         'business_date' => 'date',
         'opening_balances' => 'array',
+        'sales_orders_opening_balances' => 'array',
         'opened_at' => 'datetime',
         'closed_at' => 'datetime',
     ];

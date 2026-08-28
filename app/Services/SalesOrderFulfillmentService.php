@@ -203,6 +203,8 @@ class SalesOrderFulfillmentService
                 'sales_daily_session_id' => $financials['sales_daily_session_id'],
                 'customer_debt_balance' => $financials['customer_debt_balance'],
                 'carrier_receivable_balance' => $financials['carrier_receivable_balance'],
+                'delivery_settled_at' => ($financials['customer_debt_balance'] <= 0 && $financials['carrier_receivable_balance'] <= 0) ? now() : null,
+                'delivery_settled_amount' => ($financials['customer_debt_balance'] <= 0 && $financials['carrier_receivable_balance'] <= 0) ? $financials['paid_amount'] : 0,
                 'updated_by' => $financialActor->id,
             ]);
 
@@ -298,6 +300,8 @@ class SalesOrderFulfillmentService
                 'sales_daily_session_id' => $financials['sales_daily_session_id'],
                 'customer_debt_balance' => $financials['customer_debt_balance'],
                 'carrier_receivable_balance' => $financials['carrier_receivable_balance'],
+                'delivery_settled_at' => ($financials['customer_debt_balance'] <= 0 && $financials['carrier_receivable_balance'] <= 0) ? now() : null,
+                'delivery_settled_amount' => ($financials['customer_debt_balance'] <= 0 && $financials['carrier_receivable_balance'] <= 0) ? $financials['paid_amount'] : 0,
                 'updated_by' => $user->id,
             ]);
 
@@ -312,6 +316,22 @@ class SalesOrderFulfillmentService
     {
         $order = SalesOrder::query()->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::Delivered]);
+
+        $requestedAmount = (float) ($payload['delivery_settled_amount'] ?? 0);
+        if ($requestedAmount <= 0
+            && (float) $order->customer_debt_balance <= 0
+            && (float) $order->carrier_receivable_balance <= 0) {
+            $order->update([
+                'delivery_settled_at' => $order->delivery_settled_at ?? now(),
+                'delivery_settled_amount' => max(
+                    (float) $order->delivery_settled_amount,
+                    (float) $order->payment_amount
+                ),
+                'updated_by' => $user->id,
+            ]);
+
+            return $order->fresh();
+        }
 
         $data = validator($payload, [
             'delivery_settled_amount' => 'required|numeric|gt:0',
@@ -817,12 +837,12 @@ class SalesOrderFulfillmentService
             return;
         }
 
-        if ($companyCode !== 'office') {
+        if ($companyCode === 'shiply' || $companyCode === null) {
             return;
         }
 
         $errors = [];
-        if (trim((string) ($data['carrier_office_name'] ?? '')) === '') {
+        if (trim((string) ($data['carrier_office_name'] ?? $data['carrier_contact_name'] ?? '')) === '') {
             $errors['carrier_office_name'] = [__('messages.sales_order_office_name_required')];
         }
         if (trim((string) ($data['carrier_vehicle_number'] ?? '')) === '') {

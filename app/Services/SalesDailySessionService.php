@@ -224,7 +224,8 @@ class SalesDailySessionService
         User $user,
         ?Carbon $date = null,
         array $openingCounts = [],
-        bool $confirmOpeningVariance = false
+        bool $confirmOpeningVariance = false,
+        array $salesOrdersOpeningCounts = []
     ): SalesDailySession
     {
         $owner = $this->resolveOwner($user);
@@ -261,14 +262,23 @@ class SalesDailySessionService
         $expectedOpeningCounts = $this->expectedOpeningCountsForNextSession();
         $openingBalances = $this->normalizeOpeningCounts($openingCounts, $expectedOpeningCounts);
         $openingVariances = $this->openingVarianceRows($openingBalances, $expectedOpeningCounts);
+        $expectedOrdersOpeningCounts = $this->expectedSalesOrdersOpeningCounts($user);
+        $ordersOpeningBalances = $this->normalizeOpeningCounts(
+            $salesOrdersOpeningCounts,
+            $expectedOrdersOpeningCounts
+        );
+        $ordersOpeningVariances = $this->openingVarianceRows(
+            $ordersOpeningBalances,
+            $expectedOrdersOpeningCounts
+        );
 
-        if ($openingVariances !== [] && ! $confirmOpeningVariance) {
+        if (($openingVariances !== [] || $ordersOpeningVariances !== []) && ! $confirmOpeningVariance) {
             throw ValidationException::withMessages([
                 'opening_counts' => [__('messages.sales_daily_opening_variance')],
             ]);
         }
 
-        $session = DB::transaction(function () use ($user, $owner, $date, $openingBalances, $expectedOpeningCounts) {
+        $session = DB::transaction(function () use ($user, $owner, $date, $openingBalances, $ordersOpeningBalances, $expectedOpeningCounts) {
             $this->syncOpeningDailyBoxBalances($user, $openingBalances, $expectedOpeningCounts);
 
             return SalesDailySession::create([
@@ -277,9 +287,14 @@ class SalesDailySessionService
                 'business_date' => $date->toDateString(),
                 'status' => config('sales_daily.session_status.open'),
                 'opening_balances' => $openingBalances,
+                'sales_orders_opening_balances' => $ordersOpeningBalances,
                 'opened_at' => now(),
                 'opened_by_user_id' => $owner['user_id'],
             ]);
+        });
+
+        app(SalesOrdersDailyBoxService::class)->ensureBoxes($user)->each(function (Box $box) use ($ordersOpeningBalances) {
+            $box->update(['total' => round((float) ($ordersOpeningBalances[$box->currency] ?? 0), 2)]);
         });
 
         $this->logSessionActivity(
@@ -288,7 +303,7 @@ class SalesDailySessionService
             'sales_daily_session_opened',
             'فتح صندوق المبيعات',
             'تم فتح صندوق المبيعات اليومي',
-            ['opening_balances' => $openingBalances]
+            ['opening_balances' => $openingBalances, 'sales_orders_opening_balances' => $ordersOpeningBalances]
         );
 
         return $session;
@@ -1083,6 +1098,9 @@ class SalesDailySessionService
             'expected_opening_counts' => $canRequestOpen
                 ? $this->expectedOpeningCountsForNextSession()
                 : [],
+            'expected_sales_orders_opening_counts' => $canRequestOpen
+                ? $this->expectedSalesOrdersOpeningCounts($user)
+                : [],
             'config' => [
                 'variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
                 'max_float' => SalesDailySettings::maxFloatMap(),
@@ -1099,7 +1117,8 @@ class SalesDailySessionService
         ?string $lateCloseReason = null,
         ?int $sessionId = null,
         ?array $transfers = null,
-        ?string $reviewNotes = null
+        ?string $reviewNotes = null,
+        array $salesOrdersCashCounts = []
     ): SalesDailyClosingRequest {
         if ($sessionId !== null) {
             $session = SalesDailySession::query()->findOrFail($sessionId);
@@ -1128,8 +1147,9 @@ class SalesDailySessionService
         }
 
         $normalized = $this->normalizeCashCounts($owner, $session, $cashCounts);
+        $ordersNormalized = $this->normalizeSalesOrdersCashCounts($session, $salesOrdersCashCounts);
 
-        $request = DB::transaction(function () use ($user, $session, $normalized, $isLateClose, $lateCloseReason, $owner) {
+        $request = DB::transaction(function () use ($user, $session, $normalized, $ordersNormalized, $isLateClose, $lateCloseReason, $owner) {
             $session->update([
                 'status' => config('sales_daily.session_status.closing_requested'),
             ]);
@@ -1367,6 +1387,41 @@ class SalesDailySessionService
         return $normalized;
     }
 
+    /** @return array<int, array<string, mixed>> */
+    private function normalizeSalesOrdersCashCounts(SalesDailySession $session, array $cashCounts): array
+    {
+        return collect(app(SalesOrdersDailyBoxService::class)->summary($session))
+            ->map(function (array $meta) use ($cashCounts) {
+                $currency = (string) $meta['currency'];
+                $input = collect($cashCounts)->firstWhere('currency', $currency) ?? [];
+                $system = round((float) $meta['system_balance'], 2);
+                $physical = round((float) ($input['physical_count'] ?? $system), 2);
+                $float = round((float) ($input['float_to_keep'] ?? 0), 2);
+                $variance = round($physical - $system, 2);
+                $note = trim((string) ($input['employee_note'] ?? ''));
+                if ($physical < 0 || $float < 0 || $float > $physical) {
+                    throw ValidationException::withMessages(['sales_orders_cash_counts' => ['قيم جرد صندوق الطلبيات غير صحيحة.']]);
+                }
+                if (config('sales_daily.variance_note_required') && abs($variance) > .0001 && $note === '') {
+                    throw ValidationException::withMessages(['sales_orders_cash_counts' => [__('messages.sales_daily_variance_note_required')]]);
+                }
+
+                return [
+                    'currency' => $currency,
+                    'daily_box_id' => (int) $meta['daily_box_id'],
+                    'opening_float' => (float) $meta['opening_float'],
+                    'sales_collected' => (float) $meta['orders_collected'],
+                    'system_balance' => $system,
+                    'physical_count' => $physical,
+                    'variance' => $variance,
+                    'float_to_keep' => $float,
+                    'amount_to_transfer' => round(max(0, $physical - $float), 2),
+                    'employee_note' => $note,
+                    'box_kind' => 'sales_orders',
+                ];
+            })->all();
+    }
+
     /**
      * @param  array<int, array<string, mixed>>  $transfers
      */
@@ -1388,6 +1443,23 @@ class SalesDailySessionService
         });
     }
 
+    /** @return array<int, array<string, mixed>> */
+    private function expectedSalesOrdersOpeningCounts(User $user): array
+    {
+        $owner = $this->resolveOwner($user);
+        $query = Box::query()->where('type', config('sales_orders.daily_box.type', 'daily_sales_orders'));
+        $owner['employee_id']
+            ? $query->where('employee_id', $owner['employee_id'])
+            : $query->where('user_id', $owner['user_id'])->whereNull('employee_id');
+        $byCurrency = $query->get()->keyBy('currency');
+
+        return collect(config('sales_daily.default_currencies', ['شيكل']))
+            ->map(fn ($currency) => [
+                'currency' => $currency,
+                'expected_amount' => round((float) ($byCurrency->get($currency)?->total ?? 0), 2),
+            ])->all();
+    }
+
     /**
      * @param  array<int, array<string, mixed>>  $cashCounts
      * @param  array<int, array<string, mixed>>  $transfers
@@ -1397,7 +1469,8 @@ class SalesDailySessionService
         array $cashCounts,
         int $sessionId,
         array $transfers,
-        ?string $reviewNotes = null
+        ?string $reviewNotes = null,
+        array $salesOrdersCashCounts = []
     ): SalesDailyClosingRequest {
         if (! $this->canReviewAllSessions($reviewer)) {
             throw ValidationException::withMessages([
@@ -1417,9 +1490,10 @@ class SalesDailySessionService
 
         $owner = User::query()->findOrFail($session->user_id);
         $normalized = $this->normalizeCashCounts($owner, $session, $cashCounts);
+        $ordersNormalized = $this->normalizeSalesOrdersCashCounts($session, $salesOrdersCashCounts);
         $counts = $this->salesCountsForSession($session);
 
-        return DB::transaction(function () use ($reviewer, $session, $normalized, $counts, $transfers, $reviewNotes) {
+        return DB::transaction(function () use ($reviewer, $session, $normalized, $ordersNormalized, $counts, $transfers, $reviewNotes) {
             $closingRequest = SalesDailyClosingRequest::create([
                 'session_id' => $session->id,
                 'requested_by_user_id' => $reviewer->id,
@@ -1431,6 +1505,7 @@ class SalesDailySessionService
                 'instant_sales_count' => $counts['instant'],
                 'profit_sales_count' => $counts['profit'],
                 'cash_counts' => $normalized,
+                'sales_orders_cash_counts' => $ordersNormalized,
             ]);
 
             return $this->applyApprovedClosing($reviewer, $closingRequest, $transfers, $reviewNotes);
@@ -1447,7 +1522,10 @@ class SalesDailySessionService
         ?string $reviewNotes = null
     ): SalesDailyClosingRequest {
         $session = $closingRequest->session;
-        $cashCounts = $closingRequest->cash_counts ?? [];
+        $cashCounts = array_merge(
+            $closingRequest->cash_counts ?? [],
+            $closingRequest->sales_orders_cash_counts ?? []
+        );
         $executedTransfers = [];
 
         foreach ($cashCounts as $row) {
@@ -2245,6 +2323,7 @@ class SalesDailySessionService
             'instant_sales_count' => $request->instant_sales_count,
             'profit_sales_count' => $request->profit_sales_count,
             'cash_counts' => $request->cash_counts,
+            'sales_orders_cash_counts' => $request->sales_orders_cash_counts,
             'transfers' => $request->transfers,
             'is_late_close' => $isLateClose,
             'late_close_reason' => $request->late_close_reason,
