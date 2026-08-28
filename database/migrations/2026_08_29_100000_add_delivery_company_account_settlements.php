@@ -24,31 +24,75 @@ return new class extends Migration
         if (! Schema::hasTable('delivery_company_settlement_batches')) {
             Schema::create('delivery_company_settlement_batches', function (Blueprint $table) {
                 $table->id();
-                $table->foreignId('delivery_company_id')->nullable()->constrained('delivery_companies')->nullOnDelete();
+                $table->unsignedBigInteger('delivery_company_id')->nullable();
                 $table->string('delivery_company_name');
                 $table->decimal('amount', 14, 2);
                 $table->unsignedInteger('orders_count')->default(0);
-                $table->foreignId('sales_daily_session_id')->nullable()->constrained('sales_daily_sessions')->nullOnDelete();
-                $table->foreignId('box_id')->nullable()->constrained('boxes')->nullOnDelete();
+                $table->unsignedBigInteger('sales_daily_session_id')->nullable();
+                $table->unsignedBigInteger('box_id')->nullable();
                 $table->string('idempotency_key', 100)->unique();
                 $table->text('notes')->nullable();
-                $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+                $table->unsignedBigInteger('created_by')->nullable();
                 $table->timestamps();
 
                 $table->index(['delivery_company_id', 'delivery_company_name'], 'delivery_company_batches_account_idx');
+                $table->foreign('delivery_company_id', 'dc_batch_company_fk')
+                    ->references('id')->on('delivery_companies')->nullOnDelete();
+                $table->foreign('sales_daily_session_id', 'dc_batch_session_fk')
+                    ->references('id')->on('sales_daily_sessions')->nullOnDelete();
+                $table->foreign('box_id', 'dc_batch_box_fk')
+                    ->references('id')->on('boxes')->nullOnDelete();
+                $table->foreign('created_by', 'dc_batch_created_by_fk')
+                    ->references('id')->on('users')->nullOnDelete();
             });
         }
+
+        // A previous deployment may have created the table before MySQL rejected
+        // Laravel's generated (too long) constraint name. Complete that table safely.
+        $this->ensureMysqlForeignKey(
+            'delivery_company_settlement_batches',
+            'delivery_company_id',
+            'delivery_companies',
+            'dc_batch_company_fk'
+        );
+        $this->ensureMysqlForeignKey(
+            'delivery_company_settlement_batches',
+            'sales_daily_session_id',
+            'sales_daily_sessions',
+            'dc_batch_session_fk'
+        );
+        $this->ensureMysqlForeignKey(
+            'delivery_company_settlement_batches',
+            'box_id',
+            'boxes',
+            'dc_batch_box_fk'
+        );
+        $this->ensureMysqlForeignKey(
+            'delivery_company_settlement_batches',
+            'created_by',
+            'users',
+            'dc_batch_created_by_fk'
+        );
 
         if (Schema::hasTable('sales_order_settlements') &&
             ! Schema::hasColumn('sales_order_settlements', 'delivery_company_settlement_batch_id')) {
             Schema::table('sales_order_settlements', function (Blueprint $table) {
-                $table->foreignId('delivery_company_settlement_batch_id')
+                $table->unsignedBigInteger('delivery_company_settlement_batch_id')
                     ->nullable()
-                    ->after('id')
-                    ->constrained('delivery_company_settlement_batches')
-                    ->nullOnDelete();
+                    ->after('id');
+                $table->foreign(
+                    'delivery_company_settlement_batch_id',
+                    'so_settlement_dc_batch_fk'
+                )->references('id')->on('delivery_company_settlement_batches')->nullOnDelete();
             });
         }
+
+        $this->ensureMysqlForeignKey(
+            'sales_order_settlements',
+            'delivery_company_settlement_batch_id',
+            'delivery_company_settlement_batches',
+            'so_settlement_dc_batch_fk'
+        );
     }
 
     public function down(): void
@@ -56,9 +100,44 @@ return new class extends Migration
         if (Schema::hasTable('sales_order_settlements') &&
             Schema::hasColumn('sales_order_settlements', 'delivery_company_settlement_batch_id')) {
             Schema::table('sales_order_settlements', function (Blueprint $table) {
-                $table->dropConstrainedForeignId('delivery_company_settlement_batch_id');
+                $table->dropForeign('so_settlement_dc_batch_fk');
+                $table->dropColumn('delivery_company_settlement_batch_id');
             });
         }
         Schema::dropIfExists('delivery_company_settlement_batches');
+    }
+
+    private function ensureMysqlForeignKey(
+        string $table,
+        string $column,
+        string $referencedTable,
+        string $constraintName
+    ): void {
+        if (DB::getDriverName() !== 'mysql' ||
+            ! Schema::hasTable($table) ||
+            ! Schema::hasTable($referencedTable) ||
+            ! Schema::hasColumn($table, $column)) {
+            return;
+        }
+
+        $exists = DB::table('information_schema.KEY_COLUMN_USAGE')
+            ->whereRaw('TABLE_SCHEMA = DATABASE()')
+            ->where('TABLE_NAME', $table)
+            ->where('COLUMN_NAME', $column)
+            ->whereNotNull('REFERENCED_TABLE_NAME')
+            ->exists();
+
+        if ($exists) {
+            return;
+        }
+
+        Schema::table($table, function (Blueprint $blueprint) use (
+            $column,
+            $referencedTable,
+            $constraintName
+        ) {
+            $blueprint->foreign($column, $constraintName)
+                ->references('id')->on($referencedTable)->nullOnDelete();
+        });
     }
 };
