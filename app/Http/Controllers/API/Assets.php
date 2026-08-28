@@ -103,6 +103,10 @@ class Assets extends Controller
             ]);
             $period = now()->format('Y-m');
             $query = Asset::query()
+                ->withExists([
+                    'logs as depreciated_this_month' => fn (Builder $log) =>
+                        $log->where('depreciation_period', $period),
+                ])
                 ->when($filters['search'] ?? null, fn (Builder $q, string $search) => $q->where('name', 'like', "%{$search}%"))
                 ->when($filters['from'] ?? null, fn (Builder $q, string $from) => $q->whereDate('created_at', '>=', $from))
                 ->when($filters['to'] ?? null, fn (Builder $q, string $to) => $q->whereDate('created_at', '<=', $to))
@@ -231,7 +235,13 @@ class Assets extends Controller
         }
         $asset['media'] = $formattedMedia;
         $asset->makeHidden(['depreciation_price']);
-        $asset['logs'] = $asset->logs()->get(['total','created_at','type']);
+        $period = now()->format('Y-m');
+        $asset['depreciated_this_month'] = $asset->logs()
+            ->where('depreciation_period', $period)
+            ->exists();
+        $asset['depreciation_period'] = $period;
+        $asset['logs'] = $asset->logs()
+            ->get(['total','created_at','type','depreciation_period']);
         return response()->json([
             'status' =>'success',
             'asset' => $asset,

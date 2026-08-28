@@ -33,6 +33,8 @@ class AssetResource extends JsonResource
             'original_price' => $this->price,
             'depreciation_rate' => $this->depreciation_rate,
             'depreciation_price' => $this->depreciation_price,
+            'depreciated_this_month' => (bool) ($this->depreciated_this_month ?? false),
+            'depreciation_period' => now()->format('Y-m'),
             'created_at' => $this->created_at ? $this->created_at->format('Y-m-d') : null,
             'image' => $imagePath ?? 'no image files',
 
