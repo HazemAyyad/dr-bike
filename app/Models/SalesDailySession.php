@@ -12,6 +12,7 @@ class SalesDailySession extends Model
     protected $fillable = [
         'user_id',
         'employee_id',
+        'session_type',
         'business_date',
         'status',
         'opening_balances',
@@ -84,5 +85,10 @@ class SalesDailySession extends Model
     public function allowsSales(): bool
     {
         return $this->isOpen();
+    }
+
+    public function isSalesOrders(): bool
+    {
+        return $this->session_type === config('sales_daily.session_types.sales_orders', 'sales_orders');
     }
 }

@@ -9,11 +9,11 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeNotification;
 use App\Models\InstantSale;
 use App\Models\ProfitSale;
-use App\Models\SalesOrder;
 use App\Models\SalesCancellationRequest;
 use App\Models\SalesDailyClosingRequest;
 use App\Models\SalesDailyReopenRequest;
 use App\Models\SalesDailySession;
+use App\Models\SalesOrder;
 use App\Models\User;
 use App\Support\SalesDailySettings;
 use Carbon\Carbon;
@@ -24,6 +24,10 @@ use Illuminate\Validation\ValidationException;
 
 class SalesDailySessionService
 {
+    public const TYPE_INSTANT_SALES = 'instant_sales';
+
+    public const TYPE_SALES_ORDERS = 'sales_orders';
+
     public function __construct(
         protected AdminNotificationService $adminNotificationService,
         protected EmployeeNotificationService $employeeNotificationService
@@ -43,6 +47,13 @@ class SalesDailySessionService
     public function businessDateToday(): Carbon
     {
         return Carbon::today();
+    }
+
+    public function normalizeSessionType(?string $type): string
+    {
+        return $type === self::TYPE_SALES_ORDERS
+            ? self::TYPE_SALES_ORDERS
+            : self::TYPE_INSTANT_SALES;
     }
 
     /**
@@ -106,12 +117,14 @@ class SalesDailySessionService
             ->get();
     }
 
-    public function findBlockingSession(User $user): ?SalesDailySession
+    public function findBlockingSession(User $user, string $type = self::TYPE_INSTANT_SALES): ?SalesDailySession
     {
+        $type = $this->normalizeSessionType($type);
         $owner = $this->resolveOwner($user);
         $today = $this->businessDateToday()->toDateString();
 
         return SalesDailySession::query()
+            ->where('session_type', $type)
             ->where('user_id', $owner['user_id'])
             ->whereIn('status', [
                 config('sales_daily.session_status.open'),
@@ -122,10 +135,12 @@ class SalesDailySessionService
             ->first();
     }
 
-    public function findGlobalOpenSession(?int $exceptSessionId = null): ?SalesDailySession
+    public function findGlobalOpenSession(?int $exceptSessionId = null, string $type = self::TYPE_INSTANT_SALES): ?SalesDailySession
     {
+        $type = $this->normalizeSessionType($type);
         $query = SalesDailySession::query()
             ->with('user')
+            ->where('session_type', $type)
             ->whereIn('status', [
                 config('sales_daily.session_status.open'),
                 config('sales_daily.session_status.closing_requested'),
@@ -141,12 +156,14 @@ class SalesDailySessionService
             ->first();
     }
 
-    public function findOpenSessionForBusinessDate(User $user, ?Carbon $date = null): ?SalesDailySession
+    public function findOpenSessionForBusinessDate(User $user, ?Carbon $date = null, string $type = self::TYPE_INSTANT_SALES): ?SalesDailySession
     {
+        $type = $this->normalizeSessionType($type);
         $owner = $this->resolveOwner($user);
         $date = ($date ?? $this->businessDateToday())->toDateString();
 
         return SalesDailySession::query()
+            ->where('session_type', $type)
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $date)
             ->where('status', config('sales_daily.session_status.open'))
@@ -154,11 +171,13 @@ class SalesDailySessionService
             ->first();
     }
 
-    public function findGlobalOpenSessionForBusinessDate(?Carbon $date = null, ?int $exceptSessionId = null): ?SalesDailySession
+    public function findGlobalOpenSessionForBusinessDate(?Carbon $date = null, ?int $exceptSessionId = null, string $type = self::TYPE_INSTANT_SALES): ?SalesDailySession
     {
+        $type = $this->normalizeSessionType($type);
         $date = ($date ?? $this->businessDateToday())->toDateString();
         $query = SalesDailySession::query()
             ->with('user')
+            ->where('session_type', $type)
             ->whereDate('business_date', $date)
             ->where('status', config('sales_daily.session_status.open'));
 
@@ -171,10 +190,10 @@ class SalesDailySessionService
             ->first();
     }
 
-    public function assertCanCreateSaleToday(User $user): SalesDailySession
+    public function assertCanCreateSaleToday(User $user, string $type = self::TYPE_INSTANT_SALES): SalesDailySession
     {
-        $session = $this->findOpenSessionForBusinessDate($user)
-            ?? $this->findGlobalOpenSessionForBusinessDate();
+        $session = $this->findOpenSessionForBusinessDate($user, type: $type)
+            ?? $this->findGlobalOpenSessionForBusinessDate(type: $type);
 
         if (! $session) {
             throw ValidationException::withMessages([
@@ -185,12 +204,13 @@ class SalesDailySessionService
         return $session;
     }
 
-    public function getActiveSession(User $user, bool $autoOpen = false): ?SalesDailySession
+    public function getActiveSession(User $user, bool $autoOpen = false, string $type = self::TYPE_INSTANT_SALES): ?SalesDailySession
     {
+        $type = $this->normalizeSessionType($type);
         $owner = $this->resolveOwner($user);
         $today = $this->businessDateToday();
 
-        $blocking = $this->findBlockingSession($user);
+        $blocking = $this->findBlockingSession($user, $type);
         if ($blocking && ! $autoOpen) {
             return $blocking;
         }
@@ -200,6 +220,7 @@ class SalesDailySessionService
         }
 
         $session = SalesDailySession::query()
+            ->where('session_type', $type)
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $today)
             ->whereIn('status', [
@@ -217,7 +238,7 @@ class SalesDailySessionService
             return null;
         }
 
-        return $this->openSession($user, $today);
+        return $this->openSession($user, $today, sessionType: $type);
     }
 
     public function openSession(
@@ -225,19 +246,21 @@ class SalesDailySessionService
         ?Carbon $date = null,
         array $openingCounts = [],
         bool $confirmOpeningVariance = false,
-        array $salesOrdersOpeningCounts = []
-    ): SalesDailySession
-    {
+        array $salesOrdersOpeningCounts = [],
+        string $sessionType = self::TYPE_INSTANT_SALES
+    ): SalesDailySession {
+        $sessionType = $this->normalizeSessionType($sessionType);
         $owner = $this->resolveOwner($user);
         $date = ($date ?? $this->businessDateToday())->copy()->startOfDay();
 
-        if ($this->findBlockingSession($user)) {
+        if ($this->findBlockingSession($user, $sessionType)) {
             throw ValidationException::withMessages([
                 'session' => [__('messages.sales_daily_previous_day_open')],
             ]);
         }
 
         $existing = SalesDailySession::query()
+            ->where('session_type', $sessionType)
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $date)
             ->whereIn('status', [
@@ -250,7 +273,7 @@ class SalesDailySessionService
             return $existing;
         }
 
-        if ($globalOpen = $this->findGlobalOpenSession()) {
+        if ($globalOpen = $this->findGlobalOpenSession(type: $sessionType)) {
             $employeeName = $globalOpen->user?->name ?? __('messages.employee_default_name');
 
             throw ValidationException::withMessages([
@@ -258,11 +281,17 @@ class SalesDailySessionService
             ]);
         }
 
-        $this->ensureDailyBoxes($user);
-        $expectedOpeningCounts = $this->expectedOpeningCountsForNextSession();
+        if ($sessionType === self::TYPE_INSTANT_SALES) {
+            $this->ensureDailyBoxes($user);
+        }
+        $expectedOpeningCounts = $sessionType === self::TYPE_INSTANT_SALES
+            ? $this->expectedOpeningCountsForNextSession()
+            : [];
         $openingBalances = $this->normalizeOpeningCounts($openingCounts, $expectedOpeningCounts);
         $openingVariances = $this->openingVarianceRows($openingBalances, $expectedOpeningCounts);
-        $expectedOrdersOpeningCounts = $this->expectedSalesOrdersOpeningCounts($user);
+        $expectedOrdersOpeningCounts = $sessionType === self::TYPE_SALES_ORDERS
+            ? $this->expectedSalesOrdersOpeningCounts($user)
+            : [];
         $ordersOpeningBalances = $this->normalizeOpeningCounts(
             $salesOrdersOpeningCounts,
             $expectedOrdersOpeningCounts
@@ -278,12 +307,15 @@ class SalesDailySessionService
             ]);
         }
 
-        $session = DB::transaction(function () use ($user, $owner, $date, $openingBalances, $ordersOpeningBalances, $expectedOpeningCounts) {
-            $this->syncOpeningDailyBoxBalances($user, $openingBalances, $expectedOpeningCounts);
+        $session = DB::transaction(function () use ($user, $owner, $date, $openingBalances, $ordersOpeningBalances, $expectedOpeningCounts, $sessionType) {
+            if ($sessionType === self::TYPE_INSTANT_SALES) {
+                $this->syncOpeningDailyBoxBalances($user, $openingBalances, $expectedOpeningCounts);
+            }
 
             return SalesDailySession::create([
                 'user_id' => $owner['user_id'],
                 'employee_id' => $owner['employee_id'],
+                'session_type' => $sessionType,
                 'business_date' => $date->toDateString(),
                 'status' => config('sales_daily.session_status.open'),
                 'opening_balances' => $openingBalances,
@@ -293,16 +325,18 @@ class SalesDailySessionService
             ]);
         });
 
-        app(SalesOrdersDailyBoxService::class)->ensureBoxes($user)->each(function (Box $box) use ($ordersOpeningBalances) {
-            $box->update(['total' => round((float) ($ordersOpeningBalances[$box->currency] ?? 0), 2)]);
-        });
+        if ($sessionType === self::TYPE_SALES_ORDERS) {
+            app(SalesOrdersDailyBoxService::class)->ensureBoxes($user, $session)->each(function (Box $box) use ($ordersOpeningBalances) {
+                $box->update(['total' => round((float) ($ordersOpeningBalances[$box->currency] ?? 0), 2)]);
+            });
+        }
 
         $this->logSessionActivity(
             $session,
             $user,
             'sales_daily_session_opened',
-            'فتح صندوق المبيعات',
-            'تم فتح صندوق المبيعات اليومي',
+            $sessionType === self::TYPE_SALES_ORDERS ? 'فتح صندوق الطلبيات' : 'فتح صندوق المبيعات',
+            $sessionType === self::TYPE_SALES_ORDERS ? 'تم فتح صندوق الطلبيات اليومي' : 'تم فتح صندوق المبيعات اليومي',
             ['opening_balances' => $openingBalances, 'sales_orders_opening_balances' => $ordersOpeningBalances]
         );
 
@@ -323,6 +357,7 @@ class SalesDailySessionService
     private function expectedOpeningCountsForSession(?SalesDailySession $session = null): array
     {
         $previousQuery = SalesDailySession::query()
+            ->where('session_type', self::TYPE_INSTANT_SALES)
             ->with([
                 'user',
                 'closingRequests' => fn ($query) => $query
@@ -511,12 +546,13 @@ class SalesDailySessionService
         }
     }
 
-    public function assertCanCreateSale(User $user): SalesDailySession
+    public function assertCanCreateSale(User $user, string $type = self::TYPE_INSTANT_SALES): SalesDailySession
     {
-        $session = $this->getActiveSession($user, autoOpen: false);
+        $type = $this->normalizeSessionType($type);
+        $session = $this->getActiveSession($user, autoOpen: false, type: $type);
 
         if (! $session) {
-            $session = $this->findGlobalOpenSession();
+            $session = $this->findGlobalOpenSession(type: $type);
         }
 
         if (! $session) {
@@ -962,17 +998,19 @@ class SalesDailySessionService
     /**
      * @return array<string, mixed>
      */
-    public function buildSessionPayload(User $user): array
+    public function buildSessionPayload(User $user, string $type = self::TYPE_INSTANT_SALES): array
     {
+        $type = $this->normalizeSessionType($type);
         $owner = $this->resolveOwner($user);
-        $blocking = $this->findBlockingSession($user);
-        $globalOpen = $this->findGlobalOpenSession();
+        $blocking = $this->findBlockingSession($user, $type);
+        $globalOpen = $this->findGlobalOpenSession(type: $type);
         $session = $blocking
-            ?? $this->getActiveSession($user, autoOpen: false)
+            ?? $this->getActiveSession($user, autoOpen: false, type: $type)
             ?? $globalOpen;
         $blockedByOther = $globalOpen !== null
             && (int) $globalOpen->user_id !== $owner['user_id'];
         $todaySessionExists = SalesDailySession::query()
+            ->where('session_type', $type)
             ->where('user_id', $owner['user_id'])
             ->whereDate('business_date', $this->businessDateToday())
             ->whereIn('status', [
@@ -985,13 +1023,17 @@ class SalesDailySessionService
             && ! $todaySessionExists;
         $session?->loadMissing('user');
         $boxOwner = $session?->user ?? $user;
-        $dailyBoxes = $session ? $this->ensureDailyBoxes($boxOwner) : collect();
-        $salesCollected = $session ? $this->salesCollectedByCurrency($session) : [];
+        $dailyBoxes = $session && $type === self::TYPE_INSTANT_SALES
+            ? $this->ensureDailyBoxes($boxOwner)
+            : collect();
+        $salesCollected = $session && $type === self::TYPE_INSTANT_SALES
+            ? $this->salesCollectedByCurrency($session)
+            : [];
         $openingBalances = $session?->opening_balances ?? [];
-        if ($session && $session->allowsSales()) {
-            app(SalesOrdersDailyBoxService::class)->ensureBoxes($boxOwner);
+        if ($session && $session->allowsSales() && $type === self::TYPE_SALES_ORDERS) {
+            app(SalesOrdersDailyBoxService::class)->ensureBoxes($boxOwner, $session);
         }
-        $ordersCurrencies = $session
+        $ordersCurrencies = $session && $type === self::TYPE_SALES_ORDERS
             ? app(SalesOrdersDailyBoxService::class)->summary($session)
             : [];
 
@@ -1064,6 +1106,7 @@ class SalesDailySessionService
         return [
             'session' => $session ? [
                 'id' => $session->id,
+                'session_type' => $session->session_type,
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
                 'employee_name' => $session->user?->name,
@@ -1095,10 +1138,11 @@ class SalesDailySessionService
             'profit_sales_count' => $profitCount,
             'pending_closing_request_id' => $pendingClosing?->id,
             'pending_reopen_request_id' => $pendingReopen?->id,
-            'expected_opening_counts' => $canRequestOpen
+            'session_type' => $type,
+            'expected_opening_counts' => $canRequestOpen && $type === self::TYPE_INSTANT_SALES
                 ? $this->expectedOpeningCountsForNextSession()
                 : [],
-            'expected_sales_orders_opening_counts' => $canRequestOpen
+            'expected_sales_orders_opening_counts' => $canRequestOpen && $type === self::TYPE_SALES_ORDERS
                 ? $this->expectedSalesOrdersOpeningCounts($user)
                 : [],
             'config' => [
@@ -1146,8 +1190,23 @@ class SalesDailySessionService
             ]);
         }
 
-        $normalized = $this->normalizeCashCounts($owner, $session, $cashCounts);
-        $ordersNormalized = $this->normalizeSalesOrdersCashCounts($session, $salesOrdersCashCounts);
+        if ($session->isSalesOrders() && $salesOrdersCashCounts === []) {
+            throw ValidationException::withMessages([
+                'sales_orders_cash_counts' => ['يجب إدخال جرد صندوق الطلبيات.'],
+            ]);
+        }
+        if (! $session->isSalesOrders() && $cashCounts === []) {
+            throw ValidationException::withMessages([
+                'cash_counts' => ['يجب إدخال جرد صندوق المبيعات.'],
+            ]);
+        }
+
+        $normalized = $session->isSalesOrders()
+            ? []
+            : $this->normalizeCashCounts($owner, $session, $cashCounts);
+        $ordersNormalized = $session->isSalesOrders()
+            ? $this->normalizeSalesOrdersCashCounts($session, $salesOrdersCashCounts)
+            : [];
 
         $request = DB::transaction(function () use ($user, $session, $normalized, $ordersNormalized, $isLateClose, $lateCloseReason, $owner) {
             $session->update([
@@ -1173,6 +1232,7 @@ class SalesDailySessionService
                     })
                     ->count(),
                 'cash_counts' => $normalized,
+                'sales_orders_cash_counts' => $ordersNormalized,
                 'late_close_reason' => $isLateClose && $lateCloseReason !== '' ? $lateCloseReason : null,
             ]);
 
@@ -1251,9 +1311,9 @@ class SalesDailySessionService
                     ->first();
 
                 return array_merge($this->formatSessionSummary($session), [
-                    'currencies' => $owner
-                        ? $this->buildCurrenciesForSession($session, $owner)
-                        : [],
+                    'currencies' => $session->isSalesOrders()
+                        ? app(SalesOrdersDailyBoxService::class)->summary($session)
+                        : ($owner ? $this->buildCurrenciesForSession($session, $owner) : []),
                     'can_close' => $session->isOpen() && ! $pendingClosing,
                     'pending_closing_request_id' => $pendingClosing?->id,
                 ]);
@@ -1274,8 +1334,12 @@ class SalesDailySessionService
         $this->assertCanViewSession($viewer, $session);
 
         $owner = User::query()->findOrFail($session->user_id);
-        $currencies = $this->buildCurrenciesForSession($session, $owner);
-        $ordersCurrencies = app(SalesOrdersDailyBoxService::class)->summary($session);
+        $currencies = $session->isSalesOrders()
+            ? []
+            : $this->buildCurrenciesForSession($session, $owner);
+        $ordersCurrencies = $session->isSalesOrders()
+            ? app(SalesOrdersDailyBoxService::class)->summary($session)
+            : [];
         $counts = $this->salesCountsForSession($session);
         $pendingClosing = $session->closingRequests()
             ->where('status', 'pending')
@@ -1296,6 +1360,7 @@ class SalesDailySessionService
         return [
             'session' => [
                 'id' => $session->id,
+                'session_type' => $session->session_type,
                 'user_id' => $session->user_id,
                 'employee_name' => $session->user?->name,
                 'business_date' => $session->business_date->toDateString(),
@@ -1308,6 +1373,7 @@ class SalesDailySessionService
                 'is_late_close' => $isLate,
             ],
             'can_finalize_closing' => $this->canReviewAllSessions($viewer),
+            'session_type' => $session->session_type,
             'currencies' => $currencies,
             'sales_orders_currencies' => $ordersCurrencies,
             'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
@@ -1489,8 +1555,23 @@ class SalesDailySessionService
         }
 
         $owner = User::query()->findOrFail($session->user_id);
-        $normalized = $this->normalizeCashCounts($owner, $session, $cashCounts);
-        $ordersNormalized = $this->normalizeSalesOrdersCashCounts($session, $salesOrdersCashCounts);
+        if ($session->isSalesOrders() && $salesOrdersCashCounts === []) {
+            throw ValidationException::withMessages([
+                'sales_orders_cash_counts' => ['يجب إدخال جرد صندوق الطلبيات.'],
+            ]);
+        }
+        if (! $session->isSalesOrders() && $cashCounts === []) {
+            throw ValidationException::withMessages([
+                'cash_counts' => ['يجب إدخال جرد صندوق المبيعات.'],
+            ]);
+        }
+
+        $normalized = $session->isSalesOrders()
+            ? []
+            : $this->normalizeCashCounts($owner, $session, $cashCounts);
+        $ordersNormalized = $session->isSalesOrders()
+            ? $this->normalizeSalesOrdersCashCounts($session, $salesOrdersCashCounts)
+            : [];
         $counts = $this->salesCountsForSession($session);
 
         return DB::transaction(function () use ($reviewer, $session, $normalized, $ordersNormalized, $counts, $transfers, $reviewNotes) {
@@ -2008,7 +2089,9 @@ class SalesDailySessionService
             }
 
             return array_merge($summary, [
-                'currencies' => $this->buildCurrenciesForSession($session, $owner),
+                'currencies' => $session->isSalesOrders()
+                    ? app(SalesOrdersDailyBoxService::class)->summary($session)
+                    : $this->buildCurrenciesForSession($session, $owner),
             ]);
         });
 
@@ -2275,6 +2358,7 @@ class SalesDailySessionService
 
         return [
             'id' => $session->id,
+            'session_type' => $session->session_type,
             'user_id' => $session->user_id,
             'employee_id' => $session->employee_id,
             'employee_name' => $session->user?->name,
@@ -2286,8 +2370,12 @@ class SalesDailySessionService
                 && $session->closed_at->toDateString() > $session->business_date->toDateString(),
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],
-            'currencies' => $owner ? $this->buildCurrenciesForSession($session, $owner) : [],
-            'expected_opening_counts' => $this->expectedOpeningCountsForSession($session),
+            'currencies' => $session->isSalesOrders()
+                ? app(SalesOrdersDailyBoxService::class)->summary($session)
+                : ($owner ? $this->buildCurrenciesForSession($session, $owner) : []),
+            'expected_opening_counts' => $session->isSalesOrders()
+                ? []
+                : $this->expectedOpeningCountsForSession($session),
         ];
     }
 

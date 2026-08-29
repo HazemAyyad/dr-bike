@@ -80,7 +80,8 @@ class SalesDailySessionController extends Controller
     public function current(Request $request)
     {
         try {
-            $payload = $this->sessionService->buildSessionPayload($request->user());
+            $type = $this->sessionService->normalizeSessionType($request->query('session_type'));
+            $payload = $this->sessionService->buildSessionPayload($request->user(), $type);
 
             return response()->json([
                 'status' => 'success',
@@ -100,6 +101,7 @@ class SalesDailySessionController extends Controller
             $this->normalizeOpeningCountInput($request);
 
             $data = $request->validate([
+                'session_type' => 'nullable|string|in:instant_sales,sales_orders',
                 'opening_counts' => 'nullable|array',
                 'opening_counts.*.currency' => 'required|string',
                 'opening_counts.*.physical_count' => 'required|numeric|min:0',
@@ -114,9 +116,13 @@ class SalesDailySessionController extends Controller
                 null,
                 $data['opening_counts'] ?? [],
                 (bool) ($data['confirm_opening_variance'] ?? false),
-                $data['sales_orders_opening_counts'] ?? []
+                $data['sales_orders_opening_counts'] ?? [],
+                $data['session_type'] ?? SalesDailySessionService::TYPE_INSTANT_SALES
             );
-            $payload = $this->sessionService->buildSessionPayload($request->user());
+            $payload = $this->sessionService->buildSessionPayload(
+                $request->user(),
+                $data['session_type'] ?? SalesDailySessionService::TYPE_INSTANT_SALES
+            );
 
             return response()->json([
                 'status' => 'success',
@@ -280,7 +286,7 @@ class SalesDailySessionController extends Controller
             $this->normalizeCashCountInput($request);
 
             $data = $request->validate([
-                'cash_counts' => 'required|array|min:1',
+                'cash_counts' => 'nullable|array',
                 'cash_counts.*.currency' => 'required|string',
                 'cash_counts.*.physical_count' => 'required|numeric|min:0',
                 'cash_counts.*.float_to_keep' => 'required|numeric|min:0',
@@ -304,7 +310,8 @@ class SalesDailySessionController extends Controller
                 $data['late_close_reason'] ?? null,
                 isset($data['session_id']) ? (int) $data['session_id'] : null,
                 $data['transfers'] ?? null,
-                $data['review_notes'] ?? null
+                $data['review_notes'] ?? null,
+                $data['sales_orders_cash_counts'] ?? []
             );
 
             return response()->json([
@@ -421,7 +428,7 @@ class SalesDailySessionController extends Controller
             $this->normalizeCashCountInput($request);
 
             $data = $request->validate([
-                'cash_counts' => 'required|array|min:1',
+                'cash_counts' => 'nullable|array',
                 'cash_counts.*.currency' => 'required|string',
                 'cash_counts.*.physical_count' => 'required|numeric|min:0',
                 'cash_counts.*.float_to_keep' => 'required|numeric|min:0',
@@ -440,7 +447,7 @@ class SalesDailySessionController extends Controller
 
             $closingRequest = $this->sessionService->directClose(
                 $request->user(),
-                $data['cash_counts'],
+                $data['cash_counts'] ?? [],
                 (int) $data['session_id'],
                 $data['transfers'] ?? [],
                 $data['review_notes'] ?? null,

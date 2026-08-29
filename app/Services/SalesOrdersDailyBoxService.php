@@ -14,9 +14,12 @@ class SalesOrdersDailyBoxService
     public function __construct(private SalesDailySessionService $sessions) {}
 
     /** @return Collection<int, Box> */
-    public function ensureBoxes(User $user): Collection
+    public function ensureBoxes(User $user, ?SalesDailySession $session = null): Collection
     {
-        $session = $this->sessions->assertCanCreateSale($user);
+        $session ??= $this->sessions->assertCanCreateSale(
+            $user,
+            SalesDailySessionService::TYPE_SALES_ORDERS
+        );
         $owner = $session->user()->with('employee')->first() ?? $user;
         $employeeId = $session->employee_id ?: $owner->employee?->id;
         $prefix = config('sales_orders.daily_box.name_prefix', 'صندوق الطلبيات اليومي');
@@ -77,15 +80,17 @@ class SalesOrdersDailyBoxService
                 ->where('box_id', $box->id)
                 ->sum('amount');
             $balance = round((float) $box->total, 2);
+            $opening = round((float) (($session->sales_orders_opening_balances ?? [])[$box->currency] ?? 0), 2);
 
             return [
                 'currency' => $box->currency,
                 'daily_box_id' => $box->id,
                 'daily_box_name' => $box->name,
                 'box_balance' => $balance,
-                'opening_float' => round($balance - $collected, 2),
+                'opening_float' => $opening,
                 'orders_collected' => round($collected, 2),
-                'system_balance' => $balance,
+                'sales_collected' => round($collected, 2),
+                'system_balance' => round($opening + $collected, 2),
             ];
         })->values()->all();
     }

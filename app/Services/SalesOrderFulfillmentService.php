@@ -14,11 +14,11 @@ use App\Models\SalesOrderMedia;
 use App\Models\SalesOrderSettlement;
 use App\Models\SalesOrderStatusLog;
 use App\Models\User;
+use App\Support\ShiplySettings;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use App\Support\ShiplySettings;
 use Illuminate\Validation\ValidationException;
 
 class SalesOrderFulfillmentService
@@ -184,7 +184,9 @@ class SalesOrderFulfillmentService
 
         $note = trim((string) ($meta['note'] ?? ''));
         $logNote = $note !== '' ? $note : 'تم التوصيل تلقائياً من Shiply';
-        $globalSession = $this->sessionService->findGlobalOpenSession();
+        $globalSession = $this->sessionService->findGlobalOpenSession(
+            type: SalesDailySessionService::TYPE_SALES_ORDERS
+        );
         $financialActor = $globalSession?->allowsSales() === true
             ? ($globalSession->user ?? $user)
             : $user;
@@ -379,7 +381,10 @@ class SalesOrderFulfillmentService
 
             $customerAfter = $source === 'customer_debt' ? round($customerBefore - $amount, 2) : $customerBefore;
             $carrierAfter = $source === 'carrier' ? round($carrierBefore - $amount, 2) : $carrierBefore;
-            $session = $this->sessionService->assertCanCreateSale($user);
+            $session = $this->sessionService->assertCanCreateSale(
+                $user,
+                SalesDailySessionService::TYPE_SALES_ORDERS
+            );
             $box = Box::lockForUpdate()->findOrFail($resolvedBox['id']);
             $box->total = round((float) $box->total + $amount, 2);
             $box->save();
@@ -461,8 +466,7 @@ class SalesOrderFulfillmentService
         int $orderId,
         ?string $note = null,
         bool $skipNotification = false,
-    ): SalesOrder
-    {
+    ): SalesOrder {
         $order = SalesOrder::query()->with('deliveryCompany')->findOrFail($orderId);
         $this->assertTransition($order, [
             SalesOrderStatus::WithDelivery,
@@ -594,7 +598,10 @@ class SalesOrderFulfillmentService
             ];
         }
 
-        $session = $this->sessionService->assertCanCreateSale($user);
+        $session = $this->sessionService->assertCanCreateSale(
+            $user,
+            SalesDailySessionService::TYPE_SALES_ORDERS
+        );
 
         $paidAmount = $this->resolvePaidAmountForTotal($order, $recognizedTotal, $payload);
         $companyCode = $this->resolveDeliveryCompanyCode($order->delivery_company_id);
@@ -661,7 +668,10 @@ class SalesOrderFulfillmentService
             ]);
         }
 
-        $session = $this->sessionService->assertCanCreateSale($user);
+        $session = $this->sessionService->assertCanCreateSale(
+            $user,
+            SalesDailySessionService::TYPE_SALES_ORDERS
+        );
         $paidAmount = $this->resolvePaidAmountForTotal($order, $orderTotal, $payload);
         $paymentBox = $this->resolvePaymentBox($user, $paidAmount, $payload);
 

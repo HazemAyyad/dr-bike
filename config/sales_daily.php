@@ -7,6 +7,11 @@ return [
 
     'box_type' => 'daily_sales',
 
+    'session_types' => [
+        'instant_sales' => 'instant_sales',
+        'sales_orders' => 'sales_orders',
+    ],
+
     'variance_note_required' => true,
 
     'variance_alert_threshold' => 50,
