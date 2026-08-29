@@ -211,6 +211,68 @@ class Assets extends Controller
         }
     }
 
+    public function depreciationPreview(Request $request)
+    {
+        try {
+            $period = now()->format('Y-m');
+            $assets = Asset::query()
+                ->withExists([
+                    'logs as depreciated_this_month' => fn ($query) =>
+                        $query->where('depreciation_period', $period),
+                ])
+                ->orderBy('name')
+                ->get();
+
+            $rows = $assets->map(function (Asset $asset) use ($period) {
+                $before = max(0, (float) $asset->depreciation_price);
+                $rate = max(0, (float) $asset->depreciation_rate);
+                $alreadyProcessed = (bool) $asset->depreciated_this_month;
+                $eligible = ! $alreadyProcessed && $before > 0 && $rate > 0;
+                $amount = $eligible ? min($before, round($before * $rate, 2)) : 0;
+
+                return [
+                    'asset_id' => $asset->id,
+                    'name' => $asset->name,
+                    'period' => $period,
+                    'value_before' => round($before, 2),
+                    'depreciation_rate' => $rate,
+                    'depreciation_amount' => round($amount, 2),
+                    'value_after' => round(max(0, $before - $amount), 2),
+                    'eligible' => $eligible,
+                    'already_depreciated' => $alreadyProcessed,
+                    'skip_reason' => $eligible
+                        ? null
+                        : ($alreadyProcessed
+                            ? 'تم إهلاك الأصل لهذا الشهر'
+                            : ($before <= 0 ? 'اكتمل إهلاك الأصل' : 'نسبة الإهلاك صفر')),
+                ];
+            });
+
+            $eligible = $rows->where('eligible')->values();
+
+            return response()->json([
+                'status' => 'success',
+                'period' => $period,
+                'summary' => [
+                    'assets_count' => $assets->count(),
+                    'eligible_count' => $eligible->count(),
+                    'skipped_count' => $assets->count() - $eligible->count(),
+                    'value_before' => round((float) $eligible->sum('value_before'), 2),
+                    'depreciation_amount' => round((float) $eligible->sum('depreciation_amount'), 2),
+                    'value_after' => round((float) $eligible->sum('value_after'), 2),
+                ],
+                'assets' => $eligible,
+                'skipped_assets' => $rows->where('eligible', false)->values(),
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
     public function showAsset(Request $request){
         try{
 

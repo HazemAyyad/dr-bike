@@ -98,8 +98,8 @@ class Destructions extends Controller
                 'destruction', $destruction->id, userId: $userId, note: $reason
             );
         } else {
-            $unitCost = (float) ($product->price ?? 0);
-            $cost = ['method' => 'legacy_product_price_estimate', 'unit_cost' => $unitCost, 'total_cost' => $unitCost * $quantity];
+            $unitCost = (float) ($product->purchasePrices()->latest('id')->value('price') ?? $product->price ?? 0);
+            $cost = ['method' => 'legacy_product_cost_estimate', 'unit_cost' => $unitCost, 'total_cost' => $unitCost * $quantity];
             app(ProductStockService::class)->adjustStock(
                 $product, -$quantity, ProductStockMovement::TYPE_DESTRUCTION,
                 referenceType: 'destruction', referenceId: $destruction->id,
@@ -127,6 +127,8 @@ class Destructions extends Controller
     public function costLayers(Request $request)
     {
         $data = $request->validate(['product_id' => 'required|integer|exists:products,id']);
+        $product = Product::query()->findOrFail($data['product_id']);
+        $legacyCost = (float) ($product->purchasePrices()->latest('id')->value('price') ?? $product->price ?? 0);
         $layers = InventoryCostLayer::query()
             ->where('product_id', $data['product_id'])
             ->where('remaining_quantity', '>', 0)
@@ -142,7 +144,12 @@ class Destructions extends Controller
                 'effective_at' => $layer->effective_at?->toIso8601String(),
             ]);
 
-        return response()->json(['status' => 'success', 'layers' => $layers]);
+        return response()->json([
+            'status' => 'success',
+            'layers' => $layers,
+            'fallback_unit_cost' => round($legacyCost, 6),
+            'fallback_cost_source' => 'legacy_cost_price',
+        ]);
     }
 
 

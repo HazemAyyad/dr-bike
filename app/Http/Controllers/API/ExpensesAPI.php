@@ -366,10 +366,33 @@ class ExpensesAPI extends Controller
         $summary = [
             'count' => $rows->count(),
             'total' => round((float) $rows->sum('price'), 2),
+            'average' => round((float) ($rows->avg('price') ?? 0), 2),
             'by_type' => $rows->groupBy(fn (Expense $expense) => $expense->expense_type ?: 'general')
                 ->map(fn ($items) => round((float) $items->sum('price'), 2)),
         ];
         $filename = 'expenses-report-'.now()->format('Ymd-His');
+
+        if ($format === 'data') {
+            return response()->json([
+                'status' => 'success',
+                'generated_at' => now()->toIso8601String(),
+                'filters' => $request->only([
+                    'expense_type', 'box_id', 'from', 'to', 'min_price', 'max_price',
+                ]),
+                'summary' => $summary,
+                'rows' => $rows->map(fn (Expense $expense) => [
+                    'id' => $expense->id,
+                    'date' => $expense->expense_date?->format('Y-m-d')
+                        ?? $expense->created_at?->format('Y-m-d'),
+                    'expense_type' => $expense->expense_type ?: 'general',
+                    'name' => $expense->name,
+                    'price' => (float) $expense->price,
+                    'box_name' => $expense->box?->name,
+                    'currency' => $expense->box?->currency ?: 'شيكل',
+                    'notes' => $expense->notes,
+                ])->values(),
+            ]);
+        }
 
         if ($format === 'pdf') {
             return Pdf::loadView('pdf.expenses-report', [

@@ -900,6 +900,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Expenses and Finan
     Route::post('/add/asset' , [Assets::class,'store']);
     Route::get('/get/all/assets' , [Assets::class,'getAssets']);
     Route::get('/depreciate/all/assets' , [Assets::class,'depreciatAllAssets']);
+    Route::get('/assets/depreciation/preview' , [Assets::class,'depreciationPreview']);
     Route::post('/show/asset' , [Assets::class,'showAsset']);
     Route::post('/edit/asset' , [Assets::class,'editAsset']);
     Route::post('/delete/asset' , [Assets::class,'deleteAsset']);
@@ -915,7 +916,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Expenses and Finan
       Route::get('/expenses/available-boxes' , [ExpensesAPI::class,'availableBoxes']);
       Route::get('/expenses/report' , [ExpensesAPI::class,'report']);
       Route::get('/expenses/report/export/{format}' , [ExpensesAPI::class,'exportReport'])
-          ->whereIn('format', ['pdf', 'xlsx', 'csv']);
+          ->whereIn('format', ['pdf', 'xlsx', 'csv', 'data']);
       Route::post('/store/expense' , [ExpensesAPI::class,'store']);
       Route::get('/get/all/expenses' , [ExpensesAPI::class,'getExpenses']);
       Route::post('/show/expense' , [ExpensesAPI::class,'showExpense']);
