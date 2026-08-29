@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class AdminNotification extends Model
 {
@@ -34,5 +35,10 @@ class AdminNotification extends Model
     public function recipient(): BelongsTo
     {
         return $this->belongsTo(User::class, 'recipient_user_id');
+    }
+
+    public function receipts(): HasMany
+    {
+        return $this->hasMany(AdminNotificationReceipt::class);
     }
 }

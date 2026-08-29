@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\AdminDeviceToken;
 use App\Models\AdminNotification;
+use App\Models\AdminNotificationReceipt;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -14,14 +15,30 @@ class AdminNotificationCenterController extends Controller
     {
         try {
             $query = AdminNotification::query()
+                ->with(['receipts' => fn ($q) => $q->where('user_id', $request->user()->id)])
                 ->where(function ($q) use ($request) {
                     $q->whereNull('recipient_user_id')
                         ->orWhere('recipient_user_id', $request->user()->id);
                 })
+                ->whereDoesntHave('receipts', fn ($q) => $q
+                    ->where('user_id', $request->user()->id)
+                    ->whereNotNull('deleted_at'))
+                ->where(function ($q) {
+                    $q->whereNull('data->_in_app_hidden')->orWhere('data->_in_app_hidden', '!=', '1');
+                })
                 ->orderByDesc('id');
 
             if ($request->boolean('unread_only')) {
-                $query->where('is_read', false);
+                $query->where(function ($q) use ($request) {
+                    $q->where(function ($targeted) {
+                        $targeted->whereNotNull('recipient_user_id')->where('is_read', false);
+                    })->orWhere(function ($global) use ($request) {
+                        $global->whereNull('recipient_user_id')
+                            ->whereDoesntHave('receipts', fn ($receipt) => $receipt
+                                ->where('user_id', $request->user()->id)
+                                ->whereNotNull('read_at'));
+                    });
+                });
             }
 
             if ($request->filled('type')) {
@@ -38,6 +55,16 @@ class AdminNotificationCenterController extends Controller
 
             $perPage = min(max((int) $request->input('per_page', 15), 1), 100);
             $paginator = $query->paginate($perPage);
+            $paginator->getCollection()->transform(function (AdminNotification $notification) {
+                if ($notification->recipient_user_id === null) {
+                    $receipt = $notification->receipts->first();
+                    $notification->setAttribute('is_read', $receipt?->read_at !== null);
+                    $notification->setAttribute('read_at', $receipt?->read_at);
+                }
+                $notification->unsetRelation('receipts');
+
+                return $notification;
+            });
 
             return response()->json([
                 'status' => 'success',
@@ -54,12 +81,28 @@ class AdminNotificationCenterController extends Controller
     public function unreadCount()
     {
         try {
+            $userId = (int) auth()->id();
             $count = AdminNotification::query()
                 ->where(function ($q) {
                     $q->whereNull('recipient_user_id')
                         ->orWhere('recipient_user_id', auth()->id());
                 })
-                ->where('is_read', false)
+                ->whereDoesntHave('receipts', fn ($q) => $q
+                    ->where('user_id', $userId)
+                    ->whereNotNull('deleted_at'))
+                ->where(function ($q) {
+                    $q->whereNull('data->_in_app_hidden')->orWhere('data->_in_app_hidden', '!=', '1');
+                })
+                ->where(function ($q) use ($userId) {
+                    $q->where(function ($targeted) {
+                        $targeted->whereNotNull('recipient_user_id')->where('is_read', false);
+                    })->orWhere(function ($global) use ($userId) {
+                        $global->whereNull('recipient_user_id')
+                            ->whereDoesntHave('receipts', fn ($receipt) => $receipt
+                                ->where('user_id', $userId)
+                                ->whereNotNull('read_at'));
+                    });
+                })
                 ->count();
 
             return response()->json([
@@ -83,10 +126,14 @@ class AdminNotificationCenterController extends Controller
                         ->orWhere('recipient_user_id', $request->user()->id);
                 })
                 ->findOrFail($id);
-            $notification->update([
-                'is_read' => true,
-                'read_at' => now(),
-            ]);
+            if ($notification->recipient_user_id === null) {
+                AdminNotificationReceipt::query()->updateOrCreate(
+                    ['admin_notification_id' => $notification->id, 'user_id' => $request->user()->id],
+                    ['seen_at' => now(), 'read_at' => now(), 'opened_at' => now(), 'deleted_at' => null]
+                );
+            } else {
+                $notification->update(['is_read' => true, 'read_at' => now()]);
+            }
 
             return response()->json([
                 'status' => 'success',
@@ -107,16 +154,19 @@ class AdminNotificationCenterController extends Controller
     public function markAllRead()
     {
         try {
-            AdminNotification::query()
-                ->where(function ($q) {
-                    $q->whereNull('recipient_user_id')
-                        ->orWhere('recipient_user_id', auth()->id());
-                })
+            $userId = (int) auth()->id();
+            AdminNotification::query()->where('recipient_user_id', $userId)
                 ->where('is_read', false)
-                ->update([
-                'is_read' => true,
-                'read_at' => now(),
-            ]);
+                ->update(['is_read' => true, 'read_at' => now()]);
+
+            AdminNotification::query()->whereNull('recipient_user_id')
+                ->whereDoesntHave('receipts', fn ($q) => $q
+                    ->where('user_id', $userId)->whereNotNull('deleted_at'))
+                ->pluck('id')
+                ->each(fn ($id) => AdminNotificationReceipt::query()->updateOrCreate(
+                    ['admin_notification_id' => $id, 'user_id' => $userId],
+                    ['seen_at' => now(), 'read_at' => now(), 'deleted_at' => null]
+                ));
 
             return response()->json([
                 'status' => 'success',
@@ -132,13 +182,21 @@ class AdminNotificationCenterController extends Controller
     public function destroy(Request $request, int $id)
     {
         try {
-            AdminNotification::query()
+            $notification = AdminNotification::query()
                 ->where(function ($q) use ($request) {
                     $q->whereNull('recipient_user_id')
                         ->orWhere('recipient_user_id', $request->user()->id);
                 })
-                ->whereKey($id)
-                ->delete();
+                ->findOrFail($id);
+
+            if ($notification->recipient_user_id === null) {
+                AdminNotificationReceipt::query()->updateOrCreate(
+                    ['admin_notification_id' => $notification->id, 'user_id' => $request->user()->id],
+                    ['deleted_at' => now()]
+                );
+            } else {
+                $notification->delete();
+            }
 
             return response()->json([
                 'status' => 'success',

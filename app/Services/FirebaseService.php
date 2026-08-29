@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AdminDeviceToken;
+use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Contract\Messaging;
 use Kreait\Firebase\Exception\FirebaseException;
 use Kreait\Firebase\Factory;
@@ -10,7 +11,6 @@ use Kreait\Firebase\Messaging\AndroidConfig;
 use Kreait\Firebase\Messaging\ApnsConfig;
 use Kreait\Firebase\Messaging\CloudMessage;
 use Kreait\Firebase\Messaging\Notification;
-use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class FirebaseService
@@ -467,6 +467,8 @@ class FirebaseService
         ]);
 
         $androidMeta = $this->resolveNotificationDelivery($dataWithText);
+        $displayTitle = (string) ($dataWithText['notification_safe_title'] ?? $title);
+        $displayBody = (string) ($dataWithText['notification_safe_body'] ?? $body);
 
         Log::info('FCM send start', [
             'firebase_project_id' => $this->serviceAccountProjectId(),
@@ -480,19 +482,36 @@ class FirebaseService
         ]);
 
         try {
+            $androidNotification = [
+                'channel_id' => $androidMeta['channel_id'],
+                'icon' => 'ic_notification',
+                'color' => '#6B65BD',
+                'visibility' => ($dataWithText['notification_lock_screen'] ?? '1') === '1'
+                    ? 'public'
+                    : 'private',
+            ];
+            if ($androidMeta['sound'] !== 'silent') {
+                $androidNotification['sound'] = $androidMeta['sound'];
+            }
+
+            $aps = [
+                'alert' => [
+                    'title' => $displayTitle,
+                    'body' => $displayBody,
+                ],
+            ];
+            if ($androidMeta['ios_sound'] !== 'silent') {
+                $aps['sound'] = $androidMeta['ios_sound'];
+            }
+
             $message = CloudMessage::new()
                 ->toToken($token)
-                ->withNotification(Notification::create($title, $body))
+                ->withNotification(Notification::create($displayTitle, $displayBody))
                 ->withData($dataWithText)
                 ->withAndroidConfig(
                     AndroidConfig::fromArray([
                         'priority' => 'high',
-                        'notification' => [
-                            'channel_id' => $androidMeta['channel_id'],
-                            'sound' => $androidMeta['sound'],
-                            'icon' => 'ic_notification',
-                            'color' => '#6B65BD',
-                        ],
+                        'notification' => $androidNotification,
                     ])
                 )
                 ->withApnsConfig(
@@ -501,13 +520,7 @@ class FirebaseService
                             'apns-priority' => '10',
                         ],
                         'payload' => [
-                            'aps' => [
-                                'alert' => [
-                                    'title' => $title,
-                                    'body' => $body,
-                                ],
-                                'sound' => $androidMeta['ios_sound'],
-                            ],
+                            'aps' => $aps,
                         ],
                     ])
                 );
@@ -549,6 +562,14 @@ class FirebaseService
      */
     protected function resolveNotificationDelivery(array $data): array
     {
+        if (! empty($data['notification_channel_id'])) {
+            return [
+                'channel_id' => (string) $data['notification_channel_id'],
+                'sound' => (string) ($data['notification_android_sound'] ?? 'default'),
+                'ios_sound' => (string) ($data['notification_ios_sound'] ?? 'default'),
+            ];
+        }
+
         $type = (string) ($data['type'] ?? '');
 
         if (in_array($type, self::ADMIN_LOGIN_NOTIFICATION_TYPES, true)) {
@@ -649,9 +670,6 @@ class FirebaseService
         ];
     }
 
-    /**
-     * @param  mixed  $response
-     */
     protected function formatResponseForLog(mixed $response): string
     {
         if ($response === null) {

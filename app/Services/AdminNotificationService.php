@@ -11,9 +11,10 @@ use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskOccurrenceSubtask;
 use App\Models\IncomingCheck;
+use App\Models\NotificationDeliveryAttempt;
 use App\Models\OutgoingCheck;
-use App\Models\Store\StoreSalesOrder;
 use App\Models\StockImageExport;
+use App\Models\Store\StoreSalesOrder;
 use App\Support\EmployeePendingTasksForToday;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\App;
@@ -22,7 +23,8 @@ use Illuminate\Support\Facades\Log;
 class AdminNotificationService
 {
     public function __construct(
-        protected FirebaseService $firebaseService
+        protected FirebaseService $firebaseService,
+        protected NotificationControlService $notificationControl
     ) {}
 
     public const TYPE_EMPLOYEE_LOGIN = 'employee_login';
@@ -78,6 +80,7 @@ class AdminNotificationService
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
 
     public const TYPE_NEGATIVE_INSTANT_SALE_STOCK = 'negative_instant_sale_stock';
+
     public const TYPE_NEGATIVE_SALES_ORDER_STOCK = 'negative_sales_order_stock';
 
     public const TYPE_APP_DEVELOPMENT_TASK = 'app_development_task';
@@ -112,6 +115,18 @@ class AdminNotificationService
         bool $sendPush = true,
         ?int $recipientUserId = null
     ): AdminNotification {
+        $policy = $this->notificationControl->policyFor($type);
+        $rendered = $this->notificationControl->render($type, $title, $body, $data);
+        $title = $rendered['title'];
+        $body = $rendered['body'];
+        if ($policy && ! $policy->show_on_lock_screen) {
+            $data['notification_safe_title'] = 'DoctorBike';
+            $data['notification_safe_body'] = $rendered['lock_screen'] ?: 'لديك إشعار جديد';
+        }
+        if ($policy && (! $policy->is_enabled || ! $policy->in_app_enabled)) {
+            $data['_in_app_hidden'] = '1';
+        }
+
         $notification = AdminNotification::create([
             'type' => $type,
             'title' => $title,
@@ -123,6 +138,18 @@ class AdminNotificationService
             'data' => $data,
             'is_read' => false,
         ]);
+
+        if ($policy && ! $this->notificationControl->pushAllowedNow($policy)) {
+            $sendPush = false;
+        }
+
+        if ($policy && $policy->cooldown_seconds > 0 && AdminNotification::query()
+            ->where('type', $type)
+            ->whereKeyNot($notification->id)
+            ->where('created_at', '>=', now()->subSeconds($policy->cooldown_seconds))
+            ->exists()) {
+            $sendPush = false;
+        }
 
         if ($sendPush) {
             $this->pushToAdminDevices($notification);
@@ -868,6 +895,7 @@ class AdminNotificationService
 
     /**
      * @template T
+     *
      * @param  callable(): T  $callback
      * @return T
      */
@@ -960,8 +988,16 @@ class AdminNotificationService
             $tokensQuery->where('user_id', $notification->recipient_user_id);
         }
 
-        $tokens = $tokensQuery->pluck('fcm_token')->all();
-        $tokenCount = count($tokens);
+        $policy = $this->notificationControl->policyFor($notification->type);
+        if ($notification->recipient_user_id === null && $policy?->audience === 'selected_users') {
+            $tokensQuery->whereIn('user_id', $policy->recipient_user_ids ?: []);
+        } elseif ($notification->recipient_user_id === null && $policy?->audience === 'roles') {
+            $tokensQuery->whereHas('user', fn ($query) => $query
+                ->whereIn('development_role', $policy->recipient_roles ?: []));
+        }
+
+        $devices = $tokensQuery->get();
+        $tokenCount = $devices->count();
 
         Log::info('Admin FCM broadcast start', [
             'notification_id' => $notification->id,
@@ -972,7 +1008,7 @@ class AdminNotificationService
             'channel_id' => FirebaseService::ADMIN_CHANNEL_ID,
         ]);
 
-        if ($tokens === []) {
+        if ($devices->isEmpty()) {
             Log::warning('Admin FCM broadcast skipped: no device tokens');
 
             return ['sent' => 0, 'failed' => 0, 'token_count' => 0];
@@ -982,21 +1018,40 @@ class AdminNotificationService
         $sent = 0;
         $failed = 0;
 
-        foreach ($tokens as $token) {
+        foreach ($devices as $device) {
+            $token = $device->fcm_token;
+            $deliveryData = $this->notificationControl->deliveryData($notification->type, $device);
+            $resolvedData = array_merge($data, $deliveryData);
+            $attempt = null;
+            if (\Illuminate\Support\Facades\Schema::hasTable('notification_delivery_attempts')) {
+                $attempt = NotificationDeliveryAttempt::query()->create([
+                    'admin_notification_id' => $notification->id,
+                    'admin_device_token_id' => $device->id,
+                    'requested_sound_id' => $policy?->sound_id,
+                    'resolved_sound_id' => ($deliveryData['notification_sound_id'] ?? '') !== ''
+                        ? (int) $deliveryData['notification_sound_id'] : null,
+                    'status' => 'pending',
+                    'channel_id' => $deliveryData['notification_channel_id'] ?? null,
+                    'used_fallback' => ($deliveryData['notification_used_fallback'] ?? '0') === '1',
+                ]);
+            }
             try {
                 $response = $this->firebaseService->sendToTokenQuietly(
                     $token,
                     $notification->title,
                     $notification->body,
-                    $data
+                    $resolvedData
                 );
                 if ($response !== null) {
                     $sent++;
+                    $attempt?->update(['status' => 'sent', 'sent_at' => now()]);
                 } else {
                     $failed++;
+                    $attempt?->update(['status' => 'failed', 'failure_reason' => 'FCM returned no response']);
                 }
             } catch (\Throwable $e) {
                 $failed++;
+                $attempt?->update(['status' => 'failed', 'failure_reason' => mb_substr($e->getMessage(), 0, 2000)]);
                 Log::error('Admin FCM broadcast token failure', [
                     'notification_id' => $notification->id,
                     'token_prefix' => substr($token, 0, 12).'…',
