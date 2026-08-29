@@ -539,6 +539,8 @@ class SalesOrderService
         }
 
         return DB::transaction(function () use ($user, $order, $note) {
+            $this->fulfillmentService->reverseFinancialsForCancellation($order, $user);
+
             if ($order->stock_deducted_at) {
                 $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
             } else {

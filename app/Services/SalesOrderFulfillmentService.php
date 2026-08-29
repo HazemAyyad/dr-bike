@@ -256,6 +256,8 @@ class SalesOrderFulfillmentService
         }
 
         return DB::transaction(function () use ($user, $order, $note) {
+            $this->reverseFinancialsForCancellation($order, $user);
+
             if ($order->stock_deducted_at) {
                 $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
             } else {
@@ -503,6 +505,8 @@ class SalesOrderFulfillmentService
         }
 
         return DB::transaction(function () use ($user, $order, $note, $skipNotification) {
+            $this->reverseFinancialsForCancellation($order, $user);
+
             if ($order->stock_deducted_at) {
                 $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
             } else {
@@ -743,6 +747,81 @@ class SalesOrderFulfillmentService
             'payment_amount' => $amount,
             'payment_box_id' => $box->id,
             'sales_daily_session_id' => $session->id,
+        ]);
+    }
+
+    /**
+     * Reverse every net cash movement for a canceled/returned order. The
+     * original settlements stay untouched and a negative settlement is added
+     * to the currently open sales-orders drawer for a complete audit trail.
+     */
+    public function reverseFinancialsForCancellation(SalesOrder $order, User $user): void
+    {
+        $settlements = $order->settlements()->with('box')->get();
+        $amountsByCurrency = $settlements
+            ->filter(fn (SalesOrderSettlement $settlement) => $settlement->box !== null)
+            ->groupBy(fn (SalesOrderSettlement $settlement) => (string) $settlement->box->currency)
+            ->map(fn (Collection $rows) => round((float) $rows->sum('amount'), 2))
+            ->filter(fn (float $amount) => $amount > 0.0001);
+
+        if ($amountsByCurrency->isNotEmpty()) {
+            $session = $this->sessionService->assertCanCreateSale(
+                $user,
+                SalesDailySessionService::TYPE_SALES_ORDERS
+            );
+            $currentBoxes = $this->ordersDailyBoxes->ensureBoxes($user, $session)->keyBy('currency');
+
+            foreach ($amountsByCurrency as $currency => $amount) {
+                $idempotencyKey = 'sales-order-cancel-'.$order->id.'-'.md5((string) $currency);
+                if (SalesOrderSettlement::query()->where('idempotency_key', $idempotencyKey)->exists()) {
+                    continue;
+                }
+
+                /** @var Box|null $box */
+                $box = $currentBoxes->get($currency);
+                if (! $box) {
+                    throw ValidationException::withMessages([
+                        'payment_box_id' => ['لا يوجد صندوق طلبيات مفتوح بعملة '.$currency.' لعكس الدفعة.'],
+                    ]);
+                }
+
+                $box = Box::query()->lockForUpdate()->findOrFail($box->id);
+                $box->update(['total' => round((float) $box->total - $amount, 2)]);
+
+                BoxLogs::createBoxLog(
+                    $box,
+                    'سحب — عكس دفعة طلبية ملغاة '.($order->serial_number ?? '#'.$order->id),
+                    'minus',
+                    -$amount,
+                    'إلغاء/إرجاع طلبية #'.$order->id.' — '.($order->serial_number ?? '')
+                );
+
+                SalesOrderSettlement::create([
+                    'sales_order_id' => $order->id,
+                    'sales_daily_session_id' => $session->id,
+                    'box_id' => $box->id,
+                    'source' => 'cancellation_reversal',
+                    'amount' => -$amount,
+                    'customer_debt_before' => (float) $order->customer_debt_balance,
+                    'customer_debt_after' => 0,
+                    'carrier_receivable_before' => (float) $order->carrier_receivable_balance,
+                    'carrier_receivable_after' => 0,
+                    'idempotency_key' => $idempotencyKey,
+                    'notes' => 'عكس مالي بسبب إلغاء/إرجاع الطلبية',
+                    'created_by' => $user->id,
+                ]);
+            }
+        }
+
+        $this->debtLedgerService->deleteSourceLedger('sales_order', (int) $order->id);
+        $order->update([
+            'payment_amount' => 0,
+            'payment_box_id' => null,
+            'customer_debt_balance' => 0,
+            'carrier_receivable_balance' => 0,
+            'delivery_settled_amount' => 0,
+            'delivery_settled_at' => null,
+            'delivery_settled_box_id' => null,
         ]);
     }
 
