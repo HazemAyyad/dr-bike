@@ -71,6 +71,17 @@ class SalesOrderFulfillmentService
 
         $this->assertHandoverRecipient($order, $isShiply);
         $this->assertManualCarrierDetails($data, $companyCode);
+        if (in_array($companyCode, ['doctor_bike', 'self', 'pickup'], true)) {
+            foreach ([
+                'tracking_number',
+                'carrier_contact_name',
+                'carrier_contact_phone',
+                'carrier_office_name',
+                'carrier_vehicle_number',
+            ] as $field) {
+                $data[$field] = null;
+            }
+        }
         $shiplyMode = ShiplySettings::mode();
         $employeeEmail = trim((string) $user->email);
 
@@ -609,19 +620,45 @@ class SalesOrderFulfillmentService
         if ($isExternalCarrier && ! array_key_exists('payment_amount', $payload)) {
             $paidAmount = min((float) $order->payment_amount, $recognizedTotal);
         }
-        $paymentBox = $this->resolvePaymentBox($user, $paidAmount, $payload);
+        $prepaidAmount = round((float) $order->settlements()
+            ->where('source', 'order_payment')
+            ->sum('amount'), 2);
+        $amountToPost = round(max(0, $paidAmount - $prepaidAmount), 2);
+        $paymentBox = $amountToPost > 0
+            ? $this->resolvePaymentBox($user, $amountToPost, $payload)
+            : ($order->payment_box_id ? [
+                'id' => (int) $order->payment_box_id,
+                'name' => (string) (Box::query()->find($order->payment_box_id)?->name ?? ''),
+            ] : null);
 
-        if ($paidAmount > 0 && $paymentBox) {
+        if ($amountToPost > 0 && $paymentBox) {
             $box = Box::lockForUpdate()->findOrFail($paymentBox['id']);
-            $box->total = round((float) $box->total + $paidAmount, 2);
+            $box->total = round((float) $box->total + $amountToPost, 2);
             $box->save();
 
             BoxLogs::createBoxLog(
                 $box,
                 'قبض — طلبية '.($order->serial_number ?? '#'.$order->id),
                 'add',
-                $paidAmount,
+                $amountToPost,
                 'طلبية #'.$order->id.' — '.($order->serial_number ?? '')
+            );
+
+            SalesOrderSettlement::firstOrCreate(
+                ['idempotency_key' => 'sales-order-delivery-payment-'.$order->id],
+                [
+                    'sales_order_id' => $order->id,
+                    'sales_daily_session_id' => $session->id,
+                    'box_id' => $box->id,
+                    'source' => 'order_payment',
+                    'amount' => $amountToPost,
+                    'customer_debt_before' => (float) $order->customer_debt_balance,
+                    'customer_debt_after' => (float) $order->customer_debt_balance,
+                    'carrier_receivable_before' => (float) $order->carrier_receivable_balance,
+                    'carrier_receivable_after' => (float) $order->carrier_receivable_balance,
+                    'notes' => 'دفعة عند تسليم الطلبية',
+                    'created_by' => $user->id,
+                ]
             );
         }
 
@@ -648,6 +685,65 @@ class SalesOrderFulfillmentService
             'customer_debt_balance' => $customerDebt,
             'carrier_receivable_balance' => $carrierReceivable,
         ];
+    }
+
+    /**
+     * Post the amount entered while creating the order immediately to the
+     * currently open sales-orders drawer. The settlement row makes the daily
+     * drawer summary and closing count the movement without posting it again
+     * when the order is delivered.
+     */
+    public function postInitialPayment(SalesOrder $order, User $user): void
+    {
+        $amount = round(min(max(0, (float) $order->payment_amount), (float) $order->total), 2);
+        if ($amount <= 0) {
+            return;
+        }
+
+        $idempotencyKey = 'sales-order-initial-payment-'.$order->id;
+        if (SalesOrderSettlement::query()->where('idempotency_key', $idempotencyKey)->exists()) {
+            return;
+        }
+
+        $session = $this->sessionService->assertCanCreateSale(
+            $user,
+            SalesDailySessionService::TYPE_SALES_ORDERS
+        );
+        $paymentBox = $this->ordersDailyBoxes->resolve(
+            $user,
+            $order->payment_box_id ? (int) $order->payment_box_id : null
+        );
+        $box = Box::lockForUpdate()->findOrFail($paymentBox['id']);
+        $box->update(['total' => round((float) $box->total + $amount, 2)]);
+
+        BoxLogs::createBoxLog(
+            $box,
+            'دفعة أولى — طلبية '.($order->serial_number ?? '#'.$order->id),
+            'add',
+            $amount,
+            'طلبية #'.$order->id.' — '.($order->serial_number ?? '')
+        );
+
+        SalesOrderSettlement::create([
+            'sales_order_id' => $order->id,
+            'sales_daily_session_id' => $session->id,
+            'box_id' => $box->id,
+            'source' => 'order_payment',
+            'amount' => $amount,
+            'customer_debt_before' => 0,
+            'customer_debt_after' => 0,
+            'carrier_receivable_before' => 0,
+            'carrier_receivable_after' => 0,
+            'idempotency_key' => $idempotencyKey,
+            'notes' => 'دفعة مدفوعة عند إنشاء الطلبية',
+            'created_by' => $user->id,
+        ]);
+
+        $order->update([
+            'payment_amount' => $amount,
+            'payment_box_id' => $box->id,
+            'sales_daily_session_id' => $session->id,
+        ]);
     }
 
     /**
@@ -857,7 +953,8 @@ class SalesOrderFulfillmentService
             return;
         }
 
-        if ($companyCode === 'shiply' || $companyCode === null) {
+        if (in_array($companyCode, ['shiply', 'doctor_bike', 'self', 'pickup'], true)
+            || $companyCode === null) {
             return;
         }
 

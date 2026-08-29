@@ -258,6 +258,8 @@ class SalesOrderService
                 $order->created_at
             );
 
+            $this->fulfillmentService->postInitialPayment($order, $user);
+
             if (! $order->is_debt_collection) {
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
                 $freshOrder = $order->fresh(['items.product']);
@@ -292,6 +294,17 @@ class SalesOrderService
         $data = $this->validateOrderPayload($request, true, $order);
         $totals = $this->calculateTotals($data, $order);
         $customerSnapshot = $this->resolveCustomerSnapshot($data, $order);
+        if (array_key_exists('payment_amount', $data)) {
+            $postedPayment = round((float) $order->settlements()
+                ->where('source', 'order_payment')
+                ->sum('amount'), 2);
+            $requestedPayment = round((float) $data['payment_amount'], 2);
+            if ($postedPayment > 0 && abs($requestedPayment - $postedPayment) > 0.0001) {
+                throw ValidationException::withMessages([
+                    'payment_amount' => ['لا يمكن تعديل المبلغ المدفوع بعد ترحيله للصندوق؛ استخدم التسوية المالية.'],
+                ]);
+            }
+        }
 
         return DB::transaction(function () use ($user, $order, $data, $totals, $customerSnapshot) {
             $order->update([
@@ -365,6 +378,7 @@ class SalesOrderService
 
         if ($order->is_debt_collection) {
             return DB::transaction(function () use ($user, $order) {
+                $this->fulfillmentService->postInitialPayment($order, $user);
                 $from = $order->status;
                 $order->update([
                     'status' => SalesOrderStatus::Confirmed->value,
@@ -386,6 +400,7 @@ class SalesOrderService
         }
 
         return DB::transaction(function () use ($user, $order) {
+            $this->fulfillmentService->postInitialPayment($order, $user);
             $order->loadMissing('items.product', 'media');
             $conflicts = $this->stockService->analyzeOrderStockImpact($order);
             $negativeStockWasAcknowledged = $order->stockShortages()
