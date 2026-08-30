@@ -10,6 +10,7 @@ use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeeNotificationService;
 use App\Support\EmployeePendingTasksForToday;
 use App\Support\EmployeeVisibleTasks;
+use App\Support\EmployeeWorkSchedule;
 use App\Support\TaskReminderConfig;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\App;
@@ -157,6 +158,10 @@ class EmployeeTaskReminderService
         Carbon $now
     ): bool {
         if (! $employee) {
+            return false;
+        }
+
+        if (! EmployeeWorkSchedule::isWithin($employee, $now)) {
             return false;
         }
 

@@ -8,6 +8,7 @@ use App\Models\EmployeeOrder;
 use App\Models\SalaryPaymentItem;
 use App\Support\EmployeeAttendanceToday;
 use App\Support\EmployeePendingTasksForToday;
+use App\Support\EmployeeWorkSchedule;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -386,6 +387,18 @@ class EmployeeNotificationService
             $token = trim((string) ($employee->user->fcm_token ?? ''));
             $hasToken = $token !== '' && $token !== 'no_token';
 
+            if (! EmployeeWorkSchedule::isWithin($employee)) {
+                $stats['skipped']++;
+                $stats['details'][] = [
+                    'employee_id' => $employee->id,
+                    'name' => $employeeName,
+                    'status' => 'skipped_outside_work_schedule',
+                    'tasks' => 0,
+                ];
+
+                continue;
+            }
+
             $tasks = EmployeePendingTasksForToday::visibleForEmployee((int) $employee->id);
             if ($tasks->isEmpty()) {
                 $stats['skipped']++;
@@ -536,6 +549,7 @@ class EmployeeNotificationService
             'in_app_only_no_token' => 'لا توكن FCM — حُفظ داخل التطبيق فقط',
             'skipped_already_sent' => 'لم يُرسل — أُرسل له اليوم مسبقاً',
             'skipped_no_tasks' => 'لم يُرسل — لا مهام لليوم',
+            'skipped_outside_work_schedule' => 'لم يُرسل — خارج وقت دوام الموظف',
             'error' => 'خطأ أثناء الإرسال',
         ];
 
@@ -707,6 +721,14 @@ class EmployeeNotificationService
 
         foreach ($employees as $employee) {
             $stats['employees']++;
+
+            if (! EmployeeWorkSchedule::isWithin($employee, $now)) {
+                $stats['skipped']++;
+                $stats['skipped_nothing']++;
+
+                continue;
+            }
+
             $pending = EmployeePendingTasksForToday::pendingActionForEmployee((int) $employee->id);
             $needsAttendance = ! EmployeeAttendanceToday::hasCheckedInToday((int) $employee->id);
 

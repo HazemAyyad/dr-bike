@@ -509,7 +509,7 @@ class EmployeeTasks extends Controller
 
             foreach (array_unique($ids) as $employeeId) {
                 $employee = \App\Models\EmployeeDetail::with('user')->find($employeeId);
-                if (! $employee) {
+                if (! $employee || ! \App\Support\EmployeeWorkSchedule::isWithin($employee)) {
                     continue;
                 }
                 $body = 'يرجى تنفيذ المهمة: '.$occurrence->name;
@@ -532,7 +532,7 @@ class EmployeeTasks extends Controller
             $task = EmployeeTask::with('employee.user')->findOrFail($request->employee_task_id);
             foreach ($assigneeService->idsForTask($task) as $employeeId) {
                 $employee = \App\Models\EmployeeDetail::with('user')->find($employeeId);
-                if (! $employee) {
+                if (! $employee || ! \App\Support\EmployeeWorkSchedule::isWithin($employee)) {
                     continue;
                 }
                 $body = 'يرجى تنفيذ المهمة: '.$task->name;
