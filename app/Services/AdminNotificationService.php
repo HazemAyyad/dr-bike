@@ -127,7 +127,14 @@ class AdminNotificationService
             $data['notification_safe_title'] = 'DoctorBike';
             $data['notification_safe_body'] = $rendered['lock_screen'] ?: 'لديك إشعار جديد';
         }
-        if ($policy && (! $policy->is_enabled || ! $policy->in_app_enabled)) {
+        $inCooldown = $policy && $policy->cooldown_seconds > 0 && AdminNotification::query()
+            ->where('type', $type)
+            ->when($recipientUserId !== null, fn ($query) => $query->where('recipient_user_id', $recipientUserId))
+            ->when($recipientUserId === null, fn ($query) => $query->whereNull('recipient_user_id'))
+            ->where('created_at', '>=', now()->subSeconds($policy->cooldown_seconds))
+            ->exists();
+
+        if ($policy && (! $policy->is_enabled || ! $policy->in_app_enabled || $inCooldown)) {
             $data['_in_app_hidden'] = '1';
         }
 
@@ -147,11 +154,7 @@ class AdminNotificationService
             $sendPush = false;
         }
 
-        if ($policy && $policy->cooldown_seconds > 0 && AdminNotification::query()
-            ->where('type', $type)
-            ->whereKeyNot($notification->id)
-            ->where('created_at', '>=', now()->subSeconds($policy->cooldown_seconds))
-            ->exists()) {
+        if ($inCooldown) {
             $sendPush = false;
         }
 

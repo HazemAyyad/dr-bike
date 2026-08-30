@@ -6,18 +6,29 @@ use App\Http\Controllers\Controller;
 use App\Models\AdminDeviceToken;
 use App\Models\AdminNotification;
 use App\Models\AdminNotificationReceipt;
+use App\Models\NotificationDeliveryAttempt;
+use App\Services\AdminNotificationService;
+use App\Services\NotificationControlService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class AdminNotificationCenterController extends Controller
 {
+    public function __construct(
+        private readonly NotificationControlService $control,
+        private readonly AdminNotificationService $notifications,
+    ) {}
+
     public function index(Request $request)
     {
         try {
             $query = AdminNotification::query()
                 ->with(['receipts' => fn ($q) => $q->where('user_id', $request->user()->id)])
                 ->where(function ($q) use ($request) {
-                    $q->whereNull('recipient_user_id')
+                    $q->where(function ($global) use ($request) {
+                        $global->whereNull('recipient_user_id')
+                            ->whereIn('type', $this->control->visibleGlobalTypesFor($request->user()));
+                    })
                         ->orWhere('recipient_user_id', $request->user()->id);
                 })
                 ->whereDoesntHave('receipts', fn ($q) => $q
@@ -43,6 +54,15 @@ class AdminNotificationCenterController extends Controller
 
             if ($request->filled('type')) {
                 $query->where('type', $request->string('type'));
+            }
+
+            if ($request->filled('q')) {
+                $search = trim((string) $request->input('q'));
+                $query->where(function ($builder) use ($search) {
+                    $builder->where('title', 'like', "%{$search}%")
+                        ->orWhere('body', 'like', "%{$search}%")
+                        ->orWhere('type', 'like', "%{$search}%");
+                });
             }
 
             if ($request->filled('date_from')) {
@@ -83,8 +103,11 @@ class AdminNotificationCenterController extends Controller
         try {
             $userId = (int) auth()->id();
             $count = AdminNotification::query()
-                ->where(function ($q) {
-                    $q->whereNull('recipient_user_id')
+                ->where(function ($q) use ($userId) {
+                    $q->where(function ($global) use ($userId) {
+                        $global->whereNull('recipient_user_id')
+                            ->whereIn('type', $this->control->visibleGlobalTypesFor(auth()->user()));
+                    })
                         ->orWhere('recipient_user_id', auth()->id());
                 })
                 ->whereDoesntHave('receipts', fn ($q) => $q
@@ -122,7 +145,10 @@ class AdminNotificationCenterController extends Controller
         try {
             $notification = AdminNotification::query()
                 ->where(function ($q) use ($request) {
-                    $q->whereNull('recipient_user_id')
+                    $q->where(function ($global) use ($request) {
+                        $global->whereNull('recipient_user_id')
+                            ->whereIn('type', $this->control->visibleGlobalTypesFor($request->user()));
+                    })
                         ->orWhere('recipient_user_id', $request->user()->id);
                 })
                 ->findOrFail($id);
@@ -160,6 +186,7 @@ class AdminNotificationCenterController extends Controller
                 ->update(['is_read' => true, 'read_at' => now()]);
 
             AdminNotification::query()->whereNull('recipient_user_id')
+                ->whereIn('type', $this->control->visibleGlobalTypesFor(auth()->user()))
                 ->whereDoesntHave('receipts', fn ($q) => $q
                     ->where('user_id', $userId)->whereNotNull('deleted_at'))
                 ->pluck('id')
@@ -184,7 +211,10 @@ class AdminNotificationCenterController extends Controller
         try {
             $notification = AdminNotification::query()
                 ->where(function ($q) use ($request) {
-                    $q->whereNull('recipient_user_id')
+                    $q->where(function ($global) use ($request) {
+                        $global->whereNull('recipient_user_id')
+                            ->whereIn('type', $this->control->visibleGlobalTypesFor($request->user()));
+                    })
                         ->orWhere('recipient_user_id', $request->user()->id);
                 })
                 ->findOrFail($id);
@@ -274,5 +304,36 @@ class AdminNotificationCenterController extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    public function deliveryEvent(Request $request, int $id)
+    {
+        $data = $request->validate([
+            'event' => 'required|in:delivered,opened',
+            'fcm_token' => 'nullable|string|max:512',
+        ]);
+        $attempt = NotificationDeliveryAttempt::query()
+            ->where('admin_notification_id', $id)
+            ->whereHas('device', fn ($query) => $query
+                ->where('user_id', $request->user()->id)
+                ->when($data['fcm_token'] ?? null, fn ($deviceQuery, $token) => $deviceQuery
+                    ->where('fcm_token', $token)))
+            ->latest('id')->first();
+        if ($attempt) {
+            $column = $data['event'] === 'opened' ? 'opened_at' : 'delivered_at';
+            $attempt->forceFill(['status' => $data['event'], $column => now()])->save();
+        }
+
+        return response()->json(['status' => 'success']);
+    }
+
+    public function retryDelivery(Request $request, int $id)
+    {
+        $notification = AdminNotification::query()->findOrFail($id);
+
+        return response()->json([
+            'status' => 'success',
+            'delivery' => $this->notifications->pushToAdminDevices($notification),
+        ]);
     }
 }

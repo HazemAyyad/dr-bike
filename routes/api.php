@@ -1352,6 +1352,8 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/notifications/mark-all-read', [AdminNotificationCenterController::class, 'markAllRead']);
     Route::post('/admin/notifications/{id}/read', [AdminNotificationCenterController::class, 'markRead']);
     Route::delete('/admin/notifications/{id}', [AdminNotificationCenterController::class, 'destroy']);
+    Route::post('/admin/notifications/{id}/delivery-event', [AdminNotificationCenterController::class, 'deliveryEvent']);
+    Route::post('/admin/notifications/{id}/retry', [AdminNotificationCenterController::class, 'retryDelivery']);
     Route::post('/admin/device-token', [AdminNotificationCenterController::class, 'storeDeviceToken']);
     Route::delete('/admin/device-token', [AdminNotificationCenterController::class, 'destroyDeviceToken']);
     Route::get('/admin/notification-catalog', [AdminNotificationSettingsController::class, 'catalog']);
@@ -1369,6 +1371,12 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/notification-device-sounds/sync', [AdminNotificationSettingsController::class, 'syncDeviceSounds']);
     Route::get('/admin/notification-devices', [AdminNotificationSettingsController::class, 'devices']);
     Route::get('/admin/notification-deliveries', [AdminNotificationSettingsController::class, 'deliveries']);
+    Route::post('/admin/notification-deliveries/{attempt}/retry', [AdminNotificationSettingsController::class, 'retryDelivery']);
+    Route::get('/admin/notification-audience-options', [AdminNotificationSettingsController::class, 'audienceOptions']);
+    Route::get('/admin/notification-employee-options', [AdminNotificationSettingsController::class, 'employeeAudienceOptions']);
+    Route::post('/admin/notifications/manual-employees', [AdminNotificationSettingsController::class, 'sendManualEmployeeNotification'])
+        ->middleware('throttle:10,1');
+    Route::get('/admin/notification-audits', [AdminNotificationSettingsController::class, 'audits']);
     Route::get('/admin/password-reset-codes', [AdminPasswordResetCodeController::class, 'index']);
 
     Route::get('/admin/cron-job-logs', [\App\Http\Controllers\API\CronJobLogController::class, 'index']);

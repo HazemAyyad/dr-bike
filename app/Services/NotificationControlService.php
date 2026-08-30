@@ -7,6 +7,7 @@ use App\Models\NotificationDeviceSound;
 use App\Models\NotificationPolicy;
 use App\Models\NotificationSound;
 use App\Models\NotificationTemplate;
+use App\Models\User;
 use App\Support\NotificationCatalog;
 use Illuminate\Support\Facades\Schema;
 
@@ -57,6 +58,42 @@ class NotificationControlService
             ->with(['sound', 'fallbackSound'])
             ->where('notification_type', $type)
             ->first();
+    }
+
+    /**
+     * Return the global notification types this admin may see in the in-app
+     * center. Targeted notifications are handled separately by the query.
+     *
+     * @return list<string>
+     */
+    public function visibleGlobalTypesFor(User $user): array
+    {
+        if (! Schema::hasTable('notification_policies')) {
+            return array_keys(NotificationCatalog::types());
+        }
+
+        $policies = NotificationPolicy::query()
+            ->get(['notification_type', 'audience', 'recipient_user_ids', 'recipient_roles'])
+            ->keyBy('notification_type');
+        $role = (string) ($user->development_role ?? '');
+
+        return collect(array_keys(NotificationCatalog::types()))
+            ->filter(function (string $type) use ($policies, $user, $role): bool {
+                $policy = $policies->get($type);
+                if (! $policy || $policy->audience === 'all_admins') {
+                    return true;
+                }
+
+                if ($policy->audience === 'selected_users') {
+                    return in_array((int) $user->id, array_map('intval', $policy->recipient_user_ids ?: []), true);
+                }
+
+                return $policy->audience === 'roles'
+                    && $role !== ''
+                    && in_array($role, $policy->recipient_roles ?: [], true);
+            })
+            ->values()
+            ->all();
     }
 
     /** @param array<string, mixed> $data @return array{title: string, body: string, lock_screen: ?string} */
@@ -141,6 +178,9 @@ class NotificationControlService
         $channelId = $bundled['channel'] ?? ($resolved
             ? 'dr_bike_custom_'.$resolved->id.'_v'.$resolved->version
             : 'dr_bike_admin_notifications');
+        if (! $policy->vibration_enabled) {
+            $channelId .= '_no_vibration';
+        }
 
         return [
             'notification_priority' => (string) $policy->priority,

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class NotificationPolicyAudit extends Model
 {
@@ -12,4 +13,9 @@ class NotificationPolicyAudit extends Model
     ];
 
     protected $casts = ['before' => 'array', 'after' => 'array'];
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
 }

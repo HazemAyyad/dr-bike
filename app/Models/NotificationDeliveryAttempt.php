@@ -10,10 +10,15 @@ class NotificationDeliveryAttempt extends Model
     protected $fillable = [
         'admin_notification_id', 'admin_device_token_id', 'requested_sound_id',
         'resolved_sound_id', 'status', 'channel_id', 'used_fallback',
-        'failure_reason', 'sent_at',
+        'failure_reason', 'sent_at', 'delivered_at', 'opened_at',
     ];
 
-    protected $casts = ['used_fallback' => 'boolean', 'sent_at' => 'datetime'];
+    protected $casts = [
+        'used_fallback' => 'boolean',
+        'sent_at' => 'datetime',
+        'delivered_at' => 'datetime',
+        'opened_at' => 'datetime',
+    ];
 
     public function notification(): BelongsTo
     {

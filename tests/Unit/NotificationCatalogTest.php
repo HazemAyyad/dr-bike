@@ -28,4 +28,18 @@ class NotificationCatalogTest extends TestCase
         $this->assertSame('security', $otp['category']);
         $this->assertSame('critical', $otp['priority']);
     }
+
+    public function test_library_sounds_use_ios_notification_compatible_wav_files(): void
+    {
+        $library = array_filter(
+            NotificationCatalog::bundledSounds(),
+            fn (array $sound): bool => ($sound['category'] ?? null) === 'library'
+        );
+
+        $this->assertCount(10, $library);
+        foreach ($library as $key => $sound) {
+            $this->assertStringEndsWith('.wav', $sound['ios'], "{$key} must use WAV on iOS.");
+            $this->assertStringNotContainsString('.', $sound['android'], "{$key} Android resource must omit extension.");
+        }
+    }
 }

@@ -478,6 +478,7 @@ class FirebaseService
             'body' => mb_substr($body, 0, 80),
             'channel_id' => $androidMeta['channel_id'],
             'sound' => $androidMeta['sound'],
+            'priority' => $androidMeta['priority'],
             'data_keys' => array_keys($dataWithText),
         ]);
 
@@ -510,14 +511,14 @@ class FirebaseService
                 ->withData($dataWithText)
                 ->withAndroidConfig(
                     AndroidConfig::fromArray([
-                        'priority' => 'high',
+                        'priority' => $androidMeta['priority'],
                         'notification' => $androidNotification,
                     ])
                 )
                 ->withApnsConfig(
                     ApnsConfig::fromArray([
                         'headers' => [
-                            'apns-priority' => '10',
+                            'apns-priority' => $androidMeta['priority'] === 'high' ? '10' : '5',
                         ],
                         'payload' => [
                             'aps' => $aps,
@@ -558,15 +559,20 @@ class FirebaseService
 
     /**
      * @param  array<string, mixed>  $data
-     * @return array{channel_id: string, sound: string, ios_sound: string}
+     * @return array{channel_id: string, sound: string, ios_sound: string, priority: string}
      */
     protected function resolveNotificationDelivery(array $data): array
     {
         if (! empty($data['notification_channel_id'])) {
+            $priority = in_array((string) ($data['notification_priority'] ?? 'normal'), ['high', 'critical'], true)
+                ? 'high'
+                : 'normal';
+
             return [
                 'channel_id' => (string) $data['notification_channel_id'],
                 'sound' => (string) ($data['notification_android_sound'] ?? 'default'),
                 'ios_sound' => (string) ($data['notification_ios_sound'] ?? 'default'),
+                'priority' => $priority,
             ];
         }
 
@@ -577,6 +583,7 @@ class FirebaseService
                 'channel_id' => self::ADMIN_LOGIN_CHANNEL_ID,
                 'sound' => self::ADMIN_LOGIN_SOUND_ANDROID,
                 'ios_sound' => self::ADMIN_LOGIN_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -585,6 +592,7 @@ class FirebaseService
                 'channel_id' => self::ADMIN_ATTENDANCE_CHANNEL_ID,
                 'sound' => self::EMPLOYEE_TASK_SOUND_ANDROID,
                 'ios_sound' => self::EMPLOYEE_TASK_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -593,6 +601,7 @@ class FirebaseService
                 'channel_id' => self::TASK_SUCCESS_CHANNEL_ID,
                 'sound' => self::TASK_SUCCESS_SOUND_ANDROID,
                 'ios_sound' => self::TASK_SUCCESS_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -601,6 +610,7 @@ class FirebaseService
                 'channel_id' => self::EMPLOYEE_TASK_CHANNEL_ID,
                 'sound' => self::EMPLOYEE_TASK_SOUND_ANDROID,
                 'ios_sound' => self::EMPLOYEE_TASK_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -609,6 +619,7 @@ class FirebaseService
                 'channel_id' => self::SHIPLY_DELIVERED_CHANNEL_ID,
                 'sound' => self::SHIPLY_DELIVERED_SOUND_ANDROID,
                 'ios_sound' => self::SHIPLY_DELIVERED_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -617,6 +628,7 @@ class FirebaseService
                 'channel_id' => self::SALES_ORDER_STATUS_CHANNEL_ID,
                 'sound' => self::SALES_ORDER_STATUS_SOUND_ANDROID,
                 'ios_sound' => self::SALES_ORDER_STATUS_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -629,12 +641,13 @@ class FirebaseService
             'channel_id' => self::ADMIN_CHANNEL_ID,
             'sound' => 'default',
             'ios_sound' => 'default',
+            'priority' => 'high',
         ];
     }
 
     /**
      * @param  array<string, mixed>  $data
-     * @return array{channel_id: string, sound: string, ios_sound: string}|null
+     * @return array{channel_id: string, sound: string, ios_sound: string, priority: string}|null
      */
     protected function resolveShiplyTrackingDelivery(array $data): ?array
     {
@@ -652,6 +665,7 @@ class FirebaseService
                 'channel_id' => self::SHIPLY_RETURNED_CHANNEL_ID,
                 'sound' => self::SHIPLY_RETURNED_SOUND_ANDROID,
                 'ios_sound' => self::SHIPLY_RETURNED_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -660,6 +674,7 @@ class FirebaseService
                 'channel_id' => self::SHIPLY_STUCK_CHANNEL_ID,
                 'sound' => self::SHIPLY_STUCK_SOUND_ANDROID,
                 'ios_sound' => self::SHIPLY_STUCK_SOUND_IOS,
+                'priority' => 'high',
             ];
         }
 
@@ -667,6 +682,7 @@ class FirebaseService
             'channel_id' => self::SHIPLY_MOTORCYCLE_CHANNEL_ID,
             'sound' => self::SHIPLY_MOTORCYCLE_SOUND_ANDROID,
             'ios_sound' => self::SHIPLY_MOTORCYCLE_SOUND_IOS,
+            'priority' => 'high',
         ];
     }
 

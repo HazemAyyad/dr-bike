@@ -4,13 +4,16 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdminDeviceToken;
+use App\Models\EmployeeDetail;
 use App\Models\NotificationDeliveryAttempt;
 use App\Models\NotificationDeviceSound;
 use App\Models\NotificationPolicy;
 use App\Models\NotificationPolicyAudit;
 use App\Models\NotificationSound;
 use App\Models\NotificationTemplate;
+use App\Models\User;
 use App\Services\NotificationControlService;
+use App\Services\EmployeeNotificationService;
 use App\Support\NotificationCatalog;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,7 +23,10 @@ use Illuminate\Validation\Rule;
 
 class AdminNotificationSettingsController extends Controller
 {
-    public function __construct(private readonly NotificationControlService $control) {}
+    public function __construct(
+        private readonly NotificationControlService $control,
+        private readonly EmployeeNotificationService $employeeNotifications,
+    ) {}
 
     public function catalog()
     {
@@ -194,7 +200,9 @@ class AdminNotificationSettingsController extends Controller
             'file_size' => $file->getSize(),
             'checksum' => $checksum,
             'version' => 1,
-            'background_capable' => false,
+            // Final capability is tracked per device after the app downloads
+            // the file and creates its Android channel / iOS Sounds copy.
+            'background_capable' => true,
             'uploaded_by' => $request->user()->id,
             'fallback_sound_id' => $data['fallback_sound_id'] ?? null,
         ]);
@@ -323,6 +331,200 @@ class AdminNotificationSettingsController extends Controller
             'deliveries' => NotificationDeliveryAttempt::query()
                 ->with(['notification:id,type,title', 'device:id,user_id,device_name,platform'])
                 ->latest('id')->paginate($perPage),
+        ]);
+    }
+
+    public function audienceOptions()
+    {
+        $users = User::query()->where('type', 'admin')
+            ->orderBy('name')->get(['id', 'name', 'email', 'development_role']);
+
+        return response()->json([
+            'status' => 'success',
+            'users' => $users,
+            'roles' => $users->pluck('development_role')->filter()
+                ->reject(fn ($role) => $role === User::DEVELOPMENT_ROLE_NONE)
+                ->unique()->values(),
+        ]);
+    }
+
+    public function employeeAudienceOptions()
+    {
+        $employees = EmployeeDetail::query()
+            ->with('user:id,name,email,fcm_token,type')
+            ->whereHas('user', fn ($query) => $query->where('type', 'employee'))
+            ->where(function ($query) {
+                $query->whereNull('is_suspended')->orWhere('is_suspended', false);
+            })
+            ->orderBy('id')
+            ->get(['id', 'user_id', 'job_title', 'is_suspended'])
+            ->map(fn (EmployeeDetail $employee) => [
+                'id' => $employee->id,
+                'name' => $employee->user?->name ?: 'موظف #'.$employee->id,
+                'email' => $employee->user?->email,
+                'job_title' => $employee->job_title,
+                'has_push' => filled($employee->user?->fcm_token)
+                    && $employee->user?->fcm_token !== 'no_token',
+            ])
+            ->values();
+
+        return response()->json([
+            'status' => 'success',
+            'employees' => $employees,
+            'total' => $employees->count(),
+            'with_push' => $employees->where('has_push', true)->count(),
+        ]);
+    }
+
+    public function sendManualEmployeeNotification(Request $request)
+    {
+        $this->control->syncDefaults();
+        $data = $request->validate([
+            'audience' => ['required', Rule::in(['all', 'selected'])],
+            'employee_ids' => 'required_if:audience,selected|nullable|array|max:500',
+            'employee_ids.*' => 'integer|distinct|exists:employee_details,id',
+            'title' => 'required|string|max:120',
+            'body' => 'required|string|max:1000',
+            'sound_id' => 'required|integer|exists:notification_sounds,id',
+            'priority' => ['required', Rule::in(['low', 'normal', 'high', 'critical'])],
+            'vibration_enabled' => 'required|boolean',
+            'push_enabled' => 'required|boolean',
+        ]);
+
+        $sound = NotificationSound::query()
+            ->whereKey($data['sound_id'])
+            ->where('source', 'bundled')
+            ->where('is_active', true)
+            ->firstOrFail();
+        $soundDefinition = NotificationCatalog::bundledSounds()[$sound->key] ?? null;
+        abort_unless($soundDefinition, 422, 'هذا الصوت غير متاح لإشعارات الموظفين.');
+        abort_if(
+            str_ends_with(strtolower((string) ($soundDefinition['ios'] ?? '')), '.mp3'),
+            422,
+            'اختر صوتاً متوافقاً مع Android وiOS.'
+        );
+
+        $targets = EmployeeDetail::query()
+            ->with('user:id,name,fcm_token,type')
+            ->whereHas('user', fn ($query) => $query->where('type', 'employee'))
+            ->where(function ($query) {
+                $query->whereNull('is_suspended')->orWhere('is_suspended', false);
+            })
+            ->when(
+                $data['audience'] === 'selected',
+                fn ($query) => $query->whereIn('id', $data['employee_ids'] ?? [])
+            )
+            ->get();
+        abort_if($targets->isEmpty(), 422, 'لا يوجد موظفون صالحون للإرسال.');
+
+        $batchId = (string) Str::uuid();
+        $channelId = (string) $soundDefinition['channel'];
+        if (! $data['vibration_enabled']) {
+            $channelId .= '_no_vibration';
+        }
+        $payload = [
+            'source' => 'admin_manual_notification',
+            'manual_batch_id' => $batchId,
+            'manual_sender_id' => (string) $request->user()->id,
+            'sent_at' => now()->toIso8601String(),
+            'notification_priority' => $data['priority'],
+            'notification_sound_id' => (string) $sound->id,
+            'notification_sound_key' => (string) $sound->key,
+            'notification_channel_id' => $channelId,
+            'notification_android_sound' => (string) ($soundDefinition['android'] ?? 'default'),
+            'notification_ios_sound' => (string) ($soundDefinition['ios'] ?? 'default'),
+            'notification_vibration' => $data['vibration_enabled'] ? '1' : '0',
+            'notification_foreground_banner' => '1',
+        ];
+
+        $summary = [
+            'batch_id' => $batchId,
+            'targeted' => $targets->count(),
+            'created' => 0,
+            'push_sent' => 0,
+            'push_failed' => 0,
+            'in_app_only' => 0,
+        ];
+        $details = [];
+        foreach ($targets as $employee) {
+            $notification = $this->employeeNotifications->create(
+                $employee,
+                'employee_manual_message',
+                $data['title'],
+                $data['body'],
+                $payload,
+                'manual_employee_notification',
+                null,
+                false
+            );
+            if (! $notification) {
+                continue;
+            }
+
+            $summary['created']++;
+            $pushSent = false;
+            if ($data['push_enabled']) {
+                try {
+                    $pushSent = $this->employeeNotifications->pushToEmployee($employee, $notification);
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+                $summary[$pushSent ? 'push_sent' : 'push_failed']++;
+            } else {
+                $summary['in_app_only']++;
+            }
+            $details[] = [
+                'employee_id' => $employee->id,
+                'name' => $employee->user?->name,
+                'notification_id' => $notification->id,
+                'status' => $data['push_enabled']
+                    ? ($pushSent ? 'push_sent' : 'in_app_push_failed')
+                    : 'in_app_only',
+            ];
+        }
+
+        $summary['details'] = $details;
+        $this->audit(
+            $request,
+            'manual_employee_notification',
+            null,
+            'sent',
+            null,
+            array_merge($summary, [
+                'audience' => $data['audience'],
+                'employee_ids' => $data['audience'] === 'selected' ? $data['employee_ids'] : null,
+                'title' => $data['title'],
+                'sound_id' => $sound->id,
+                'priority' => $data['priority'],
+                'vibration_enabled' => $data['vibration_enabled'],
+                'push_enabled' => $data['push_enabled'],
+            ])
+        );
+
+        return response()->json(['status' => 'success', 'summary' => $summary], 201);
+    }
+
+    public function audits(Request $request)
+    {
+        $perPage = min(max((int) $request->input('per_page', 30), 1), 100);
+
+        return response()->json([
+            'status' => 'success',
+            'audits' => NotificationPolicyAudit::query()
+                ->with('user:id,name')
+                ->latest('id')->paginate($perPage),
+        ]);
+    }
+
+    public function retryDelivery(int $attempt)
+    {
+        $row = NotificationDeliveryAttempt::query()->with('notification')->findOrFail($attempt);
+        abort_unless($row->notification, 404);
+
+        return response()->json([
+            'status' => 'success',
+            'delivery' => app(\App\Services\AdminNotificationService::class)
+                ->pushToAdminDevices($row->notification),
         ]);
     }
 
