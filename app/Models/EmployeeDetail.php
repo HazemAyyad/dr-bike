@@ -115,6 +115,16 @@ class EmployeeDetail extends Model
         return $this->hasMany(EmployeeOrder::class,'employee_id');
     }
 
+    public function salaryPeriods()
+    {
+        return $this->hasMany(EmployeeSalaryPeriod::class, 'employee_id');
+    }
+
+    public function salaryPayments()
+    {
+        return $this->hasMany(SalaryPaymentItem::class, 'employee_id');
+    }
+
     public function attendances()
     {
             return $this->hasMany(EmployeeAttendance::class, 'employee_id');

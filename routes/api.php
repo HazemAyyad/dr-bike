@@ -49,6 +49,7 @@ use App\Http\Controllers\API\Employees\OrdersAPI;
 use App\Http\Controllers\API\EmployeeTasks;
 use App\Http\Controllers\API\EmployeeTaskOperationsController;
 use App\Http\Controllers\API\ExpensesAPI;
+use App\Http\Controllers\API\SalaryPayrollController;
 use App\Http\Controllers\API\FileBoxes;
 use App\Http\Controllers\API\Files;
 use App\Http\Controllers\API\FollowupAPI;
@@ -162,6 +163,9 @@ use App\Http\Controllers\API\SmartSceneController;
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
+
+Route::middleware('auth:sanctum')->get('/payroll/verify/{hash}', [SalaryPayrollController::class, 'verify'])
+    ->where('hash', '[A-Fa-f0-9]{64}');
 
 
 // private auth routes
@@ -306,6 +310,24 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->middleware('check.permission:Employees Financial View');
     Route::post('/pay/employee/salary' , [EmployeeDetails::class,'paySalary'])
         ->middleware('check.permission:Employees Salary Pay');
+    Route::get('/payroll/employees', [SalaryPayrollController::class, 'employees'])
+        ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
+    Route::get('/payroll/boxes', [SalaryPayrollController::class, 'boxes'])
+        ->middleware('check.permission:Employees Salary Pay');
+    Route::post('/payroll/preview', [SalaryPayrollController::class, 'preview'])
+        ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
+    Route::post('/payroll/pay', [SalaryPayrollController::class, 'pay'])
+        ->middleware('check.permission:Employees Salary Pay');
+    Route::get('/payroll/periods', [SalaryPayrollController::class, 'index'])
+        ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
+    Route::get('/payroll/report', [SalaryPayrollController::class, 'report'])
+        ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
+    Route::get('/payroll/batches/{batch}', [SalaryPayrollController::class, 'showBatch'])
+        ->whereNumber('batch')
+        ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
+    Route::get('/payroll/receipts/{item}', [SalaryPayrollController::class, 'adminReceipt'])
+        ->whereNumber('item')
+        ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
     Route::post('/get/employee/financial/data/report' , [EmployeeDetails::class,'employeeReportData'])
         ->middleware('check.permission:Employees Financial View');
 
@@ -1440,6 +1462,11 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/get/attendance/details', [EmployeeData::class, 'attendanceReport']);
 
     Route::get('/employee/notifications', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'index']);
+    Route::get('/employee/payroll/receipts/pending', [SalaryPayrollController::class, 'pendingReceipts']);
+    Route::get('/employee/payroll/receipts', [SalaryPayrollController::class, 'myReceipts']);
+    Route::get('/employee/payroll/receipts/{item}', [SalaryPayrollController::class, 'employeeReceipt'])->whereNumber('item');
+    Route::post('/employee/payroll/receipts/{item}/acknowledge', [SalaryPayrollController::class, 'acknowledge'])->whereNumber('item');
+    Route::post('/employee/payroll/receipts/{item}/dispute', [SalaryPayrollController::class, 'dispute'])->whereNumber('item');
     Route::get('/employee/notifications/unread-count', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'unreadCount']);
     Route::post('/employee/notifications/mark-all-read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markAllRead']);
     Route::post('/employee/notifications/{id}/read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markRead']);

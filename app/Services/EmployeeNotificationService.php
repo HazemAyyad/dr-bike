@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeNotification;
 use App\Models\EmployeeOrder;
+use App\Models\SalaryPaymentItem;
 use App\Support\EmployeeAttendanceToday;
 use App\Support\EmployeePendingTasksForToday;
 use Illuminate\Support\Facades\App;
@@ -65,6 +66,8 @@ class EmployeeNotificationService
     public const TYPE_GOAL_NO_PROGRESS = 'goal_no_progress';
 
     public const TYPE_GOAL_SHARED = 'goal_shared';
+
+    public const TYPE_SALARY_PAID = 'salary_paid';
 
     public function __construct(
         protected FirebaseService $firebaseService
@@ -189,6 +192,39 @@ class EmployeeNotificationService
                 ],
                 'employee_order',
                 (int) $order->id,
+                true
+            );
+        });
+    }
+
+    public function notifySalaryPaid(SalaryPaymentItem $item): ?EmployeeNotification
+    {
+        return $this->withArabicLocale(function () use ($item) {
+            $item->loadMissing(['employee.user', 'salaryPeriod']);
+            if (! $item->employee) {
+                return null;
+            }
+
+            $amount = number_format((float) $item->amount_paid, 2, '.', '');
+            $month = optional($item->salaryPeriod?->salary_month)->format('Y-m');
+            $isSettlementOnly = (float) $item->amount_paid <= 0;
+
+            return $this->create(
+                $item->employee,
+                self::TYPE_SALARY_PAID,
+                $isSettlementOnly ? 'تمت تسوية راتبك' : 'تم صرف راتبك',
+                $isSettlementOnly
+                    ? "تمت تسوية راتب شهر {$month} بالكامل مقابل السلف المستحقة. يرجى مراجعة السند والتوقيع."
+                    : "تم صرف مبلغ {$amount} شيكل عن راتب شهر {$month}. يرجى تأكيد الاستلام والتوقيع.",
+                [
+                    'salary_payment_item_id' => (string) $item->id,
+                    'salary_month' => (string) $month,
+                    'amount_paid' => $amount,
+                    'receipt_status' => 'pending',
+                    'requires_acknowledgment' => '1',
+                ],
+                'salary_payment_item',
+                (int) $item->id,
                 true
             );
         });

@@ -47,4 +47,9 @@ class EmployeeOrder extends Model
     {
         return $this->belongsTo(BoxLog::class, 'box_log_id');
     }
+
+    public function salaryApplications()
+    {
+        return $this->hasMany(EmployeeAdvanceApplication::class, 'employee_order_id');
+    }
 }

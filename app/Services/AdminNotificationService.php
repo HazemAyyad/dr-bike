@@ -101,6 +101,10 @@ class AdminNotificationService
 
     public const TYPE_GOAL_NO_PROGRESS = 'goal_no_progress';
 
+    public const TYPE_SALARY_RECEIPT_RECEIVED = 'salary_receipt_received';
+
+    public const TYPE_SALARY_RECEIPT_DISPUTED = 'salary_receipt_disputed';
+
     /**
      * @param  array<string, mixed>  $data
      */

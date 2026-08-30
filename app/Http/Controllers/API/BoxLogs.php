@@ -78,7 +78,7 @@ class BoxLogs extends Controller
             $payload['transfered_balance'] = abs($numericValue);
         }
 
-        BoxLog::create($payload);
+        return BoxLog::create($payload);
     }
 
     public function allBoxLogs(){

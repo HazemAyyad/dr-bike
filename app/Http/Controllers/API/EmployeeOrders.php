@@ -539,6 +539,13 @@ class EmployeeOrders extends Controller
                     'message' => 'يمكن إلغاء السلفة المقبولة فقط',
                 ], 200);
             }
+            if (Schema::hasTable('employee_advance_applications') &&
+                $order->salaryApplications()->exists()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'لا يمكن إلغاء السلفة بعد تسويتها ضمن راتب. راجع سجل الراتب المرتبط.',
+                ], 200);
+            }
 
             $amount = (float) ($order->loan_value ?? 0);
             DB::transaction(function () use ($request, $order, $amount, $reason) {
@@ -653,6 +660,13 @@ class EmployeeOrders extends Controller
                 return response()->json([
                     'status' => 'error',
                     'message' => 'يمكن تعديل السلفة المقبولة فقط',
+                ], 200);
+            }
+            if (Schema::hasTable('employee_advance_applications') &&
+                $order->salaryApplications()->exists()) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'لا يمكن تعديل السلفة بعد تسويتها ضمن راتب. راجع سجل الراتب المرتبط.',
                 ], 200);
             }
 

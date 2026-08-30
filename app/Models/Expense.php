@@ -15,7 +15,7 @@ class Expense extends Model
         'payment_method',
         'notes',
         'invoice_img',
-        'media','box_id','created_by_user_id','employee_id','expense_type','expense_date','destruction_id'
+        'media','box_id','created_by_user_id','employee_id','salary_period_id','expense_type','expense_date','destruction_id'
     ];
 
     protected $casts = [
@@ -26,5 +26,10 @@ class Expense extends Model
 
     public function box(){
         return $this->belongsTo(Box::class);
+    }
+
+    public function salaryPeriod()
+    {
+        return $this->belongsTo(EmployeeSalaryPeriod::class, 'salary_period_id');
     }
 }

@@ -86,7 +86,7 @@ class ExpensesAPI extends Controller
         try{
             $data = $request->validate([
                 'name'=>'required|string|max:255',
-                'expense_type' => 'nullable|string|in:general,salary,destruction',
+                'expense_type' => 'nullable|string|in:general',
                 'expense_date' => 'nullable|date',
                 'price'=>'required|numeric|min:1',
                 'notes' => 'nullable|string',
