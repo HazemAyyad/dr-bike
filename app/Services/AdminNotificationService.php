@@ -356,7 +356,7 @@ class AdminNotificationService
             $employee->loadMissing('user');
             $name = $employee->user->name ?? __('messages.employee_default_name');
             $minutes = (int) $request->requested_minutes;
-            $hours = number_format($minutes / 60, 2);
+            $duration = $this->formatArabicDuration($minutes);
             $date = $request->work_date?->toDateString() ?? '';
 
             return $this->create(
@@ -364,7 +364,7 @@ class AdminNotificationService
                 __('messages.admin_notify_attendance_overtime_title'),
                 __('messages.admin_notify_attendance_overtime_body', [
                     'employee' => $name,
-                    'hours' => $hours,
+                    'duration' => $duration,
                     'date' => $date,
                 ]),
                 [
@@ -381,6 +381,31 @@ class AdminNotificationService
                 true
             );
         });
+    }
+
+    private function formatArabicDuration(int $totalMinutes): string
+    {
+        $totalMinutes = max(0, $totalMinutes);
+        $hours = intdiv($totalMinutes, 60);
+        $minutes = $totalMinutes % 60;
+
+        $parts = [];
+        if ($hours > 0) {
+            $parts[] = match ($hours) {
+                1 => 'ساعة واحدة',
+                2 => 'ساعتان',
+                default => $hours.' ساعات',
+            };
+        }
+        if ($minutes > 0 || $parts === []) {
+            $parts[] = match ($minutes) {
+                1 => 'دقيقة واحدة',
+                2 => 'دقيقتان',
+                default => $minutes.' دقيقة',
+            };
+        }
+
+        return implode(' و', $parts);
     }
 
     public function notifyEmployeeLoanRequest(EmployeeOrder $order): AdminNotification

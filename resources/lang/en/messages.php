@@ -139,7 +139,7 @@ return [
     'attendance_overtime_rejected' => 'Overtime request rejected',
     'attendance_overtime_already_reviewed' => 'This overtime request was already reviewed',
     'admin_notify_attendance_overtime_title' => 'Overtime approval request',
-    'admin_notify_attendance_overtime_body' => ':employee requests approval for :hours overtime hours on :date',
+    'admin_notify_attendance_overtime_body' => ':employee requests approval for :duration of overtime on :date',
     'checkout_time_must_match_work_date' => 'Check-out time must be on the same work day',
     'checkout_time_before_check_in' => 'Check-out time cannot be before check-in',
     'salary_paid' => 'Salary was paid successfully',

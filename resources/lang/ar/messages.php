@@ -136,7 +136,7 @@ return [
     'attendance_overtime_rejected' => 'تم رفض طلب الأوفر تايم',
     'attendance_overtime_already_reviewed' => 'تمت مراجعة هذا الطلب مسبقاً',
     'admin_notify_attendance_overtime_title' => 'طلب أوفر تايم',
-    'admin_notify_attendance_overtime_body' => ':employee طلب اعتماد :hours ساعة أوفر تايم ليوم :date',
+    'admin_notify_attendance_overtime_body' => ':employee طلب اعتماد أوفر تايم لمدة :duration ليوم :date',
     'checkout_time_must_match_work_date' => 'وقت الخروج يجب أن يكون في نفس يوم الدوام',
     'checkout_time_before_check_in' => 'وقت الخروج لا يمكن أن يكون قبل وقت الدخول',
     'salary_paid' => 'تم دفع الراتب بنجاح',
