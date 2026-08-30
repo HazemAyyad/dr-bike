@@ -24,7 +24,7 @@ class NotificationControlService
                 [
                     'name' => $definition['name'],
                     'source' => 'bundled',
-                    'category' => 'system',
+                    'category' => $definition['category'] ?? 'system',
                     'android_resource' => $definition['android'],
                     'ios_filename' => $definition['ios'],
                     'is_active' => true,
