@@ -38,15 +38,7 @@ class MetaCatalogController extends Controller
             $error = $e->getMessage();
         }
 
-        $counts = $account ? $this->catalogSyncCounts($catalogId) : DB::query()->fromSub(
-                Product::query()->whereDoesntHave('sizes.colorSizes')->select('meta_catalog_sync_status')
-                    ->unionAll(SizeColor::query()->select('meta_catalog_sync_status')),
-                'sync_items'
-            )->selectRaw("SUM(meta_catalog_sync_status = 'synced') as synced")
-                ->selectRaw("SUM(meta_catalog_sync_status = 'failed') as failed")
-                ->selectRaw("SUM(meta_catalog_sync_status = 'pending' OR meta_catalog_sync_status IS NULL) as pending")
-                ->selectRaw("SUM(meta_catalog_sync_status = 'disabled') as disabled")
-                ->first();
+        $counts = $this->catalogSyncCounts($catalogId);
 
         return response()->json([
             'status' => 'success',
@@ -82,6 +74,8 @@ class MetaCatalogController extends Controller
             'status' => 'success',
             'accounts' => WhatsAppAccount::query()
                 ->with('catalogRules')
+                ->where('is_active', true)
+                ->whereNotNull('catalog_id')
                 ->orderBy('sort_order')
                 ->orderBy('id')
                 ->get()
@@ -145,12 +139,7 @@ class MetaCatalogController extends Controller
                 ->orWhere('product_code', 'like', "%{$term}%"));
         }
         if (! empty($data['status'])) {
-            $status = $data['status'];
-            $query->where(function ($q) use ($status) {
-                $q->where('meta_catalog_sync_status', $status)
-                    ->orWhereHas('sizes.colorSizes', fn ($variants) => $variants->where('meta_catalog_sync_status', $status));
-                if ($status === 'pending') $q->orWhereNull('meta_catalog_sync_status');
-            });
+            $this->applyCatalogStatusFilter($query, $this->catalogIdForAccount($account), $data['status']);
         }
         $page = $query->orderByDesc('id')->paginate((int) ($data['per_page'] ?? 20));
         $page->getCollection()->transform(fn (Product $product) => $this->productPayload($product, $account));
@@ -276,9 +265,7 @@ class MetaCatalogController extends Controller
             'source_type' => 'nullable|in:all,category,sub_category',
             'source_id' => 'nullable|integer',
         ]);
-        $account = isset($data['whatsapp_account_id'])
-            ? WhatsAppAccount::query()->findOrFail($data['whatsapp_account_id'])
-            : null;
+        $account = $this->accountFromRequest($request);
         $sourceType = $data['source_type'] ?? 'all';
         $sourceId = $sourceType === 'all' ? null : ($data['source_id'] ?? null);
         abort_if($sourceType !== 'all' && ! $sourceId, 422, 'source_id is required when syncing a category or sub category.');
@@ -453,7 +440,47 @@ class MetaCatalogController extends Controller
     private function accountFromRequest(Request $request): ?WhatsAppAccount
     {
         $id = $request->input('whatsapp_account_id');
-        return $id ? WhatsAppAccount::query()->findOrFail((int) $id) : null;
+        $query = WhatsAppAccount::query()
+            ->where('is_active', true)
+            ->whereNotNull('catalog_id');
+
+        return $id
+            ? $query->findOrFail((int) $id)
+            : $query->orderBy('sort_order')->orderBy('id')->firstOrFail();
+    }
+
+    private function applyCatalogStatusFilter($query, ?string $catalogId, string $status): void
+    {
+        $matching = fn ($syncs) => $syncs
+            ->selectRaw('1')
+            ->from('meta_catalog_product_syncs')
+            ->whereColumn('meta_catalog_product_syncs.product_id', 'products.id')
+            ->where('meta_catalog_product_syncs.catalog_id', $catalogId);
+
+        if ($status === 'failed') {
+            $query->whereExists(fn ($syncs) => $matching($syncs)->where('sync_status', 'failed'));
+            return;
+        }
+
+        if ($status === 'pending') {
+            $query->where(function ($products) use ($matching) {
+                $products
+                    ->whereExists(fn ($syncs) => $matching($syncs)->where('sync_status', 'pending'))
+                    ->orWhereNotExists($matching);
+            })->whereNotExists(fn ($syncs) => $matching($syncs)->where('sync_status', 'failed'));
+            return;
+        }
+
+        if ($status === 'disabled') {
+            $query
+                ->whereExists(fn ($syncs) => $matching($syncs)->where('sync_status', 'disabled'))
+                ->whereNotExists(fn ($syncs) => $matching($syncs)->where('sync_status', '!=', 'disabled'));
+            return;
+        }
+
+        $query
+            ->whereExists(fn ($syncs) => $matching($syncs)->where('sync_status', 'synced'))
+            ->whereNotExists(fn ($syncs) => $matching($syncs)->whereIn('sync_status', ['failed', 'pending']));
     }
 
     private function accountPayload(WhatsAppAccount $account, $accounts = null): array
@@ -559,13 +586,23 @@ class MetaCatalogController extends Controller
 
     private function catalogSyncCounts(?string $catalogId)
     {
-        return MetaCatalogProductSync::query()
+        $counts = MetaCatalogProductSync::query()
             ->where('catalog_id', $catalogId)
             ->selectRaw("SUM(sync_status = 'synced') as synced")
             ->selectRaw("SUM(sync_status = 'failed') as failed")
             ->selectRaw("SUM(sync_status = 'pending' OR sync_status IS NULL) as pending")
             ->selectRaw("SUM(sync_status = 'disabled') as disabled")
             ->first();
+
+        $totalTargets = Product::query()->whereDoesntHave('sizes.colorSizes')->count()
+            + SizeColor::query()->count();
+        $trackedTargets = (int) ($counts->synced ?? 0)
+            + (int) ($counts->failed ?? 0)
+            + (int) ($counts->pending ?? 0)
+            + (int) ($counts->disabled ?? 0);
+        $counts->pending = (int) ($counts->pending ?? 0) + max(0, $totalTargets - $trackedTargets);
+
+        return $counts;
     }
 
     private function catalogIdForAccount(?WhatsAppAccount $account): ?string
