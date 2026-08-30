@@ -2,7 +2,7 @@
 
 return [
     'api_version' => env('WHATSAPP_API_VERSION', 'v23.0'),
-    'access_token' => env('WHATSAPP_ACCESS_TOKEN'),
+    'access_token' => env('WHATSAPP_ACCESS_TOKEN_LIVE', env('WHATSAPP_ACCESS_TOKEN')),
     'phone_number_id' => env('WHATSAPP_PHONE_NUMBER_ID'),
     'business_account_id' => env('WHATSAPP_BUSINESS_ACCOUNT_ID'),
     'display_phone_number' => env('WHATSAPP_DISPLAY_PHONE_NUMBER'),
