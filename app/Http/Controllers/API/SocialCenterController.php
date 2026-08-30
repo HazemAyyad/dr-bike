@@ -21,15 +21,16 @@ class SocialCenterController extends Controller
     public function dashboard()
     {
         return $this->ok([
-            'total_contacts' => DB::table('whatsapp_contacts')->count() + DB::table('social_contacts')->count(),
-            'total_conversations' => WhatsAppConversation::query()->count() + SocialConversation::query()->count(),
-            'open_conversations' => WhatsAppConversation::query()->where('status', 'open')->count()
+            'total_contacts' => $this->activeWhatsAppConversations()->distinct()->count('whatsapp_contact_id')
+                + DB::table('social_contacts')->count(),
+            'total_conversations' => $this->activeWhatsAppConversations()->count() + SocialConversation::query()->count(),
+            'open_conversations' => $this->activeWhatsAppConversations()->where('status', 'open')->count()
                 + SocialConversation::query()->where('status', 'open')->count(),
-            'unread_conversations' => WhatsAppConversation::query()->where('unread_count', '>', 0)->count()
+            'unread_conversations' => $this->activeWhatsAppConversations()->where('unread_count', '>', 0)->count()
                 + SocialConversation::query()->where('unread_count', '>', 0)->count(),
-            'messages_today' => WhatsAppMessage::query()->whereDate('created_at', today())->count()
+            'messages_today' => $this->activeWhatsAppMessages()->whereDate('created_at', today())->count()
                 + SocialMessage::query()->whereDate('created_at', today())->count(),
-            'failed_messages_today' => WhatsAppMessage::query()->where('status', 'failed')->whereDate('created_at', today())->count()
+            'failed_messages_today' => $this->activeWhatsAppMessages()->where('status', 'failed')->whereDate('created_at', today())->count()
                 + SocialMessage::query()->where('status', 'failed')->whereDate('created_at', today())->count(),
             'channel_stats' => [
                 $this->channelStats('whatsapp'),
@@ -53,7 +54,7 @@ class SocialCenterController extends Controller
 
         $items = collect();
         if (in_array($channel, ['all', 'whatsapp'], true)) {
-            $query = WhatsAppConversation::query()->with(['contact', 'whatsappAccount']);
+            $query = $this->activeWhatsAppConversations()->with(['contact', 'whatsappAccount']);
             if (filled($status)) $query->where('status', $status);
             $this->applyQuickFilter($query, $quickFilter);
             if ($search !== '') {
@@ -100,7 +101,7 @@ class SocialCenterController extends Controller
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
 
         if ($channel === 'whatsapp') {
-            $conversation = WhatsAppConversation::query()->with(['contact', 'whatsappAccount'])->findOrFail($id);
+            $conversation = $this->activeWhatsAppConversations()->with(['contact', 'whatsappAccount'])->findOrFail($id);
             $hiddenIds = DB::table('whatsapp_message_user_hides')
                 ->where('user_id', $request->user()->id)
                 ->pluck('whatsapp_message_id');
@@ -157,7 +158,7 @@ class SocialCenterController extends Controller
 
         try {
             if ($channel === 'whatsapp') {
-                $conversation = WhatsAppConversation::query()->with('whatsappAccount')->findOrFail($id);
+                $conversation = $this->activeWhatsAppConversations()->with('whatsappAccount')->findOrFail($id);
                 $message = WhatsAppMessage::query()
                     ->where('whatsapp_conversation_id', $conversation->id)
                     ->where('id', $messageId)
@@ -258,7 +259,7 @@ class SocialCenterController extends Controller
 
         try {
             if ($channel === 'whatsapp') {
-                $conversation = WhatsAppConversation::query()->with('whatsappAccount')->findOrFail($id);
+                $conversation = $this->activeWhatsAppConversations()->with('whatsappAccount')->findOrFail($id);
                 $this->ensureCustomerServiceWindow($conversation);
                 $whatsApp = $this->whatsAppForConversation($whatsApp, $conversation);
                 $result = $whatsApp->sendText($conversation->phone, $data['message'], $request->user()->id);
@@ -293,7 +294,7 @@ class SocialCenterController extends Controller
 
         try {
             if ($channel === 'whatsapp') {
-                $conversation = WhatsAppConversation::query()->with('whatsappAccount')->findOrFail($id);
+                $conversation = $this->activeWhatsAppConversations()->with('whatsappAccount')->findOrFail($id);
                 $this->ensureCustomerServiceWindow($conversation);
                 $whatsApp = $this->whatsAppForConversation($whatsApp, $conversation);
                 $result = $whatsApp->sendMedia(
@@ -437,12 +438,12 @@ class SocialCenterController extends Controller
         if ($channel === 'whatsapp') {
             return [
                 'channel' => 'whatsapp',
-                'contacts' => DB::table('whatsapp_contacts')->count(),
-                'conversations' => WhatsAppConversation::query()->count(),
-                'open' => WhatsAppConversation::query()->where('status', 'open')->count(),
-                'unread' => WhatsAppConversation::query()->where('unread_count', '>', 0)->count(),
-                'messages_today' => WhatsAppMessage::query()->whereDate('created_at', today())->count(),
-                'failed_today' => WhatsAppMessage::query()->where('status', 'failed')->whereDate('created_at', today())->count(),
+                'contacts' => $this->activeWhatsAppConversations()->distinct()->count('whatsapp_contact_id'),
+                'conversations' => $this->activeWhatsAppConversations()->count(),
+                'open' => $this->activeWhatsAppConversations()->where('status', 'open')->count(),
+                'unread' => $this->activeWhatsAppConversations()->where('unread_count', '>', 0)->count(),
+                'messages_today' => $this->activeWhatsAppMessages()->whereDate('created_at', today())->count(),
+                'failed_today' => $this->activeWhatsAppMessages()->where('status', 'failed')->whereDate('created_at', today())->count(),
             ];
         }
 
@@ -627,7 +628,7 @@ class SocialCenterController extends Controller
     private function conversationForChannel(string $channel, int $id)
     {
         if ($channel === 'whatsapp') {
-            return WhatsAppConversation::query()->with(['contact', 'assignedAdmin'])->findOrFail($id);
+            return $this->activeWhatsAppConversations()->with(['contact', 'assignedAdmin'])->findOrFail($id);
         }
 
         return SocialConversation::query()->with(['contact', 'assignedAdmin'])->where('channel', $channel)->findOrFail($id);
@@ -716,6 +717,18 @@ class SocialCenterController extends Controller
         return $conversation->whatsappAccount
             ? $service->forAccount($conversation->whatsappAccount)
             : $service;
+    }
+
+    private function activeWhatsAppConversations(): \Illuminate\Database\Eloquent\Builder
+    {
+        return WhatsAppConversation::query()
+            ->whereHas('whatsappAccount', fn ($account) => $account->where('is_active', true));
+    }
+
+    private function activeWhatsAppMessages(): \Illuminate\Database\Eloquent\Builder
+    {
+        return WhatsAppMessage::query()
+            ->whereHas('whatsappAccount', fn ($account) => $account->where('is_active', true));
     }
 
     private function messageAssignees(): array
