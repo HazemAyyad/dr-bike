@@ -5,16 +5,16 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeSalaryPeriod;
+use App\Models\EmployeeSignature;
 use App\Models\SalaryPaymentBatch;
 use App\Models\SalaryPaymentItem;
 use App\Services\AdminNotificationService;
 use App\Services\ExpenseBoxAccessService;
+use App\Services\EmployeeSignatureService;
 use App\Services\PayrollCalculationService;
 use App\Services\PayrollService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class SalaryPayrollController extends Controller
@@ -282,10 +282,20 @@ class SalaryPayrollController extends Controller
         ]);
     }
 
-    public function acknowledge(Request $request, int $item, AdminNotificationService $notifications)
+    public function acknowledge(
+        Request $request,
+        int $item,
+        AdminNotificationService $notifications,
+        EmployeeSignatureService $signatures
+    )
     {
         $data = $request->validate([
-            'signature' => ['required', 'string', 'max:3000000'],
+            'signature_id' => ['nullable', 'integer', 'exists:employee_signatures,id'],
+            'signature' => ['required_without:signature_id', 'nullable', 'string', 'max:14000000'],
+            'signature_name' => ['nullable', 'string', 'max:100'],
+            'signature_source' => ['nullable', 'in:manual,camera,upload'],
+            'save_signature' => ['nullable', 'boolean'],
+            'make_default' => ['nullable', 'boolean'],
             'device' => ['nullable', 'string', 'max:500'],
         ]);
         $employee = $request->user()->employee;
@@ -295,23 +305,41 @@ class SalaryPayrollController extends Controller
             return response()->json(['status' => 'success', 'message' => 'تم تأكيد الاستلام مسبقاً.', 'receipt' => $payment]);
         }
 
-        $signature = preg_replace('/^data:image\/png;base64,/', '', $data['signature']);
-        $binary = base64_decode(str_replace(' ', '+', (string) $signature), true);
-        if ($binary === false || strlen($binary) < 100 || substr($binary, 0, 8) !== "\x89PNG\r\n\x1a\n") {
-            throw ValidationException::withMessages(['signature' => ['التوقيع غير صالح، يرجى التوقيع مرة أخرى.']]);
+        if (! empty($data['signature_id'])) {
+            $stored = EmployeeSignature::query()
+                ->where('employee_id', $employee->id)
+                ->findOrFail((int) $data['signature_id']);
+            $snapshot = $signatures->snapshotStored($employee, $stored);
+        } else {
+            $name = trim((string) ($data['signature_name'] ?? 'توقيع الراتب'));
+            $source = (string) ($data['signature_source'] ?? 'manual');
+            if ((bool) ($data['save_signature'] ?? false)) {
+                $stored = $signatures->create(
+                    $employee,
+                    $name,
+                    $source,
+                    (string) $data['signature'],
+                    (bool) ($data['make_default'] ?? false)
+                );
+                $snapshot = $signatures->snapshotStored($employee, $stored);
+            } else {
+                $snapshot = $signatures->snapshotInline(
+                    (string) $data['signature'],
+                    $name,
+                    $source
+                );
+            }
         }
-
-        $folder = public_path('SalaryReceipts/Signatures');
-        File::ensureDirectoryExists($folder);
-        $fileName = (string) Str::uuid().'.png';
-        File::put($folder.DIRECTORY_SEPARATOR.$fileName, $binary);
-        $signatureHash = hash('sha256', $binary);
         $payment->update([
             'receipt_status' => 'received',
             'received_at' => now(),
-            'employee_signature_path' => 'public/SalaryReceipts/Signatures/'.$fileName,
-            'employee_signature_hash' => $signatureHash,
-            'receipt_hash' => hash('sha256', $payment->receipt_hash.'|'.$signatureHash.'|'.now()->toIso8601String()),
+            'employee_signature_path' => $snapshot['path'],
+            'employee_signature_original_path' => $snapshot['original_path'],
+            'employee_signature_id' => $snapshot['id'],
+            'employee_signature_name' => $snapshot['name'],
+            'employee_signature_source' => $snapshot['source'],
+            'employee_signature_hash' => $snapshot['hash'],
+            'receipt_hash' => hash('sha256', $payment->receipt_hash.'|'.$snapshot['hash'].'|'.now()->toIso8601String()),
             'acknowledgment_ip' => $request->ip(),
             'acknowledgment_device' => $data['device'] ?? $request->userAgent(),
             'dispute_reason' => null,

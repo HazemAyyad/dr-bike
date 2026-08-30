@@ -254,6 +254,7 @@ class GoalNotificationService
         return GoalEmployeeShare::where('employee_id', $employeeId)
             ->whereHas('goal', fn ($query) => $this->applyActiveGoalFilters($query, $today))
             ->with(['goal' => fn ($query) => $this->applyActiveGoalFilters($query, $today)])
+            ->latest('id')
             ->get()
             ->pluck('goal')
             ->filter()

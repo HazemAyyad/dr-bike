@@ -50,6 +50,7 @@ use App\Http\Controllers\API\EmployeeTasks;
 use App\Http\Controllers\API\EmployeeTaskOperationsController;
 use App\Http\Controllers\API\ExpensesAPI;
 use App\Http\Controllers\API\SalaryPayrollController;
+use App\Http\Controllers\API\EmployeeSignatureController;
 use App\Http\Controllers\API\FileBoxes;
 use App\Http\Controllers\API\Files;
 use App\Http\Controllers\API\FollowupAPI;
@@ -1475,6 +1476,10 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/employee/payroll/receipts/{item}', [SalaryPayrollController::class, 'employeeReceipt'])->whereNumber('item');
     Route::post('/employee/payroll/receipts/{item}/acknowledge', [SalaryPayrollController::class, 'acknowledge'])->whereNumber('item');
     Route::post('/employee/payroll/receipts/{item}/dispute', [SalaryPayrollController::class, 'dispute'])->whereNumber('item');
+    Route::get('/employee/signatures', [EmployeeSignatureController::class, 'index']);
+    Route::post('/employee/signatures', [EmployeeSignatureController::class, 'store']);
+    Route::patch('/employee/signatures/{signature}', [EmployeeSignatureController::class, 'update'])->whereNumber('signature');
+    Route::delete('/employee/signatures/{signature}', [EmployeeSignatureController::class, 'destroy'])->whereNumber('signature');
     Route::get('/employee/notifications/unread-count', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'unreadCount']);
     Route::post('/employee/notifications/mark-all-read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markAllRead']);
     Route::post('/employee/notifications/{id}/read', [\App\Http\Controllers\API\EmployeeNotificationCenterController::class, 'markRead']);
