@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
 class WhatsAppIncomingNotificationService
 {
     public const TYPE = 'whatsapp_message_received';
-    public const PERMISSION = 'Messages Section';
+    public const PERMISSION = 'Social Center WhatsApp';
 
     public function __construct(
         protected AdminNotificationService $adminNotifications,

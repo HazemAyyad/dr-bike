@@ -11,7 +11,10 @@ use Illuminate\Support\Facades\Log;
 class SocialIncomingNotificationService
 {
     public const TYPE = 'social_message_received';
-    public const PERMISSION = 'Messages Section';
+    private const PERMISSIONS = [
+        'facebook' => 'Social Center Facebook',
+        'instagram' => 'Social Center Instagram',
+    ];
 
     public function __construct(
         protected AdminNotificationService $adminNotifications,
@@ -51,9 +54,12 @@ class SocialIncomingNotificationService
             Log::warning('Social admin notification failed', ['error' => $e->getMessage()]);
         }
 
+        $permission = self::PERMISSIONS[$message->channel] ?? null;
+        if (! $permission) return;
+
         EmployeeDetail::query()
             ->with('user')
-            ->whereHas('permissions.permission', fn ($query) => $query->where('name_en', self::PERMISSION))
+            ->whereHas('permissions.permission', fn ($query) => $query->where('name_en', $permission))
             ->whereHas('user')
             ->each(function (EmployeeDetail $employee) use ($title, $body, $data, $message) {
                 try {

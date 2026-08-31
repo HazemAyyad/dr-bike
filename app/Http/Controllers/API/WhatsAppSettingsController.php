@@ -15,6 +15,12 @@ use Illuminate\Support\Facades\Http;
 
 class WhatsAppSettingsController extends Controller
 {
+    private const SOCIAL_PERMISSIONS = [
+        'main' => 'Messages Section',
+        'whatsapp' => 'Social Center WhatsApp',
+        'facebook' => 'Social Center Facebook',
+        'instagram' => 'Social Center Instagram',
+    ];
     public function show(Request $request, WhatsAppCloudApiService $service)
     {
         $configurationError = null;
@@ -73,23 +79,33 @@ class WhatsAppSettingsController extends Controller
     {
         abort_unless($request->user()?->type === 'admin', 403);
         $data = $request->validate([
-            'employee_ids' => 'present|array',
-            'employee_ids.*' => 'integer|exists:employee_details,id',
+            'employee_channel_access' => 'present|array',
+            'employee_channel_access.*' => 'array',
+            'employee_channel_access.*.*' => 'in:main,whatsapp,facebook,instagram',
         ]);
-        $permission = Permission::query()
-            ->where('name_en', 'Messages Section')
-            ->firstOrFail();
-        $employeeIds = collect($data['employee_ids'])->map(fn ($id) => (int) $id)->unique()->values();
+        $access = collect($data['employee_channel_access']);
+        $employeeIds = $access->keys()->map(fn ($id) => (int) $id);
+        abort_if(EmployeeDetail::query()->whereIn('id', $employeeIds)->count() !== $employeeIds->unique()->count(), 422);
+        $permissions = Permission::query()->whereIn('name_en', array_values(self::SOCIAL_PERMISSIONS))->get()->keyBy('name_en');
+        abort_if($permissions->count() !== count(self::SOCIAL_PERMISSIONS), 422, 'Social center permissions are not migrated.');
+        $permissionIds = $permissions->pluck('id');
 
-        DB::transaction(function () use ($permission, $employeeIds) {
+        DB::transaction(function () use ($access, $permissions, $permissionIds) {
             EmployeePermission::query()
-                ->where('permission_id', $permission->id)
+                ->whereIn('permission_id', $permissionIds)
                 ->delete();
-            foreach ($employeeIds as $employeeId) {
-                EmployeePermission::query()->create([
-                    'employee_id' => $employeeId,
-                    'permission_id' => $permission->id,
-                ]);
+            foreach ($access as $employeeId => $channels) {
+                $channels = collect($channels)->unique()->values();
+                if ($channels->isEmpty()) continue;
+                if ($channels->intersect(['whatsapp', 'facebook', 'instagram'])->isNotEmpty() && ! $channels->contains('main')) {
+                    $channels->prepend('main');
+                }
+                foreach ($channels as $key) {
+                    EmployeePermission::query()->create([
+                        'employee_id' => (int) $employeeId,
+                        'permission_id' => $permissions[self::SOCIAL_PERMISSIONS[$key]]->id,
+                    ]);
+                }
             }
         });
 
@@ -101,9 +117,9 @@ class WhatsAppSettingsController extends Controller
 
     private function employeesWithAccess(): array
     {
-        $permissionId = Permission::query()
-            ->where('name_en', 'Messages Section')
-            ->value('id');
+        $permissionIds = Permission::query()
+            ->whereIn('name_en', array_values(self::SOCIAL_PERMISSIONS))
+            ->pluck('id', 'name_en');
 
         return EmployeeDetail::query()
             ->with('user:id,name,phone')
@@ -115,9 +131,12 @@ class WhatsAppSettingsController extends Controller
                 'name' => $employee->user?->name ?: 'موظف #'.$employee->id,
                 'phone' => $employee->user?->phone,
                 'job_title' => $employee->job_title,
-                'has_whatsapp_access' => $permissionId
-                    ? $employee->permissions()->where('permission_id', $permissionId)->exists()
-                    : false,
+                'has_social_center_access' => $employee->permissions()
+                    ->where('permission_id', $permissionIds[self::SOCIAL_PERMISSIONS['main']] ?? 0)->exists(),
+                'channel_access' => collect(['whatsapp', 'facebook', 'instagram'])->mapWithKeys(
+                    fn ($channel) => [$channel => $employee->permissions()
+                        ->where('permission_id', $permissionIds[self::SOCIAL_PERMISSIONS[$channel]] ?? 0)->exists()]
+                )->all(),
             ])
             ->all();
     }

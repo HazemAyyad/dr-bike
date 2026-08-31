@@ -187,7 +187,8 @@ class EmployeeDetails extends Controller
             'Checks', 'Checks Incoming View', 'Checks Outgoing View',
             'Checks Incoming Create', 'Checks Outgoing Create' => 'checks',
             'Maintenance', 'Maintenance Services Settings' => 'maintenance',
-            'Messages Section', 'Technical Support' => 'communication',
+            'Messages Section', 'Social Center WhatsApp', 'Social Center Facebook',
+            'Social Center Instagram', 'Technical Support' => 'communication',
             'Smart Home' => 'smart_home',
             default => 'general',
         };
@@ -234,12 +235,28 @@ class EmployeeDetails extends Controller
      */
     private function normalizePermissionIds(array $permissionIds): array
     {
-        return collect($permissionIds)
+        $ids = collect($permissionIds)
             ->map(fn ($id) => (int) $id)
             ->filter(fn ($id) => $id > 0)
-            ->unique()
-            ->values()
-            ->all();
+            ->unique();
+        $socialIds = Permission::query()
+            ->whereIn('name_en', [
+                'Messages Section',
+                'Social Center WhatsApp',
+                'Social Center Facebook',
+                'Social Center Instagram',
+            ])
+            ->pluck('id', 'name_en');
+        $channelIds = collect([
+            $socialIds['Social Center WhatsApp'] ?? null,
+            $socialIds['Social Center Facebook'] ?? null,
+            $socialIds['Social Center Instagram'] ?? null,
+        ])->filter();
+        if ($ids->intersect($channelIds)->isNotEmpty() && isset($socialIds['Messages Section'])) {
+            $ids->push((int) $socialIds['Messages Section']);
+        }
+
+        return $ids->unique()->values()->all();
     }
 
     /**

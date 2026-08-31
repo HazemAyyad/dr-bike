@@ -48,12 +48,14 @@ class SocialCenterController extends Controller
         }
         $channel = $request->input('channel', 'all');
         $request->validate(['channel' => 'nullable|in:all,whatsapp,facebook,instagram']);
+        $allowedChannels = $this->allowedChannels($request);
+        abort_if($channel !== 'all' && ! in_array($channel, $allowedChannels, true), 403);
         $quickFilter = $request->input('quick_filter', 'all');
         $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked,needs_reply']);
         $search = trim((string) $request->input('search'));
 
         $items = collect();
-        if (in_array($channel, ['all', 'whatsapp'], true)) {
+        if (in_array('whatsapp', $allowedChannels, true) && in_array($channel, ['all', 'whatsapp'], true)) {
             $query = $this->activeWhatsAppConversations()->with(['contact', 'whatsappAccount']);
             if (filled($status)) $query->where('status', $status);
             $this->applyQuickFilter($query, $quickFilter);
@@ -67,9 +69,10 @@ class SocialCenterController extends Controller
             $items = $items->merge($query->latest('last_message_at')->limit(80)->get()->map(fn ($item) => $this->serializeWhatsAppConversation($item)));
         }
 
-        if (in_array($channel, ['all', 'facebook', 'instagram'], true)) {
+        if (array_intersect(['facebook', 'instagram'], $allowedChannels) && in_array($channel, ['all', 'facebook', 'instagram'], true)) {
             $query = SocialConversation::query()->with('contact');
             if ($channel !== 'all') $query->where('channel', $channel);
+            else $query->whereIn('channel', $allowedChannels);
             if (filled($status)) $query->where('status', $status);
             $this->applyQuickFilter($query, $quickFilter);
             if ($search !== '') {
@@ -99,6 +102,7 @@ class SocialCenterController extends Controller
     public function showConversation(Request $request, string $channel, int $id)
     {
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $this->authorizeChannel($request, $channel);
 
         if ($channel === 'whatsapp') {
             $conversation = $this->activeWhatsAppConversations()->with(['contact', 'whatsappAccount'])->findOrFail($id);
@@ -155,6 +159,7 @@ class SocialCenterController extends Controller
         MetaMessagingService $meta
     ) {
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $this->authorizeChannel($request, $channel);
 
         try {
             if ($channel === 'whatsapp') {
@@ -189,6 +194,7 @@ class SocialCenterController extends Controller
     public function assignConversation(Request $request, string $channel, int $id)
     {
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $this->authorizeChannel($request, $channel);
         $data = $request->validate([
             'employee_id' => 'nullable|integer|exists:employee_details,id',
         ]);
@@ -209,6 +215,7 @@ class SocialCenterController extends Controller
     public function updateTags(Request $request, string $channel, int $id)
     {
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $this->authorizeChannel($request, $channel);
         $data = $request->validate([
             'tags' => 'present|array|max:10',
             'tags.*' => 'nullable|string|max:40',
@@ -255,6 +262,8 @@ class SocialCenterController extends Controller
         WhatsAppCloudApiService $whatsApp,
         MetaMessagingService $meta
     ) {
+        abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $this->authorizeChannel($request, $channel);
         $data = $request->validate(['message' => 'required|string|max:4096']);
 
         try {
@@ -286,6 +295,7 @@ class SocialCenterController extends Controller
         MetaMessagingService $meta
     ) {
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $this->authorizeChannel($request, $channel);
         $data = $request->validate([
             'file' => 'required|file|max:16384|mimes:jpg,jpeg,png,webp,gif,pdf,doc,docx,xls,xlsx,mp3,m4a,ogg,wav,mp4,mov',
             'caption' => 'nullable|string|max:1024',
@@ -332,6 +342,7 @@ class SocialCenterController extends Controller
         MetaMessagingService $meta
     ) {
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        $this->authorizeChannel($request, $channel);
         $data = $request->validate([
             'product_ids' => 'required|array|min:1|max:30',
             'product_ids.*' => 'required|string',
@@ -749,6 +760,35 @@ class SocialCenterController extends Controller
                 'job_title' => $employee->job_title,
             ])
             ->all();
+    }
+
+    private function allowedChannels(Request $request): array
+    {
+        if ($request->user()?->type === 'admin') {
+            return ['whatsapp', 'facebook', 'instagram'];
+        }
+
+        $permissionNames = $request->user()?->employee?->permissions()
+            ->whereHas('permission', fn ($query) => $query->whereIn('name_en', [
+                'Social Center WhatsApp',
+                'Social Center Facebook',
+                'Social Center Instagram',
+            ]))
+            ->with('permission:id,name_en')
+            ->get()
+            ->pluck('permission.name_en')
+            ->all() ?? [];
+
+        return collect([
+            'Social Center WhatsApp' => 'whatsapp',
+            'Social Center Facebook' => 'facebook',
+            'Social Center Instagram' => 'instagram',
+        ])->only($permissionNames)->values()->all();
+    }
+
+    private function authorizeChannel(Request $request, string $channel): void
+    {
+        abort_unless(in_array($channel, $this->allowedChannels($request), true), 403);
     }
 
     private function metaAppStatus(): array
