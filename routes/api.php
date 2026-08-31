@@ -775,11 +775,12 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Boxes Section','re
    Route::post('/transfer/box/balance' , [Boxes::class,'transferBalance']);
    Route::post('/delete/box' , [Boxes::class,'deleteBox']);
 
-  Route::post('/box/logs/report' , [BoxLogs::class,'boxLogsReport']);
-
 });
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Boxes Section,Daily Boxes','refresh.token.expiry']] , function() {
+
+  Route::post('/box/logs/report' , [BoxLogs::class,'boxLogsReport']);
+  Route::post('/box/logs/data' , [BoxLogs::class,'boxLogsData']);
 
    Route::get('/get/hidden/boxes' , [Boxes::class,'getHiddentBoxes']);
 

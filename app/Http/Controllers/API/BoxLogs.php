@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\MaintenanceDailyBoxLog;
+use App\Services\BoxReportService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Doctrine\DBAL\Query\QueryException;
@@ -37,6 +38,37 @@ class BoxLogs extends Controller
     {
         $visibleIds = $this->actorVisibleBoxIds($request);
         return $visibleIds === null || in_array($boxId, $visibleIds, true);
+    }
+
+    private function actorCanReportBox(Request $request, Box $box): bool
+    {
+        $user = $request->user();
+        if (! $user) {
+            return false;
+        }
+        if ($user->type === 'admin') {
+            return true;
+        }
+
+        $dailyTypes = [
+            config('sales_daily.box_type', 'daily_sales'),
+            config('maintenance_daily.box_type', 'daily_maintenance'),
+            config('sales_orders.daily_box.type', 'daily_sales_orders'),
+        ];
+        $requiredPermission = in_array($box->type, $dailyTypes, true)
+            ? 'Daily Boxes'
+            : 'Boxes Section';
+
+        $hasPermission = (bool) $user->employee?->permissions()
+            ->whereHas('permission', fn ($q) => $q->where('name_en', $requiredPermission))
+            ->exists();
+
+        if (! $hasPermission) {
+            return false;
+        }
+
+        return in_array($box->type, $dailyTypes, true)
+            || $this->actorCanAccessBox($request, (int) $box->id);
     }
 
     static public function createTransferLog(Box $fromBox , Box $toBox ,$description, $value, ?string $note = null){
@@ -152,43 +184,37 @@ class BoxLogs extends Controller
     }
 
     // box logs report
-    public function boxLogsReport(Request $request){
+    public function boxLogsData(Request $request, BoxReportService $reportService)
+    {
+        $filters = $reportService->validate($request);
+        $box = Box::findOrFail($filters['box_id']);
+        if (! $this->actorCanReportBox($request, $box)) {
+            return response()->json(['status' => 'error', 'message' => __('messages.box_not_found')], 403);
+        }
+
+        return response()->json(['status' => 'success', 'data' => $reportService->paginate($box, $filters)]);
+    }
+
+    public function boxLogsReport(Request $request, BoxReportService $reportService){
         try{
 
-            $request->validate([
-                
-                'box_id'=>'required|integer|exists:boxes,id',
-                'from_date' => ['required', 'date'],
-                'to_date'   => ['required', 'date', 'after_or_equal:from_date'],
-
-            
-            ]);
-            $box = Box::findOrFail($request->box_id);
-            if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+            $filters = $reportService->validate($request);
+            $box = Box::findOrFail($filters['box_id']);
+            if (! $this->actorCanReportBox($request, $box)) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('messages.box_not_found')
-                ], 200);
+                ], 403);
             }
-            $logs = BoxLog::where(function ($q) use ($box) {
-                        $q->where('box_id', $box->id)
-                        ->orWhere('to_box_id', $box->id)
-                        ->orWhere('from_box_id', $box->id);
-                    })
-                    ->when($request->from_date, function ($q) use ($request) {
-                        $q->whereDate('created_at', '>=', $request->from_date);
-                    })
-                    ->when($request->to_date, function ($q) use ($request) {
-                        $q->whereDate('created_at', '<=', $request->to_date);
-                    })
-                    ->with(['fromBox:id,name,total,type', 'toBox:id,name,total,type', 'box:id,name,total,type'])
-                    ->get();
+            $report = $reportService->report($box, $filters);
 
 
 
             $reportHtml = view('pdf.boxlogs-report', [
                 'box' => $box,
-                'logs' => $logs,
+                'logs' => $report['logs'],
+                'summary' => $report['summary'],
+                'filters' => $filters,
             ])->render();
 
             // 🔹 Fix Arabic text
@@ -205,7 +231,7 @@ class BoxLogs extends Controller
             // 🔹 Load fixed HTML into PDF
             $pdf = Pdf::loadHTML($reportHtml);
 
-            return $pdf->download('boxlogs-report.pdf');
+            return $pdf->setPaper('a4', 'landscape')->download('box-report-'.$box->id.'.pdf');
 
         }
         catch (ValidationException $e) {
