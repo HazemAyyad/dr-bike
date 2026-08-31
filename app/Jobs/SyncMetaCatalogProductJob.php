@@ -63,6 +63,18 @@ class SyncMetaCatalogProductJob implements ShouldQueue
             ]);
             // Local eligibility errors are permanent until the product is
             // corrected. The service already marked the item as failed.
+        } catch (\Throwable $e) {
+            Log::error('[MetaCatalogProduct] sync failed without blocking inventory operation', [
+                'product_id' => $product->id,
+                'variant_id' => $variant?->id,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+            // Stock changes can dispatch this job after a sale transaction.
+            // With the sync queue driver, rethrowing an external Meta error
+            // would make a successfully persisted sale appear to have failed.
+            // MetaCatalogService already records the failed sync for retry.
         }
     }
 }
