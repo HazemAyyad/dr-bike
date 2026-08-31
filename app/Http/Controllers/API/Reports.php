@@ -357,6 +357,188 @@ class Reports extends Controller
         }
     }
 
+    public function analyticsDashboard(Request $request)
+    {
+        $request->validate([
+            'period' => ['nullable', 'string', Rule::in(['today', 'week', 'month', 'quarter', 'half_year', 'year', 'custom'])],
+            'from_date' => ['nullable', 'date'],
+            'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
+        ]);
+
+        [$from, $to, $period] = $this->resolveReportPeriod($request);
+        $from = $from->copy()->startOfDay();
+        $to = $to->copy()->endOfDay();
+        $duration = $from->diffInSeconds($to) + 1;
+        $previousTo = $from->copy()->subSecond();
+        $previousFrom = $previousTo->copy()->subSeconds($duration - 1);
+
+        $current = $this->analyticsPeriodMetrics($from, $to);
+        $previous = $this->analyticsPeriodMetrics($previousFrom, $previousTo);
+        $series = $this->analyticsSeries($from, $to);
+
+        $debtsForUs = (float) Debt::where('type', 'owed to us')->where('status', 'unpaid')->sum('total');
+        $debtsOnUs = (float) Debt::where('type', 'we owe')->where('status', 'unpaid')->sum('total');
+        $incomingChecks = (float) IncomingCheck::totalAmount();
+        $outgoingChecks = (float) OutgoingCheck::totalAmount();
+
+        $inventory = Product::query()
+            ->with(['purchasePrices' => fn ($query) => $query->orderByDesc('id')->limit(1)])
+            ->get()
+            ->map(function (Product $product) {
+                $stock = (float) ($product->stock ?? 0);
+                $unitCost = (float) ($product->purchasePrices->first()?->price ?? 0);
+
+                return [
+                    'label' => $product->nameAr ?: $product->nameEng ?: (string) $product->id,
+                    'quantity' => round($stock, 3),
+                    'value' => round($stock * $unitCost, 3),
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'period' => [
+                    'key' => $period,
+                    'from_date' => $from->toDateString(),
+                    'to_date' => $to->toDateString(),
+                    'previous_from_date' => $previousFrom->toDateString(),
+                    'previous_to_date' => $previousTo->toDateString(),
+                ],
+                'generated_at' => Carbon::now()->toIso8601String(),
+                'summary' => [
+                    $this->analyticsSummaryItem('sales', $current['net_sales'], $previous['net_sales']),
+                    $this->analyticsSummaryItem('net_profit', $current['net_profit'], $previous['net_profit']),
+                    $this->analyticsSummaryItem('expenses', $current['expenses'], $previous['expenses']),
+                    $this->analyticsSummaryItem('cash_collected', $current['cash_collected'], $previous['cash_collected']),
+                ],
+                'sales_profit_series' => $series->map(fn ($row) => [
+                    'label' => $row['label'],
+                    'sales' => round($row['sales'], 3),
+                    'profit' => round($row['profit'], 3),
+                ])->values(),
+                'operations_series' => $series->map(fn ($row) => [
+                    'label' => $row['label'],
+                    'sales' => round($row['sales'], 3),
+                    'expenses' => round($row['expenses'], 3),
+                    'purchases' => round($row['purchases'], 3),
+                ])->values(),
+                'payment_mix' => [
+                    ['key' => 'cash', 'label' => 'نقدي', 'value' => round($current['payment_cash'], 3)],
+                    ['key' => 'debt', 'label' => 'دين', 'value' => round($current['payment_debt'], 3)],
+                    ['key' => 'mixed', 'label' => 'مختلط', 'value' => round($current['payment_mixed'], 3)],
+                ],
+                'debts' => [
+                    ['key' => 'for_us', 'label' => 'ديون لنا', 'value' => round($debtsForUs, 3)],
+                    ['key' => 'on_us', 'label' => 'ديون علينا', 'value' => round($debtsOnUs, 3)],
+                ],
+                'checks' => [
+                    ['key' => 'incoming', 'label' => 'واردة', 'value' => round($incomingChecks, 3)],
+                    ['key' => 'outgoing', 'label' => 'صادرة', 'value' => round($outgoingChecks, 3)],
+                ],
+                'inventory' => [
+                    'products_count' => $inventory->count(),
+                    'quantity' => round($inventory->sum('quantity'), 3),
+                    'value' => round($inventory->sum('value'), 3),
+                    'low_stock_count' => $inventory->where('quantity', '<=', 3)->count(),
+                    'top_value' => $inventory->sortByDesc('value')->take(7)->values(),
+                ],
+                'tasks' => [
+                    ['key' => 'completed', 'label' => 'منجزة', 'value' => $current['tasks_completed']],
+                    ['key' => 'pending', 'label' => 'غير منجزة', 'value' => $current['tasks_pending']],
+                ],
+            ],
+        ]);
+    }
+
+    private function analyticsPeriodMetrics(Carbon $from, Carbon $to): array
+    {
+        $sales = InstantSale::query()
+            ->whereNull('parent_id')
+            ->whereNull('maintenance_id')
+            ->whereBetween('created_at', [$from, $to])
+            ->where(fn ($query) => $query->whereNull('status')->orWhere('status', '!=', 'cancelled'))
+            ->whereNull('cancelled_at')
+            ->get(['total_cost', 'discount', 'payment_box_value', 'inventory_total_cost']);
+
+        $grossSales = (float) $sales->sum('total_cost');
+        $discounts = (float) $sales->sum('discount');
+        $netSales = $grossSales - $discounts;
+        $cost = (float) $sales->sum('inventory_total_cost');
+        $expenses = (float) Expense::whereBetween('created_at', [$from, $to])->sum('price');
+        $purchases = (float) Bill::where('status', 'finished')->whereBetween('created_at', [$from, $to])->sum('total');
+        $purchaseReturns = (float) ReturnModel::whereIn('status', ['confirmed', 'delivered', 'settled'])
+            ->whereBetween('created_at', [$from, $to])->sum('total');
+
+        $paymentMix = ['cash' => 0.0, 'debt' => 0.0, 'mixed' => 0.0];
+        foreach ($sales as $sale) {
+            $total = max((float) $sale->total_cost - (float) $sale->discount, 0);
+            $paid = min(max((float) $sale->payment_box_value, 0), $total);
+            $paymentMix[$this->salesReportPaymentType($total, $paid)] += $total;
+        }
+
+        return [
+            'net_sales' => $netSales,
+            'cash_collected' => (float) $sales->sum('payment_box_value'),
+            'expenses' => $expenses,
+            'purchases' => $purchases,
+            'purchase_returns' => $purchaseReturns,
+            'cost_of_sales' => $cost,
+            'net_profit' => $netSales - $cost - $expenses,
+            'payment_cash' => $paymentMix['cash'],
+            'payment_debt' => $paymentMix['debt'],
+            'payment_mixed' => $paymentMix['mixed'],
+            'tasks_completed' => EmployeeTask::where('status', 'completed')->whereNull('parent_id')->whereBetween('created_at', [$from, $to])->count(),
+            'tasks_pending' => EmployeeTask::where('status', '!=', 'completed')->whereNull('parent_id')->whereBetween('created_at', [$from, $to])->count(),
+        ];
+    }
+
+    private function analyticsSeries(Carbon $from, Carbon $to)
+    {
+        $days = max($from->diffInDays($to), 1);
+        $format = $days > 120 ? 'Y-m' : 'Y-m-d';
+        $labelFormat = $days > 120 ? 'm/Y' : 'd/m';
+        $cursor = $from->copy()->startOfDay();
+        $points = collect();
+
+        while ($cursor->lte($to)) {
+            $key = $cursor->format($format);
+            $points->put($key, ['label' => $cursor->format($labelFormat), 'sales' => 0.0, 'profit' => 0.0, 'expenses' => 0.0, 'purchases' => 0.0]);
+            $cursor = $days > 120 ? $cursor->addMonth()->startOfMonth() : $cursor->addDay();
+        }
+
+        $sales = InstantSale::query()->whereNull('parent_id')->whereNull('maintenance_id')
+            ->whereBetween('created_at', [$from, $to])
+            ->where(fn ($query) => $query->whereNull('status')->orWhere('status', '!=', 'cancelled'))
+            ->whereNull('cancelled_at')->get(['created_at', 'total_cost', 'discount', 'inventory_total_cost']);
+        foreach ($sales as $sale) {
+            $key = $sale->created_at->format($format);
+            if (!$points->has($key)) continue;
+            $net = (float) $sale->total_cost - (float) $sale->discount;
+            $row = $points[$key];
+            $row['sales'] += $net;
+            $row['profit'] += $net - (float) $sale->inventory_total_cost;
+            $points->put($key, $row);
+        }
+
+        foreach (Expense::whereBetween('created_at', [$from, $to])->get(['created_at', 'price']) as $expense) {
+            $key = $expense->created_at->format($format);
+            if ($points->has($key)) { $row = $points[$key]; $row['expenses'] += (float) $expense->price; $row['profit'] -= (float) $expense->price; $points->put($key, $row); }
+        }
+        foreach (Bill::where('status', 'finished')->whereBetween('created_at', [$from, $to])->get(['created_at', 'total']) as $bill) {
+            $key = $bill->created_at->format($format);
+            if ($points->has($key)) { $row = $points[$key]; $row['purchases'] += (float) $bill->total; $points->put($key, $row); }
+        }
+
+        return $points->values();
+    }
+
+    private function analyticsSummaryItem(string $key, float $current, float $previous): array
+    {
+        $change = $previous == 0.0 ? ($current == 0.0 ? 0.0 : 100.0) : (($current - $previous) / abs($previous)) * 100;
+        return ['key' => $key, 'value' => round($current, 3), 'previous_value' => round($previous, 3), 'change_percent' => round($change, 1)];
+    }
+
     public function reportData(Request $request)
     {
         try {
