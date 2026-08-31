@@ -39,6 +39,7 @@ class SalesOrdersController extends Controller
             return response()->json([
                 'status' => 'success',
                 'sales_orders' => $this->service->list($filters),
+                'status_counts' => $this->service->statusCounts($filters),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([

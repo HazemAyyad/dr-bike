@@ -138,7 +138,39 @@ class SalesOrderService
             ->orderByDesc('created_at')
             ->orderByDesc('id');
 
-        if (! empty($filters['status'])) {
+        $this->applyListFilters($query, $filters, includeStatus: true);
+
+        return $query->limit(500)->get()
+            ->map(fn (SalesOrder $order) => $this->formatListItem($order))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Counts every status using the same filters as the list, except the
+     * currently selected status so the client can build all status tabs.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<string, int>
+     */
+    public function statusCounts(array $filters = []): array
+    {
+        $query = SalesOrder::query();
+        $this->applyListFilters($query, $filters, includeStatus: false);
+
+        return $query
+            ->selectRaw('status, COUNT(*) as aggregate')
+            ->groupBy('status')
+            ->pluck('aggregate', 'status')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+    }
+
+    /** @param \Illuminate\Database\Eloquent\Builder<SalesOrder> $query */
+    private function applyListFilters($query, array $filters, bool $includeStatus): void
+    {
+
+        if ($includeStatus && ! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
 
@@ -178,11 +210,6 @@ class SalesOrderService
         if (! empty($filters['stuck_assigned_to'])) {
             $query->where('stuck_assigned_to', (int) $filters['stuck_assigned_to']);
         }
-
-        return $query->limit(500)->get()
-            ->map(fn (SalesOrder $order) => $this->formatListItem($order))
-            ->values()
-            ->all();
     }
 
     public function show(int $orderId): SalesOrder

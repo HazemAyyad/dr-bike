@@ -124,8 +124,6 @@ class ProfitSales extends Controller
         'seller_id' => 'nullable|integer|exists:sellers,id',
         'buyer_name' => 'nullable|string|max:255',
         'buyer_phone' => 'nullable|string|max:30',
-        'payment_box_id' => 'nullable|integer|exists:boxes,id',
-        'payment_box_name' => 'nullable|string|max:255',
         'payment_box_value' => 'nullable|numeric|min:0',
     ]);
 
@@ -164,20 +162,16 @@ class ProfitSales extends Controller
             $data['buyer_type'] = 'unknown';
         }
 
-        $data['payment_box_value'] = (float) ($data['payment_box_value'] ?? 0);
-        if (! $request->filled('payment_box_id')) {
-            unset($data['payment_box_id'], $data['payment_box_name']);
-        } else {
-            unset($data['payment_box_name']);
-            $box = Box::find((int) $data['payment_box_id']);
-            if ($box && $box->isDailySalesBox()) {
-                app(SalesDailySessionService::class)->assertDailyBoxOwnedByUser($request->user(), $box);
-            } elseif ($box && (float) $data['payment_box_value'] > 0) {
-                throw ValidationException::withMessages([
-                    'payment_box_id' => [__('messages.sales_daily_box_required')],
-                ]);
-            }
+        $data['payment_box_value'] = (float) ($data['payment_box_value'] ?? $data['total_cost']);
+        $dailyBox = app(SalesDailySessionService::class)
+            ->dailyBoxForSessionCurrency($dailySession, 'شيكل');
+        if (! $dailyBox) {
+            throw ValidationException::withMessages([
+                'payment_box_id' => [__('messages.sales_daily_box_required')],
+            ]);
         }
+        $data['payment_box_id'] = (int) $dailyBox->id;
+        $data['payment_box_name'] = (string) $dailyBox->name;
 
         $data['sales_daily_session_id'] = $dailySession->id;
         if (Schema::hasColumn('profit_sales', 'created_by')) {
