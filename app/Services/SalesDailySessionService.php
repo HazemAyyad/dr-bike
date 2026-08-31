@@ -1110,6 +1110,7 @@ class SalesDailySessionService
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
                 'employee_name' => $session->user?->name,
+                'opened_at' => $session->opened_at?->toDateTimeString(),
                 'allows_sales' => $session->allowsSales(),
                 'is_blocking_previous_day' => (bool) $isPreviousDayOpen,
                 'previous_day_warning' => (bool) $isPreviousDayOpen,
@@ -2071,17 +2072,25 @@ class SalesDailySessionService
     {
         $today = $this->businessDateToday()->toDateString();
 
-        $result = $this->listSessions($viewer, [
-            'business_date' => $today,
-            'per_page' => 50,
-            'page' => 1,
-        ]);
+        $query = SalesDailySession::query()
+            ->with(['user', 'employee.user'])
+            ->where(function ($query) use ($today) {
+                $query->whereDate('business_date', $today)
+                    ->orWhereIn('status', [
+                        config('sales_daily.session_status.open'),
+                        config('sales_daily.session_status.closing_requested'),
+                    ]);
+            })
+            ->orderByRaw("CASE WHEN status IN ('open', 'closing_requested') THEN 0 ELSE 1 END")
+            ->orderByDesc('business_date')
+            ->orderByDesc('id');
 
-        $sessions = $result['sessions']->map(function (array $summary) {
-            $session = SalesDailySession::query()->find($summary['id']);
-            if (! $session) {
-                return $summary;
-            }
+        if (! $this->canReviewAllSessions($viewer)) {
+            $query->where('user_id', $viewer->id);
+        }
+
+        $sessions = $query->limit(100)->get()->map(function (SalesDailySession $session) {
+            $summary = $this->formatSessionSummary($session);
 
             $owner = User::query()->find($session->user_id);
             if (! $owner) {
@@ -2139,6 +2148,7 @@ class SalesDailySessionService
                 'user_id' => $session->user_id,
                 'employee_id' => $session->employee_id,
                 'employee_name' => $session->user?->name,
+                'opened_at' => $session->opened_at?->toDateTimeString(),
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
                 'allows_sales' => $session->allowsSales(),
