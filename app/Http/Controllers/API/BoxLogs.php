@@ -192,7 +192,11 @@ class BoxLogs extends Controller
             return response()->json(['status' => 'error', 'message' => __('messages.box_not_found')], 403);
         }
 
-        return response()->json(['status' => 'success', 'data' => $reportService->paginate($box, $filters)]);
+        $data = ! empty($filters['all'])
+            ? $reportService->report($box, $filters)
+            : $reportService->paginate($box, $filters);
+
+        return response()->json(['status' => 'success', 'data' => $data]);
     }
 
     public function boxLogsReport(Request $request, BoxReportService $reportService){

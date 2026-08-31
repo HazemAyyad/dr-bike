@@ -32,6 +32,7 @@ class BoxReportService
             'max_amount' => ['nullable', 'numeric', 'gte:min_amount'],
             'sort' => ['nullable', 'in:newest,oldest,amount_desc,amount_asc'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:100'],
+            'all' => ['nullable', 'boolean'],
         ]);
     }
 
