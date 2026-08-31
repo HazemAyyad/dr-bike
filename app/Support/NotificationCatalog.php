@@ -34,6 +34,8 @@ final class NotificationCatalog
             'store_order_created' => self::item('طلب متجر جديد', 'store', 'high', 'sales_order'),
             'store_order_canceled' => self::item('إلغاء طلب متجر', 'store', 'high', 'urgent'),
             'support_message' => self::item('رسالة دعم', 'messages', 'high', 'default'),
+            'whatsapp_message_received' => self::item('رسالة واتساب واردة', 'messages', 'high', 'library_message_pop'),
+            'social_message_received' => self::item('رسالة فيسبوك أو إنستغرام واردة', 'messages', 'high', 'library_clear_announce'),
             'negative_instant_sale_stock' => self::item('مخزون سالب بمبيعة فورية', 'stock', 'critical', 'urgent'),
             'negative_sales_order_stock' => self::item('مخزون سالب بطلبية', 'stock', 'critical', 'urgent'),
             'app_development_task' => self::item('مهمة تطوير تطبيق', 'development', 'normal', 'default'),

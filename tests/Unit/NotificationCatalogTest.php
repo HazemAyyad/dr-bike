@@ -42,4 +42,14 @@ class NotificationCatalogTest extends TestCase
             $this->assertStringNotContainsString('.', $sound['android'], "{$key} Android resource must omit extension.");
         }
     }
+
+    public function test_incoming_customer_messages_have_independent_sound_policies(): void
+    {
+        $types = NotificationCatalog::types();
+
+        $this->assertSame('messages', $types['whatsapp_message_received']['category']);
+        $this->assertSame('library_message_pop', $types['whatsapp_message_received']['sound']);
+        $this->assertSame('messages', $types['social_message_received']['category']);
+        $this->assertSame('library_clear_announce', $types['social_message_received']['sound']);
+    }
 }
