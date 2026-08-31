@@ -134,7 +134,12 @@ class SalesOrderService
     public function list(array $filters = []): array
     {
         $query = SalesOrder::query()
-            ->with(['customer:id,name,phone', 'city:id,name_ar', 'createdByUser:id,name'])
+            ->with([
+                'customer:id,name,phone',
+                'city:id,name_ar',
+                'createdByUser:id,name',
+                'deliveryCompany:id,name,code',
+            ])
             ->orderByDesc('created_at')
             ->orderByDesc('id');
 
@@ -171,7 +176,11 @@ class SalesOrderService
     {
 
         if ($includeStatus && ! empty($filters['status'])) {
-            $query->where('status', $filters['status']);
+            if ($filters['status'] === 'all') {
+                $query->where('status', '!=', SalesOrderStatus::Archived->value);
+            } else {
+                $query->where('status', $filters['status']);
+            }
         }
 
         if (! empty($filters['search'])) {
@@ -825,6 +834,11 @@ class SalesOrderService
             'payment_type' => $order->payment_type,
             'created_at' => $order->created_at?->toDateTimeString(),
             'created_by_name' => $order->createdByUser?->name,
+            'delivery_company_name' => $order->delivery_company_name
+                ?: $order->deliveryCompany?->name,
+            'delivery_company_code' => $order->deliveryCompany?->code
+                ? strtolower((string) $order->deliveryCompany->code)
+                : null,
         ];
     }
 
