@@ -262,6 +262,11 @@ class ExpensesAPI extends Controller
             ]);
 
             $expense = Expense::findOrFail($data['expense_id']);
+            if ($expense->expense_type === 'salary' || $expense->salary_period_id !== null) {
+                throw ValidationException::withMessages([
+                    'expense_id' => ['قيد الراتب محمي ويجب إدارته من ملف الراتب.'],
+                ]);
+            }
             $updatedData = Arr::except($data, ['expense_id', 'media','invoice_img']);
             $expense->update($updatedData);
 
@@ -469,6 +474,7 @@ class ExpensesAPI extends Controller
                     'name' => $expense->name,
                     'price' => $expense->price,
                     'expense_type' => $expense->expense_type ?: 'general',
+                    'salary_period_id' => $expense->salary_period_id,
                     'created_at' => $expense->expense_date?->format('Y-m-d')
                         ?? ($expense->created_at?->format('Y-m-d') ?: 'no date'),
                     'image'=> $imagePath,

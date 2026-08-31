@@ -321,6 +321,9 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->middleware('check.permission:Employees Salary Pay');
     Route::get('/payroll/periods', [SalaryPayrollController::class, 'index'])
         ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
+    Route::get('/payroll/periods/{period}', [SalaryPayrollController::class, 'showPeriod'])
+        ->whereNumber('period')
+        ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
     Route::get('/payroll/report', [SalaryPayrollController::class, 'report'])
         ->middleware('check.permission:Employees Financial View,Employees Salary Pay');
     Route::get('/payroll/batches/{batch}', [SalaryPayrollController::class, 'showBatch'])

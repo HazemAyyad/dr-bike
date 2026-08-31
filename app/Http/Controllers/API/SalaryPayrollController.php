@@ -125,6 +125,22 @@ class SalaryPayrollController extends Controller
         return response()->json(['status' => 'success', 'periods' => $periods]);
     }
 
+    public function showPeriod(int $period)
+    {
+        $row = EmployeeSalaryPeriod::query()
+            ->with([
+                'employee.user:id,name',
+                'expense:id,name,price,expense_type,expense_date,salary_period_id',
+                'advanceApplications.order',
+                'payments' => fn ($query) => $query->latest('id'),
+                'payments.batch.creator:id,name',
+                'payments.batch.box:id,name,currency',
+            ])
+            ->findOrFail($period);
+
+        return response()->json(['status' => 'success', 'period' => $row]);
+    }
+
     public function report(Request $request)
     {
         $data = $request->validate([
