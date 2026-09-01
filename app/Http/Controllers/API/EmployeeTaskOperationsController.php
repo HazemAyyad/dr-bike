@@ -459,6 +459,7 @@ class EmployeeTaskOperationsController extends Controller
             $data = $request->validate([
                 'template_id' => 'required|exists:employee_task_templates,id',
                 'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
+                'update_scope' => 'nullable|in:occurrence_only,current_and_future',
                 'name' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'notes' => 'nullable|string',
@@ -514,6 +515,7 @@ class EmployeeTaskOperationsController extends Controller
             }
 
             $template = EmployeeTaskTemplate::findOrFail($data['template_id']);
+            $updateScope = $data['update_scope'] ?? 'occurrence_only';
             $proofRequired = $request->boolean('is_forced_to_upload_img');
             $proofMediaType = $this->proofMediaTypeFromInput($request, 'proof_media_type', $proofRequired);
             $reminderMinutes = \App\Support\TaskReminderConfig::minutesFromRequest($request);
@@ -551,7 +553,7 @@ class EmployeeTaskOperationsController extends Controller
                 }
             }
 
-            $template->update([
+            $templatePayload = [
                 'employee_id' => $data['employee_id'],
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
@@ -566,11 +568,14 @@ class EmployeeTaskOperationsController extends Controller
                 'recurrence_config' => $recurrenceConfig,
                 'admin_img' => $adminImg,
                 'audio' => $audio,
-            ]);
+            ];
+            if ($updateScope === 'current_and_future') {
+                $template->update($templatePayload);
+            }
 
             $occurrence = null;
             $oldOccurrenceEmployeeId = null;
-            if ($request->filled('occurrence_id')) {
+            if ($request->filled('occurrence_id') && $updateScope === 'occurrence_only') {
                 $occurrence = EmployeeTaskOccurrence::query()
                     ->where('id', $request->occurrence_id)
                     ->where('template_id', $template->id)
@@ -683,10 +688,19 @@ class EmployeeTaskOperationsController extends Controller
             }
 
             if ($request->has('sub_employee_tasks')) {
-                $this->syncTemplateSubtasks($request, $template);
+                if ($updateScope === 'current_and_future') {
+                    $this->syncTemplateSubtasks($request, $template);
+                }
                 if ($occurrence) {
                     $this->syncOccurrenceSubtasks($request, $occurrence);
                 }
+            }
+
+            $futureOccurrencesUpdated = 0;
+            if ($updateScope === 'current_and_future') {
+                $futureOccurrencesUpdated = $this->recurrence->syncCurrentAndFutureOccurrences(
+                    $template->fresh()
+                );
             }
 
             if ($occurrence && isset($shouldResetCompletion) && $shouldResetCompletion) {
@@ -706,6 +720,8 @@ class EmployeeTaskOperationsController extends Controller
                 'message' => __('messages.employee_task_updated_successfully'),
                 'template_id' => $template->id,
                 'occurrence_id' => $occurrence?->id,
+                'update_scope' => $updateScope,
+                'future_occurrences_updated' => $futureOccurrencesUpdated,
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([

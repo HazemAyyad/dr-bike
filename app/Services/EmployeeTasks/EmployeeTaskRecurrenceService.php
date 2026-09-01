@@ -345,4 +345,50 @@ class EmployeeTaskRecurrenceService
             $this->ensureOccurrences($template, $from, $to);
         }
     }
+
+    /**
+     * Apply template changes to untouched occurrences from today onward.
+     * Historical or already-interacted occurrences remain immutable.
+     */
+    public function syncCurrentAndFutureOccurrences(EmployeeTaskTemplate $template, ?Carbon $from = null): int
+    {
+        return DB::transaction(function () use ($template, $from) {
+            $template = EmployeeTaskTemplate::query()->with('subtasks')->lockForUpdate()->findOrFail($template->id);
+            $rangeStart = ($from ?? now())->copy()->startOfDay();
+            $rangeEnd = $rangeStart->copy()->addDays(self::HORIZON_DAYS)->endOfDay();
+            $synced = 0;
+
+            $occurrences = EmployeeTaskOccurrence::query()
+                ->where('template_id', $template->id)
+                ->whereDate('scheduled_date', '>=', $rangeStart->toDateString())
+                ->where('is_canceled', false)
+                ->whereIn('status', [EmployeeTaskStatus::Pending->value, EmployeeTaskStatus::Overdue->value])
+                ->whereNull('started_at')
+                ->whereNull('submitted_at')
+                ->whereNull('reviewed_at')
+                ->whereNull('completed_at')
+                ->whereNull('completed_by_employee_id')
+                ->whereDoesntHave('subtasks', fn ($query) => $query->where('status', '!=', 'pending'))
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($occurrences as $occurrence) {
+                $date = Carbon::parse($occurrence->scheduled_date)->startOfDay();
+                if (! $this->matchesRecurrence($template, $date) || ! $this->isWithinDuration($template, $date)) {
+                    $occurrence->delete();
+                    continue;
+                }
+
+                [$start, $end] = $this->windowForDate($template, $date);
+                $occurrence->update($this->occurrencePayloadFromTemplate($template, $start, $end, $date));
+                $occurrence->subtasks()->delete();
+                $this->copySubtasksFromTemplate($template, $occurrence);
+                $synced++;
+            }
+
+            $this->ensureOccurrences($template, $rangeStart, $rangeEnd);
+
+            return $synced;
+        });
+    }
 }
