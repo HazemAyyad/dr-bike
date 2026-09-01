@@ -47,9 +47,10 @@ class MaintenanceDeliveryService
 
         $partsTotal = round($maintenance->products->sum('line_total'), 2);
         $laborCost = round((float) $maintenance->labor_cost, 2);
+        $servicesTotal = round(collect($maintenance->service_lines ?? [])->sum('price'), 2);
         $discount = round((float) $maintenance->discount, 2);
         $additionalTotal = round(collect($maintenance->additional_charges ?? [])->sum('amount'), 2);
-        $invoiceTotal = max(0, round($partsTotal + $laborCost + $additionalTotal - $discount, 2));
+        $invoiceTotal = max(0, round($partsTotal + $servicesTotal + $laborCost + $additionalTotal - $discount, 2));
 
         return [
             'items' => $items,
@@ -87,6 +88,7 @@ class MaintenanceDeliveryService
             0,
             round(
                 $partsTotal
+                + collect($maintenance->service_lines ?? [])->sum('price')
                 + (float) $maintenance->labor_cost
                 + collect($maintenance->additional_charges ?? [])->sum('amount')
                 - (float) $maintenance->discount,
@@ -160,9 +162,6 @@ class MaintenanceDeliveryService
                     'name' => trim((string) ($line['name'] ?? '')),
                     'price' => max(0, round((float) ($line['price'] ?? 0), 2)),
                 ])->filter(fn (array $line) => $line['name'] !== '')->values()->all();
-                if ($updates['service_lines'] !== []) {
-                    $updates['labor_cost'] = round(collect($updates['service_lines'])->sum('price'), 2);
-                }
             }
             if ($additionalCharges !== null) {
                 $updates['additional_charges'] = collect($additionalCharges)->map(fn (array $line) => [
