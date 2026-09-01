@@ -163,12 +163,22 @@ class SalesOrderService
         $query = SalesOrder::query();
         $this->applyListFilters($query, $filters, includeStatus: false);
 
-        return $query
+        $counts = (clone $query)
             ->selectRaw('status, COUNT(*) as aggregate')
             ->groupBy('status')
             ->pluck('aggregate', 'status')
             ->map(fn ($count) => (int) $count)
             ->all();
+
+        $counts['settlement'] = (clone $query)
+            ->where('status', SalesOrderStatus::Delivered->value)
+            ->where(function ($balanceQuery) {
+                $balanceQuery->where('customer_debt_balance', '>', 0)
+                    ->orWhere('carrier_receivable_balance', '>', 0);
+            })
+            ->count();
+
+        return $counts;
     }
 
     /** @param \Illuminate\Database\Eloquent\Builder<SalesOrder> $query */
@@ -178,6 +188,12 @@ class SalesOrderService
         if ($includeStatus && ! empty($filters['status'])) {
             if ($filters['status'] === 'all') {
                 $query->where('status', '!=', SalesOrderStatus::Archived->value);
+            } elseif ($filters['status'] === 'settlement') {
+                $query->where('status', SalesOrderStatus::Delivered->value)
+                    ->where(function ($balanceQuery) {
+                        $balanceQuery->where('customer_debt_balance', '>', 0)
+                            ->orWhere('carrier_receivable_balance', '>', 0);
+                    });
             } else {
                 $query->where('status', $filters['status']);
             }
@@ -831,6 +847,8 @@ class SalesOrderService
             'customer_phone' => $order->customer_phone,
             'city_name' => $this->formatShiplyAddressLabel($order) ?: $order->city?->name_ar,
             'total' => (float) $order->total,
+            'customer_debt_balance' => (float) $order->customer_debt_balance,
+            'carrier_receivable_balance' => (float) $order->carrier_receivable_balance,
             'payment_type' => $order->payment_type,
             'created_at' => $order->created_at?->toDateTimeString(),
             'created_by_name' => $order->createdByUser?->name,

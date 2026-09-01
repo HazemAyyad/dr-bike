@@ -30,6 +30,12 @@ class SalesOrderMediaRequirementService
     public function settings(): array
     {
         $defaults = [
+            'visible' => [
+                SalesOrderMediaCategory::ITEMS_GROUP => true,
+                SalesOrderMediaCategory::PACKAGED => true,
+                SalesOrderMediaCategory::TESTING => true,
+                SalesOrderMediaCategory::DOCUMENT => true,
+            ],
             'mark_ready' => [
                 SalesOrderMediaCategory::ITEMS_GROUP => true,
                 SalesOrderMediaCategory::PACKAGED => false,
@@ -78,8 +84,10 @@ class SalesOrderMediaRequirementService
     /** @return list<string> */
     private function requiredFor(string $stage): array
     {
-        return collect($this->settings()[$stage] ?? [])
-            ->filter(fn ($enabled) => (bool) $enabled)
+        $settings = $this->settings();
+        return collect($settings[$stage] ?? [])
+            ->filter(fn ($required, $category) =>
+                (bool) $required && (bool) ($settings['visible'][$category] ?? true))
             ->keys()
             ->values()
             ->all();
@@ -134,6 +142,7 @@ class SalesOrderMediaRequirementService
         $present = $order->media->pluck('category')->unique()->all();
 
         $configured = $this->settings();
+        $visible = $configured['visible'] ?? [];
         $defs = [
             SalesOrderMediaCategory::ITEMS_GROUP => [
                 'required_for' => ['mark_ready', 'handover'],
@@ -157,19 +166,23 @@ class SalesOrderMediaRequirementService
         $out = [];
         foreach ($defs as $category => $meta) {
             $requiredFor = collect($configured)
-                ->filter(fn ($categories) => (bool) ($categories[$category] ?? false))
+                ->except('visible')
+                ->filter(fn ($categories) =>
+                    (bool) ($visible[$category] ?? true) &&
+                    (bool) ($categories[$category] ?? false))
                 ->keys()
                 ->values()
                 ->all();
-            if ($requiredFor === []) {
+            $isPresent = in_array($category, $present, true);
+            if (! (bool) ($visible[$category] ?? true) && ! $isPresent) {
                 continue;
             }
             $out[$category] = array_merge($meta, [
                 'required_for' => $requiredFor,
-                'optional' => false,
+                'optional' => $requiredFor === [],
                 'category' => $category,
                 'label' => __('messages.sales_order_media_category_'.$category),
-                'satisfied' => in_array($category, $present, true),
+                'satisfied' => $isPresent,
             ]);
         }
 
