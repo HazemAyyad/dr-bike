@@ -480,6 +480,12 @@ class MaintenanceAPI extends Controller
         
         $maintenance = Maintenance::findOrFail($request->maintenance_id);
         $oldStatus = $maintenance->status;
+        $statusLabels = [
+            'new' => 'جديدة',
+            'ongoing' => 'قيد العمل',
+            'ready' => 'جاهزة للتسليم',
+            'delivered' => 'تم التسليم',
+        ];
         $editReason = trim((string) ($data['edit_reason'] ?? ''));
         if ($oldStatus === 'delivered' && $editReason === '') {
             throw ValidationException::withMessages([
@@ -534,7 +540,8 @@ class MaintenanceAPI extends Controller
                 $oldStatus !== $maintenance->status ? 'status_changed' : 'updated',
                 $oldStatus !== $maintenance->status ? 'تغيير حالة الصيانة' : 'تعديل بيانات الصيانة',
                 $oldStatus !== $maintenance->status
-                    ? 'تم تغيير حالة الصيانة من '.$oldStatus.' إلى '.$maintenance->status
+                    ? 'تم تغيير حالة الصيانة من '.($statusLabels[$oldStatus] ?? 'غير معروفة')
+                        .' إلى '.($statusLabels[$maintenance->status] ?? 'غير معروفة')
                     : ($oldStatus === 'delivered'
                         ? 'تم تعديل بيانات صيانة مسلّمة. السبب: '.$editReason
                         : 'تم تعديل بيانات الصيانة.'),
@@ -624,6 +631,13 @@ class MaintenanceAPI extends Controller
                 'products.*.size_color_id' => 'nullable|integer|exists:size_colors,id',
                 'products.*.quantity' => 'required|numeric|min:1',
                 'products.*.unit_price' => 'required|numeric|min:0',
+                'service_lines' => 'nullable|array',
+                'service_lines.*.service_id' => 'nullable|integer',
+                'service_lines.*.name' => 'required_with:service_lines|string|max:255',
+                'service_lines.*.price' => 'required_with:service_lines|numeric|min:0',
+                'additional_charges' => 'nullable|array',
+                'additional_charges.*.label' => 'required_with:additional_charges|string|max:255',
+                'additional_charges.*.amount' => 'required_with:additional_charges|numeric|min:0',
                 'edit_reason' => 'nullable|string|max:1000',
             ]);
 
@@ -635,6 +649,8 @@ class MaintenanceAPI extends Controller
                 isset($data['discount']) ? (float) $data['discount'] : null,
                 $request->user(),
                 $data['edit_reason'] ?? null,
+                $data['service_lines'] ?? null,
+                $data['additional_charges'] ?? null,
             );
 
             return response()->json([
@@ -719,6 +735,48 @@ class MaintenanceAPI extends Controller
                 'message' => __('messages.maintenance_not_found'),
             ], 200);
         } catch (\Exception $e) {
+            report($e);
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function addPayment(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'maintenance_id' => 'required|integer|exists:maintenance,id',
+                'amount' => 'required|numeric|min:0.01',
+                'note' => 'nullable|string|max:1000',
+            ]);
+
+            $maintenance = $this->deliveryService->addPayment(
+                Maintenance::findOrFail((int) $data['maintenance_id']),
+                $request->user(),
+                (float) $data['amount'],
+                $data['note'] ?? null,
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم تثبيت العربون على طلب الصيانة.',
+                'billing' => $this->deliveryService->formatProductsSummary($maintenance),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.maintenance_not_found'),
+            ], 200);
+        } catch (\Exception $e) {
+            report($e);
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
@@ -1036,13 +1094,6 @@ class MaintenanceAPI extends Controller
     public function dailySessionDirectClose(Request $request)
     {
         try {
-            if (! $this->maintenanceDailyBoxService->canReviewClosing($request->user())) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.unauthorized'),
-                ], 200);
-            }
-
             $data = $request->validate([
                 'session_id' => 'required|integer|exists:maintenance_daily_sessions,id',
                 'to_box_id' => 'nullable|integer|exists:boxes,id',

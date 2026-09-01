@@ -733,6 +733,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Maintenance','refr
     Route::post('/change/maintenance/status' , [MaintenanceAPI::class,'commonUpdate']);
     Route::post('/maintenance/sync/products' , [MaintenanceAPI::class,'syncProducts']);
     Route::post('/maintenance/deliver' , [MaintenanceAPI::class,'deliver']);
+    Route::post('/maintenance/payment' , [MaintenanceAPI::class,'addPayment']);
     Route::post('/maintenance/activity-log' , [MaintenanceAPI::class,'activityLog']);
     Route::post('/maintenance/invoice' , [MaintenanceAPI::class,'invoiceData']);
     Route::post('/maintenance/invoice/pdf' , [MaintenanceAPI::class,'invoicePdf']);

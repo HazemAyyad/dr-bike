@@ -635,17 +635,17 @@ class MaintenanceDailyBoxService
 
     public function directClose(User $reviewer, int $sessionId, ?int $toBoxId = null, ?string $note = null, ?array $closingInput = null): MaintenanceDailyClosingRequest
     {
-        if (! $this->canReviewClosing($reviewer)) {
-            throw ValidationException::withMessages([
-                'session' => [__('messages.unauthorized')],
-            ]);
-        }
-
         return DB::transaction(function () use ($reviewer, $sessionId, $toBoxId, $note, $closingInput) {
             $session = MaintenanceDailySession::query()
                 ->with(['user', 'closingRequests'])
                 ->lockForUpdate()
                 ->findOrFail($sessionId);
+
+            if ((int) $session->user_id !== (int) $reviewer->id) {
+                throw ValidationException::withMessages([
+                    'session' => ['فقط صاحب صندوق الصيانة يستطيع إغلاقه.'],
+                ]);
+            }
 
             $pendingClosing = $session->closingRequests
                 ->where('status', 'pending')

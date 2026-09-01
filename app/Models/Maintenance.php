@@ -25,6 +25,8 @@ class Maintenance extends Model
         'discount',
         'invoice_total',
         'paid_amount',
+        'service_lines',
+        'additional_charges',
         'payment_box_id',
         'maintenance_daily_session_id',
         'instant_sale_id',
@@ -36,6 +38,8 @@ class Maintenance extends Model
         'discount' => 'float',
         'invoice_total' => 'float',
         'paid_amount' => 'float',
+        'service_lines' => 'array',
+        'additional_charges' => 'array',
     ];
 
 

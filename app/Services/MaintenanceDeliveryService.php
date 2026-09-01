@@ -27,7 +27,10 @@ class MaintenanceDeliveryService
      */
     public function formatProductsSummary(Maintenance $maintenance): array
     {
-        $maintenance->loadMissing(['products.product:id,nameAr,nameEng', 'payments']);
+        $maintenance->loadMissing([
+            'products.product:id,nameAr,nameEng',
+            'payments.createdBy:id,name',
+        ]);
 
         $items = $maintenance->products->map(function (MaintenanceProduct $item) {
             return [
@@ -45,12 +48,16 @@ class MaintenanceDeliveryService
         $partsTotal = round($maintenance->products->sum('line_total'), 2);
         $laborCost = round((float) $maintenance->labor_cost, 2);
         $discount = round((float) $maintenance->discount, 2);
-        $invoiceTotal = max(0, round($partsTotal + $laborCost - $discount, 2));
+        $additionalTotal = round(collect($maintenance->additional_charges ?? [])->sum('amount'), 2);
+        $invoiceTotal = max(0, round($partsTotal + $laborCost + $additionalTotal - $discount, 2));
 
         return [
             'items' => $items,
             'parts_total' => $partsTotal,
             'labor_cost' => $laborCost,
+            'service_lines' => array_values($maintenance->service_lines ?? []),
+            'additional_charges' => array_values($maintenance->additional_charges ?? []),
+            'additional_total' => $additionalTotal,
             'discount' => $discount,
             'invoice_total' => $invoiceTotal,
             'paid_amount' => round((float) $maintenance->paid_amount, 2),
@@ -62,6 +69,8 @@ class MaintenanceDeliveryService
                     'amount' => round((float) $payment->amount, 2),
                     'currency' => $payment->currency,
                     'note' => $payment->note,
+                    'created_by' => $payment->created_by,
+                    'created_by_name' => $payment->createdBy?->name,
                     'created_at' => optional($payment->created_at)->format('Y-m-d H:i:s'),
                 ])->values()->all()
                 : [],
@@ -76,7 +85,13 @@ class MaintenanceDeliveryService
         $partsTotal = round($maintenance->products->sum('line_total'), 2);
         $invoiceTotal = max(
             0,
-            round($partsTotal + (float) $maintenance->labor_cost - (float) $maintenance->discount, 2)
+            round(
+                $partsTotal
+                + (float) $maintenance->labor_cost
+                + collect($maintenance->additional_charges ?? [])->sum('amount')
+                - (float) $maintenance->discount,
+                2
+            )
         );
 
         $maintenance->update(['invoice_total' => $invoiceTotal]);
@@ -93,7 +108,9 @@ class MaintenanceDeliveryService
         ?float $laborCost = null,
         ?float $discount = null,
         ?User $actor = null,
-        ?string $editReason = null
+        ?string $editReason = null,
+        ?array $serviceLines = null,
+        ?array $additionalCharges = null
     ): Maintenance
     {
         $editReason = trim((string) $editReason);
@@ -103,7 +120,7 @@ class MaintenanceDeliveryService
             ]);
         }
 
-        return DB::transaction(function () use ($maintenance, $items, $laborCost, $discount, $actor, $editReason) {
+        return DB::transaction(function () use ($maintenance, $items, $laborCost, $discount, $actor, $editReason, $serviceLines, $additionalCharges) {
             $maintenance = Maintenance::lockForUpdate()->findOrFail($maintenance->id);
             $before = $this->formatProductsSummary($maintenance);
             $wasDelivered = $maintenance->status === 'delivered';
@@ -136,6 +153,22 @@ class MaintenanceDeliveryService
             }
             if ($discount !== null) {
                 $updates['discount'] = max(0, round($discount, 2));
+            }
+            if ($serviceLines !== null) {
+                $updates['service_lines'] = collect($serviceLines)->map(fn (array $line) => [
+                    'service_id' => isset($line['service_id']) ? (int) $line['service_id'] : null,
+                    'name' => trim((string) ($line['name'] ?? '')),
+                    'price' => max(0, round((float) ($line['price'] ?? 0), 2)),
+                ])->filter(fn (array $line) => $line['name'] !== '')->values()->all();
+                if ($updates['service_lines'] !== []) {
+                    $updates['labor_cost'] = round(collect($updates['service_lines'])->sum('price'), 2);
+                }
+            }
+            if ($additionalCharges !== null) {
+                $updates['additional_charges'] = collect($additionalCharges)->map(fn (array $line) => [
+                    'label' => trim((string) ($line['label'] ?? '')),
+                    'amount' => max(0, round((float) ($line['amount'] ?? 0), 2)),
+                ])->filter(fn (array $line) => $line['label'] !== '' && $line['amount'] > 0)->values()->all();
             }
             if ($updates !== []) {
                 $maintenance->update($updates);
@@ -226,8 +259,17 @@ class MaintenanceDeliveryService
                 ];
             }
 
-            $payments = $this->normalizePayments($payload, $invoiceTotal);
-            $paidAmount = min($invoiceTotal, round(collect($payments)->sum('amount'), 2));
+            $prepaidAmount = round((float) $maintenance->payments()->sum('amount'), 2);
+            if ($prepaidAmount > $invoiceTotal) {
+                throw ValidationException::withMessages([
+                    'payments' => ['إجمالي العربون والدفعات المثبتة أكبر من قيمة طلب الصيانة.'],
+                ]);
+            }
+
+            $remainingBeforeDelivery = max(0, round($invoiceTotal - $prepaidAmount, 2));
+            $payments = $this->normalizePayments($payload, $remainingBeforeDelivery);
+            $deliveryPaidAmount = round(collect($payments)->sum('amount'), 2);
+            $paidAmount = min($invoiceTotal, round($prepaidAmount + $deliveryPaidAmount, 2));
 
             $maintenanceSession = $invoiceTotal > 0
                 ? $this->maintenanceDailyBoxService->requireOpenSession($user)
@@ -270,17 +312,9 @@ class MaintenanceDeliveryService
                 ]);
             }
 
-            if ($payments === [] && $paidAmount > 0) {
-                $movement = $this->maintenanceDailyBoxService->recordPayment(
-                    $maintenance,
-                    $user,
-                    $paidAmount,
-                    $instantSale->id,
-                    'cash',
-                    null
-                );
-                $maintenanceBoxMovement = $movement;
-            }
+            $maintenance->payments()
+                ->whereNull('instant_sale_id')
+                ->update(['instant_sale_id' => $instantSale->id]);
 
             $remainingAmount = max(0, round($invoiceTotal - $paidAmount, 2));
             if ($remainingAmount > 0) {
@@ -312,6 +346,8 @@ class MaintenanceDeliveryService
                 [
                     'invoice_total' => $invoiceTotal,
                     'paid_amount' => $paidAmount,
+                    'prepaid_amount' => $prepaidAmount,
+                    'delivery_paid_amount' => $deliveryPaidAmount,
                     'remaining_amount' => $remainingAmount,
                     'payments' => $payments,
                     'instant_sale_id' => $instantSale->id,
@@ -326,6 +362,82 @@ class MaintenanceDeliveryService
                 'maintenance' => $fresh,
                 'instant_sale' => $instantSale->fresh(['product', 'subProducts.product']),
             ];
+        });
+    }
+
+    /**
+     * ثبت عربوناً أو دفعة على طلب صيانة قبل التسليم.
+     */
+    public function addPayment(
+        Maintenance $maintenance,
+        User $user,
+        float $amount,
+        ?string $note = null
+    ): Maintenance {
+        return DB::transaction(function () use ($maintenance, $user, $amount, $note) {
+            $maintenance = Maintenance::lockForUpdate()->findOrFail($maintenance->id);
+
+            if ($maintenance->status === 'delivered') {
+                throw ValidationException::withMessages([
+                    'maintenance' => ['لا يمكن إضافة عربون إلى صيانة تم تسليمها.'],
+                ]);
+            }
+
+            $maintenance = $this->recalculateTotals($maintenance);
+            $alreadyPaid = round((float) $maintenance->payments()->sum('amount'), 2);
+            $amount = round(max(0, $amount), 2);
+            if ($amount <= 0) {
+                throw ValidationException::withMessages([
+                    'amount' => ['قيمة العربون يجب أن تكون أكبر من صفر.'],
+                ]);
+            }
+            if (round($alreadyPaid + $amount, 2) > round((float) $maintenance->invoice_total, 2)) {
+                throw ValidationException::withMessages([
+                    'amount' => ['العربون يتجاوز المبلغ المتبقي على طلب الصيانة.'],
+                ]);
+            }
+
+            $movement = $this->maintenanceDailyBoxService->recordPayment(
+                $maintenance,
+                $user,
+                $amount,
+                null,
+                'cash',
+                $note
+            );
+
+            MaintenancePayment::create([
+                'maintenance_id' => $maintenance->id,
+                'maintenance_daily_session_id' => $movement['session']->id,
+                'box_id' => $movement['box']->id,
+                'instant_sale_id' => null,
+                'created_by' => $user->id,
+                'method' => 'cash',
+                'amount' => $amount,
+                'currency' => $movement['box']->currency ?: 'شيكل',
+                'note' => $note ? trim($note) : null,
+            ]);
+
+            $newPaidAmount = round($alreadyPaid + $amount, 2);
+            $maintenance->update(['paid_amount' => $newPaidAmount]);
+            $this->activityLogger->log(
+                $maintenance,
+                $user,
+                'payment_added',
+                'إضافة عربون للصيانة',
+                'تم تثبيت عربون بقيمة '.$amount.' شيكل بواسطة '.$user->name.'.',
+                $maintenance->status,
+                $maintenance->status,
+                [
+                    'amount' => $amount,
+                    'paid_amount' => $newPaidAmount,
+                    'remaining_amount' => max(0, round((float) $maintenance->invoice_total - $newPaidAmount, 2)),
+                    'received_by' => $user->name,
+                    'box_id' => $movement['box']->id,
+                ]
+            );
+
+            return $maintenance->fresh(['products.product', 'payments.createdBy', 'instantSale']);
         });
     }
 
@@ -363,7 +475,7 @@ class MaintenanceDeliveryService
                     'note' => null,
                 ];
             }
-        } else {
+        } elseif ($invoiceTotal > 0) {
             $rows[] = [
                 'method' => 'cash',
                 'amount' => round(max(0, $invoiceTotal), 2),
@@ -405,10 +517,19 @@ class MaintenanceDeliveryService
             .($laborCost > 0 ? ' | أجرة صيانة: '.$laborCost : '');
 
         $additionalNotes = [];
-        if ($laborCost > 0 && $products->isNotEmpty()) {
+        foreach ($maintenance->service_lines ?? [] as $line) {
             $additionalNotes[] = [
-                'text' => 'أجرة صيانة',
-                'amount' => $laborCost,
+                'text' => (string) ($line['name'] ?? 'خدمة صيانة'),
+                'amount' => round((float) ($line['price'] ?? 0), 2),
+            ];
+        }
+        if (($maintenance->service_lines ?? []) === [] && $laborCost > 0 && $products->isNotEmpty()) {
+            $additionalNotes[] = ['text' => 'أجرة صيانة', 'amount' => $laborCost];
+        }
+        foreach ($maintenance->additional_charges ?? [] as $line) {
+            $additionalNotes[] = [
+                'text' => (string) ($line['label'] ?? 'إضافة'),
+                'amount' => round((float) ($line['amount'] ?? 0), 2),
             ];
         }
 
