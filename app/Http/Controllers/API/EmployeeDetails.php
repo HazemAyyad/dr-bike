@@ -2832,15 +2832,26 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             fn (array $dayRow) => (int) ($dayRow['worked_minutes'] ?? 0),
             $days
         ));
+        // The PDF/payroll summary must use the financial minutes already resolved
+        // for every day. In particular, overtime_minutes_value reflects the
+        // approved overtime policy; recomputing overtime as worked - required at
+        // month level discards approved daily overtime when other days are short.
+        $rangeNormalMinutes = (int) array_sum(array_map(
+            fn (array $dayRow) => (int) ($dayRow['normal_minutes_value'] ?? 0),
+            $days
+        ));
+        $rangeOvertimeMinutes = (int) array_sum(array_map(
+            fn (array $dayRow) => (int) ($dayRow['overtime_minutes_value'] ?? 0),
+            $days
+        ));
         $monthlyRequiredProrated = $includeEmptyDays
             ? ((int) $salaryService->countEmployeeWorkingDaysBetween($employee, $from, $to) * $expectedMinutes)
             : (int) round($periodMonthly['monthly_required_minutes'] * $proration);
-        $monthlyOvertimeProrated = max(0, $monthlyWorkedInRange - $monthlyRequiredProrated);
 
         $monthlySalary = $salaryService->calculateSalary(
             $employee,
-            max(0, min($monthlyWorkedInRange, $monthlyRequiredProrated)),
-            max(0, $monthlyOvertimeProrated)
+            max(0, $rangeNormalMinutes),
+            max(0, $rangeOvertimeMinutes)
         );
 
         $monthlyNormalMinutes = max(0, min((int) $periodMonthly['monthly_worked_minutes'], (int) $periodMonthly['monthly_required_minutes']));
@@ -2879,11 +2890,11 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'range_to' => $toStr,
                 'range_worked_minutes' => max(0, $monthlyWorkedInRange),
                 'range_required_minutes' => max(0, $monthlyRequiredProrated),
-                'range_overtime_minutes' => max(0, (int) $monthlyOvertimeProrated),
+                'range_overtime_minutes' => max(0, $rangeOvertimeMinutes),
                 'range_worked_hours' => $salaryService->formatHours(max(0, $monthlyWorkedInRange)),
                 'range_required_hours' => $salaryService->formatHours(max(0, $monthlyRequiredProrated)),
-                'range_normal_hours' => $salaryService->formatHours(max(0, min($monthlyWorkedInRange, $monthlyRequiredProrated))),
-                'range_overtime_hours' => $salaryService->formatHours(max(0, (int) $monthlyOvertimeProrated)),
+                'range_normal_hours' => $salaryService->formatHours(max(0, $rangeNormalMinutes)),
+                'range_overtime_hours' => $salaryService->formatHours(max(0, $rangeOvertimeMinutes)),
                 'range_normal_salary' => number_format((float) $monthlySalary['normal_salary'], 2, '.', ''),
                 'range_overtime_salary' => number_format((float) $monthlySalary['overtime_salary'], 2, '.', ''),
                 'range_total_salary' => number_format((float) $monthlySalary['total_salary'], 2, '.', ''),

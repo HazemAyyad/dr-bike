@@ -635,13 +635,26 @@ class EmployeeOrders extends Controller
                 'message' => __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
-        } catch (\Exception $e) {
-            Log::error('Employee advance cancellation failed: '.$e->getMessage(), [
+        } catch (\Throwable $e) {
+            Log::error('Employee advance cancellation failed', [
                 'employee_order_id' => $request->input('employee_order_id'),
+                'actor_user_id' => $request->user()?->id,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
             ]);
+
+            $message = __('messages.something_wrong');
+            if (config('app.debug')) {
+                $message .= ' ['.class_basename($e).']: '.$e->getMessage()
+                    .' @ '.basename($e->getFile()).':'.$e->getLine();
+            }
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => $message,
             ], 200);
         }
     }
