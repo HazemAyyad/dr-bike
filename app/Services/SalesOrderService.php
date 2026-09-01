@@ -852,6 +852,7 @@ class SalesOrderService
             'payment_type' => $order->payment_type,
             'created_at' => $order->created_at?->toDateTimeString(),
             'created_by_name' => $order->createdByUser?->name,
+            'delivery_company_id' => $order->delivery_company_id,
             'delivery_company_name' => $order->delivery_company_name
                 ?: $order->deliveryCompany?->name,
             'delivery_company_code' => $order->deliveryCompany?->code
