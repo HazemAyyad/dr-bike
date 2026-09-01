@@ -840,8 +840,11 @@ private function getTasks($status)
 
     
     public function cancelEmployeeTask(Request $request){
-        try{
-        $request->validate([
+          try{
+          if ($request->filled('occurrence_id')) {
+              $request->request->remove('employee_task_id');
+          }
+          $request->validate([
             'employee_task_id' => 'nullable|exists:employee_tasks,id',
             'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
         ]);
@@ -933,8 +936,11 @@ private function getTasks($status)
 
 
     public function cancelEmployeeTaskWithRepetition(Request $request){
-        try{
-        $request->validate([
+          try{
+          if ($request->filled('occurrence_id')) {
+              $request->request->remove('employee_task_id');
+          }
+          $request->validate([
             'employee_task_id' => 'nullable|exists:employee_tasks,id',
             'occurrence_id' => 'nullable|exists:employee_task_occurrences,id',
         ]);
