@@ -31,6 +31,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
+use App\Services\DebtLedgerService;
 
 class Reports extends Controller
 {
@@ -377,8 +378,10 @@ class Reports extends Controller
         $previous = $this->analyticsPeriodMetrics($previousFrom, $previousTo);
         $series = $this->analyticsSeries($from, $to);
 
-        $debtsForUs = (float) Debt::where('type', 'owed to us')->where('status', 'unpaid')->sum('total');
-        $debtsOnUs = (float) Debt::where('type', 'we owe')->where('status', 'unpaid')->sum('total');
+        $debtPeople = collect(app(DebtLedgerService::class)->getPeopleList('customers'))
+            ->concat(app(DebtLedgerService::class)->getPeopleList('sellers'));
+        $debtsForUs = $debtPeople->sum(fn (array $person) => max((float) ($person['balances']['شيكل']['balance'] ?? 0), 0));
+        $debtsOnUs = $debtPeople->sum(fn (array $person) => abs(min((float) ($person['balances']['شيكل']['balance'] ?? 0), 0)));
         $incomingChecks = (float) IncomingCheck::totalAmount();
         $outgoingChecks = (float) OutgoingCheck::totalAmount();
 
@@ -390,11 +393,24 @@ class Reports extends Controller
                 $unitCost = (float) ($product->purchasePrices->first()?->price ?? 0);
 
                 return [
+                    'id' => $product->id,
                     'label' => $product->nameAr ?: $product->nameEng ?: (string) $product->id,
                     'quantity' => round($stock, 3),
                     'value' => round($stock * $unitCost, 3),
                 ];
             });
+        $soldByProduct = InstantSale::query()
+            ->whereNotNull('product_id')
+            ->whereBetween('created_at', [$from, $to])
+            ->where(fn ($query) => $query->whereNull('status')->orWhere('status', '!=', 'cancelled'))
+            ->whereNull('cancelled_at')
+            ->select('product_id', DB::raw('SUM(quantity) as sold_quantity'))
+            ->groupBy('product_id')
+            ->pluck('sold_quantity', 'product_id');
+        $inventory = $inventory->map(function (array $row) use ($soldByProduct) {
+            $row['sold_quantity'] = (float) ($soldByProduct[$row['id']] ?? 0);
+            return $row;
+        });
 
         return response()->json([
             'status' => 'success',
@@ -441,8 +457,13 @@ class Reports extends Controller
                     'products_count' => $inventory->count(),
                     'quantity' => round($inventory->sum('quantity'), 3),
                     'value' => round($inventory->sum('value'), 3),
-                    'low_stock_count' => $inventory->where('quantity', '<=', 3)->count(),
+                    'low_stock_count' => $inventory->where('quantity', '>', 0)->where('quantity', '<=', 3)->count(),
                     'top_value' => $inventory->sortByDesc('value')->take(7)->values(),
+                    'low_stock' => $inventory->where('quantity', '>', 0)->where('quantity', '<=', 3)->sortBy('quantity')->values(),
+                    'out_of_stock' => $inventory->where('quantity', 0)->values(),
+                    'negative_stock' => $inventory->where('quantity', '<', 0)->sortBy('quantity')->values(),
+                    'best_sellers' => $inventory->where('sold_quantity', '>', 0)->sortByDesc('sold_quantity')->take(50)->values(),
+                    'least_sellers' => $inventory->sortBy('sold_quantity')->take(50)->values(),
                 ],
                 'tasks' => [
                     ['key' => 'completed', 'label' => 'منجزة', 'value' => $current['tasks_completed']],
