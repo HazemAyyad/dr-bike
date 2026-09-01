@@ -591,7 +591,7 @@ class Reports extends Controller
             $lineColumns = ['id', 'parent_id', 'product_id', 'quantity'];
             if ($instantHasCost) $lineColumns[] = 'inventory_total_cost';
             $costByInvoice = InstantSale::query()
-                ->with('product:id,wholesalePrice')
+                ->with(['product.purchasePrices' => fn ($query) => $query->orderByDesc('id')->limit(1)])
                 ->where(function ($query) use ($parentIds) {
                     $query->whereIn('id', $parentIds)->orWhereIn('parent_id', $parentIds);
                 })
@@ -601,7 +601,7 @@ class Reports extends Controller
                     $this->analyticsLineCost(
                         $instantHasCost ? $line->inventory_total_cost : null,
                         (float) ($line->quantity ?? 0),
-                        (float) ($line->product?->wholesalePrice ?? 0)
+                        (float) ($line->product?->purchasePrices->first()?->price ?? 0)
                     )
                 ));
         }
@@ -648,11 +648,11 @@ class Reports extends Controller
         return ['key' => $key, 'value' => round($current, 3), 'previous_value' => round($previous, 3), 'change_percent' => round($change, 1)];
     }
 
-    private function analyticsLineCost($snapshotCost, float $quantity, float $wholesalePrice): float
+    private function analyticsLineCost($snapshotCost, float $quantity, float $purchasePrice): float
     {
         return $snapshotCost !== null
             ? (float) $snapshotCost
-            : $quantity * $wholesalePrice;
+            : $quantity * $purchasePrice;
     }
 
     private function analyticsNetProfit(float $netSales, float $costOfSales, float $expenses): float

@@ -38,7 +38,7 @@ class ReportsAnalyticsTest extends TestCase
         $this->assertSame(350.0, $method->invoke(new Reports(), 1000.0, 500.0, 150.0));
     }
 
-    public function test_line_cost_prefers_fifo_snapshot_and_falls_back_to_wholesale_price(): void
+    public function test_line_cost_prefers_fifo_snapshot_and_falls_back_to_purchase_price(): void
     {
         $method = new ReflectionMethod(Reports::class, 'analyticsLineCost');
         $method->setAccessible(true);
