@@ -389,6 +389,8 @@ class Reports extends Controller
             ->with([
                 'purchasePrices' => fn ($query) => $query->orderByDesc('id')->limit(1),
                 'normalImages' => fn ($query) => $query->orderBy('id')->limit(1),
+                'viewImages' => fn ($query) => $query->orderBy('id')->limit(1),
+                'image3d' => fn ($query) => $query->orderBy('id')->limit(1),
             ])
             ->get()
             ->map(function (Product $product) {
@@ -398,7 +400,14 @@ class Reports extends Controller
                 return [
                     'id' => $product->id,
                     'label' => $product->nameAr ?: $product->nameEng ?: (string) $product->id,
-                    'image' => $product->normalImages->first()?->imageUrl,
+                    'image' => $product->viewImages->first()?->imageUrl
+                        ?? $product->normalImages->first()?->imageUrl
+                        ?? $product->image3d->first()?->imageUrl,
+                    'images' => collect([
+                        $product->viewImages->first()?->imageUrl,
+                        $product->normalImages->first()?->imageUrl,
+                        $product->image3d->first()?->imageUrl,
+                    ])->filter()->values(),
                     'quantity' => round($stock, 3),
                     'value' => round($stock * $unitCost, 3),
                 ];
@@ -429,7 +438,14 @@ class Reports extends Controller
                 'generated_at' => Carbon::now()->toIso8601String(),
                 'summary' => [
                     $this->analyticsSummaryItem('sales', $current['net_sales'], $previous['net_sales']),
-                    $this->analyticsSummaryItem('net_profit', $current['net_profit'], $previous['net_profit']),
+                    array_merge(
+                        $this->analyticsSummaryItem('net_profit', $current['net_profit'], $previous['net_profit']),
+                        [
+                            'net_sales' => round($current['net_sales'], 3),
+                            'cost_of_sales' => round($current['cost_of_sales'], 3),
+                            'expenses' => round($current['expenses'], 3),
+                        ]
+                    ),
                     $this->analyticsSummaryItem('expenses', $current['expenses'], $previous['expenses']),
                     $this->analyticsSummaryItem('cash_collected', $current['cash_collected'], $previous['cash_collected']),
                 ],
