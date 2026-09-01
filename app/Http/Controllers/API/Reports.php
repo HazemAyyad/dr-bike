@@ -386,7 +386,10 @@ class Reports extends Controller
         $outgoingChecks = (float) OutgoingCheck::totalAmount();
 
         $inventory = Product::query()
-            ->with(['purchasePrices' => fn ($query) => $query->orderByDesc('id')->limit(1)])
+            ->with([
+                'purchasePrices' => fn ($query) => $query->orderByDesc('id')->limit(1),
+                'normalImages' => fn ($query) => $query->orderBy('id')->limit(1),
+            ])
             ->get()
             ->map(function (Product $product) {
                 $stock = (float) ($product->stock ?? 0);
@@ -395,6 +398,7 @@ class Reports extends Controller
                 return [
                     'id' => $product->id,
                     'label' => $product->nameAr ?: $product->nameEng ?: (string) $product->id,
+                    'image' => $product->normalImages->first()?->imageUrl,
                     'quantity' => round($stock, 3),
                     'value' => round($stock * $unitCost, 3),
                 ];
