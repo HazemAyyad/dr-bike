@@ -6,10 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Models\AppSetting;
 use App\Support\SalesDailySettings;
 use App\Support\ShiplySettings;
+use App\Services\SalesOrderMediaRequirementService;
 use Illuminate\Http\Request;
 
 class SalesSettingsController extends Controller
 {
+    public function __construct(
+        private SalesOrderMediaRequirementService $mediaRequirements,
+    ) {}
     public function show()
     {
         return response()->json([
@@ -25,6 +29,9 @@ class SalesSettingsController extends Controller
             'sales_daily_variance_alert_threshold' => 'sometimes|numeric|min:0|max:999999',
             'sales_daily_max_float' => 'sometimes|array',
             'shiply' => 'sometimes|array',
+            'sales_order_media_requirements' => 'sometimes|array',
+            'sales_order_media_requirements.*' => 'array',
+            'sales_order_media_requirements.*.*' => 'boolean',
         ];
         foreach ($currencies as $currency) {
             $rules['sales_daily_max_float.'.$currency] = 'sometimes|numeric|min:0|max:999999';
@@ -52,6 +59,11 @@ class SalesSettingsController extends Controller
         if ($request->has('shiply')) {
             ShiplySettings::updateFromArray($data['shiply']);
         }
+        if ($request->has('sales_order_media_requirements')) {
+            $this->mediaRequirements->updateSettings(
+                $data['sales_order_media_requirements']
+            );
+        }
 
         return response()->json([
             'status' => 'success',
@@ -66,6 +78,7 @@ class SalesSettingsController extends Controller
             'sales_daily_variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
             'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),
             'shiply' => ShiplySettings::toArray(),
+            'sales_order_media_requirements' => $this->mediaRequirements->settings(),
         ];
     }
 }

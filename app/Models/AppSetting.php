@@ -52,6 +52,9 @@ class AppSetting extends Model
     /** JSON map currency => max float allowed at day close. */
     public const KEY_SALES_DAILY_MAX_FLOAT_JSON = 'sales_daily_max_float_json';
 
+    /** JSON map of order workflow action => required media categories. */
+    public const KEY_SALES_ORDER_MEDIA_REQUIREMENTS_JSON = 'sales_order_media_requirements_json';
+
     // Attendance settings
     public const KEY_ATTENDANCE_QR_ENABLED = 'attendance_qr_enabled';
     public const KEY_ATTENDANCE_FINGERPRINT_ENABLED = 'attendance_fingerprint_enabled';
