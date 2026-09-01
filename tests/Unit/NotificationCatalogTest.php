@@ -2,6 +2,8 @@
 
 namespace Tests\Unit;
 
+use App\Enums\SalesOrderStatus;
+use App\Services\SalesOrderNotificationService;
 use App\Support\NotificationCatalog;
 use PHPUnit\Framework\TestCase;
 
@@ -51,5 +53,26 @@ class NotificationCatalogTest extends TestCase
         $this->assertSame('library_message_pop', $types['whatsapp_message_received']['sound']);
         $this->assertSame('messages', $types['social_message_received']['category']);
         $this->assertSame('library_clear_announce', $types['social_message_received']['sound']);
+    }
+
+    public function test_every_sales_order_stage_has_an_independent_policy(): void
+    {
+        $types = NotificationCatalog::types();
+
+        foreach (SalesOrderStatus::cases() as $status) {
+            $type = SalesOrderNotificationService::typeForStatus($status->value);
+
+            $this->assertArrayHasKey($type, $types, "Missing notification policy for {$status->value}.");
+            $this->assertSame('sales_orders', $types[$type]['category']);
+        }
+    }
+
+    public function test_shiply_order_events_are_available_in_the_catalog(): void
+    {
+        $types = NotificationCatalog::types();
+
+        $this->assertArrayHasKey(SalesOrderNotificationService::TYPE_SHIPLY_HANDOVER, $types);
+        $this->assertArrayHasKey(SalesOrderNotificationService::TYPE_SHIPLY_DELIVERED, $types);
+        $this->assertArrayHasKey(SalesOrderNotificationService::TYPE_SHIPLY_STATUS, $types);
     }
 }

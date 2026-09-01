@@ -12,6 +12,8 @@ class SalesOrderNotificationService
 {
     public const TYPE_STATUS = 'sales_order_status';
 
+    public const TYPE_STATUS_PREFIX = 'sales_order_status_';
+
     public const TYPE_SHIPLY_HANDOVER = 'sales_order_shiply_handover';
 
     public const TYPE_SHIPLY_DELIVERED = 'sales_order_shiply_delivered';
@@ -49,7 +51,7 @@ class SalesOrderNotificationService
             }
 
             $this->adminNotifications->create(
-                self::TYPE_STATUS,
+                self::typeForStatus($toStatus),
                 $title,
                 $body,
                 [
@@ -71,6 +73,13 @@ class SalesOrderNotificationService
                 'to_status' => $toStatus,
             ]);
         }
+    }
+
+    public static function typeForStatus(string $status): string
+    {
+        return SalesOrderStatus::tryFrom($status) !== null
+            ? self::TYPE_STATUS_PREFIX.$status
+            : self::TYPE_STATUS;
     }
 
     public function notifyShiplyHandover(

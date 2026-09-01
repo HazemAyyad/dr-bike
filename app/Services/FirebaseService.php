@@ -623,7 +623,8 @@ class FirebaseService
             ];
         }
 
-        if (in_array($type, self::SALES_ORDER_STATUS_NOTIFICATION_TYPES, true)) {
+        if (in_array($type, self::SALES_ORDER_STATUS_NOTIFICATION_TYPES, true)
+            || str_starts_with($type, SalesOrderNotificationService::TYPE_STATUS_PREFIX)) {
             return [
                 'channel_id' => self::SALES_ORDER_STATUS_CHANNEL_ID,
                 'sound' => self::SALES_ORDER_STATUS_SOUND_ANDROID,
