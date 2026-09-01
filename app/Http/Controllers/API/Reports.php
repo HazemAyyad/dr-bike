@@ -20,6 +20,7 @@ use App\Models\Log;
 use App\Models\OutgoingCheck;
 use App\Models\Product;
 use App\Models\Project;
+use App\Models\ProfitSale;
 use App\Models\ReturnModel;
 use App\Models\Seller;
 use Carbon\Carbon;
@@ -453,18 +454,12 @@ class Reports extends Controller
 
     private function analyticsPeriodMetrics(Carbon $from, Carbon $to): array
     {
-        $sales = InstantSale::query()
-            ->whereNull('parent_id')
-            ->whereNull('maintenance_id')
-            ->whereBetween('created_at', [$from, $to])
-            ->where(fn ($query) => $query->whereNull('status')->orWhere('status', '!=', 'cancelled'))
-            ->whereNull('cancelled_at')
-            ->get(['total_cost', 'discount', 'payment_box_value', 'inventory_total_cost']);
+        $sales = $this->analyticsSales($from, $to);
 
-        $grossSales = (float) $sales->sum('total_cost');
+        $grossSales = (float) $sales->sum('total');
         $discounts = (float) $sales->sum('discount');
         $netSales = $grossSales - $discounts;
-        $cost = (float) $sales->sum('inventory_total_cost');
+        $cost = (float) $sales->sum('cost');
         $expenses = (float) Expense::whereBetween('created_at', [$from, $to])->sum('price');
         $purchases = (float) Bill::where('status', 'finished')->whereBetween('created_at', [$from, $to])->sum('total');
         $purchaseReturns = (float) ReturnModel::whereIn('status', ['confirmed', 'delivered', 'settled'])
@@ -472,14 +467,14 @@ class Reports extends Controller
 
         $paymentMix = ['cash' => 0.0, 'debt' => 0.0, 'mixed' => 0.0];
         foreach ($sales as $sale) {
-            $total = max((float) $sale->total_cost - (float) $sale->discount, 0);
-            $paid = min(max((float) $sale->payment_box_value, 0), $total);
+            $total = max((float) $sale['total'] - (float) $sale['discount'], 0);
+            $paid = min(max((float) $sale['paid'], 0), $total);
             $paymentMix[$this->salesReportPaymentType($total, $paid)] += $total;
         }
 
         return [
             'net_sales' => $netSales,
-            'cash_collected' => (float) $sales->sum('payment_box_value'),
+            'cash_collected' => (float) $sales->sum('paid'),
             'expenses' => $expenses,
             'purchases' => $purchases,
             'purchase_returns' => $purchaseReturns,
@@ -507,17 +502,14 @@ class Reports extends Controller
             $cursor = $days > 120 ? $cursor->addMonth()->startOfMonth() : $cursor->addDay();
         }
 
-        $sales = InstantSale::query()->whereNull('parent_id')->whereNull('maintenance_id')
-            ->whereBetween('created_at', [$from, $to])
-            ->where(fn ($query) => $query->whereNull('status')->orWhere('status', '!=', 'cancelled'))
-            ->whereNull('cancelled_at')->get(['created_at', 'total_cost', 'discount', 'inventory_total_cost']);
+        $sales = $this->analyticsSales($from, $to);
         foreach ($sales as $sale) {
-            $key = $sale->created_at->format($format);
+            $key = $sale['created_at']->format($format);
             if (!$points->has($key)) continue;
-            $net = (float) $sale->total_cost - (float) $sale->discount;
+            $net = (float) $sale['total'] - (float) $sale['discount'];
             $row = $points[$key];
             $row['sales'] += $net;
-            $row['profit'] += $net - (float) $sale->inventory_total_cost;
+            $row['profit'] += $net - (float) $sale['cost'];
             $points->put($key, $row);
         }
 
@@ -531,6 +523,59 @@ class Reports extends Controller
         }
 
         return $points->values();
+    }
+
+    private function analyticsSales(Carbon $from, Carbon $to)
+    {
+        $instantHasPaid = Schema::hasColumn('instant_sales', 'payment_box_value');
+        $instantHasCost = Schema::hasColumn('instant_sales', 'inventory_total_cost');
+        $instantColumns = ['created_at', 'total_cost', 'discount'];
+        if ($instantHasPaid) $instantColumns[] = 'payment_box_value';
+        if ($instantHasCost) $instantColumns[] = 'inventory_total_cost';
+
+        $instantQuery = InstantSale::query()
+            ->whereNull('parent_id')
+            ->whereBetween('created_at', [$from, $to]);
+        if (Schema::hasColumn('instant_sales', 'maintenance_id')) $instantQuery->whereNull('maintenance_id');
+        if (Schema::hasColumn('instant_sales', 'status')) {
+            $instantQuery->where(fn ($query) => $query->whereNull('status')->orWhere('status', '!=', 'cancelled'));
+        }
+        if (Schema::hasColumn('instant_sales', 'cancelled_at')) $instantQuery->whereNull('cancelled_at');
+
+        $instant = $instantQuery->get($instantColumns)->map(fn (InstantSale $sale) => [
+            'source' => 'instant_sale',
+            'created_at' => $sale->created_at,
+            'total' => (float) ($sale->total_cost ?? 0),
+            'discount' => (float) ($sale->discount ?? 0),
+            'paid' => $instantHasPaid
+                ? (float) ($sale->payment_box_value ?? 0)
+                : (float) ($sale->total_cost ?? 0),
+            'cost' => (float) ($sale->inventory_total_cost ?? 0),
+        ]);
+
+        if (!Schema::hasTable('profit_sales')) return $instant;
+
+        $profitHasPaid = Schema::hasColumn('profit_sales', 'payment_box_value');
+        $profitColumns = ['created_at', 'total_cost'];
+        if ($profitHasPaid) $profitColumns[] = 'payment_box_value';
+        $profitQuery = ProfitSale::query()->whereBetween('created_at', [$from, $to]);
+        if (Schema::hasColumn('profit_sales', 'status')) {
+            $profitQuery->where(fn ($query) => $query->whereNull('status')->orWhere('status', '!=', 'cancelled'));
+        }
+        if (Schema::hasColumn('profit_sales', 'cancelled_at')) $profitQuery->whereNull('cancelled_at');
+
+        $profit = $profitQuery->get($profitColumns)->map(fn (ProfitSale $sale) => [
+            'source' => 'profit_sale',
+            'created_at' => $sale->created_at,
+            'total' => (float) ($sale->total_cost ?? 0),
+            'discount' => 0.0,
+            'paid' => $profitHasPaid
+                ? (float) ($sale->payment_box_value ?? 0)
+                : (float) ($sale->total_cost ?? 0),
+            'cost' => 0.0,
+        ]);
+
+        return $instant->concat($profit)->values();
     }
 
     private function analyticsSummaryItem(string $key, float $current, float $previous): array
