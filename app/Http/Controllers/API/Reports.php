@@ -32,6 +32,7 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use App\Services\DebtLedgerService;
+use App\Support\ApiImageUrl;
 
 class Reports extends Controller
 {
@@ -387,10 +388,10 @@ class Reports extends Controller
 
         $inventory = Product::query()
             ->with([
-                'purchasePrices' => fn ($query) => $query->orderByDesc('id')->limit(1),
-                'normalImages' => fn ($query) => $query->orderBy('id')->limit(1),
-                'viewImages' => fn ($query) => $query->orderBy('id')->limit(1),
-                'image3d' => fn ($query) => $query->orderBy('id')->limit(1),
+                'purchasePrices' => fn ($query) => $query->orderByDesc('id'),
+                'normalImages' => fn ($query) => $query->orderBy('id'),
+                'viewImages' => fn ($query) => $query->orderBy('id'),
+                'image3d' => fn ($query) => $query->orderBy('id'),
             ])
             ->get()
             ->map(function (Product $product) {
@@ -400,14 +401,14 @@ class Reports extends Controller
                 return [
                     'id' => $product->id,
                     'label' => $product->nameAr ?: $product->nameEng ?: (string) $product->id,
-                    'image' => $product->viewImages->first()?->imageUrl
+                    'image' => ApiImageUrl::normalize($product->viewImages->first()?->imageUrl
                         ?? $product->normalImages->first()?->imageUrl
-                        ?? $product->image3d->first()?->imageUrl,
+                        ?? $product->image3d->first()?->imageUrl),
                     'images' => collect([
                         $product->viewImages->first()?->imageUrl,
                         $product->normalImages->first()?->imageUrl,
                         $product->image3d->first()?->imageUrl,
-                    ])->filter()->values(),
+                    ])->filter()->map(fn ($image) => ApiImageUrl::normalize($image))->values(),
                     'quantity' => round($stock, 3),
                     'value' => round($stock * $unitCost, 3),
                 ];
@@ -591,7 +592,7 @@ class Reports extends Controller
             $lineColumns = ['id', 'parent_id', 'product_id', 'quantity'];
             if ($instantHasCost) $lineColumns[] = 'inventory_total_cost';
             $costByInvoice = InstantSale::query()
-                ->with(['product.purchasePrices' => fn ($query) => $query->orderByDesc('id')->limit(1)])
+                ->with(['product.purchasePrices' => fn ($query) => $query->orderByDesc('id')])
                 ->where(function ($query) use ($parentIds) {
                     $query->whereIn('id', $parentIds)->orWhereIn('parent_id', $parentIds);
                 })
