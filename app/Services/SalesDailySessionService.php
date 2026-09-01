@@ -904,6 +904,8 @@ class SalesDailySessionService
                     ?? $employee?->user?->name
                     ?? __('messages.employee_default_name');
                 $businessDate = $session->business_date?->toDateString() ?? '';
+                $isOrders = $session->isSalesOrders();
+                $drawerName = $isOrders ? 'صندوق الطلبيات' : 'صندوق المبيعات';
 
                 $data = [
                     'session_id' => (string) $session->id,
@@ -915,6 +917,7 @@ class SalesDailySessionService
                     'reminder_date' => $reminderDate,
                     'reminder_slot' => $reminderSlot,
                     'checked_at' => $now->toIso8601String(),
+                    'session_type' => $session->session_type,
                 ];
 
                 $adminSent = false;
@@ -923,8 +926,8 @@ class SalesDailySessionService
                 } else {
                     $this->adminNotificationService->create(
                         AdminNotificationService::TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN,
-                        'صندوق مبيعات غير مغلق',
-                        "{$employeeName} لم يغلق صندوق مبيعات يوم {$businessDate}. يرجى إغلاق الصندوق.",
+                        "{$drawerName} غير مغلق",
+                        "{$employeeName} لم يغلق {$drawerName} ليوم {$businessDate}. يرجى مراجعة {$drawerName} وإغلاقه.",
                         $data,
                         $session->employee_id ?: $employee?->id,
                         'sales_daily_session',
@@ -943,8 +946,8 @@ class SalesDailySessionService
                     $this->employeeNotificationService->create(
                         $employee,
                         EmployeeNotificationService::TYPE_SALES_DAILY_PREVIOUS_DAY_OPEN,
-                        'تذكير إغلاق صندوق المبيعات',
-                        "صندوق مبيعات يوم {$businessDate} ما زال غير مغلق. يرجى إغلاق الصندوق.",
+                        "تذكير إغلاق {$drawerName}",
+                        "{$drawerName} ليوم {$businessDate} ما زال غير مغلق. يرجى إغلاقه.",
                         $data,
                         'sales_daily_session',
                         (int) $session->id
@@ -1240,20 +1243,21 @@ class SalesDailySessionService
             $owner->loadMissing('employee.user');
             $name = $owner->name ?? __('messages.employee_default_name');
             $actorName = $user->name ?? __('messages.employee_default_name');
+            $drawerName = $session->isSalesOrders()
+                ? 'صندوق الطلبيات'
+                : 'صندوق المبيعات';
             $notifyBody = (int) $user->id === (int) $owner->id
-                ? __('messages.sales_daily_closing_notify_body', ['employee' => $name])
-                : __('messages.sales_daily_closing_notify_body_admin', [
-                    'admin' => $actorName,
-                    'employee' => $name,
-                ]);
+                ? "{$name} طلب إغلاق {$drawerName}."
+                : "{$actorName} أرسل طلب إغلاق {$drawerName} الخاص بـ {$name}.";
 
             $this->adminNotificationService->create(
                 AdminNotificationService::TYPE_SALES_DAILY_CLOSING_REQUEST,
-                __('messages.sales_daily_closing_notify_title'),
+                "طلب إغلاق {$drawerName}",
                 $notifyBody,
                 [
                     'closing_request_id' => (string) $request->id,
                     'session_id' => (string) $session->id,
+                    'session_type' => $session->session_type,
                 ],
                 $session->employee_id,
                 'sales_daily_closing_request',
@@ -1267,8 +1271,12 @@ class SalesDailySessionService
             $request->session,
             $user,
             'sales_daily_closing_requested',
-            'طلب إغلاق صندوق المبيعات',
-            'تم طلب إغلاق صندوق المبيعات اليومي',
+            $request->session->isSalesOrders()
+                ? 'طلب إغلاق صندوق الطلبيات'
+                : 'طلب إغلاق صندوق المبيعات',
+            $request->session->isSalesOrders()
+                ? 'تم طلب إغلاق صندوق الطلبيات اليومي'
+                : 'تم طلب إغلاق صندوق المبيعات اليومي',
             [
                 'closing_request_id' => (int) $request->id,
                 'late_close_reason' => $lateCloseReason !== '' ? $lateCloseReason : null,
@@ -1655,8 +1663,9 @@ class SalesDailySessionService
             $toBox->update(['total' => (float) $toBox->total + $amountToTransfer]);
             $fromBox->update(['total' => $floatToKeep]);
 
-            $note = 'ترحيل نهاية يوم مبيعات #'.$session->id.' — '.$currency;
-            BoxLogs::createTransferLog($fromBox, $toBox, 'ترحيل صندوق مبيعات يومي', $amountToTransfer, $note);
+            $drawerName = $session->isSalesOrders() ? 'صندوق طلبيات يومي' : 'صندوق مبيعات يومي';
+            $note = 'ترحيل نهاية '.$drawerName.' #'.$session->id.' — '.$currency;
+            BoxLogs::createTransferLog($fromBox, $toBox, 'ترحيل '.$drawerName, $amountToTransfer, $note);
 
             $executedTransfers[] = [
                 'currency' => $currency,
@@ -1686,8 +1695,8 @@ class SalesDailySessionService
             $session,
             $reviewer,
             'sales_daily_closing_approved',
-            'اعتماد إغلاق صندوق المبيعات',
-            'تم اعتماد إغلاق صندوق المبيعات اليومي',
+            $session->isSalesOrders() ? 'اعتماد إغلاق صندوق الطلبيات' : 'اعتماد إغلاق صندوق المبيعات',
+            $session->isSalesOrders() ? 'تم اعتماد إغلاق صندوق الطلبيات اليومي' : 'تم اعتماد إغلاق صندوق المبيعات اليومي',
             [
                 'closing_request_id' => (int) $closingRequest->id,
                 'transfers' => $executedTransfers,
@@ -1730,8 +1739,8 @@ class SalesDailySessionService
                 $closingRequest->session,
                 $reviewer,
                 'sales_daily_closing_rejected',
-                'رفض إغلاق صندوق المبيعات',
-                'تم رفض طلب إغلاق صندوق المبيعات اليومي',
+                $closingRequest->session->isSalesOrders() ? 'رفض إغلاق صندوق الطلبيات' : 'رفض إغلاق صندوق المبيعات',
+                $closingRequest->session->isSalesOrders() ? 'تم رفض طلب إغلاق صندوق الطلبيات اليومي' : 'تم رفض طلب إغلاق صندوق المبيعات اليومي',
                 [
                     'closing_request_id' => (int) $closingRequest->id,
                     'review_notes' => $reviewNotes,
@@ -1788,14 +1797,18 @@ class SalesDailySessionService
         App::setLocale('ar');
 
         try {
+            $isOrders = $session->isSalesOrders();
             $this->employeeNotificationService->create(
                 $employee,
                 EmployeeNotificationService::TYPE_SALES_DAILY_CLOSING_APPROVED,
-                __('messages.sales_daily_closing_approved_notify_title'),
-                __('messages.sales_daily_closing_approved_notify_body'),
+                $isOrders ? 'تم إغلاق صندوق الطلبيات' : 'تم إغلاق صندوق المبيعات',
+                $isOrders
+                    ? 'تمت الموافقة على إغلاق صندوق الطلبيات الخاص بك. لا يمكنك تسجيل طلبيات مالية عليه الآن.'
+                    : __('messages.sales_daily_closing_approved_notify_body'),
                 [
                     'session_id' => (string) $session->id,
                     'business_date' => $session->business_date?->toDateString() ?? '',
+                    'session_type' => $session->session_type,
                 ],
                 'sales_daily_session',
                 (int) $session->id
@@ -1816,14 +1829,18 @@ class SalesDailySessionService
         App::setLocale('ar');
 
         try {
+            $isOrders = $session->isSalesOrders();
             $this->employeeNotificationService->create(
                 $employee,
                 EmployeeNotificationService::TYPE_SALES_DAILY_CLOSING_REJECTED,
-                __('messages.sales_daily_closing_rejected_notify_title'),
-                __('messages.sales_daily_closing_rejected_notify_body'),
+                $isOrders ? 'تم رفض إغلاق صندوق الطلبيات' : __('messages.sales_daily_closing_rejected_notify_title'),
+                $isOrders
+                    ? 'تم رفض طلب إغلاق صندوق الطلبيات الخاص بك. يمكنك متابعة العمل عليه.'
+                    : __('messages.sales_daily_closing_rejected_notify_body'),
                 [
                     'session_id' => (string) $session->id,
                     'business_date' => $session->business_date?->toDateString() ?? '',
+                    'session_type' => $session->session_type,
                 ],
                 'sales_daily_session',
                 (int) $session->id
@@ -2426,6 +2443,7 @@ class SalesDailySessionService
             'is_late_close' => $isLateClose,
             'late_close_reason' => $request->late_close_reason,
             'business_date' => $businessDate,
+            'session_type' => $session?->session_type,
             'instant_sales' => $salesLog['instant_sales'],
             'profit_sales' => $salesLog['profit_sales'],
         ];
