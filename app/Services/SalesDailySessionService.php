@@ -2145,7 +2145,9 @@ class SalesDailySessionService
         $this->assertCanViewSession($viewer, $session);
 
         $owner = User::query()->findOrFail($session->user_id);
-        $currencies = $this->buildCurrenciesForSession($session, $owner);
+        $currencies = $session->isSalesOrders()
+            ? app(SalesOrdersDailyBoxService::class)->summary($session)
+            : $this->buildCurrenciesForSession($session, $owner);
         $counts = $this->salesCountsForSession($session);
         $closingRequests = $session->closingRequests
             ->sortByDesc('id')
