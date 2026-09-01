@@ -479,7 +479,7 @@ class Reports extends Controller
             'purchases' => $purchases,
             'purchase_returns' => $purchaseReturns,
             'cost_of_sales' => $cost,
-            'net_profit' => $netSales - $cost - $expenses,
+            'net_profit' => $this->analyticsNetProfit($netSales, $cost, $expenses),
             'payment_cash' => $paymentMix['cash'],
             'payment_debt' => $paymentMix['debt'],
             'payment_mixed' => $paymentMix['mixed'],
@@ -529,7 +529,7 @@ class Reports extends Controller
     {
         $instantHasPaid = Schema::hasColumn('instant_sales', 'payment_box_value');
         $instantHasCost = Schema::hasColumn('instant_sales', 'inventory_total_cost');
-        $instantColumns = ['created_at', 'total_cost', 'discount'];
+        $instantColumns = ['id', 'created_at', 'total_cost', 'discount'];
         if ($instantHasPaid) $instantColumns[] = 'payment_box_value';
         if ($instantHasCost) $instantColumns[] = 'inventory_total_cost';
 
@@ -542,7 +542,30 @@ class Reports extends Controller
         }
         if (Schema::hasColumn('instant_sales', 'cancelled_at')) $instantQuery->whereNull('cancelled_at');
 
-        $instant = $instantQuery->get($instantColumns)->map(fn (InstantSale $sale) => [
+        $instantRows = $instantQuery->get($instantColumns);
+        $parentIds = $instantRows->pluck('id')->map(fn ($id) => (int) $id)->values();
+        $costByInvoice = collect();
+
+        if ($parentIds->isNotEmpty()) {
+            $lineColumns = ['id', 'parent_id', 'product_id', 'quantity'];
+            if ($instantHasCost) $lineColumns[] = 'inventory_total_cost';
+            $costByInvoice = InstantSale::query()
+                ->with('product:id,wholesalePrice')
+                ->where(function ($query) use ($parentIds) {
+                    $query->whereIn('id', $parentIds)->orWhereIn('parent_id', $parentIds);
+                })
+                ->get($lineColumns)
+                ->groupBy(fn (InstantSale $line) => (int) ($line->parent_id ?: $line->id))
+                ->map(fn ($lines) => (float) $lines->sum(fn (InstantSale $line) =>
+                    $this->analyticsLineCost(
+                        $instantHasCost ? $line->inventory_total_cost : null,
+                        (float) ($line->quantity ?? 0),
+                        (float) ($line->product?->wholesalePrice ?? 0)
+                    )
+                ));
+        }
+
+        $instant = $instantRows->map(fn (InstantSale $sale) => [
             'source' => 'instant_sale',
             'created_at' => $sale->created_at,
             'total' => (float) ($sale->total_cost ?? 0),
@@ -550,7 +573,7 @@ class Reports extends Controller
             'paid' => $instantHasPaid
                 ? (float) ($sale->payment_box_value ?? 0)
                 : (float) ($sale->total_cost ?? 0),
-            'cost' => (float) ($sale->inventory_total_cost ?? 0),
+            'cost' => (float) ($costByInvoice[(int) $sale->id] ?? 0),
         ]);
 
         if (!Schema::hasTable('profit_sales')) return $instant;
@@ -582,6 +605,18 @@ class Reports extends Controller
     {
         $change = $previous == 0.0 ? ($current == 0.0 ? 0.0 : 100.0) : (($current - $previous) / abs($previous)) * 100;
         return ['key' => $key, 'value' => round($current, 3), 'previous_value' => round($previous, 3), 'change_percent' => round($change, 1)];
+    }
+
+    private function analyticsLineCost($snapshotCost, float $quantity, float $wholesalePrice): float
+    {
+        return $snapshotCost !== null
+            ? (float) $snapshotCost
+            : $quantity * $wholesalePrice;
+    }
+
+    private function analyticsNetProfit(float $netSales, float $costOfSales, float $expenses): float
+    {
+        return $netSales - $costOfSales - $expenses;
     }
 
     public function reportData(Request $request)

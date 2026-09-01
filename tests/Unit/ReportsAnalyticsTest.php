@@ -29,4 +29,21 @@ class ReportsAnalyticsTest extends TestCase
         $this->assertSame(0.0, $method->invoke(new Reports(), 'sales', 0.0, 0.0)['change_percent']);
         $this->assertSame(100.0, $method->invoke(new Reports(), 'sales', 20.0, 0.0)['change_percent']);
     }
+
+    public function test_net_profit_subtracts_all_line_costs_and_expenses(): void
+    {
+        $method = new ReflectionMethod(Reports::class, 'analyticsNetProfit');
+        $method->setAccessible(true);
+
+        $this->assertSame(350.0, $method->invoke(new Reports(), 1000.0, 500.0, 150.0));
+    }
+
+    public function test_line_cost_prefers_fifo_snapshot_and_falls_back_to_wholesale_price(): void
+    {
+        $method = new ReflectionMethod(Reports::class, 'analyticsLineCost');
+        $method->setAccessible(true);
+
+        $this->assertSame(75.0, $method->invoke(new Reports(), 75.0, 3.0, 20.0));
+        $this->assertSame(60.0, $method->invoke(new Reports(), null, 3.0, 20.0));
+    }
 }
