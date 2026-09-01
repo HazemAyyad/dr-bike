@@ -5,6 +5,7 @@ namespace App\Services\EmployeeTasks;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Models\EmployeeTaskTemplate;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -45,7 +46,7 @@ class EmployeeTaskCancellationService
 
             if (! $occurrence->template_id) {
                 if ($occurrence->legacy_task_id) {
-                    $this->cancelLegacyFamily($occurrence->legacy_task_id);
+                    $this->cancelLegacyFamilyFromToday($occurrence->legacy_task_id);
                     $occurrence->update(['is_canceled' => true]);
 
                     return $occurrence->fresh();
@@ -73,7 +74,7 @@ class EmployeeTaskCancellationService
                 $this->cancelTemplateSeries((int) $task->template_id);
             }
 
-            $this->cancelLegacyFamily($task->id);
+        $this->cancelLegacyFamilyFromToday($task->id);
 
             return $task->fresh();
         });
@@ -87,25 +88,49 @@ class EmployeeTaskCancellationService
 
         $template->update(['is_active' => false]);
 
+        $today = Carbon::now('Asia/Hebron')->toDateString();
+
         EmployeeTaskOccurrence::query()
             ->where('template_id', $templateId)
+            ->whereDate('scheduled_date', '>=', $today)
+            ->whereNotIn('status', ['completed', 'waiting_review'])
+            ->whereNull('started_at')
+            ->whereNull('submitted_at')
+            ->whereNull('reviewed_at')
+            ->whereNull('completed_at')
+            ->whereNull('completed_by_employee_id')
+            ->whereDoesntHave('subtasks', fn ($query) => $query->where('status', '!=', 'pending'))
             ->update(['is_canceled' => true]);
 
         EmployeeTask::query()
             ->where('template_id', $templateId)
+            ->whereDate('start_time', '>=', $today)
+            ->whereNotIn('status', ['completed', 'waiting_review'])
+            ->whereNull('started_at')
+            ->whereNull('submitted_at')
+            ->whereNull('reviewed_at')
+            ->whereNull('completed_by_employee_id')
+            ->whereDoesntHave('subTasks', fn ($query) => $query->where('status', '!=', 'pending'))
             ->update(['is_canceled' => true]);
     }
 
-    private function cancelLegacyFamily(int $taskId): void
+    private function cancelLegacyFamilyFromToday(int $taskId): void
     {
         $task = EmployeeTask::query()
             ->lockForUpdate()
             ->findOrFail($taskId);
         $rootId = (int) ($task->parent_id ?: $task->id);
+        $today = Carbon::now('Asia/Hebron')->toDateString();
 
         EmployeeTask::query()
-            ->where('id', $rootId)
-            ->orWhere('parent_id', $rootId)
+            ->where(fn ($query) => $query->where('id', $rootId)->orWhere('parent_id', $rootId))
+            ->whereDate('start_time', '>=', $today)
+            ->whereNotIn('status', ['completed', 'waiting_review'])
+            ->whereNull('started_at')
+            ->whereNull('submitted_at')
+            ->whereNull('reviewed_at')
+            ->whereNull('completed_by_employee_id')
+            ->whereDoesntHave('subTasks', fn ($query) => $query->where('status', '!=', 'pending'))
             ->update(['is_canceled' => true]);
     }
 }

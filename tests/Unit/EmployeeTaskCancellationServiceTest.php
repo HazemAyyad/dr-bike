@@ -6,6 +6,7 @@ use App\Models\EmployeeTaskTemplate;
 use App\Services\EmployeeTasks\EmployeeTaskCancellationService;
 use App\Services\EmployeeTasks\EmployeeTaskRecurrenceService;
 use App\Services\EmployeeTasks\EmployeeTaskTimelineService;
+use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -38,16 +39,41 @@ class EmployeeTaskCancellationServiceTest extends TestCase
             $table->unsignedBigInteger('template_id')->nullable();
             $table->unsignedBigInteger('employee_id')->nullable();
             $table->unsignedBigInteger('legacy_task_id')->nullable();
+            $table->string('status')->default('pending');
             $table->boolean('is_canceled')->default(false);
+            $table->date('scheduled_date')->nullable();
+            $table->unsignedBigInteger('completed_by_employee_id')->nullable();
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('submitted_at')->nullable();
+            $table->timestamp('reviewed_at')->nullable();
+            $table->timestamp('completed_at')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('employee_task_occurrence_subtasks', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('occurrence_id');
+            $table->string('status')->default('pending');
         });
 
         Schema::create('employee_tasks', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('parent_id')->nullable();
             $table->unsignedBigInteger('template_id')->nullable();
+            $table->string('status')->default('pending');
             $table->boolean('is_canceled')->default(false);
+            $table->dateTime('start_time')->nullable();
+            $table->unsignedBigInteger('completed_by_employee_id')->nullable();
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('submitted_at')->nullable();
+            $table->timestamp('reviewed_at')->nullable();
             $table->timestamps();
+        });
+
+        Schema::create('sub_employee_tasks', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('employee_task_id');
+            $table->string('status')->default('pending');
         });
 
         $this->service = new EmployeeTaskCancellationService();
@@ -79,19 +105,24 @@ class EmployeeTaskCancellationServiceTest extends TestCase
         $this->assertDatabaseHas('employee_tasks', ['id' => $secondChildId, 'is_canceled' => 0]);
     }
 
-    public function test_canceling_occurrence_series_deactivates_template_and_cancels_every_linked_row(): void
+    public function test_canceling_occurrence_series_preserves_history_and_cancels_only_untouched_current_and_future_rows(): void
     {
+        Carbon::setTestNow(Carbon::parse('2026-09-01 12:00:00', 'Asia/Hebron'));
         $templateId = $this->insertTemplate();
-        $firstId = $this->insertOccurrence($templateId);
-        $secondId = $this->insertOccurrence($templateId);
-        $linkedLegacyId = $this->insertLegacyTask(templateId: $templateId);
+        $pastCompletedId = $this->insertOccurrence($templateId, date: '2026-08-31', status: 'completed');
+        $todayId = $this->insertOccurrence($templateId, date: '2026-09-01');
+        $futureId = $this->insertOccurrence($templateId, date: '2026-09-02');
+        $startedFutureId = $this->insertOccurrence($templateId, date: '2026-09-03', startedAt: now());
+        $linkedLegacyId = $this->insertLegacyTask(templateId: $templateId, date: '2026-09-02');
         $unrelatedId = $this->insertOccurrence(null);
 
-        $this->service->cancelOccurrenceSeries($firstId);
+        $this->service->cancelOccurrenceSeries($todayId);
 
         $this->assertDatabaseHas('employee_task_templates', ['id' => $templateId, 'is_active' => 0]);
-        $this->assertDatabaseHas('employee_task_occurrences', ['id' => $firstId, 'is_canceled' => 1]);
-        $this->assertDatabaseHas('employee_task_occurrences', ['id' => $secondId, 'is_canceled' => 1]);
+        $this->assertDatabaseHas('employee_task_occurrences', ['id' => $pastCompletedId, 'is_canceled' => 0]);
+        $this->assertDatabaseHas('employee_task_occurrences', ['id' => $todayId, 'is_canceled' => 1]);
+        $this->assertDatabaseHas('employee_task_occurrences', ['id' => $futureId, 'is_canceled' => 1]);
+        $this->assertDatabaseHas('employee_task_occurrences', ['id' => $startedFutureId, 'is_canceled' => 0]);
         $this->assertDatabaseHas('employee_tasks', ['id' => $linkedLegacyId, 'is_canceled' => 1]);
         $this->assertDatabaseHas('employee_task_occurrences', ['id' => $unrelatedId, 'is_canceled' => 0]);
 
@@ -101,7 +132,7 @@ class EmployeeTaskCancellationServiceTest extends TestCase
         $template = EmployeeTaskTemplate::findOrFail($templateId);
 
         $this->assertCount(0, $recurrence->ensureOccurrences($template));
-        $this->assertSame(2, DB::table('employee_task_occurrences')->where('template_id', $templateId)->count());
+        $this->assertSame(4, DB::table('employee_task_occurrences')->where('template_id', $templateId)->count());
     }
 
     public function test_occurrence_without_template_never_cancels_unrelated_null_template_rows(): void
@@ -144,23 +175,39 @@ class EmployeeTaskCancellationServiceTest extends TestCase
         ]);
     }
 
-    private function insertOccurrence(?int $templateId, ?int $legacyTaskId = null): int
+    private function insertOccurrence(
+        ?int $templateId,
+        ?int $legacyTaskId = null,
+        string $date = '2026-09-01',
+        string $status = 'pending',
+        mixed $startedAt = null
+    ): int
     {
         return (int) DB::table('employee_task_occurrences')->insertGetId([
             'template_id' => $templateId,
             'legacy_task_id' => $legacyTaskId,
+            'status' => $status,
             'is_canceled' => false,
+            'scheduled_date' => $date,
+            'started_at' => $startedAt,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
     }
 
-    private function insertLegacyTask(?int $parentId = null, ?int $templateId = null): int
+    private function insertLegacyTask(
+        ?int $parentId = null,
+        ?int $templateId = null,
+        string $date = '2026-09-01',
+        string $status = 'pending'
+    ): int
     {
         return (int) DB::table('employee_tasks')->insertGetId([
             'parent_id' => $parentId,
             'template_id' => $templateId,
+            'status' => $status,
             'is_canceled' => false,
+            'start_time' => $date.' 10:00:00',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
