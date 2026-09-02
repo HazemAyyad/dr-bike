@@ -1,19 +1,20 @@
 <?php
 
 use App\Http\Controllers\AdminNotificationWebController;
-use App\Http\Controllers\DebtLedgerShareWebController;
-use App\Http\Controllers\EmployeeNotificationWebController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeTasks;
+use App\Http\Controllers\API\FingerprintPushController;
 use App\Http\Controllers\API\Products;
 use App\Http\Controllers\API\Stocks;
 use App\Http\Controllers\API\Test;
-use App\Http\Controllers\ProductEditTestController;
 use App\Http\Controllers\CronJobWebController;
+use App\Http\Controllers\DebtLedgerShareWebController;
+use App\Http\Controllers\EmployeeNotificationWebController;
+use App\Http\Controllers\ProductEditTestController;
+use App\Http\Controllers\SecurityCenterWebController;
 use App\Http\Controllers\SmsTestWebController;
 use App\Http\Controllers\StoreSyncTestController;
 use App\Http\Controllers\UserSessionsWebController;
-use App\Http\Controllers\API\FingerprintPushController;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -35,6 +36,17 @@ Route::get('/', function () {
 
 Route::view('/privacy-policy', 'legal.privacy-policy')->name('privacy-policy');
 Route::view('/data-deletion', 'legal.data-deletion')->name('data-deletion');
+
+/** مركز أمان الويب: مراقبة دخول التطبيق وإدارة حظر Laravel لعناوين IP */
+Route::get('/security-center/login', [SecurityCenterWebController::class, 'loginForm'])->name('security-center.login');
+Route::post('/security-center/login', [SecurityCenterWebController::class, 'login'])->middleware('throttle:5,1')->name('security-center.login.submit');
+Route::middleware('security.center')->prefix('security-center')->name('security-center.')->group(function () {
+    Route::get('/', [SecurityCenterWebController::class, 'index'])->name('index');
+    Route::post('/blocks', [SecurityCenterWebController::class, 'block'])->name('blocks.store');
+    Route::post('/blocks/{block}/unblock', [SecurityCenterWebController::class, 'unblock'])->whereNumber('block')->name('blocks.unblock');
+    Route::post('/geolocation/refresh', [SecurityCenterWebController::class, 'refreshGeolocation'])->middleware('throttle:6,1')->name('geolocation.refresh');
+    Route::post('/logout', [SecurityCenterWebController::class, 'logout'])->name('logout');
+});
 
 /** ZKTeco ADMS / Push (no CSRF — called by fingerprint device) */
 Route::match(['GET', 'POST'], '/iclock/cdata', [FingerprintPushController::class, 'iclockCdata']);

@@ -40,6 +40,8 @@ class Kernel extends HttpKernel
 
     'api' => [
         \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
+        \App\Http\Middleware\EnforceSecurityIpBlock::class,
+        \App\Http\Middleware\MonitorSecurityAccess::class,
         \Illuminate\Routing\Middleware\ThrottleRequests::class.':api',
         \Illuminate\Routing\Middleware\SubstituteBindings::class,
         \App\Http\Middleware\SetLocale::class,
@@ -71,6 +73,7 @@ class Kernel extends HttpKernel
         'check.permission' => \App\Http\Middleware\CheckPermission::class,
         'check.task.owner' => \App\Http\Middleware\CheckTaskOwnership::class,
         'check.self.owner.or.permission' => \App\Http\Middleware\CheckSelfOrPermission::class,
+        'security.center' => \App\Http\Middleware\EnsureSecurityCenterAccess::class,
 
 
     ];
