@@ -16,6 +16,7 @@ class SmartDevice extends Model
         'user_id',
         'smart_home_id',
         'smart_room_id',
+        'display_order',
         'tuya_device_id',
         'tuya_product_id',
         'tuya_uuid',
@@ -35,6 +36,7 @@ class SmartDevice extends Model
 
     protected $casts = [
         'online' => 'boolean',
+        'display_order' => 'integer',
         'raw_metadata' => 'array',
         'last_status' => 'array',
         'paired_at' => 'datetime',

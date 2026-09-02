@@ -263,7 +263,7 @@ class SmartHomeController extends Controller
 
         $perPage = min(max((int) $request->input('per_page', 50), 1), 100);
 
-        $devices = $query->orderBy('name')->paginate($perPage);
+        $devices = $query->orderBy('display_order')->orderBy('name')->paginate($perPage);
         $devices->getCollection()->each(fn (SmartDevice $device) => $this->syncDeviceFunctions($device));
         $devices->getCollection()->load('functions');
 
@@ -389,6 +389,59 @@ class SmartHomeController extends Controller
             'status' => 'success',
             'message' => 'تم تحديث الجهاز',
             'device' => new SmartDeviceResource($device->fresh()->load(['room:id,name,tuya_room_id', 'functions'])),
+        ]);
+    }
+
+    public function reorderDevices(Request $request)
+    {
+        $data = $request->validate([
+            'scope' => ['required', Rule::in(['home', 'room', 'unassigned'])],
+            'smart_home_id' => ['nullable', 'integer'],
+            'smart_room_id' => ['nullable', 'integer'],
+            'device_ids' => ['required', 'array', 'min:1', 'max:100'],
+            'device_ids.*' => ['required', 'integer', 'distinct'],
+        ]);
+
+        $ownerId = $this->requestedOwnerId($request);
+        $query = SmartDevice::query()->where(fn (Builder $query) => $query
+            ->where('user_id', $ownerId)
+            ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $ownerId)));
+
+        if ($data['scope'] === 'unassigned') {
+            $query->whereNull('smart_home_id');
+        } else {
+            abort_if(empty($data['smart_home_id']), 422, 'المنزل مطلوب لحفظ ترتيب الأجهزة');
+            $home = $this->readableHome($request, (int) $data['smart_home_id']);
+            $query->where('smart_home_id', $home->id);
+
+            if ($data['scope'] === 'room') {
+                abort_if(empty($data['smart_room_id']), 422, 'الغرفة مطلوبة لحفظ ترتيب الأجهزة');
+                $room = $this->readableRoom($request, (int) $data['smart_room_id']);
+                abort_unless((int) $room->smart_home_id === (int) $home->id, 422, 'الغرفة لا تتبع هذا المنزل');
+                $query->where('smart_room_id', $room->id);
+            }
+        }
+
+        $deviceIds = collect($data['device_ids'])->map(fn ($id) => (int) $id)->values();
+        $devices = $query->whereIn('id', $deviceIds)->get()->keyBy('id');
+        abort_unless($devices->count() === $deviceIds->count(), 422, 'أحد الأجهزة لا يتبع النطاق المحدد');
+
+        DB::transaction(function () use ($deviceIds): void {
+            foreach ($deviceIds as $position => $deviceId) {
+                SmartDevice::whereKey($deviceId)->update(['display_order' => $position]);
+            }
+        });
+
+        $ordered = SmartDevice::query()
+            ->with(['room:id,name,tuya_room_id', 'functions'])
+            ->whereIn('id', $deviceIds)
+            ->orderBy('display_order')
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'تم حفظ ترتيب الأجهزة',
+            'devices' => SmartDeviceResource::collection($ordered),
         ]);
     }
 
@@ -854,12 +907,18 @@ class SmartHomeController extends Controller
     {
         $data = $request->validate([
             'name' => ['required', 'string', 'max:191'],
-            'command_code' => ['required', 'string', 'max:120'],
-            'command_value' => ['required', 'array'],
+            'command_code' => ['required_without:commands', 'string', 'max:120'],
+            'command_value' => ['required_without:commands', 'array'],
+            'command_value.value' => ['required_without:commands'],
+            'commands' => ['required_without:command_code', 'array', 'min:1', 'max:32'],
+            'commands.*.command_code' => ['required', 'string', 'max:120'],
+            'commands.*.command_value' => ['required', 'array'],
+            'commands.*.command_value.value' => ['present'],
             'scheduled_at' => ['required', 'date'],
             'repeat_type' => ['required', Rule::in(['once', 'daily', 'weekly'])],
             'repeat_days' => ['nullable', 'array'],
             'repeat_days.*' => ['string', Rule::in(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'])],
+            'recurrence_config' => ['nullable', 'array'],
             'enabled' => ['required', 'boolean'],
         ]);
 
@@ -868,6 +927,22 @@ class SmartHomeController extends Controller
         }
 
         $data['repeat_days'] = array_values(array_unique($data['repeat_days'] ?? []));
+        $commands = collect($data['commands'] ?? [[
+            'command_code' => $data['command_code'],
+            'command_value' => $data['command_value'],
+        ]])
+            ->keyBy(fn (array $command) => trim((string) $command['command_code']))
+            ->map(fn (array $command, string $code) => [
+                'command_code' => $code,
+                'command_value' => $command['command_value'],
+            ])
+            ->values()
+            ->all();
+
+        $data['commands'] = $commands;
+        $data['command_code'] = $commands[0]['command_code'];
+        $data['command_value'] = $commands[0]['command_value'];
+        $data['recurrence_config'] = $data['recurrence_config'] ?? [];
 
         return $data;
     }

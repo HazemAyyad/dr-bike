@@ -16,9 +16,11 @@ class SmartDeviceSchedule extends Model
         'name',
         'command_code',
         'command_value',
+        'commands',
         'scheduled_at',
         'repeat_type',
         'repeat_days',
+        'recurrence_config',
         'enabled',
         'last_executed_at',
         'next_run_at',
@@ -26,7 +28,9 @@ class SmartDeviceSchedule extends Model
 
     protected $casts = [
         'command_value' => 'array',
+        'commands' => 'array',
         'repeat_days' => 'array',
+        'recurrence_config' => 'array',
         'scheduled_at' => 'datetime',
         'enabled' => 'boolean',
         'last_executed_at' => 'datetime',

@@ -16,6 +16,7 @@ class SmartDeviceResource extends JsonResource
             'id' => (int) $this->id,
             'smart_home_id' => $this->smart_home_id !== null ? (int) $this->smart_home_id : null,
             'smart_room_id' => $this->smart_room_id !== null ? (int) $this->smart_room_id : null,
+            'display_order' => (int) ($this->display_order ?? 0),
             'room' => $this->whenLoaded('room', fn () => $this->room ? [
                 'id' => (int) $this->room->id,
                 'name' => $this->room->name,

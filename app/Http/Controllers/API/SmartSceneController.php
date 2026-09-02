@@ -137,6 +137,7 @@ class SmartSceneController extends Controller
             'conditions.*.value' => ['nullable'],
             'conditions.*.time' => ['nullable', 'date_format:H:i'],
             'conditions.*.date' => ['nullable', 'date_format:Y-m-d'],
+            'conditions.*.repeat_type' => ['nullable', Rule::in(['once', 'daily', 'weekly'])],
             'conditions.*.repeat_days' => ['nullable', 'array'],
             'conditions.*.repeat_days.*' => [Rule::in(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'])],
             'conditions.*.timezone' => ['nullable', 'string', 'max:80'],
