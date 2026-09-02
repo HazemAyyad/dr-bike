@@ -1264,6 +1264,7 @@ class MaintenanceDailyBoxService
         return [
             'id' => $session->id,
             'session_id' => $session->id,
+            'session_type' => 'maintenance',
             'user_id' => $session->user_id,
             'employee_id' => $session->employee_id,
             'employee_name' => $session->user?->name,
