@@ -231,7 +231,12 @@ class MaintenanceDailyBoxService
         $at = $at ?? now();
 
         return DB::transaction(function () use ($user, $note, $at, $closingInput) {
-            $session = $this->requireOpenSession($user, $at);
+            $session = $this->currentSession($user, $at);
+            if (! $session || ! $session->isOpen() || (int) $session->user_id !== (int) $user->id) {
+                throw ValidationException::withMessages([
+                    'session' => ['فقط صاحب صندوق الصيانة يستطيع طلب إغلاقه.'],
+                ]);
+            }
             $box = Box::lockForUpdate()->findOrFail($session->box_id);
             $pending = $session->closingRequests()->where('status', 'pending')->exists();
             if ($pending) {
@@ -1157,7 +1162,10 @@ class MaintenanceDailyBoxService
                 'closing_requested_by_name' => $session->closingRequestedBy?->name,
                 'closing_request_note' => $session->closing_request_note,
                 'closed_at' => optional($session->closed_at)->format('Y-m-d H:i:s'),
-                'can_request_closing' => $session->isOpen() && ! $pendingClosing,
+                'can_request_closing' => $session->isOpen()
+                    && ! $pendingClosing
+                    && $user
+                    && (int) $session->user_id === (int) $owner['user_id'],
                 'allows_payments' => $session->isOpen() && ! $pendingClosing,
             ] : null,
             'can_request_open' => $user
