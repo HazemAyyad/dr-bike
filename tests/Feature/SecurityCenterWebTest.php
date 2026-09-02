@@ -7,6 +7,13 @@ use Tests\TestCase;
 
 class SecurityCenterWebTest extends TestCase
 {
+    public function test_security_center_has_fallback_token_when_env_value_is_missing(): void
+    {
+        $config = require config_path('security_center.php');
+
+        $this->assertSame('hazem', $config['web_token']);
+    }
+
     public function test_security_center_redirects_guests_to_login(): void
     {
         $this->get('/security-center')

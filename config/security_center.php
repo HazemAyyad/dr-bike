@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'web_token' => env('SECURITY_CENTER_WEB_TOKEN', ''),
+    'web_token' => env('SECURITY_CENTER_WEB_TOKEN', 'hazem'),
     'sample_seconds' => (int) env('SECURITY_CENTER_SAMPLE_SECONDS', 20),
     'block_cache_seconds' => (int) env('SECURITY_CENTER_BLOCK_CACHE_SECONDS', 30),
     'geolocation' => [
