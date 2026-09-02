@@ -69,7 +69,7 @@ class SalesOrderService
      */
     private function guardReservedStockConflicts(SalesOrder $order, array $data): void
     {
-        if ($order->stock_deducted_at || ! $order->statusEnum()->reservesStock()) {
+        if ($order->stock_deducted_at || ! $order->reserves_stock || ! $order->statusEnum()->reservesStock()) {
             return;
         }
 
@@ -92,7 +92,7 @@ class SalesOrderService
      */
     private function applyUnconfirmedStockReservation(SalesOrder $order, array $data, User $user): void
     {
-        if (! $order->statusEnum()->reservesStock() || $order->stock_deducted_at) {
+        if (! $order->reserves_stock || ! $order->statusEnum()->reservesStock() || $order->stock_deducted_at) {
             return;
         }
 
@@ -295,6 +295,7 @@ class SalesOrderService
                 'debt_id' => $data['debt_id'] ?? null,
                 'is_debt_collection' => (bool) ($data['is_debt_collection'] ?? false),
                 'notes' => $data['notes'] ?? null,
+                'reserves_stock' => (bool) ($data['reserve_stock'] ?? true),
                 'created_by' => $user->id,
                 'updated_by' => $user->id,
             ]);
@@ -392,6 +393,7 @@ class SalesOrderService
                 'debt_id' => $data['debt_id'] ?? $order->debt_id,
                 'is_debt_collection' => (bool) ($data['is_debt_collection'] ?? $order->is_debt_collection),
                 'notes' => $data['notes'] ?? $order->notes,
+                'reserves_stock' => (bool) ($data['reserve_stock'] ?? $order->reserves_stock),
                 'updated_by' => $user->id,
             ]);
 
@@ -458,7 +460,7 @@ class SalesOrderService
             $negativeStockWasAcknowledged = $order->stockShortages()
                 ->where('status', 'open')->exists();
 
-            if ($conflicts !== [] && ! $negativeStockWasAcknowledged) {
+            if ($conflicts !== [] && $order->reserves_stock && ! $negativeStockWasAcknowledged) {
                 throw ValidationException::withMessages([
                     'acknowledge_negative_stock' => [__('messages.sales_order_reserved_stock_conflict')],
                 ]);
@@ -467,7 +469,11 @@ class SalesOrderService
                 $this->shortages->syncAndNotify($order, $conflicts, $user);
             }
 
-            $this->stockService->dispatchOrder($order, (int) $user->id);
+            $this->stockService->dispatchOrder(
+                $order,
+                (int) $user->id,
+                allowNegative: $conflicts !== []
+            );
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Confirmed->value,
@@ -731,6 +737,7 @@ class SalesOrderService
             'created_at' => $order->created_at?->toDateTimeString(),
             'updated_at' => $order->updated_at?->toDateTimeString(),
             'stock_deducted_at' => $order->stock_deducted_at?->toDateTimeString(),
+            'reserves_stock' => (bool) $order->reserves_stock,
             'financial_posted_at' => $order->financial_posted_at?->toDateTimeString(),
             'delivery_settled_at' => $order->delivery_settled_at?->toDateTimeString(),
             'delivery_settled_amount' => $order->delivery_settled_amount !== null
@@ -858,6 +865,7 @@ class SalesOrderService
             'delivery_company_code' => $order->deliveryCompany?->code
                 ? strtolower((string) $order->deliveryCompany->code)
                 : null,
+            'reserves_stock' => (bool) $order->reserves_stock,
         ];
     }
 
@@ -964,6 +972,7 @@ class SalesOrderService
             'packages.*.package_index' => 'required_with:packages|integer|min:1|max:2',
             'packages.*.customer_delivery_fee' => 'nullable|numeric|min:0',
             'acknowledge_negative_stock' => 'nullable|boolean',
+            'reserve_stock' => 'nullable|boolean',
         ];
 
         $data = $request->validate($rules);

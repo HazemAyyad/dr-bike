@@ -37,6 +37,7 @@ class SalesOrderStockService
         $query = SalesOrderItem::query()
             ->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
             ->where('sales_order_items.product_id', $productId)
+            ->where('sales_orders.reserves_stock', true)
             ->whereIn('sales_orders.status', $this->reservingStatuses());
 
         if ($excludeOrderId) {
@@ -77,6 +78,7 @@ class SalesOrderStockService
         $query = SalesOrderItem::query()
             ->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
             ->where('sales_order_items.product_id', $productId)
+            ->where('sales_orders.reserves_stock', true)
             ->where('sales_order_items.is_hidden', false)
             ->whereIn('sales_orders.status', $this->reservingStatuses());
 
@@ -232,6 +234,7 @@ class SalesOrderStockService
             ->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
             ->leftJoin('customers', 'customers.id', '=', 'sales_orders.customer_id')
             ->where('sales_order_items.product_id', $productId)
+            ->where('sales_orders.reserves_stock', true)
             ->where('sales_order_items.is_hidden', false)
             ->whereIn('sales_orders.status', $this->reservingStatuses());
 
@@ -396,6 +399,12 @@ class SalesOrderStockService
 
     public function reserveOrder(SalesOrder $order, bool $allowNegative = false): void
     {
+        if (! $order->reserves_stock) {
+            $this->releaseOrder($order);
+
+            return;
+        }
+
         $order->loadMissing('items.product');
 
         foreach ($order->items as $item) {
@@ -430,6 +439,12 @@ class SalesOrderStockService
             return;
         }
 
+        if (! $order->reserves_stock) {
+            $this->releaseOrder($order);
+
+            return;
+        }
+
         if (! $order->statusEnum()->reservesStock()) {
             return;
         }
@@ -438,7 +453,11 @@ class SalesOrderStockService
         $this->reserveOrder($order->fresh(['items.product']), $allowNegative);
     }
 
-    public function dispatchOrder(SalesOrder $order, ?int $userId = null): void
+    public function dispatchOrder(
+        SalesOrder $order,
+        ?int $userId = null,
+        bool $allowNegative = false
+    ): void
     {
         $order->loadMissing('items.product');
 
@@ -460,6 +479,7 @@ class SalesOrderStockService
                 referenceId: (int) $order->id,
                 note: 'خصم مخزون — طلبية #'.$order->id,
                 userId: $userId,
+                allowNegative: $allowNegative,
             );
 
             $item->update([
