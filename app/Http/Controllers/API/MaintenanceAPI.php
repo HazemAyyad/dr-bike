@@ -416,7 +416,11 @@ class MaintenanceAPI extends Controller
             $logDescription = $maintenance->customer_id
                 ? 'تم حذف طلب الصيانة للزبون '.$name
                 : 'تم حذف طلب الصيانة للتاجر '.$name;
-            DB::transaction(function () use ($maintenance, $logDescription) {
+            DB::transaction(function () use ($maintenance, $logDescription, $request) {
+                $this->deliveryService->reversePaymentsForDeletion(
+                    $maintenance,
+                    $request->user()
+                );
                 Logs::createLog('حذف طلب صيانة', $logDescription, 'maintenances');
                 $maintenance->delete();
             });

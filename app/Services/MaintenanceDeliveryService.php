@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Models\Box;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
+use App\Models\MaintenanceDailyBoxLog;
 use App\Models\MaintenancePayment;
 use App\Models\MaintenanceProduct;
 use App\Models\MaintenanceDailySession;
@@ -438,6 +440,112 @@ class MaintenanceDeliveryService
 
             return $maintenance->fresh(['products.product', 'payments.createdBy', 'instantSale']);
         });
+    }
+
+    /**
+     * يعكس كل الدفعات النقدية المثبتة عند حذف طلب الصيانة، مع إبقاء
+     * الحركات الأصلية وإضافة حركات سالبة حتى يبقى السجل المالي قابلاً للتدقيق.
+     */
+    public function reversePaymentsForDeletion(
+        Maintenance $maintenance,
+        User $user
+    ): float {
+        $maintenance = Maintenance::query()
+            ->with('payments')
+            ->lockForUpdate()
+            ->findOrFail($maintenance->id);
+
+        if ($maintenance->payments->contains(
+            fn (MaintenancePayment $payment) => $payment->method === 'cancellation_reversal'
+        )) {
+            return 0.0;
+        }
+
+        $payments = $maintenance->payments
+            ->filter(fn (MaintenancePayment $payment) =>
+                $payment->method === 'cash' && (float) $payment->amount > 0
+            );
+        $reversalSession = $payments->isNotEmpty()
+            ? $this->maintenanceDailyBoxService->requireOpenSession($user)
+            : null;
+
+        $reversedTotal = 0.0;
+        foreach ($payments->groupBy(fn (MaintenancePayment $payment) => implode(':', [
+            $payment->box_id,
+            $payment->maintenance_daily_session_id,
+            $payment->currency,
+        ])) as $group) {
+            /** @var MaintenancePayment $sourcePayment */
+            $sourcePayment = $group->first();
+            $amount = round((float) $group->sum('amount'), 2);
+            if ($amount <= 0) {
+                continue;
+            }
+            if (! $reversalSession?->box_id) {
+                throw ValidationException::withMessages([
+                    'payments' => ['يجب فتح صندوق الصيانة اليومي لعكس الدفعات قبل حذف الطلب.'],
+                ]);
+            }
+
+            $box = Box::query()->lockForUpdate()->findOrFail($reversalSession->box_id);
+            if ($sourcePayment->currency && $box->currency !== $sourcePayment->currency) {
+                throw ValidationException::withMessages([
+                    'payments' => ['عملة صندوق الصيانة المفتوح لا تطابق عملة الدفعة المراد عكسها.'],
+                ]);
+            }
+            $before = round((float) $box->total, 2);
+            $after = round($before - $amount, 2);
+            $box->update(['total' => $after]);
+
+            MaintenanceDailyBoxLog::create([
+                'session_id' => $reversalSession->id,
+                'box_id' => $box->id,
+                'maintenance_id' => $maintenance->id,
+                'instant_sale_id' => null,
+                'user_id' => $user->id,
+                'actor_name' => $user->name,
+                'type' => 'cancellation_reversal',
+                'payment_method' => 'cash',
+                'affects_cash_balance' => true,
+                'amount' => -$amount,
+                'box_balance_before' => $before,
+                'box_balance_after' => $after,
+                'description' => 'عكس دفعات صيانة محذوفة #'.$maintenance->id,
+                'note' => 'إلغاء مالي تلقائي بسبب حذف طلب الصيانة بواسطة '.$user->name,
+            ]);
+
+            MaintenancePayment::create([
+                'maintenance_id' => $maintenance->id,
+                'maintenance_daily_session_id' => $reversalSession->id,
+                'box_id' => $box->id,
+                'instant_sale_id' => null,
+                'created_by' => $user->id,
+                'method' => 'cancellation_reversal',
+                'amount' => -$amount,
+                'currency' => $sourcePayment->currency ?: ($box->currency ?: 'شيكل'),
+                'note' => 'إلغاء مالي تلقائي بسبب حذف طلب الصيانة',
+            ]);
+            $reversedTotal = round($reversedTotal + $amount, 2);
+        }
+
+        if ($reversedTotal > 0) {
+            $maintenance->update([
+                'paid_amount' => 0,
+                'payment_box_id' => null,
+            ]);
+            $this->activityLogger->log(
+                $maintenance,
+                $user,
+                'payments_reversed_on_delete',
+                'إلغاء مالي لدفعات الصيانة',
+                'تم عكس دفعات بقيمة '.$reversedTotal.' شيكل قبل حذف الطلب.',
+                $maintenance->status,
+                $maintenance->status,
+                ['amount' => -$reversedTotal]
+            );
+        }
+
+        return $reversedTotal;
     }
 
     /**
