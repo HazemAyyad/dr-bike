@@ -1000,6 +1000,34 @@ class DebtLedger extends Controller
 
             $periodLabel = $this->formatPeriodLabel($request->period, $startDate, $endDate);
             $periodLabel = $periodLabel.' — '.$displayCurrency;
+            $sourceDetails = $this->reportSourceDetails($transactions, $detailLevel);
+
+            if ($request->boolean('json_response')) {
+                return response()->json([
+                    'status' => 'success',
+                    'report' => [
+                        'file_name' => 'debt_ledger_'.$person['id'].'.pdf',
+                        'person' => $person,
+                        'total_taken' => $totals['total_taken'],
+                        'total_given' => $totals['total_given'],
+                        'balance' => $totals['balance'],
+                        'transactions_count' => $transactions->count(),
+                        'period_label' => $periodLabel,
+                        'detail_level' => $detailLevel,
+                        'generated_at' => now()->format('Y-m-d H:i'),
+                        'transactions' => $transactions->map(fn ($transaction) => [
+                            'id' => (int) $transaction->id,
+                            'type' => $transaction->type,
+                            'amount' => (float) $transaction->amount,
+                            'note' => $transaction->note,
+                            'transaction_date' => $transaction->transaction_date?->format('Y-m-d'),
+                            'balance_after' => (float) $transaction->balance_after,
+                        ])->values(),
+                        'source_details' => collect($sourceDetails)
+                            ->mapWithKeys(fn ($detail, $transactionId) => [(string) $transactionId => $detail]),
+                    ],
+                ], 200);
+            }
 
             $reportHtml = view('pdf.debt-ledger-report', [
                 'person' => $person,
@@ -1010,7 +1038,7 @@ class DebtLedger extends Controller
                 'period_label' => $periodLabel,
                 'currency' => $displayCurrency,
                 'detail_level' => $detailLevel,
-                'source_details' => $this->reportSourceDetails($transactions, $detailLevel),
+                'source_details' => $sourceDetails,
                 'generated_at' => now()->format('Y-m-d H:i'),
                 'transactions_count' => $transactions->count(),
             ])->render();
@@ -1026,33 +1054,6 @@ class DebtLedger extends Controller
             }
 
             $pdf = Pdf::loadHTML($reportHtml);
-
-            if ($request->boolean('json_response')) {
-                $fileName = 'debt_ledger_' . $person['id'] . '_' . time() . '.pdf';
-                $path = 'debt-ledger-reports/' . $fileName;
-                $fullPath = public_path($path);
-
-                if (!is_dir(dirname($fullPath))) {
-                    mkdir(dirname($fullPath), 0755, true);
-                }
-
-                $pdf->save($fullPath);
-
-                return response()->json([
-                    'status' => 'success',
-                    'report' => [
-                        'pdf_url' => url($path),
-                        'file_name' => $fileName,
-                        'person' => $person,
-                        'total_taken' => $totals['total_taken'],
-                        'total_given' => $totals['total_given'],
-                        'balance' => $totals['balance'],
-                        'transactions_count' => $transactions->count(),
-                        'period_label' => $periodLabel,
-                        'detail_level' => $detailLevel,
-                    ],
-                ], 200);
-            }
 
             return $pdf->download('debt_ledger_report.pdf');
         } catch (ValidationException $e) {
@@ -1088,7 +1089,7 @@ class DebtLedger extends Controller
                 'sales_order' => $this->salesOrderReportDetail($sourceId, $withImages),
                 'instant_sale' => $this->instantSaleReportDetail($sourceId, $withImages),
                 'profit_sale' => $this->profitSaleReportDetail($sourceId, $withImages),
-                'bill' => $this->billReportDetail($sourceId, $withImages),
+                'bill', 'purchase_invoice' => $this->billReportDetail($sourceId, $withImages),
                 default => null,
             };
 
@@ -1247,7 +1248,7 @@ class DebtLedger extends Controller
         foreach ([$relative, 'images/'.$relative, 'storage/'.$relative] as $candidate) {
             $path = public_path($candidate);
             if (is_file($path)) {
-                return $path;
+                return url($candidate);
             }
         }
 

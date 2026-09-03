@@ -225,11 +225,11 @@
 
         <section class="summary">
             <div class="summary-item">
-                <span class="summary-label">إجمالي أخذت</span>
+                <span class="summary-label">إجمالي مستحق لنا</span>
                 <span class="summary-value taken">{{ number_format($total_taken, 2) }} {{ $currency ?? 'شيكل' }}</span>
             </div>
             <div class="summary-item">
-                <span class="summary-label">إجمالي أعطيت</span>
+                <span class="summary-label">إجمالي مستحق علينا</span>
                 <span class="summary-value given">{{ number_format($total_given, 2) }} {{ $currency ?? 'شيكل' }}</span>
             </div>
             <div class="summary-item">
@@ -250,8 +250,8 @@
                             <th class="num">#</th>
                             <th>التاريخ</th>
                             <th>ملاحظة</th>
-                            <th class="num">أعطيت</th>
-                            <th class="num">أخذت</th>
+                            <th class="num">مستحق علينا</th>
+                            <th class="num">مستحق لنا</th>
                             <th class="num">الرصيد السابق</th>
                             <th class="num">الرصيد بعد</th>
                         </tr>

@@ -588,7 +588,7 @@ class DebtLedgerService
         return [
             'id' => $transaction->id,
             'type' => $transaction->type,
-            'type_label' => $transaction->type === 'taken' ? 'أخذت' : 'أعطيت',
+            'type_label' => $transaction->type === 'taken' ? 'مستحق لنا' : 'مستحق علينا',
             'source_label' => $sourceLabel,
             'amount' => (float) $transaction->amount,
             'currency' => $currency,
@@ -1459,7 +1459,7 @@ class DebtLedgerService
                 'last_transaction' => $lastTransaction ? [
                     'id' => $lastTransaction->id,
                     'type' => $lastTransaction->type,
-                    'type_label' => $lastTransaction->type === 'taken' ? 'أخذت' : 'أعطيت',
+                    'type_label' => $lastTransaction->type === 'taken' ? 'مستحق لنا' : 'مستحق علينا',
                     'amount' => (float) $lastTransaction->amount,
                     'currency' => $this->normalizeCurrency($lastTransaction->currency),
                     'transaction_date' => $lastTransaction->transaction_date?->format('Y-m-d'),
