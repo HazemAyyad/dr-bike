@@ -1002,7 +1002,8 @@ class SalesOrderService
                         'partner_address_id' => ['العنوان المختار لا يتبع الزبون أو المورد المحدد.'],
                     ]);
                 }
-                if (! $customerAddressProvided) {
+                $providedAddress = trim((string) ($data['customer_address'] ?? ''));
+                if (! $customerAddressProvided || in_array($providedAddress, ['', '----'], true)) {
                     $data['customer_address'] = $this->normalizeStreetAddress($selectedAddress->street_address);
                 }
                 if (! $customerPhoneProvided && filled($selectedAddress->phone)) {
