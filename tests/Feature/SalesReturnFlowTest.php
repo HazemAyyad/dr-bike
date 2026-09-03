@@ -6,6 +6,7 @@ use App\Models\Box;
 use App\Models\Customer;
 use App\Models\DebtTransaction;
 use App\Models\InstantSale;
+use App\Models\InventoryCostLayer;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\SalesDailySession;
@@ -60,6 +61,20 @@ class SalesReturnFlowTest extends TestCase
             'reference_type' => 'sales_return',
             'reference_id' => $return->id,
         ]);
+        $returnItem = $return->items()->firstOrFail();
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'source_type' => 'sales_return_item',
+            'source_id' => $returnItem->id,
+            'quantity' => 2,
+            'remaining_quantity' => 2,
+        ]);
+        $this->assertSame(
+            (float) $returnItem->inventory_unit_cost,
+            (float) InventoryCostLayer::where('source_type', 'sales_return_item')
+                ->where('source_id', $returnItem->id)
+                ->value('unit_cost')
+        );
     }
 
     public function test_return_cannot_exceed_quantity_remaining_after_previous_return(): void
@@ -80,6 +95,59 @@ class SalesReturnFlowTest extends TestCase
 
         $this->expectException(ValidationException::class);
         app(SalesReturnService::class)->create($this->user, $payload);
+    }
+
+    public function test_cancelling_return_reverses_stock_credit_and_cost_layer(): void
+    {
+        [$customer, $product, $sale] = $this->instantSale(quantity: 2, unitPrice: 30, stock: 5);
+        $service = app(SalesReturnService::class);
+        $return = $service->create($this->user, [
+            'person_type' => 'customer',
+            'person_id' => $customer->id,
+            'cash_refund_amount' => 0,
+            'items' => [[
+                'source_type' => 'instant_sale',
+                'source_item_id' => $sale->id,
+                'quantity' => 1,
+                'unit_price' => 30,
+            ]],
+        ]);
+
+        $this->assertSame(6, (int) $product->fresh()->stock);
+        $cancelled = $service->cancel($this->user, $return->id, 'خطأ في كمية المرتجع');
+
+        $this->assertSame('cancelled', $cancelled->status);
+        $this->assertSame(5, (int) $product->fresh()->stock);
+        $this->assertSame(0, DebtTransaction::query()
+            ->active()
+            ->where('source', 'sales_return')
+            ->where('source_id', $return->id)
+            ->count());
+        $returnItem = $return->items()->firstOrFail();
+        $this->assertEquals(0, (float) InventoryCostLayer::query()
+            ->where('source_type', 'sales_return_item')
+            ->where('source_id', $returnItem->id)
+            ->value('remaining_quantity'));
+    }
+
+    public function test_sale_with_active_return_cannot_be_cancelled_or_edited(): void
+    {
+        [$customer, , $sale] = $this->instantSale(quantity: 2, unitPrice: 30, stock: 5);
+        $service = app(SalesReturnService::class);
+        $service->create($this->user, [
+            'person_type' => 'customer',
+            'person_id' => $customer->id,
+            'cash_refund_amount' => 0,
+            'items' => [[
+                'source_type' => 'instant_sale',
+                'source_item_id' => $sale->id,
+                'quantity' => 1,
+                'unit_price' => 30,
+            ]],
+        ]);
+
+        $this->expectException(ValidationException::class);
+        $service->assertInstantSaleHasNoActiveDirectReturns($sale);
     }
 
     public function test_mixed_cash_and_credit_return_uses_open_daily_box(): void

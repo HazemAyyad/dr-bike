@@ -6,6 +6,8 @@ use App\Http\Controllers\API\BoxLogs;
 use App\Http\Controllers\API\Logs;
 use App\Models\Box;
 use App\Models\Customer;
+use App\Models\InventoryCostAllocation;
+use App\Models\InventoryCostLayer;
 use App\Models\InstantSale;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
@@ -13,8 +15,11 @@ use App\Models\SalesOrderItem;
 use App\Models\SalesReturn;
 use App\Models\SalesReturnItem;
 use App\Models\Seller;
+use App\Models\SizeColor;
 use App\Models\User;
+use App\Support\ProductImageResolver;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class SalesReturnService
@@ -66,7 +71,7 @@ class SalesReturnService
         $this->assertPerson($personType, $personId);
 
         $instantRows = InstantSale::query()
-            ->with(['product.normalImages', 'size:id,size', 'sizeColor:id,colorAr,sizeId', 'parentSale.subProducts'])
+            ->with(['product.viewImages', 'product.normalImages', 'product.image3d', 'size:id,size', 'sizeColor:id,colorAr,sizeId', 'parentSale.subProducts'])
             ->whereNotNull('product_id')
             ->where($personType === 'customer' ? 'buyer_id' : 'seller_id', $personId)
             ->where($personType === 'customer' ? 'seller_id' : 'buyer_id', null)
@@ -75,7 +80,10 @@ class SalesReturnService
             ->get()
             ->map(function (InstantSale $line) {
                 $sold = (int) round((float) $line->quantity);
-                $returned = (int) SalesReturnItem::query()->where('instant_sale_id', $line->id)->sum('quantity');
+                $returned = (int) SalesReturnItem::query()
+                    ->where('instant_sale_id', $line->id)
+                    ->whereHas('salesReturn', fn ($query) => $query->where('status', '!=', 'cancelled'))
+                    ->sum('quantity');
                 $available = max(0, $sold - $returned);
                 $root = $line->parent_id ? $line->parentSale : $line;
 
@@ -96,7 +104,7 @@ class SalesReturnService
         $orderRows = collect();
         if ($personType === 'customer') {
             $orderRows = SalesOrderItem::query()
-                ->with(['product.normalImages', 'size:id,size', 'sizeColor:id,colorAr,sizeId', 'salesOrder:id,serial_number,customer_id,status,subtotal,discount,created_at'])
+                ->with(['product.viewImages', 'product.normalImages', 'product.image3d', 'size:id,size', 'sizeColor:id,colorAr,sizeId', 'salesOrder:id,serial_number,customer_id,status,subtotal,discount,created_at'])
                 ->whereHas('salesOrder', fn ($query) => $query
                     ->where('customer_id', $personId)
                     ->whereIn('status', $this->returnableOrderStatuses()))
@@ -104,7 +112,10 @@ class SalesReturnService
                 ->get()
                 ->map(function (SalesOrderItem $line) {
                     $sold = (int) ($line->delivered_qty > 0 ? $line->delivered_qty : $line->quantity);
-                    $recorded = (int) SalesReturnItem::query()->where('sales_order_item_id', $line->id)->sum('quantity');
+                    $recorded = (int) SalesReturnItem::query()
+                        ->where('sales_order_item_id', $line->id)
+                        ->whereHas('salesReturn', fn ($query) => $query->where('status', '!=', 'cancelled'))
+                        ->sum('quantity');
                     $returned = max((int) $line->returned_qty, $recorded);
                     $available = max(0, $sold - $returned);
                     $order = $line->salesOrder;
@@ -189,7 +200,7 @@ class SalesReturnService
             $this->serials->assignPrefixedToModel($return, DocumentSerialService::TYPE_SALES_RETURN, 'SRT-', 'serial_number');
 
             foreach ($prepared as $row) {
-                SalesReturnItem::create([
+                $returnItem = SalesReturnItem::create([
                     'sales_return_id' => $return->id,
                     'sales_order_item_id' => $row['sales_order_item_id'],
                     'instant_sale_id' => $row['instant_sale_id'],
@@ -219,6 +230,10 @@ class SalesReturnService
                     (int) $return->id,
                     'مرتجع مبيعات '.$return->serial_number.' — '.$row['product_name'],
                     (int) $actor->id,
+                    (float) $row['inventory_unit_cost'],
+                    (float) $row['inventory_total_cost'],
+                    'sales_return_item',
+                    (int) $returnItem->id,
                 );
             }
 
@@ -258,15 +273,322 @@ class SalesReturnService
         });
     }
 
-    public function show(int $id): SalesReturn
+    public function cancel(User $actor, int $id, string $reason): SalesReturn
     {
-        return SalesReturn::query()->with($this->relations())->findOrFail($id);
+        return DB::transaction(function () use ($actor, $id, $reason) {
+            $return = SalesReturn::query()
+                ->with(['items.product', 'refundBox'])
+                ->lockForUpdate()
+                ->findOrFail($id);
+
+            if ($return->status === 'cancelled') {
+                throw ValidationException::withMessages([
+                    'sales_return_id' => ['فاتورة المرتجع ملغاة مسبقًا.'],
+                ]);
+            }
+            if ($return->return_type !== 'direct') {
+                throw ValidationException::withMessages([
+                    'sales_return_id' => ['هذا المرتجع تابع لمسار الطلبيات ولا يمكن إلغاؤه من شاشة المرتجعات المباشرة.'],
+                ]);
+            }
+
+            foreach ($return->items as $item) {
+                $this->reverseReturnedStock($return, $item, $actor);
+                if ($item->sales_order_item_id) {
+                    DB::table('sales_order_items')
+                        ->where('id', $item->sales_order_item_id)
+                        ->update([
+                            'returned_qty' => DB::raw('GREATEST(0, returned_qty - '.(int) $item->quantity.')'),
+                            'updated_at' => now(),
+                        ]);
+                }
+            }
+
+            if ((float) $return->cash_refund_amount > 0) {
+                $box = Box::query()->lockForUpdate()->find($return->refund_box_id);
+                if (! $box) {
+                    throw ValidationException::withMessages([
+                        'refund_box_id' => ['صندوق رد المبلغ الأصلي غير موجود؛ لا يمكن عكس المرتجع آليًا.'],
+                    ]);
+                }
+                $box->increment('total', (float) $return->cash_refund_amount);
+                BoxLogs::createBoxLog(
+                    $box->fresh(),
+                    'إضافة — إلغاء مرتجع مبيعات '.$return->serial_number,
+                    'add',
+                    (float) $return->cash_refund_amount,
+                    'عكس الرد النقدي للمرتجع — السبب: '.$reason,
+                );
+            }
+
+            $this->ledger->deleteSourceLedger('sales_return', (int) $return->id);
+            $return->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $actor->id,
+                'cancellation_reason' => $reason,
+            ]);
+
+            Logs::createLog(
+                'إلغاء فاتورة مرتجع مبيعات',
+                'تم إلغاء '.$return->serial_number.' وعكس المخزون والنقد والرصيد. السبب: '.$reason,
+                'sales_returns'
+            );
+
+            return $return->fresh($this->relations());
+        });
+    }
+
+    /** @param array<string, mixed> $data */
+    public function replace(User $actor, int $id, array $data, string $reason): SalesReturn
+    {
+        return DB::transaction(function () use ($actor, $id, $data, $reason) {
+            $old = $this->cancel($actor, $id, 'تعديل المرتجع: '.$reason);
+            $replacement = $this->create($actor, $data);
+            $replacement->update(['replaces_sales_return_id' => $old->id]);
+            $old->update(['replacement_sales_return_id' => $replacement->id]);
+
+            Logs::createLog(
+                'تعديل فاتورة مرتجع مبيعات',
+                'تم استبدال '.$old->serial_number.' بالفاتورة '.$replacement->serial_number.'. السبب: '.$reason,
+                'sales_returns'
+            );
+
+            return $replacement->fresh($this->relations());
+        });
+    }
+
+    public function assertInstantSaleHasNoActiveDirectReturns(InstantSale $sale): void
+    {
+        $lineIds = InstantSale::query()
+            ->where('id', $sale->id)
+            ->orWhere('parent_id', $sale->id)
+            ->pluck('id');
+        $exists = SalesReturnItem::query()
+            ->whereIn('instant_sale_id', $lineIds)
+            ->whereHas('salesReturn', fn ($query) => $query
+                ->where('return_type', 'direct')
+                ->where('status', '!=', 'cancelled'))
+            ->exists();
+        if ($exists) {
+            throw ValidationException::withMessages([
+                'instant_sale_id' => ['لا يمكن إلغاء أو تعديل فاتورة البيع قبل إلغاء مرتجعاتها الفعالة.'],
+            ]);
+        }
+    }
+
+    public function assertSalesOrderHasNoActiveDirectReturns(int $orderId): void
+    {
+        $exists = SalesReturnItem::query()
+            ->whereHas('salesOrderItem', fn ($query) => $query->where('sales_order_id', $orderId))
+            ->whereHas('salesReturn', fn ($query) => $query
+                ->where('return_type', 'direct')
+                ->where('status', '!=', 'cancelled'))
+            ->exists();
+        if ($exists) {
+            throw ValidationException::withMessages([
+                'order' => ['لا يمكن إلغاء أو تعديل الطلبية قبل إلغاء مرتجعاتها الفعالة.'],
+            ]);
+        }
+    }
+
+    private function reverseReturnedStock(SalesReturn $return, SalesReturnItem $item, User $actor): void
+    {
+        $layer = InventoryCostLayer::query()
+            ->where('source_type', 'sales_return_item')
+            ->where('source_id', $item->id)
+            ->lockForUpdate()
+            ->first();
+        if (! $layer || (float) $layer->remaining_quantity + 0.0001 < (float) $item->quantity) {
+            throw ValidationException::withMessages([
+                'items' => ['لا يمكن إلغاء المرتجع لأن مخزونه أُعيد بيعه أو لا يملك طبقة تكلفة موثقة: '.$item->product_name],
+            ]);
+        }
+
+        if ($item->size_color_id) {
+            $stock = (int) SizeColor::query()->whereKey($item->size_color_id)->lockForUpdate()->value('stock');
+        } else {
+            $stock = (int) Product::withTrashed()->whereKey($item->product_id)->lockForUpdate()->value('stock');
+        }
+        if ($stock < (int) $item->quantity) {
+            throw ValidationException::withMessages([
+                'items' => ['كمية المخزون الحالية لا تكفي لعكس المرتجع للصنف '.$item->product_name.'.'],
+            ]);
+        }
+
+        $layer->decrement('remaining_quantity', (float) $item->quantity);
+        $this->stock->adjustStock(
+            product: $item->product,
+            quantityDelta: -1 * (int) $item->quantity,
+            type: 'sales_return_cancel',
+            sizeColorId: $item->size_color_id ? (int) $item->size_color_id : null,
+            referenceType: 'sales_return_cancel',
+            referenceId: (int) $return->id,
+            note: 'عكس مخزون مرتجع '.$return->serial_number.' — '.$item->product_name,
+            userId: (int) $actor->id,
+            unitCost: (float) $item->inventory_unit_cost,
+            totalCost: (float) $item->inventory_total_cost,
+        );
+    }
+
+    /** @return array<string, mixed> */
+    public function show(int $id): array
+    {
+        $return = SalesReturn::query()->with($this->detailRelations())->findOrFail($id);
+        $payload = $return->toArray();
+        $payload['items'] = $return->items->map(
+            fn (SalesReturnItem $item) => $this->detailItemPayload($item)
+        )->values()->all();
+        $payload['source_invoices'] = collect($payload['items'])
+            ->pluck('sale_invoice')
+            ->filter()
+            ->unique(fn (array $invoice) => $invoice['type'].':'.$invoice['id'])
+            ->values()
+            ->all();
+        $payload['accounting'] = [
+            'gross_return' => (float) $return->total_amount,
+            'cash_refund' => (float) $return->cash_refund_amount,
+            'credit_refund' => (float) $return->credit_amount,
+            'inventory_cost_restored' => round((float) $return->items->sum('inventory_total_cost'), 4),
+            'margin_reversed' => round((float) $return->total_amount - (float) $return->items->sum('inventory_total_cost'), 4),
+            'debt_transaction_id' => $return->debt_transaction_id,
+            'refund_box_id' => $return->refund_box_id,
+        ];
+
+        return $payload;
     }
 
     /** @return array<int, string> */
     private function relations(): array
     {
         return ['items.instantSale', 'items.salesOrderItem', 'customer:id,name,phone', 'seller:id,name,phone', 'refundBox:id,name,currency', 'debtTransaction'];
+    }
+
+    /** @return array<int, string> */
+    private function detailRelations(): array
+    {
+        return [
+            'items.product.viewImages',
+            'items.product.normalImages',
+            'items.product.image3d',
+            'items.size:id,size',
+            'items.sizeColor:id,colorAr,sizeId',
+            'items.instantSale.parentSale',
+            'items.salesOrderItem.salesOrder',
+            'customer:id,name,phone',
+            'seller:id,name,phone',
+            'refundBox:id,name,currency',
+            'debtTransaction',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function detailItemPayload(SalesReturnItem $item): array
+    {
+        $saleInvoice = $this->saleInvoicePayload($item);
+        $payload = $item->toArray();
+        $images = $item->product
+            ? ProductImageResolver::formatForList($item->product)
+            : ['product_image' => 'no image', 'product_viewImages' => [], 'product_normalImages' => [], 'product_image3d' => []];
+        $payload['product_code'] = $item->product?->product_code;
+        $payload['product_image'] = $images['product_image'];
+        $payload['product_images'] = collect([
+            ...$images['product_viewImages'],
+            ...$images['product_normalImages'],
+            ...$images['product_image3d'],
+        ])->unique()->values()->all();
+        $payload['size_label'] = $item->size?->size;
+        $payload['color_label'] = $item->sizeColor?->colorAr;
+        $payload['sale_invoice'] = $saleInvoice;
+        $payload['purchase_sources'] = $this->purchaseSources($item, $saleInvoice);
+
+        return $payload;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function saleInvoicePayload(SalesReturnItem $item): ?array
+    {
+        if ($item->instant_sale_id) {
+            $line = $item->instantSale;
+            $root = $line?->parent_id ? $line->parentSale : $line;
+            if (! $root) {
+                return null;
+            }
+
+            return [
+                'type' => 'instant_sale',
+                'id' => (int) $root->id,
+                'serial' => (string) ($root->serial_number ?: '#'.$root->id),
+                'date' => $root->created_at?->toDateTimeString(),
+                'sold_quantity' => (int) round((float) $line->quantity),
+                'sold_unit_price' => $this->instantEffectiveUnitPrice($line),
+            ];
+        }
+
+        $line = $item->salesOrderItem;
+        $order = $line?->salesOrder;
+        if (! $line || ! $order) {
+            return null;
+        }
+
+        return [
+            'type' => 'sales_order',
+            'id' => (int) $order->id,
+            'serial' => (string) ($order->serial_number ?: '#'.$order->id),
+            'date' => $order->created_at?->toDateTimeString(),
+            'sold_quantity' => (int) ($line->delivered_qty > 0 ? $line->delivered_qty : $line->quantity),
+            'sold_unit_price' => (float) $item->original_unit_price,
+        ];
+    }
+
+    /** @param array<string, mixed>|null $saleInvoice @return array<int, array<string, mixed>> */
+    private function purchaseSources(SalesReturnItem $item, ?array $saleInvoice): array
+    {
+        if (! $saleInvoice
+            || ! Schema::hasTable('inventory_cost_allocations')
+            || ! Schema::hasTable('inventory_cost_layers')
+            || ! Schema::hasTable('purchase_receipt_items')) {
+            return [];
+        }
+
+        $costReferenceId = $item->instant_sale_id
+            ? (int) $item->instant_sale_id
+            : (int) $saleInvoice['id'];
+
+        $query = InventoryCostAllocation::query()
+            ->join('inventory_cost_layers as layers', 'layers.id', '=', 'inventory_cost_allocations.inventory_cost_layer_id')
+            ->join('purchase_receipt_items as receipt_items', function ($join) {
+                $join->on('receipt_items.id', '=', 'layers.source_id')
+                    ->where('layers.source_type', 'purchase_receipt_item');
+            })
+            ->join('purchase_receipts as receipts', 'receipts.id', '=', 'receipt_items.purchase_receipt_id')
+            ->join('bill_items', 'bill_items.id', '=', 'receipt_items.bill_item_id')
+            ->join('bills', 'bills.id', '=', 'receipts.bill_id')
+            ->where('inventory_cost_allocations.reference_type', $saleInvoice['type'])
+            ->where('inventory_cost_allocations.reference_id', $costReferenceId)
+            ->where('inventory_cost_allocations.product_id', $item->product_id)
+            ->when($item->size_color_id, fn ($q) => $q->where('layers.size_color_id', $item->size_color_id))
+            ->when(! $item->size_color_id && $item->size_id, fn ($q) => $q->where('layers.size_id', $item->size_id));
+
+        return $query
+            ->selectRaw('bills.id as bill_id, bills.created_at as bill_date, bills.currency, bill_items.id as bill_item_id, bill_items.quantity as invoice_quantity, bill_items.ordered_quantity, bill_items.received_owned_quantity, receipt_items.unit_price, SUM(inventory_cost_allocations.quantity) as allocated_quantity, SUM(inventory_cost_allocations.total_cost) as allocated_total_cost')
+            ->groupBy('bills.id', 'bills.created_at', 'bills.currency', 'bill_items.id', 'bill_items.quantity', 'bill_items.ordered_quantity', 'bill_items.received_owned_quantity', 'receipt_items.unit_price')
+            ->orderBy('bills.id')
+            ->get()
+            ->map(fn ($row) => [
+                'bill_id' => (int) $row->bill_id,
+                'bill_date' => $row->bill_date,
+                'bill_item_id' => (int) $row->bill_item_id,
+                'invoice_quantity' => (float) $row->invoice_quantity,
+                'ordered_quantity' => (float) $row->ordered_quantity,
+                'received_quantity' => (float) $row->received_owned_quantity,
+                'allocated_to_sale_quantity' => (float) $row->allocated_quantity,
+                'unit_cost' => (float) $row->unit_price,
+                'allocated_total_cost' => (float) $row->allocated_total_cost,
+                'currency' => (string) $row->currency,
+                'traceability' => 'inventory_cost_allocation',
+            ])
+            ->all();
     }
 
     private function activeInstantSales($query)
@@ -300,8 +622,6 @@ class SalesReturnService
     private function availableRow(string $sourceType, int $sourceItemId, int $invoiceId, string $serial, object $line, int $sold, int $returned, int $available, float $price, ?string $date): array
     {
         $product = $line->product;
-        $image = $product?->normalImages?->first();
-
         return [
             'source_type' => $sourceType,
             'source_item_id' => $sourceItemId,
@@ -311,7 +631,7 @@ class SalesReturnService
             'product_id' => (int) $line->product_id,
             'product_code' => $product?->product_code,
             'product_name' => $product?->nameAr ?: $line->product_name,
-            'image' => $image?->imageUrl,
+            'image' => ProductImageResolver::preferredUrl($product),
             'size_id' => $line->size_id ? (int) $line->size_id : null,
             'size_label' => $line->size?->size,
             'size_color_id' => $line->size_color_id ? (int) $line->size_color_id : null,
@@ -352,6 +672,7 @@ class SalesReturnService
             $sold = (int) round((float) $line->quantity);
             $returned = (int) SalesReturnItem::query()
                 ->where('instant_sale_id', $line->id)
+                ->whereHas('salesReturn', fn ($query) => $query->where('status', '!=', 'cancelled'))
                 ->lockForUpdate()
                 ->sum('quantity');
             $original = $this->instantEffectiveUnitPrice($line);
@@ -373,6 +694,7 @@ class SalesReturnService
             $sold = (int) ($line->delivered_qty > 0 ? $line->delivered_qty : $line->quantity);
             $recorded = (int) SalesReturnItem::query()
                 ->where('sales_order_item_id', $line->id)
+                ->whereHas('salesReturn', fn ($query) => $query->where('status', '!=', 'cancelled'))
                 ->lockForUpdate()
                 ->sum('quantity');
             $returned = max((int) $line->returned_qty, $recorded);

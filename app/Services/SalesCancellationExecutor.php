@@ -63,6 +63,8 @@ class SalesCancellationExecutor
             ]);
         }
 
+        app(SalesReturnService::class)->assertInstantSaleHasNoActiveDirectReturns($sale);
+
         foreach ($this->stockLinesForSale($sale) as $line) {
             $this->restoreStockForSaleLine($line);
         }

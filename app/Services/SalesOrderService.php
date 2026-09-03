@@ -337,6 +337,7 @@ class SalesOrderService
     public function update(User $user, int $orderId, Request $request): SalesOrder
     {
         $order = SalesOrder::query()->with('items')->findOrFail($orderId);
+        app(SalesReturnService::class)->assertSalesOrderHasNoActiveDirectReturns((int) $order->id);
 
         if (! $order->statusEnum()->isEditable()) {
             throw ValidationException::withMessages([
@@ -514,6 +515,7 @@ class SalesOrderService
     public function revertStatus(User $user, int $orderId, ?string $note = null): SalesOrder
     {
         $order = SalesOrder::query()->with(['items.product'])->findOrFail($orderId);
+        app(SalesReturnService::class)->assertSalesOrderHasNoActiveDirectReturns((int) $order->id);
 
         if ($order->instant_sale_id || $order->financial_posted_at) {
             throw ValidationException::withMessages([
@@ -580,6 +582,7 @@ class SalesOrderService
     public function cancel(User $user, int $orderId, ?string $note = null): SalesOrder
     {
         $order = SalesOrder::query()->findOrFail($orderId);
+        app(SalesReturnService::class)->assertSalesOrderHasNoActiveDirectReturns((int) $order->id);
 
         if (in_array($order->statusEnum(), [
             SalesOrderStatus::WithDelivery,

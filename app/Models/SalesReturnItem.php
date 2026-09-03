@@ -46,4 +46,19 @@ class SalesReturnItem extends Model
     {
         return $this->belongsTo(InstantSale::class);
     }
+
+    public function product(): BelongsTo
+    {
+        return $this->belongsTo(Product::class)->withTrashed();
+    }
+
+    public function size(): BelongsTo
+    {
+        return $this->belongsTo(Size::class, 'size_id');
+    }
+
+    public function sizeColor(): BelongsTo
+    {
+        return $this->belongsTo(SizeColor::class, 'size_color_id');
+    }
 }

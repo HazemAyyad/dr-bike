@@ -54,19 +54,7 @@ class SalesReturnsController extends Controller
     public function store(Request $request)
     {
         try {
-            $data = $request->validate([
-                'person_type' => ['required', Rule::in(['customer', 'seller'])],
-                'person_id' => ['required', 'integer'],
-                'cash_refund_amount' => ['nullable', 'numeric', 'min:0'],
-                'refund_box_id' => ['nullable', 'integer', 'exists:boxes,id'],
-                'note' => ['nullable', 'string', 'max:1000'],
-                'items' => ['required', 'array', 'min:1'],
-                'items.*.source_type' => ['required', Rule::in(['instant_sale', 'sales_order'])],
-                'items.*.source_item_id' => ['required', 'integer'],
-                'items.*.quantity' => ['required', 'integer', 'min:1'],
-                'items.*.unit_price' => ['required', 'numeric', 'min:0'],
-                'items.*.price_override_reason' => ['nullable', 'string', 'max:500'],
-            ]);
+            $data = $request->validate($this->returnRules());
             $return = $this->service->create($request->user(), $data);
 
             return $this->success([
@@ -80,6 +68,71 @@ class SalesReturnsController extends Controller
 
             return response()->json(['status' => 'error', 'message' => config('app.debug') ? $e->getMessage() : 'تعذر إنشاء فاتورة المرتجع.'], 200);
         }
+    }
+
+    public function cancel(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_return_id' => ['required', 'integer', 'exists:sales_returns,id'],
+                'reason' => ['required', 'string', 'min:3', 'max:500'],
+            ]);
+            $return = $this->service->cancel($request->user(), (int) $data['sales_return_id'], trim($data['reason']));
+
+            return $this->success([
+                'message' => 'تم إلغاء فاتورة المرتجع وعكس آثارها المحاسبية.',
+                'sales_return' => $return,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => collect($e->errors())->flatten()->first(), 'errors' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            Log::error('Sales return cancellation failed', ['message' => $e->getMessage(), 'sales_return_id' => $request->input('sales_return_id')]);
+
+            return response()->json(['status' => 'error', 'message' => config('app.debug') ? $e->getMessage() : 'تعذر إلغاء فاتورة المرتجع.'], 200);
+        }
+    }
+
+    public function update(Request $request)
+    {
+        try {
+            $data = $request->validate(array_merge($this->returnRules(), [
+                'sales_return_id' => ['required', 'integer', 'exists:sales_returns,id'],
+                'edit_reason' => ['required', 'string', 'min:3', 'max:500'],
+            ]));
+            $returnId = (int) $data['sales_return_id'];
+            $reason = trim($data['edit_reason']);
+            unset($data['sales_return_id'], $data['edit_reason']);
+            $return = $this->service->replace($request->user(), $returnId, $data, $reason);
+
+            return $this->success([
+                'message' => 'تم تعديل المرتجع بإنشاء نسخة محاسبية بديلة مع حفظ أثر النسخة السابقة.',
+                'sales_return' => $return,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => collect($e->errors())->flatten()->first(), 'errors' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            Log::error('Sales return update failed', ['message' => $e->getMessage(), 'sales_return_id' => $request->input('sales_return_id')]);
+
+            return response()->json(['status' => 'error', 'message' => config('app.debug') ? $e->getMessage() : 'تعذر تعديل فاتورة المرتجع.'], 200);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    private function returnRules(): array
+    {
+        return [
+            'person_type' => ['required', Rule::in(['customer', 'seller'])],
+            'person_id' => ['required', 'integer'],
+            'cash_refund_amount' => ['nullable', 'numeric', 'min:0'],
+            'refund_box_id' => ['nullable', 'integer', 'exists:boxes,id'],
+            'note' => ['nullable', 'string', 'max:1000'],
+            'items' => ['required', 'array', 'min:1'],
+            'items.*.source_type' => ['required', Rule::in(['instant_sale', 'sales_order'])],
+            'items.*.source_item_id' => ['required', 'integer'],
+            'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'items.*.unit_price' => ['required', 'numeric', 'min:0'],
+            'items.*.price_override_reason' => ['nullable', 'string', 'max:500'],
+        ];
     }
 
     /** @param array<string, mixed> $payload */

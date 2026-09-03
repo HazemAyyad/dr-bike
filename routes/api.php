@@ -622,6 +622,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/sales/returns', [SalesReturnsController::class, 'index']);
       Route::get('/sales/return', [SalesReturnsController::class, 'show']);
       Route::post('/sales/return', [SalesReturnsController::class, 'store']);
+      Route::put('/sales/return', [SalesReturnsController::class, 'update']);
+      Route::post('/sales/return/cancel', [SalesReturnsController::class, 'cancel']);
 
       // suspended (pending) instant sales — الفواتير العالقة
       Route::get('/suspended/instant/sales', [SuspendedInstantSaleController::class, 'index']);

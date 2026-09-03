@@ -25,6 +25,11 @@ class SalesReturn extends Model
         'sales_daily_session_id',
         'note',
         'completed_at',
+        'cancelled_at',
+        'cancelled_by',
+        'cancellation_reason',
+        'replaces_sales_return_id',
+        'replacement_sales_return_id',
         'created_by',
     ];
 
@@ -33,6 +38,7 @@ class SalesReturn extends Model
         'cash_refund_amount' => 'float',
         'credit_amount' => 'float',
         'completed_at' => 'datetime',
+        'cancelled_at' => 'datetime',
     ];
 
     public function salesOrder(): BelongsTo

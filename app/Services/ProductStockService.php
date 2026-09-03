@@ -292,16 +292,22 @@ class ProductStockService
         ?int $referenceId = null,
         ?string $note = null,
         ?int $userId = null,
+        ?float $unitCost = null,
+        ?float $totalCost = null,
+        ?string $costSourceType = null,
+        ?int $costSourceId = null,
     ): void {
         if ($quantity <= 0) {
             return;
         }
 
-        DB::transaction(function () use ($product, $quantity, $sizeColorId, $sizeId, $referenceType, $referenceId, $note, $userId) {
+        DB::transaction(function () use ($product, $quantity, $sizeColorId, $sizeId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost, $costSourceType, $costSourceId) {
             $lockedProduct = Product::withTrashed()->lockForUpdate()->find($product->id);
             if (! $lockedProduct instanceof Product) {
                 return;
             }
+
+            $restoredTotalCost = $totalCost ?? ($unitCost !== null ? $unitCost * $quantity : null);
 
             if ($sizeColorId !== null && $sizeColorId > 0) {
                 $variant = SizeColor::lockForUpdate()->find($sizeColorId);
@@ -311,6 +317,15 @@ class ProductStockService
 
                 $before = (int) $variant->stock;
                 $after = $before + $quantity;
+                $this->createRestoredCostLayer(
+                    $lockedProduct,
+                    $quantity,
+                    $unitCost,
+                    $sizeId ?? (int) $variant->sizeId,
+                    $sizeColorId,
+                    $costSourceType ?? $referenceType ?? 'sale_return',
+                    $costSourceId ?? $referenceId,
+                );
                 $variant->update(['stock' => $after]);
 
                 $this->logMovement(
@@ -327,12 +342,23 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
+                    unitCost: $unitCost,
+                    totalCost: $restoredTotalCost,
                 );
 
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
             } else {
                 $before = (int) $lockedProduct->stock;
                 $after = $before + $quantity;
+                $this->createRestoredCostLayer(
+                    $lockedProduct,
+                    $quantity,
+                    $unitCost,
+                    null,
+                    null,
+                    $costSourceType ?? $referenceType ?? 'sale_return',
+                    $costSourceId ?? $referenceId,
+                );
                 Product::withTrashed()->where('id', $lockedProduct->id)->update(['stock' => $after]);
 
                 $this->logMovement(
@@ -349,11 +375,40 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
+                    unitCost: $unitCost,
+                    totalCost: $restoredTotalCost,
                 );
             }
 
             $this->refreshCloseoutStatus((int) $lockedProduct->id, reopen: true);
         });
+    }
+
+    private function createRestoredCostLayer(
+        Product $product,
+        int $quantity,
+        ?float $unitCost,
+        ?int $sizeId,
+        ?int $sizeColorId,
+        string $sourceType,
+        ?int $sourceId,
+    ): void {
+        if ($unitCost === null || ! Schema::hasTable('inventory_cost_layers')) {
+            return;
+        }
+
+        InventoryCostLayer::create([
+            'product_id' => $product->id,
+            'size_id' => $sizeId,
+            'size_color_id' => $sizeColorId,
+            'quantity' => $quantity,
+            'remaining_quantity' => $quantity,
+            'unit_cost' => $unitCost,
+            'currency' => 'شيكل',
+            'source_type' => $sourceType,
+            'source_id' => $sourceId,
+            'effective_at' => now(),
+        ]);
     }
 
     public function adjustStock(

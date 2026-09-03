@@ -23,6 +23,7 @@ use App\Services\EmployeeActivityLogger;
 use App\Services\OfferPackageService;
 use App\Services\ProductStockService;
 use App\Services\SalesDailySessionService;
+use App\Services\SalesReturnService;
 use App\Support\ApiImageUrl;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -2180,6 +2181,13 @@ public function store(Request $request)
 public function edit(Request $request)
     {
         try {
+            if ($request->filled('instant_sale_id')) {
+                $requestedSale = InstantSale::query()->findOrFail((int) $request->input('instant_sale_id'));
+                $rootSale = $requestedSale->parent_id
+                    ? InstantSale::query()->findOrFail((int) $requestedSale->parent_id)
+                    : $requestedSale;
+                app(SalesReturnService::class)->assertInstantSaleHasNoActiveDirectReturns($rootSale);
+            }
             if ($request->filled('product_id') || $request->filled('offer_package_id')) {
                 $request->validate([
                     'instant_sale_id' => 'required|integer|exists:instant_sales,id',
@@ -2473,6 +2481,8 @@ public function edit(Request $request)
                         'instant_sale_id' => [__('messages.instant_sale_already_cancelled')],
                     ]);
                 }
+
+                app(SalesReturnService::class)->assertInstantSaleHasNoActiveDirectReturns($sale);
 
                 foreach ($this->stockLinesForSale($sale) as $line) {
                     $this->restoreStockForSaleLine($line);
