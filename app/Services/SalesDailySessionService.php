@@ -1527,11 +1527,21 @@ class SalesDailySessionService
             ? $query->where('employee_id', $owner['employee_id'])
             : $query->where('user_id', $owner['user_id'])->whereNull('employee_id');
         $byCurrency = $query->get()->keyBy('currency');
+        $previous = SalesDailySession::query()
+            ->where('session_type', self::TYPE_SALES_ORDERS)
+            ->where('user_id', $owner['user_id'])
+            ->where('status', config('sales_daily.session_status.closed'))
+            ->orderByDesc('closed_at')
+            ->orderByDesc('id')
+            ->first();
 
         return collect(config('sales_daily.default_currencies', ['شيكل']))
             ->map(fn ($currency) => [
                 'currency' => $currency,
                 'expected_amount' => round((float) ($byCurrency->get($currency)?->total ?? 0), 2),
+                'previous_employee_name' => $user->name,
+                'previous_session_id' => $previous?->id,
+                'previous_business_date' => $previous?->business_date?->toDateString(),
             ])->all();
     }
 
@@ -2045,7 +2055,7 @@ class SalesDailySessionService
         $page = max(1, (int) ($filters['page'] ?? 1));
 
         $query = SalesDailySession::query()
-            ->with(['user', 'employee.user'])
+            ->with(['user', 'employee.user', 'closingRequests'])
             ->orderByDesc('business_date')
             ->orderByDesc('id');
 
@@ -2090,7 +2100,7 @@ class SalesDailySessionService
         $today = $this->businessDateToday()->toDateString();
 
         $query = SalesDailySession::query()
-            ->with(['user', 'employee.user'])
+            ->with(['user', 'employee.user', 'closingRequests'])
             ->where(function ($query) use ($today) {
                 $query->whereDate('business_date', $today)
                     ->orWhereIn('status', [
@@ -2106,20 +2116,8 @@ class SalesDailySessionService
             $query->where('user_id', $viewer->id);
         }
 
-        $sessions = $query->limit(100)->get()->map(function (SalesDailySession $session) {
-            $summary = $this->formatSessionSummary($session);
-
-            $owner = User::query()->find($session->user_id);
-            if (! $owner) {
-                return $summary;
-            }
-
-            return array_merge($summary, [
-                'currencies' => $session->isSalesOrders()
-                    ? app(SalesOrdersDailyBoxService::class)->summary($session)
-                    : $this->buildCurrenciesForSession($session, $owner),
-            ]);
-        });
+        $sessions = $query->limit(100)->get()
+            ->map(fn (SalesDailySession $session) => $this->formatSessionSummary($session));
 
         return [
             'business_date' => $today,
@@ -2148,6 +2146,7 @@ class SalesDailySessionService
         $currencies = $session->isSalesOrders()
             ? app(SalesOrdersDailyBoxService::class)->summary($session)
             : $this->buildCurrenciesForSession($session, $owner);
+        $currencies = $this->withClosingSnapshot($session, $currencies);
         $counts = $this->salesCountsForSession($session);
         $closingRequests = $session->closingRequests
             ->sortByDesc('id')
@@ -2381,7 +2380,7 @@ class SalesDailySessionService
      */
     private function formatSessionSummary(SalesDailySession $session): array
     {
-        $session->loadMissing(['user', 'employee.user']);
+        $session->loadMissing(['user', 'employee.user', 'closingRequests']);
         $counts = $this->salesCountsForSession($session);
         $owner = User::query()->find($session->user_id);
 
@@ -2399,9 +2398,12 @@ class SalesDailySessionService
                 && $session->closed_at->toDateString() > $session->business_date->toDateString(),
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],
-            'currencies' => $session->isSalesOrders()
-                ? app(SalesOrdersDailyBoxService::class)->summary($session)
-                : ($owner ? $this->buildCurrenciesForSession($session, $owner) : []),
+            'currencies' => $this->withClosingSnapshot(
+                $session,
+                $session->isSalesOrders()
+                    ? app(SalesOrdersDailyBoxService::class)->summary($session)
+                    : ($owner ? $this->buildCurrenciesForSession($session, $owner) : [])
+            ),
             'expected_opening_counts' => $session->isSalesOrders()
                 ? []
                 : $this->expectedOpeningCountsForSession($session),
@@ -2449,6 +2451,46 @@ class SalesDailySessionService
             'instant_sales' => $salesLog['instant_sales'],
             'profit_sales' => $salesLog['profit_sales'],
         ];
+    }
+
+    /**
+     * Keep historical session amounts tied to the approved closing count instead
+     * of the reusable daily box's current balance.
+     *
+     * @param  array<int, array<string, mixed>>  $currencies
+     * @return array<int, array<string, mixed>>
+     */
+    private function withClosingSnapshot(SalesDailySession $session, array $currencies): array
+    {
+        $session->loadMissing('closingRequests');
+        $requests = $session->closingRequests->sortByDesc('id');
+        $request = $session->status === config('sales_daily.session_status.closed')
+            ? $requests->firstWhere('status', 'approved')
+            : $requests->first();
+        $counts = $session->isSalesOrders()
+            ? ($request?->sales_orders_cash_counts ?? [])
+            : ($request?->cash_counts ?? []);
+        $byCurrency = collect($counts)->keyBy(fn (array $row) => (string) ($row['currency'] ?? ''));
+
+        return collect($currencies)->map(function (array $currency) use ($byCurrency, $session) {
+            $count = $byCurrency->get((string) ($currency['currency'] ?? ''));
+            if (! is_array($count)) {
+                return $currency;
+            }
+
+            $float = round((float) ($count['float_to_keep'] ?? 0), 2);
+
+            return array_merge($currency, [
+                'box_balance' => $session->status === config('sales_daily.session_status.closed')
+                    ? $float
+                    : ($currency['box_balance'] ?? 0),
+                'has_closing_snapshot' => true,
+                'closing_physical_count' => round((float) ($count['physical_count'] ?? 0), 2),
+                'closing_float_to_keep' => $float,
+                'closing_amount_to_transfer' => round((float) ($count['amount_to_transfer'] ?? 0), 2),
+                'closing_variance' => round((float) ($count['variance'] ?? 0), 2),
+            ]);
+        })->values()->all();
     }
 
     /**

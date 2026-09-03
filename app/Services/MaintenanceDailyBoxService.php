@@ -355,7 +355,7 @@ class MaintenanceDailyBoxService
         $page = max(1, (int) ($filters['page'] ?? 1));
 
         $query = MaintenanceDailySession::query()
-            ->with(['box:id,name,total,currency,type', 'user:id,name', 'employee.user'])
+            ->with(['box:id,name,total,currency,type', 'user:id,name', 'employee.user', 'closingRequests'])
             ->orderByDesc('business_date')
             ->orderByDesc('id');
 
@@ -409,7 +409,10 @@ class MaintenanceDailyBoxService
         $this->assertCanViewSession($viewer, $session);
 
         $payload = $this->payload($session->business_date?->toDateString(), $session->user);
-        $currencies = $this->currenciesForPayload($payload, $session);
+        $currencies = $this->withClosingSnapshot(
+            $session,
+            $this->currenciesForPayload($payload, $session)
+        );
         $maintenanceLog = $this->buildSessionMaintenanceLog($session);
         $closingRequests = $session->closingRequests
             ->sortByDesc('id')
@@ -1257,7 +1260,10 @@ class MaintenanceDailyBoxService
             ->where('status', 'pending')
             ->sortByDesc('id')
             ->first();
-        $currencyRows = $this->currenciesForPayload($payload, $session);
+        $currencyRows = $this->withClosingSnapshot(
+            $session,
+            $this->currenciesForPayload($payload, $session)
+        );
         $firstCurrency = $currencyRows[0] ?? [];
         $firstCount = collect($pendingClosing?->cash_counts ?? [])->first() ?: [];
 
@@ -1313,6 +1319,41 @@ class MaintenanceDailyBoxService
             'sales_collected' => $cash,
             'system_balance' => $expectedClosing,
         ]];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $currencies
+     * @return array<int, array<string, mixed>>
+     */
+    private function withClosingSnapshot(MaintenanceDailySession $session, array $currencies): array
+    {
+        $session->loadMissing('closingRequests');
+        $requests = $session->closingRequests->sortByDesc('id');
+        $request = $session->status === config('maintenance_daily.session_status.closed', 'closed')
+            ? $requests->firstWhere('status', 'approved')
+            : $requests->first();
+        $byCurrency = collect($request?->cash_counts ?? [])
+            ->keyBy(fn (array $row) => (string) ($row['currency'] ?? ''));
+
+        return collect($currencies)->map(function (array $currency) use ($byCurrency, $session) {
+            $count = $byCurrency->get((string) ($currency['currency'] ?? ''));
+            if (! is_array($count)) {
+                return $currency;
+            }
+
+            $float = round((float) ($count['float_to_keep'] ?? 0), 2);
+
+            return array_merge($currency, [
+                'box_balance' => $session->status === config('maintenance_daily.session_status.closed', 'closed')
+                    ? $float
+                    : ($currency['box_balance'] ?? 0),
+                'has_closing_snapshot' => true,
+                'closing_physical_count' => round((float) ($count['physical_count'] ?? 0), 2),
+                'closing_float_to_keep' => $float,
+                'closing_amount_to_transfer' => round((float) ($count['amount_to_transfer'] ?? 0), 2),
+                'closing_variance' => round((float) ($count['variance'] ?? 0), 2),
+            ]);
+        })->values()->all();
     }
 
     /**
