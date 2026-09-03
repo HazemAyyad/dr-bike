@@ -2204,7 +2204,12 @@ class SalesDailySessionService
         $sales = InstantSale::query()
             ->where('sales_daily_session_id', $session->id)
             ->whereNull('parent_id')
-            ->with(['product:id,nameAr', 'offerPackage:id,name', 'createdByUser:id,name'])
+            ->with([
+                'product:id,nameAr',
+                'offerPackage:id,name',
+                'subProducts.product:id,nameAr',
+                'createdByUser:id,name',
+            ])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get();
@@ -2229,6 +2234,7 @@ class SalesDailySessionService
                 if ($paid > $total) {
                     $paid = $total;
                 }
+                $products = $this->instantSaleProductsForDailyLog($sale);
 
                 return [
                     'id' => $sale->id,
@@ -2246,6 +2252,8 @@ class SalesDailySessionService
                     'sales_order_id' => $linkedOrder?->id,
                     'sales_order_serial' => $linkedOrder?->serial_number,
                     'total_cost' => $total,
+                    'products_count' => count($products),
+                    'products' => $products,
                     'quantity' => (float) $sale->quantity,
                     'paid_amount' => $paid,
                     'remaining_amount' => max(0, round($total - $paid, 2)),
@@ -2273,6 +2281,7 @@ class SalesDailySessionService
             ->whereNotNull('financial_posted_at')
             ->where('is_debt_collection', false)
             ->when($linkedOrderIds !== [], fn ($q) => $q->whereNotIn('id', $linkedOrderIds))
+            ->with('items.product:id,nameAr')
             ->orderByDesc('financial_posted_at')
             ->orderByDesc('id')
             ->get()
@@ -2282,6 +2291,12 @@ class SalesDailySessionService
                 if ($paid > $total) {
                     $paid = $total;
                 }
+                $products = $order->items->map(fn ($item) => [
+                    'name' => $item->product?->nameAr ?? $item->product_name ?? 'منتج محذوف',
+                    'quantity' => (float) $item->quantity,
+                    'unit_price' => round((float) $item->unit_price, 2),
+                    'subtotal' => round((float) $item->quantity * (float) $item->unit_price, 2),
+                ])->values()->all();
 
                 return [
                     'id' => $order->id,
@@ -2292,6 +2307,8 @@ class SalesDailySessionService
                     'sales_order_id' => $order->id,
                     'sales_order_serial' => $order->serial_number,
                     'total_cost' => $total,
+                    'products_count' => count($products),
+                    'products' => $products,
                     'quantity' => 0,
                     'paid_amount' => $paid,
                     'remaining_amount' => max(0, round($total - $paid, 2)),
@@ -2341,6 +2358,32 @@ class SalesDailySessionService
             'instant_sales' => $instantSales,
             'profit_sales' => $profitSales,
         ];
+    }
+
+    /**
+     * @return array<int, array{name: string, quantity: float, unit_price: float, subtotal: float}>
+     */
+    private function instantSaleProductsForDailyLog(InstantSale $sale): array
+    {
+        $products = [[
+            'name' => $sale->offer_package_id !== null
+                ? ($sale->offerPackage?->name ?? 'باكيج محذوف')
+                : ($sale->product?->nameAr ?? 'منتج محذوف'),
+            'quantity' => (float) $sale->quantity,
+            'unit_price' => round((float) $sale->cost, 2),
+            'subtotal' => round((float) $sale->quantity * (float) $sale->cost, 2),
+        ]];
+
+        foreach ($sale->subProducts as $item) {
+            $products[] = [
+                'name' => $item->product?->nameAr ?? 'منتج محذوف',
+                'quantity' => (float) $item->quantity,
+                'unit_price' => round((float) $item->cost, 2),
+                'subtotal' => round((float) $item->quantity * (float) $item->cost, 2),
+            ];
+        }
+
+        return $products;
     }
 
     /**
