@@ -27,6 +27,8 @@ class ProductStockMovement extends Model
 
     public const TYPE_RETURN = 'return';
 
+    public const TYPE_SALES_RETURN = 'sales_return';
+
     public const TYPE_MANUAL_ADD = 'manual_add';
 
     public const TYPE_MANUAL_SET = 'manual_set';

@@ -84,6 +84,11 @@ class InstantSale extends Model
         return $this->hasMany(InstantSale::class, 'parent_id');
     }
 
+    public function parentSale()
+    {
+        return $this->belongsTo(InstantSale::class, 'parent_id');
+    }
+
     public function project()
     {
         return $this->belongsTo(Project::class);

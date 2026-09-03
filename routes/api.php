@@ -61,6 +61,7 @@ use App\Http\Controllers\API\PersonProfileController;
 use App\Http\Controllers\API\PersonProductSettingsController;
 use App\Http\Controllers\API\SuspendedInstantSaleController;
 use App\Http\Controllers\API\SalesOrdersController;
+use App\Http\Controllers\API\SalesReturnsController;
 use App\Http\Controllers\API\PartnerAddressesController;
 use App\Http\Controllers\API\ShiplyController;
 use App\Http\Controllers\API\ShiplyWebhookController;
@@ -614,6 +615,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/get/subsales' , [InstantSales::class,'getSubSales']);
       Route::post('/get/instant/sale/invoice' , [InstantSales::class,'invoiceDetails']);
       Route::get('/instant/sale/customer-product-prices', [InstantSales::class, 'customerProductPriceHistory']);
+
+      // direct sales returns — فواتير مرتجع المبيعات
+      Route::get('/sales/returns/people', [SalesReturnsController::class, 'people']);
+      Route::get('/sales/returns/available-items', [SalesReturnsController::class, 'availableItems']);
+      Route::get('/sales/returns', [SalesReturnsController::class, 'index']);
+      Route::get('/sales/return', [SalesReturnsController::class, 'show']);
+      Route::post('/sales/return', [SalesReturnsController::class, 'store']);
 
       // suspended (pending) instant sales — الفواتير العالقة
       Route::get('/suspended/instant/sales', [SuspendedInstantSaleController::class, 'index']);

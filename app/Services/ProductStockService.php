@@ -317,7 +317,9 @@ class ProductStockService
                     productId: (int) $lockedProduct->id,
                     sizeId: $sizeId ?? (int) $variant->sizeId,
                     sizeColorId: $sizeColorId,
-                    type: ProductStockMovement::TYPE_SALE_CANCEL,
+                    type: $referenceType === 'sales_return'
+                        ? ProductStockMovement::TYPE_SALES_RETURN
+                        : ProductStockMovement::TYPE_SALE_CANCEL,
                     quantity: $quantity,
                     stockBefore: $before,
                     stockAfter: $after,
@@ -337,7 +339,9 @@ class ProductStockService
                     productId: (int) $lockedProduct->id,
                     sizeId: null,
                     sizeColorId: null,
-                    type: ProductStockMovement::TYPE_SALE_CANCEL,
+                    type: $referenceType === 'sales_return'
+                        ? ProductStockMovement::TYPE_SALES_RETURN
+                        : ProductStockMovement::TYPE_SALE_CANCEL,
                     quantity: $quantity,
                     stockBefore: $before,
                     stockAfter: $after,

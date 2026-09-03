@@ -23,6 +23,8 @@ use App\Models\Project;
 use App\Models\ProfitSale;
 use App\Models\ReturnModel;
 use App\Models\Seller;
+use App\Models\SalesReturn;
+use App\Models\SalesReturnItem;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -500,8 +502,12 @@ class Reports extends Controller
 
         $grossSales = (float) $sales->sum('total');
         $discounts = (float) $sales->sum('discount');
-        $netSales = $grossSales - $discounts;
-        $cost = (float) $sales->sum('cost');
+        $directReturns = SalesReturn::query()->where('return_type', 'direct')->where('status', 'completed')->whereBetween('completed_at', [$from, $to]);
+        $directReturnTotal = (float) (clone $directReturns)->sum('total_amount');
+        $directReturnCost = (float) SalesReturnItem::query()->whereHas('salesReturn', fn ($query) => $query
+            ->where('return_type', 'direct')->where('status', 'completed')->whereBetween('completed_at', [$from, $to]))->sum('inventory_total_cost');
+        $netSales = $grossSales - $discounts - $directReturnTotal;
+        $cost = max(0, (float) $sales->sum('cost') - $directReturnCost);
         $expenses = (float) Expense::whereBetween('created_at', [$from, $to])->sum('price');
         $purchases = (float) Bill::where('status', 'finished')->whereBetween('created_at', [$from, $to])->sum('total');
         $purchaseReturns = (float) ReturnModel::whereIn('status', ['confirmed', 'delivered', 'settled'])
@@ -1039,6 +1045,11 @@ class Reports extends Controller
                 $query->where('status', 'cancelled')->orWhereNotNull('cancelled_at');
             })
             ->sum('total_cost');
+        $salesReturns += (float) SalesReturn::query()
+            ->where('return_type', 'direct')
+            ->where('status', 'completed')
+            ->whereBetween('completed_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+            ->sum('total_amount');
         $purchases = (float) Bill::whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])->sum('total');
         $purchaseReturns = (float) ReturnModel::whereIn('status', ['confirmed', 'pending', 'delivered', 'settled'])
             ->whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])->sum('total');
@@ -1083,7 +1094,7 @@ class Reports extends Controller
 
     private function salesReturnsReportPayload(Carbon $from, Carbon $to): array
     {
-        $rows = InstantSale::query()
+        $cancelledRows = InstantSale::query()
             ->with(['product:id,nameAr,nameEng', 'buyerCustomer:id,name,phone', 'seller:id,name,phone'])
             ->whereNull('parent_id')
             ->whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
@@ -1102,11 +1113,29 @@ class Reports extends Controller
                 'total' => (float) ($sale->total_cost ?? 0),
                 'cancelled_at' => optional($sale->cancelled_at)->toDateTimeString(),
             ]);
+        $directRows = SalesReturn::query()
+            ->with(['customer:id,name', 'seller:id,name', 'items'])
+            ->where('return_type', 'direct')
+            ->where('status', 'completed')
+            ->whereBetween('completed_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+            ->orderByDesc('completed_at')
+            ->limit(1000)
+            ->get()
+            ->map(fn (SalesReturn $return) => [
+                'serial' => $return->serial_number ?: $return->id,
+                'date' => optional($return->completed_at)->toDateTimeString(),
+                'buyer' => $return->customer?->name ?: $return->seller?->name ?: '-',
+                'product' => $return->items->pluck('product_name')->filter()->implode('، '),
+                'quantity' => (float) $return->items->sum('quantity'),
+                'total' => (float) $return->total_amount,
+                'cancelled_at' => null,
+            ]);
+        $rows = $cancelledRows->concat($directRows)->sortByDesc('date')->values();
 
         return [
             'title' => 'مردودات المبيعات',
             'summary' => [
-                ['title' => 'عدد الفواتير الملغية', 'value' => $rows->count()],
+                ['title' => 'عدد فواتير المرتجع والإلغاء', 'value' => $rows->count()],
                 ['title' => 'قيمة المرتجعات', 'value' => round($rows->sum('total'), 3)],
             ],
             'columns' => ['الرقم', 'التاريخ', 'الزبون', 'الصنف', 'الكمية', 'الإجمالي', 'تاريخ الإلغاء'],
@@ -1176,6 +1205,7 @@ class Reports extends Controller
             'instant_sale' => 'باقي فاتورة بيع فوري',
             'profit_sale' => 'باقي فاتورة بيع ربحي',
             'sales_order' => 'باقي طلبية',
+            'sales_return' => 'رصيد مرتجع مبيعات',
             'incoming_check' => 'شيك وارد',
             'incoming_check_disposal' => 'تصرف في شيك وارد',
             'outgoing_check' => 'شيك صادر',

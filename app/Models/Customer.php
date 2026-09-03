@@ -55,6 +55,16 @@ class Customer extends Model
         return $this->hasMany(InstantBuying::class);
     }
 
+    public function instantSales()
+    {
+        return $this->hasMany(InstantSale::class, 'buyer_id');
+    }
+
+    public function salesOrders()
+    {
+        return $this->hasMany(SalesOrder::class);
+    }
+
     public function debts(){
         return $this->hasMany(Debt::class);
     }

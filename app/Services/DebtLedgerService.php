@@ -52,6 +52,7 @@ class DebtLedgerService
             'purchase_payment' => 'دفعة مورد',
             'purchase_account_payment' => 'دفعة مورد على الحساب',
             'purchase_return' => 'مرتجع شراء',
+            'sales_return' => 'مرتجع مبيعات',
             'purchase_refund' => 'استرداد من مورد',
             'purchase_settlement' => 'تسوية شراء',
             'manual', '' => 'إدخال يدوي',

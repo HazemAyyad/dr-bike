@@ -13,11 +13,15 @@ class DocumentSerialService
     /** فاتورة البيع الفوري */
     public const TYPE_INSTANT_SALE_INVOICE = 'IS';
 
+    /** فاتورة مرتجع المبيعات */
+    public const TYPE_SALES_RETURN = 'SR';
+
     public function usesYearPrefix(string $documentType): bool
     {
         return ! in_array($documentType, [
             self::TYPE_SALES_ORDER,
             self::TYPE_INSTANT_SALE_INVOICE,
+            self::TYPE_SALES_RETURN,
         ], true);
     }
 
