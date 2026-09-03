@@ -1413,13 +1413,28 @@ class MaintenanceDailyBoxService
     {
         return MaintenanceDailyBoxLog::query()
             ->where('session_id', $session->id)
-            ->with(['maintenance.customer:id,name', 'maintenance.seller:id,name', 'user:id,name', 'instantSale:id,serial_number'])
+            ->with([
+                'maintenance.customer:id,name',
+                'maintenance.seller:id,name',
+                'maintenance.products.product:id,nameAr,nameEng',
+                'user:id,name',
+                'instantSale:id,serial_number',
+            ])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get()
             ->map(function (MaintenanceDailyBoxLog $log) {
                 $maintenance = $log->maintenance;
                 $partyName = $maintenance?->customer?->name ?: $maintenance?->seller?->name;
+                $products = $maintenance?->products->map(fn ($item) => [
+                    'name' => $item->product?->nameAr ?? $item->product?->nameEng ?? 'منتج محذوف',
+                    'quantity' => (float) $item->quantity,
+                    'unit_price' => round((float) $item->unit_price, 2),
+                    'subtotal' => round((float) $item->line_total, 2),
+                ])->values()->all() ?? [];
+
+                $total = round((float) ($maintenance?->invoice_total ?? $log->amount), 2);
+                $paid = min($total, round((float) ($maintenance?->paid_amount ?? $log->amount), 2));
 
                 return [
                     'id' => $log->id,
@@ -1434,9 +1449,11 @@ class MaintenanceDailyBoxService
                         : null,
                     'is_package_sale' => false,
                     'is_from_sales_order' => false,
-                    'total_cost' => round((float) $log->amount, 2),
-                    'paid_amount' => round((float) $log->amount, 2),
-                    'remaining_amount' => 0,
+                    'total_cost' => $total,
+                    'paid_amount' => $paid,
+                    'remaining_amount' => max(0, round($total - $paid, 2)),
+                    'products_count' => count($products),
+                    'products' => $products,
                     'quantity' => 1,
                     'status' => 'active',
                     'created_at' => $log->created_at?->toDateTimeString(),
@@ -1448,6 +1465,9 @@ class MaintenanceDailyBoxService
                     'notes' => $log->note,
                 ];
             })
+            ->unique(fn (array $row) => $row['maintenance_id']
+                ? 'maintenance:'.$row['maintenance_id']
+                : 'log:'.$row['id'])
             ->values()
             ->all();
     }

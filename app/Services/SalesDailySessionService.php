@@ -2163,6 +2163,7 @@ class SalesDailySessionService
         return [
             'session' => [
                 'id' => $session->id,
+                'session_type' => $session->session_type,
                 'user_id' => $session->user_id,
                 'employee_id' => $session->employee_id,
                 'employee_name' => $session->user?->name,
@@ -2397,23 +2398,39 @@ class SalesDailySessionService
             ->where('created_by', $session->user_id)
             ->whereDate('created_at', $businessDate)
             ->where('is_debt_collection', false)
+            ->with(['items.product:id,nameAr', 'createdByUser:id,name'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get()
-            ->map(fn (SalesOrder $order) => [
-                'id' => $order->id,
-                'serial_number' => $order->serial_number,
-                'status' => $order->status,
-                'customer_name' => $order->customer_name,
-                'total' => round((float) $order->total, 2),
-                'payment_type' => $order->payment_type,
-                'payment_amount' => round((float) $order->payment_amount, 2),
-                'instant_sale_id' => $order->instant_sale_id,
-                'delivered_today' => $order->sales_daily_session_id === $session->id
-                    && $order->financial_posted_at !== null,
-                'created_at' => $order->created_at?->toDateTimeString(),
-                'financial_posted_at' => $order->financial_posted_at?->toDateTimeString(),
-            ])
+            ->map(function (SalesOrder $order) use ($session) {
+                $products = $order->items->map(fn ($item) => [
+                    'name' => $item->product?->nameAr ?? $item->product_name ?? 'منتج محذوف',
+                    'quantity' => (float) $item->quantity,
+                    'unit_price' => round((float) $item->unit_price, 2),
+                    'subtotal' => round((float) $item->line_total, 2),
+                ])->values()->all();
+                $total = round((float) $order->total, 2);
+                $paid = min($total, round((float) $order->payment_amount, 2));
+
+                return [
+                    'id' => $order->id,
+                    'serial_number' => $order->serial_number,
+                    'status' => $order->status,
+                    'customer_name' => $order->customer_name,
+                    'total' => $total,
+                    'payment_type' => $order->payment_type,
+                    'payment_amount' => $paid,
+                    'remaining_amount' => max(0, round($total - $paid, 2)),
+                    'products_count' => count($products),
+                    'products' => $products,
+                    'created_by_name' => $order->createdByUser?->name,
+                    'instant_sale_id' => $order->instant_sale_id,
+                    'delivered_today' => $order->sales_daily_session_id === $session->id
+                        && $order->financial_posted_at !== null,
+                    'created_at' => $order->created_at?->toDateTimeString(),
+                    'financial_posted_at' => $order->financial_posted_at?->toDateTimeString(),
+                ];
+            })
             ->values()
             ->all();
     }
@@ -2441,6 +2458,13 @@ class SalesDailySessionService
                 && $session->closed_at->toDateString() > $session->business_date->toDateString(),
             'instant_sales_count' => $counts['instant'],
             'profit_sales_count' => $counts['profit'],
+            'sales_orders_count' => $session->isSalesOrders()
+                ? SalesOrder::query()
+                    ->where('created_by', $session->user_id)
+                    ->whereDate('created_at', $session->business_date->toDateString())
+                    ->where('is_debt_collection', false)
+                    ->count()
+                : 0,
             'currencies' => $this->withClosingSnapshot(
                 $session,
                 $session->isSalesOrders()
