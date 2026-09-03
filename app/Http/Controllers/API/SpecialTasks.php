@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
@@ -856,19 +857,20 @@ if ($request->has('sub_special_tasks')) {
             'special_task_id'=>'required|exists:special_tasks,id',
         ]);
 
-        $task = SpecialTask::findOrFail($request->special_task_id);
-        $hasIncomplete = $task->subTasks()
-            ->whereNotIn('status', ['completed', 'canceled', 'rejected'])
-            ->exists();
+        DB::transaction(function () use ($request) {
+            $task = SpecialTask::query()
+                ->lockForUpdate()
+                ->findOrFail($request->special_task_id);
 
-        if ($hasIncomplete) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.can_not_complete_special_task'),
-            ], 200);
-        }
-        $task->update(['status'=>'completed']);
-        Logs::createLog('اكمال مهمة خاصة','اكمال مهمة خاصة باسم'.' '.$task->name,'special_tasks');
+            // Completing the parent from its details screen also resolves every
+            // open subtask. Keep canceled/rejected subtasks unchanged as history.
+            $task->subTasks()
+                ->whereNotIn('status', ['completed', 'canceled', 'rejected'])
+                ->update(['status' => 'completed']);
+
+            $task->update(['status' => 'completed']);
+            Logs::createLog('اكمال مهمة خاصة','اكمال مهمة خاصة باسم'.' '.$task->name,'special_tasks');
+        });
 
         return response()->json([
             'status' => 'success',
