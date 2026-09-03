@@ -90,22 +90,41 @@ class PurchaseReturnsController extends Controller
         ]);
     }
 
-    public function returnableBills(PurchaseReturnService $service)
+    public function returnableBills()
     {
         $bills = Bill::query()
-            ->with(['seller:id,name', 'customer:id,name'])
+            ->with([
+                'seller:id,name',
+                'customer:id,name',
+                'items' => fn ($query) => $query
+                    ->where('received_owned_quantity', '>', 0)
+                    ->withSum([
+                        'purchaseReturnItems as approved_returned_quantity' => fn ($returns) => $returns
+                            ->whereHas('return', fn ($return) => $return->whereIn('status', [
+                                PurchaseReturnStatus::Confirmed->value,
+                                PurchaseReturnStatus::Delivered->value,
+                                PurchaseReturnStatus::Settled->value,
+                            ])),
+                    ], 'quantity'),
+            ])
             ->whereHas('items', fn ($q) => $q->where('received_owned_quantity', '>', 0))
             ->latest('id')->limit(200)->get()
-            ->map(function (Bill $bill) use ($service) {
-                $items = $service->availableItems($bill);
-                if ($items === []) return null;
+            ->map(function (Bill $bill) {
+                $availableItemsCount = $bill->items->filter(
+                    fn ($item) => (float) $item->received_owned_quantity
+                        - (float) ($item->approved_returned_quantity ?? 0) > 0.0001
+                )->count();
+                if ($availableItemsCount === 0) {
+                    return null;
+                }
+
                 return [
                     'id' => $bill->id,
                     'party_name' => $bill->seller?->name ?? $bill->customer?->name ?? '—',
                     'currency' => $bill->currency,
                     'final_total' => (float) $bill->final_total,
                     'created_at' => $bill->created_at?->format('Y-m-d H:i:s'),
-                    'available_items_count' => count($items),
+                    'available_items_count' => $availableItemsCount,
                 ];
             })->filter()->values();
 
