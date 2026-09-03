@@ -1245,6 +1245,19 @@ public function store(Request $request)
             round($mainLineTotal + $otherProductsTotal + $additionalNotesTotal - (float) ($mainData['discount'] ?? 0), 2)
         );
 
+        // The client may restore an auto-saved payment amount that was captured
+        // before a discount changed the invoice total. Never post more cash to
+        // the box than the final invoice total.
+        if (array_key_exists('payment_box_value', $mainData)) {
+            $mainData['payment_box_value'] = min(
+                $mainData['total_cost'],
+                max(0, round((float) $mainData['payment_box_value'], 2))
+            );
+            $request->merge([
+                'payment_box_value' => $mainData['payment_box_value'],
+            ]);
+        }
+
         if ($this->hasRemainingInstantSaleAmount($mainData, $request) && ! $this->hasRequiredDebtBuyer($request)) {
             return response()->json([
                 'status' => 'error',

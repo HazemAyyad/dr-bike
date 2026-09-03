@@ -35,6 +35,8 @@ class SalesReturnsController extends Controller
     {
         $returns = SalesReturn::query()
             ->with(['customer:id,name,phone', 'seller:id,name,phone', 'refundBox:id,name,currency'])
+            ->withCount('items')
+            ->withSum('items as returned_quantity', 'quantity')
             ->where('return_type', 'direct')
             ->orderByDesc('id')
             ->paginate(min(100, max(10, (int) $request->query('per_page', 30))));
