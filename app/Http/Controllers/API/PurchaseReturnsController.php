@@ -10,6 +10,7 @@ use App\Models\PurchaseAttachment;
 use App\Models\Product;
 use App\Services\PurchaseReturnService;
 use App\Services\PurchaseAttachmentService;
+use App\Support\ProductImageResolver;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -80,11 +81,29 @@ class PurchaseReturnsController extends Controller
 
     public function availableItems(Bill $bill, PurchaseReturnService $service)
     {
+        $items = collect($service->availableItems($bill));
+        $products = Product::query()
+            ->with(['viewImages', 'normalImages', 'image3d'])
+            ->whereIn('id', $items->pluck('product_id')->filter()->unique())
+            ->get()
+            ->keyBy('id');
+
         return response()->json([
             'status' => 'success',
             'bill' => $bill->load(['seller:id,name', 'customer:id,name']),
-            'items' => collect($service->availableItems($bill))->map(function ($item) {
-                $item['product_image'] = $this->productImage($item['product_id'], $item['size_color_id'] ?? null);
+            'items' => $items->map(function ($item) use ($products) {
+                $product = $products->get((int) $item['product_id']);
+                $images = $product
+                    ? ProductImageResolver::formatForList($product)
+                    : [];
+                $item['product_image'] = $this->productImage(
+                    $item['product_id'],
+                    $item['size_color_id'] ?? null,
+                );
+                $item['product_images'] = $this->orderedProductImages(
+                    $images,
+                    $item['product_image'],
+                );
                 return $item;
             })->values(),
         ]);
@@ -135,30 +154,39 @@ class PurchaseReturnsController extends Controller
     {
         $search = trim((string) $request->query('search', ''));
         $products = Product::query()
-            ->with(['normalImages', 'sizes.colorSizes'])
+            ->with(['viewImages', 'normalImages', 'image3d', 'sizes.colorSizes'])
             ->when($search !== '', fn ($q) => $q->where(function ($inner) use ($search) {
                 $inner->where('nameAr', 'like', "%{$search}%")
                     ->orWhere('nameEng', 'like', "%{$search}%")
                     ->orWhere('id', $search);
             }))
             ->orderByDesc('id')->limit(100)->get()->map(function (Product $product) {
+                $images = ProductImageResolver::formatForList($product);
+                $productImages = $this->orderedProductImages($images);
                 return [
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
-                    'product_image' => $this->productImage($product->id),
+                    'product_image' => $images['product_image'] ?? 'no image',
+                    'product_images' => $productImages,
                     'stock' => (float) $product->stock,
                     'unit_price' => (float) ($product->price ?? $product->normailPrice ?? 0),
-                    'variants' => $product->sizes->flatMap(fn ($size) => $size->colorSizes->map(fn ($color) => [
-                        'size_id' => $size->id,
-                        'size_label' => $size->size,
-                        'size_color_id' => $color->id,
-                        'color_label' => $color->colorAr,
-                        'stock' => (float) $color->stock,
-                        'unit_price' => (float) ($color->normailPrice ?? $product->price ?? $product->normailPrice ?? 0),
-                        'product_image' => trim((string) $color->image_url) !== ''
-                            ? \App\Support\ApiImageUrl::normalize($color->image_url)
-                            : $this->productImage($product->id),
-                    ]))->values(),
+                    'variants' => $product->sizes->flatMap(
+                        fn ($size) => $size->colorSizes->map(function ($color) use ($size, $product, $images, $productImages) {
+                            $variantImage = trim((string) $color->image_url) !== ''
+                                ? \App\Support\ApiImageUrl::normalize($color->image_url)
+                                : ($images['product_image'] ?? 'no image');
+                            return [
+                                'size_id' => $size->id,
+                                'size_label' => $size->size,
+                                'size_color_id' => $color->id,
+                                'color_label' => $color->colorAr,
+                                'stock' => (float) $color->stock,
+                                'unit_price' => (float) ($color->normailPrice ?? $product->price ?? $product->normailPrice ?? 0),
+                                'product_image' => $variantImage,
+                                'product_images' => $this->prependImage($productImages, $variantImage),
+                            ];
+                        }),
+                    )->values(),
                 ];
             })->values();
 
@@ -284,5 +312,35 @@ class PurchaseReturnsController extends Controller
         $imageColumn = Schema::hasColumn('normal_image_products', 'imageUrl') ? 'imageUrl' : 'image_url';
         $image = DB::table('normal_image_products')->where($productColumn, $productId)->orderBy('id')->value($imageColumn);
         return trim((string) $image) === '' ? null : \App\Support\ApiImageUrl::normalize($image);
+    }
+
+    private function orderedProductImages(array $images, ?string $fallback = null): array
+    {
+        $ordered = array_merge(
+            $images['product_viewImages'] ?? [],
+            $images['product_normalImages'] ?? [],
+            $images['product_image3d'] ?? [],
+        );
+
+        return $this->prependImage($ordered, $fallback);
+    }
+
+    private function prependImage(array $images, ?string $image): array
+    {
+        $ordered = [];
+        if (ProductImageResolver::isValidUrl($image)) {
+            $ordered[] = trim((string) $image);
+        }
+        foreach ($images as $candidate) {
+            if (! ProductImageResolver::isValidUrl($candidate)) {
+                continue;
+            }
+            $candidate = trim((string) $candidate);
+            if (! in_array($candidate, $ordered, true)) {
+                $ordered[] = $candidate;
+            }
+        }
+
+        return $ordered;
     }
 }
