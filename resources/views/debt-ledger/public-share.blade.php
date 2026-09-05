@@ -73,8 +73,8 @@
         <div><strong>تاريخ الإصدار:</strong> {{ now()->format('Y-m-d H:i') }}</div>
     </section>
     <section class="summary">
-        <div class="summary-item"><span class="summary-label">مبالغ مستحقة لنا</span><span class="summary-value taken">{{ number_format($total_taken,2) }} {{ $currencyLabel }}</span></div>
-        <div class="summary-item"><span class="summary-label">مبالغ مستحقة علينا</span><span class="summary-value given">{{ number_format($total_given,2) }} {{ $currencyLabel }}</span></div>
+        <div class="summary-item"><span class="summary-label">إجمالي {{ $taken_label ?? 'أخذت' }}</span><span class="summary-value taken">{{ number_format($total_taken,2) }} {{ $currencyLabel }}</span></div>
+        <div class="summary-item"><span class="summary-label">إجمالي {{ $given_label ?? 'أعطيت' }}</span><span class="summary-value given">{{ number_format($total_given,2) }} {{ $currencyLabel }}</span></div>
         <div class="summary-item"><span class="summary-label">صافي الرصيد</span><span class="summary-value {{ $balance >= 0 ? 'taken' : 'given' }}">{{ number_format($balance,2) }} {{ $currencyLabel }}</span></div>
     </section>
 
@@ -91,7 +91,7 @@
                 <div class="transaction-main">
                     <div class="transaction-top">
                         <div class="transaction-date">{{ $index + 1 }}. {{ $transaction->transaction_date?->format('Y-m-d') ?? '—' }}</div>
-                        <div class="transaction-type {{ $isTaken ? 'taken' : 'given' }}">{{ $isTaken ? 'مستحق لنا' : 'مستحق علينا' }} &nbsp; {{ number_format($transaction->amount,2) }} {{ $currencyLabel }}</div>
+                        <div class="transaction-type {{ $isTaken ? 'taken' : 'given' }}">{{ $isTaken ? ($taken_label ?? 'أخذت') : ($given_label ?? 'أعطيت') }} &nbsp; {{ number_format($transaction->amount,2) }} {{ $currencyLabel }}</div>
                     </div>
                     @if(!empty(trim((string) $transaction->note)))<div class="transaction-note">{{ $transaction->note }}</div>@endif
                     <div class="transaction-balance">الرصيد بعد الحركة: <strong>{{ number_format($transaction->balance_after,2) }} {{ $currencyLabel }}</strong></div>

@@ -29,6 +29,8 @@ class DebtLedgerShareWebController extends Controller
         $startDate = $payload['start_date'] ?? null;
         $endDate = $payload['end_date'] ?? null;
         $currency = $this->ledger->normalizeCurrency($payload['currency'] ?? null);
+        $takenLabel = trim((string) ($payload['taken_label'] ?? 'أخذت')) ?: 'أخذت';
+        $givenLabel = trim((string) ($payload['given_label'] ?? 'أعطيت')) ?: 'أعطيت';
 
         $person = $this->ledger->getPersonInfo($customerId, $sellerId);
         $transactionsQuery = $this->ledger->baseQuery($customerId, $sellerId)
@@ -47,7 +49,11 @@ class DebtLedgerShareWebController extends Controller
             $currency
         );
 
-        return view('debt-ledger.public-share', [
+        $view = $detailLevel === 'summary'
+            ? 'debt-ledger.public-share-summary'
+            : 'debt-ledger.public-share';
+
+        return view($view, [
             'person' => $person,
             'transactions' => $transactions,
             'total_taken' => $totals['total_taken'],
@@ -59,6 +65,8 @@ class DebtLedgerShareWebController extends Controller
                 : 'جميع المعاملات',
             'detail_level' => $detailLevel,
             'source_details' => $this->reportSourceDetails($transactions, $detailLevel),
+            'taken_label' => $takenLabel,
+            'given_label' => $givenLabel,
         ]);
     }
 

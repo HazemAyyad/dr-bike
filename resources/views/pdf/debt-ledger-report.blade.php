@@ -152,8 +152,8 @@
     </div>
 
     <div class="summary">
-        <span>إجمالي مستحق لنا: <span class="taken">{{ number_format($total_taken, 2) }} {{ $currencyLabel }}</span></span>
-        <span>إجمالي مستحق علينا: <span class="given">{{ number_format($total_given, 2) }} {{ $currencyLabel }}</span></span>
+        <span>إجمالي {{ $taken_label ?? 'أخذت' }}: <span class="taken">{{ number_format($total_taken, 2) }} {{ $currencyLabel }}</span></span>
+        <span>إجمالي {{ $given_label ?? 'أعطيت' }}: <span class="given">{{ number_format($total_given, 2) }} {{ $currencyLabel }}</span></span>
         <span>الرصيد النهائي:
             <span class="{{ $balance >= 0 ? 'taken' : 'given' }}">{{ number_format($balance, 2) }} {{ $currencyLabel }}</span>
         </span>
@@ -165,8 +165,8 @@
                 <th class="num">#</th>
                 <th>التاريخ</th>
                 <th>ملاحظة</th>
-                <th class="num">مستحق علينا</th>
-                <th class="num">مستحق لنا</th>
+                <th class="num">{{ $given_label ?? 'أعطيت' }}</th>
+                <th class="num">{{ $taken_label ?? 'أخذت' }}</th>
                 <th class="num">الرصيد السابق</th>
                 <th class="num">الرصيد بعد</th>
             </tr>

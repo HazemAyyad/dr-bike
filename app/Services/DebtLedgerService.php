@@ -20,6 +20,20 @@ use Illuminate\Support\Facades\DB;
 
 class DebtLedgerService
 {
+    public function takenLabel(?array $preferences = null): string
+    {
+        $preferences ??= auth()->user()?->ui_preferences ?? [];
+
+        return trim((string) ($preferences['debt_ledger']['taken_label'] ?? 'أخذت')) ?: 'أخذت';
+    }
+
+    public function givenLabel(?array $preferences = null): string
+    {
+        $preferences ??= auth()->user()?->ui_preferences ?? [];
+
+        return trim((string) ($preferences['debt_ledger']['given_label'] ?? 'أعطيت')) ?: 'أعطيت';
+    }
+
     public const CURRENCIES = ['شيكل', 'دولار', 'دينار'];
 
     public function __construct(private ?DebtLedgerActivityLogger $activityLogger = null)
@@ -589,7 +603,7 @@ class DebtLedgerService
         return [
             'id' => $transaction->id,
             'type' => $transaction->type,
-            'type_label' => $transaction->type === 'taken' ? 'مستحق لنا' : 'مستحق علينا',
+            'type_label' => $transaction->type === 'taken' ? $this->takenLabel() : $this->givenLabel(),
             'source_label' => $sourceLabel,
             'amount' => (float) $transaction->amount,
             'currency' => $currency,
@@ -1460,7 +1474,7 @@ class DebtLedgerService
                 'last_transaction' => $lastTransaction ? [
                     'id' => $lastTransaction->id,
                     'type' => $lastTransaction->type,
-                    'type_label' => $lastTransaction->type === 'taken' ? 'مستحق لنا' : 'مستحق علينا',
+                    'type_label' => $lastTransaction->type === 'taken' ? $this->takenLabel() : $this->givenLabel(),
                     'amount' => (float) $lastTransaction->amount,
                     'currency' => $this->normalizeCurrency($lastTransaction->currency),
                     'transaction_date' => $lastTransaction->transaction_date?->format('Y-m-d'),

@@ -656,6 +656,8 @@ class DebtLedger extends Controller
                 'end_date' => $endDate,
                 'currency' => $this->ledger->normalizeCurrency($request->currency),
                 'report_detail_level' => $request->input('report_detail_level', 'summary'),
+                'taken_label' => $this->ledger->takenLabel(),
+                'given_label' => $this->ledger->givenLabel(),
             ], now()->addDays(90));
 
             return response()->json([
@@ -1001,6 +1003,8 @@ class DebtLedger extends Controller
             $periodLabel = $this->formatPeriodLabel($request->period, $startDate, $endDate);
             $periodLabel = $periodLabel.' — '.$displayCurrency;
             $sourceDetails = $this->reportSourceDetails($transactions, $detailLevel);
+            $takenLabel = $this->ledger->takenLabel();
+            $givenLabel = $this->ledger->givenLabel();
 
             if ($request->boolean('json_response')) {
                 return response()->json([
@@ -1015,6 +1019,8 @@ class DebtLedger extends Controller
                         'period_label' => $periodLabel,
                         'detail_level' => $detailLevel,
                         'generated_at' => now()->format('Y-m-d H:i'),
+                        'taken_label' => $takenLabel,
+                        'given_label' => $givenLabel,
                         'transactions' => $transactions->map(fn ($transaction) => [
                             'id' => (int) $transaction->id,
                             'type' => $transaction->type,
@@ -1040,6 +1046,8 @@ class DebtLedger extends Controller
                 'detail_level' => $detailLevel,
                 'source_details' => $sourceDetails,
                 'generated_at' => now()->format('Y-m-d H:i'),
+                'taken_label' => $takenLabel,
+                'given_label' => $givenLabel,
                 'transactions_count' => $transactions->count(),
             ])->render();
 
