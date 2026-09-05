@@ -305,7 +305,7 @@ class MaintenanceDailyBoxService
         }
 
         return MaintenanceDailySession::query()
-            ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequests'])
+            ->with(['box:id,name,total,currency,type', 'user:id,name', 'openedBy:id,name', 'closingRequests'])
             ->whereIn('status', [
                 config('maintenance_daily.session_status.open', 'open'),
                 config('maintenance_daily.session_status.closing_requested', 'closing_requested'),
@@ -324,6 +324,8 @@ class MaintenanceDailyBoxService
                 'id' => (int) $session->id,
                 'session_id' => (int) $session->id,
                 'employee_name' => $session->user?->name,
+                'opened_by_user_id' => $session->opened_by_user_id,
+                'opened_by_name' => $session->openedBy?->name,
                     'business_date' => $session->business_date?->toDateString(),
                     'status' => $session->status,
                     'box_id' => $session->box_id,
@@ -400,6 +402,7 @@ class MaintenanceDailyBoxService
             ->with([
                 'box:id,name,total,currency,type',
                 'user:id,name',
+                'openedBy:id,name',
                 'employee.user',
                 'closingRequests.requestedBy',
                 'closingRequests.reviewedBy',
@@ -428,6 +431,8 @@ class MaintenanceDailyBoxService
                 'user_id' => $session->user_id,
                 'employee_id' => $session->employee_id,
                 'employee_name' => $session->user?->name,
+                'opened_by_user_id' => $session->opened_by_user_id,
+                'opened_by_name' => $session->openedBy?->name,
                 'business_date' => $session->business_date?->toDateString(),
                 'status' => $session->status,
                 'allows_sales' => $session->isOpen() && ! $pendingClosing,
@@ -649,9 +654,9 @@ class MaintenanceDailyBoxService
                 ->lockForUpdate()
                 ->findOrFail($sessionId);
 
-            if ((int) $session->user_id !== (int) $reviewer->id) {
+            if (! $this->canReviewClosing($reviewer)) {
                 throw ValidationException::withMessages([
-                    'session' => ['فقط صاحب صندوق الصيانة يستطيع إغلاقه.'],
+                    'session' => [__('messages.unauthorized')],
                 ]);
             }
 
@@ -1065,12 +1070,13 @@ class MaintenanceDailyBoxService
             $session?->loadMissing([
                 'box:id,name,total,currency,type',
                 'user:id,name',
+                'openedBy:id,name',
                 'closingRequestedBy:id,name',
                 'closingRequests',
             ]);
         } else {
             $sessionQuery = MaintenanceDailySession::query()
-                ->with(['box:id,name,total,currency,type', 'user:id,name', 'closingRequestedBy:id,name', 'closingRequests'])
+                ->with(['box:id,name,total,currency,type', 'user:id,name', 'openedBy:id,name', 'closingRequestedBy:id,name', 'closingRequests'])
                 ->whereDate('business_date', $businessDate);
 
             if ($user) {
@@ -1145,6 +1151,8 @@ class MaintenanceDailyBoxService
                 'id' => $session->id,
                 'user_id' => $session->user_id,
                 'employee_name' => $session->user?->name,
+                'opened_by_user_id' => $session->opened_by_user_id,
+                'opened_by_name' => $session->openedBy?->name,
                 'business_date' => $session->business_date->toDateString(),
                 'status' => $session->status,
                 'is_blocking_previous_day' => (bool) $isPreviousDayOpen,
@@ -1251,7 +1259,12 @@ class MaintenanceDailyBoxService
      */
     private function formatSessionSummary(MaintenanceDailySession $session): array
     {
-        $session->loadMissing(['box:id,name,total,currency,type', 'user:id,name', 'closingRequests']);
+        $session->loadMissing([
+            'box:id,name,total,currency,type',
+            'user:id,name',
+            'openedBy:id,name',
+            'closingRequests',
+        ]);
         $payload = $this->payload($session->business_date?->toDateString(), $session->user);
         $maintenanceCount = Maintenance::query()
             ->where('maintenance_daily_session_id', $session->id)
@@ -1274,6 +1287,8 @@ class MaintenanceDailyBoxService
             'user_id' => $session->user_id,
             'employee_id' => $session->employee_id,
             'employee_name' => $session->user?->name,
+            'opened_by_user_id' => $session->opened_by_user_id,
+            'opened_by_name' => $session->openedBy?->name,
             'business_date' => $session->business_date?->toDateString(),
             'status' => $session->status,
             'opening_balance' => round((float) $session->opening_balance, 2),
