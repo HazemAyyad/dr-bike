@@ -20,6 +20,7 @@ use App\Services\CustomerProductPriceHistoryService;
 use App\Services\DebtLedgerService;
 use App\Services\DocumentSerialService;
 use App\Services\EmployeeActivityLogger;
+use App\Services\InstantSaleHistoryService;
 use App\Services\OfferPackageService;
 use App\Services\ProductStockService;
 use App\Services\SalesDailySessionService;
@@ -1065,6 +1066,7 @@ class InstantSales extends Controller
 public function store(Request $request)
  {
     $replaceId = 0;
+    $beforeHistorySnapshot = null;
 
     try{
     $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
@@ -1275,6 +1277,7 @@ public function store(Request $request)
 
         if ($replaceId > 0) {
             DB::beginTransaction();
+            $beforeHistorySnapshot = app(InstantSaleHistoryService::class)->snapshot($replaceId);
             $this->prepareInstantSaleReplacement(
                 $replaceId,
                 reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement)
@@ -1491,6 +1494,16 @@ public function store(Request $request)
             );
         }
 
+        $historyService = app(InstantSaleHistoryService::class);
+        $historyService->record(
+            (int) $mainInstantSale->id,
+            $replaceId > 0 ? 'updated' : 'created',
+            $beforeHistorySnapshot,
+            $historyService->snapshot((int) $mainInstantSale->id),
+            $replaceId > 0 ? trim((string) $request->input('closed_day_edit_reason', '')) ?: null : null,
+            ['closed_day_edit_mode' => $closedDayEditMode]
+        );
+
         if ($replaceId > 0) {
             DB::commit();
         }
@@ -1568,10 +1581,12 @@ public function store(Request $request)
 
         return DB::transaction(function () use ($request, $data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession, $existingReplaceSale, $closedDayEditMode) {
             $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
+            $beforeHistorySnapshot = null;
             $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
             $isClosedDayFinancialSettlement = $closedDayEditMode === 'today_financial_settlement';
 
             if ($replaceId > 0) {
+                $beforeHistorySnapshot = app(InstantSaleHistoryService::class)->snapshot($replaceId);
                 $this->prepareInstantSaleReplacement(
                     $replaceId,
                     reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement)
@@ -1798,6 +1813,16 @@ public function store(Request $request)
                     $mainInstantSale->payment_box_id ? (int) $mainInstantSale->payment_box_id : null
                 );
             }
+
+            $historyService = app(InstantSaleHistoryService::class);
+            $historyService->record(
+                (int) $mainInstantSale->id,
+                $replaceId > 0 ? 'updated' : 'created',
+                $beforeHistorySnapshot,
+                $historyService->snapshot((int) $mainInstantSale->id),
+                $replaceId > 0 ? trim((string) $request->input('closed_day_edit_reason', '')) ?: null : null,
+                ['closed_day_edit_mode' => $closedDayEditMode]
+            );
 
             return response()->json([
                 'status' => 'success',
@@ -2221,6 +2246,8 @@ public function edit(Request $request)
                     ->with(['product', 'subProducts.product', 'salesDailySession'])
                     ->lockForUpdate()
                     ->findOrFail($request->instant_sale_id);
+                $historyService = app(InstantSaleHistoryService::class);
+                $beforeHistorySnapshot = $historyService->snapshot((int) $instantSale->id);
                 $existingSnapshot = $instantSale->replicate();
                 $existingSnapshot->setAttribute('id', $instantSale->id);
                 $existingSnapshot->setRelation('salesDailySession', $instantSale->salesDailySession);
@@ -2332,6 +2359,15 @@ public function edit(Request $request)
                         $instantSale->fresh(['product', 'offerPackage'])
                     );
                 }
+
+                $historyService->record(
+                    (int) $instantSale->id,
+                    'updated',
+                    $beforeHistorySnapshot,
+                    $historyService->snapshot((int) $instantSale->id),
+                    trim((string) $request->input('closed_day_edit_reason', '')) ?: null,
+                    ['closed_day_edit_mode' => $closedDayEditMode]
+                );
 
                 Logs::createLog('تعديل بيع فوري', 'تم تعديل بيع فوري #'.$instantSale->id, 'instant_sales');
             });
@@ -2482,6 +2518,9 @@ public function edit(Request $request)
                     ]);
                 }
 
+                $historyService = app(InstantSaleHistoryService::class);
+                $beforeHistorySnapshot = $historyService->snapshot((int) $sale->id);
+
                 app(SalesReturnService::class)->assertInstantSaleHasNoActiveDirectReturns($sale);
 
                 foreach ($this->stockLinesForSale($sale) as $line) {
@@ -2509,6 +2548,12 @@ public function edit(Request $request)
                 $this->reverseBoxForCancelledSale($sale);
                 $this->markInstantSaleCancelled($sale);
                 app(DebtLedgerService::class)->deleteInstantSaleLedger($sale);
+                $historyService->record(
+                    (int) $sale->id,
+                    'cancelled',
+                    $beforeHistorySnapshot,
+                    $historyService->snapshot((int) $sale->id)
+                );
 
                 Logs::createLog(
                     'إلغاء بيع فوري',
@@ -2682,6 +2727,7 @@ public function edit(Request $request)
                         'is_additional_product' => $isPackageSale && $lineCost > 0,
                     ];
                 })->values(),
+                'history' => app(InstantSaleHistoryService::class)->timeline($sale),
              ];
 
              return response()->json([
