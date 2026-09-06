@@ -277,8 +277,11 @@ class WhatsAppController extends Controller
 
     public function media(int $id, WhatsAppCloudApiService $service)
     {
-        $message = WhatsAppMessage::query()->findOrFail($id);
+        $message = WhatsAppMessage::query()->with('whatsappAccount')->findOrFail($id);
         abort_unless($message->media_url, 404);
+        $service = $message->whatsappAccount
+            ? $service->forAccount($message->whatsappAccount)
+            : $service;
         $media = $service->downloadMedia($message->media_url);
         $extension = match ($media['mime_type']) {
             'image/jpeg' => 'jpg', 'image/png' => 'png', 'application/pdf' => 'pdf',

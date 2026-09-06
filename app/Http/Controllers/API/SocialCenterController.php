@@ -11,6 +11,7 @@ use App\Models\SocialMessage;
 use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessage;
 use App\Services\Meta\MetaMessagingService;
+use App\Services\Social\LinkPreviewService;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -51,14 +52,16 @@ class SocialCenterController extends Controller
         $allowedChannels = $this->allowedChannels($request);
         abort_if($channel !== 'all' && ! in_array($channel, $allowedChannels, true), 403);
         $quickFilter = $request->input('quick_filter', 'all');
-        $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked,needs_reply']);
+        $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked,needs_reply,assigned_me']);
         $search = trim((string) $request->input('search'));
 
         $items = collect();
         if (in_array('whatsapp', $allowedChannels, true) && in_array($channel, ['all', 'whatsapp'], true)) {
-            $query = $this->activeWhatsAppConversations()->with(['contact', 'whatsappAccount']);
+            $query = $this->activeWhatsAppConversations()
+                ->with(['contact', 'whatsappAccount', 'latestMessage', 'assignedAdmin'])
+                ->withCount(['messages as failed_count' => fn ($messages) => $messages->where('status', 'failed')]);
             if (filled($status)) $query->where('status', $status);
-            $this->applyQuickFilter($query, $quickFilter);
+            $this->applyQuickFilter($query, $quickFilter, $request->user()->id);
             if ($search !== '') {
                 $query->where(function ($q) use ($search) {
                     $q->where('phone', 'like', "%{$search}%")
@@ -70,11 +73,13 @@ class SocialCenterController extends Controller
         }
 
         if (array_intersect(['facebook', 'instagram'], $allowedChannels) && in_array($channel, ['all', 'facebook', 'instagram'], true)) {
-            $query = SocialConversation::query()->with('contact');
+            $query = SocialConversation::query()
+                ->with(['contact', 'latestMessage', 'assignedAdmin'])
+                ->withCount(['messages as failed_count' => fn ($messages) => $messages->where('status', 'failed')]);
             if ($channel !== 'all') $query->where('channel', $channel);
             else $query->whereIn('channel', $allowedChannels);
             if (filled($status)) $query->where('status', $status);
-            $this->applyQuickFilter($query, $quickFilter);
+            $this->applyQuickFilter($query, $quickFilter, $request->user()->id);
             if ($search !== '') {
                 $query->where(function ($q) use ($search) {
                     $q->where('last_message', 'like', "%{$search}%")
@@ -111,7 +116,7 @@ class SocialCenterController extends Controller
                 ->pluck('whatsapp_message_id');
             $messages = $conversation->messages()
                 ->whereNotIn('id', $hiddenIds)
-                ->with(['replyTo:id,message_type,body,direction', 'sender:id,name'])
+                ->with(['replyTo:id,message_type,body,direction,media_url', 'sender:id,name'])
                 ->orderByDesc('created_at')
                 ->orderByDesc('id')
                 ->paginate($this->perPage($request, 30))
@@ -264,14 +269,20 @@ class SocialCenterController extends Controller
     ) {
         abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
         $this->authorizeChannel($request, $channel);
-        $data = $request->validate(['message' => 'required|string|max:4096']);
+        $data = $request->validate([
+            'message' => 'required|string|max:4096',
+            'reply_to_message_id' => 'nullable|integer',
+        ]);
 
         try {
             if ($channel === 'whatsapp') {
                 $conversation = $this->activeWhatsAppConversations()->with('whatsappAccount')->findOrFail($id);
                 $this->ensureCustomerServiceWindow($conversation);
                 $whatsApp = $this->whatsAppForConversation($whatsApp, $conversation);
-                $result = $whatsApp->sendText($conversation->phone, $data['message'], $request->user()->id);
+                $replyTo = isset($data['reply_to_message_id'])
+                    ? $conversation->messages()->findOrFail($data['reply_to_message_id'])
+                    : null;
+                $result = $whatsApp->sendText($conversation->phone, $data['message'], $request->user()->id, $replyTo);
             } else {
                 abort_unless(in_array($channel, ['facebook', 'instagram'], true), 404);
                 $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
@@ -366,6 +377,7 @@ class SocialCenterController extends Controller
 
     private function serializeWhatsAppConversation(WhatsAppConversation $conversation): array
     {
+        $latestMessage = $conversation->latestMessage;
         return [
             'id' => $conversation->id,
             'channel' => 'whatsapp',
@@ -374,8 +386,10 @@ class SocialCenterController extends Controller
             'last_message' => $conversation->last_message,
             'last_message_at' => $conversation->last_message_at,
             'unread_count' => $conversation->unread_count,
-            'failed_count' => $conversation->messages()->where('status', 'failed')->count(),
-            'last_message_type' => $conversation->messages()->latest('created_at')->value('message_type'),
+            'failed_count' => (int) ($conversation->failed_count ?? $conversation->messages()->where('status', 'failed')->count()),
+            'last_message_type' => $latestMessage?->message_type,
+            'last_message_direction' => $latestMessage?->direction,
+            'last_message_status' => $latestMessage?->status,
             'needs_reply' => $this->needsReply($conversation, 'whatsapp'),
             'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
             'tags' => $this->conversationTags('whatsapp', $conversation->id),
@@ -390,6 +404,7 @@ class SocialCenterController extends Controller
 
     private function serializeSocialConversation(SocialConversation $conversation): array
     {
+        $latestMessage = $conversation->latestMessage;
         return [
             'id' => $conversation->id,
             'channel' => $conversation->channel,
@@ -398,8 +413,10 @@ class SocialCenterController extends Controller
             'last_message' => $conversation->last_message,
             'last_message_at' => $conversation->last_message_at,
             'unread_count' => $conversation->unread_count,
-            'failed_count' => $conversation->messages()->where('status', 'failed')->count(),
-            'last_message_type' => $conversation->messages()->latest('created_at')->value('message_type'),
+            'failed_count' => (int) ($conversation->failed_count ?? $conversation->messages()->where('status', 'failed')->count()),
+            'last_message_type' => $latestMessage?->message_type,
+            'last_message_direction' => $latestMessage?->direction,
+            'last_message_status' => $latestMessage?->status,
             'needs_reply' => $this->needsReply($conversation, $conversation->channel),
             'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
             'tags' => $this->conversationTags($conversation->channel, $conversation->id),
@@ -418,7 +435,11 @@ class SocialCenterController extends Controller
 
     private function serializeWhatsAppMessage(WhatsAppMessage $message): array
     {
-        return array_merge($message->toArray(), ['channel' => 'whatsapp']);
+        return array_merge($message->toArray(), [
+            'channel' => 'whatsapp',
+            'link_url' => LinkPreviewService::firstUrl($message->body),
+            'media' => $this->messageMedia($message->message_type, $message->media_url, $message->body, $message->raw_payload),
+        ]);
     }
 
     private function serializeSocialMessage(SocialMessage $message): array
@@ -434,11 +455,39 @@ class SocialCenterController extends Controller
             'meta_status' => $message->meta_status,
             'status' => $message->status,
             'error_message' => $message->error_message,
+            'link_url' => LinkPreviewService::firstUrl($message->body),
+            'media' => $this->messageMedia($message->message_type, $message->media_url, $message->body, $message->raw_payload),
             'sender' => $message->sender,
             'raw_payload' => $message->raw_payload,
             'response_payload' => $message->response_payload,
             'created_at' => $message->created_at,
         ];
+    }
+
+    public function linkPreview(Request $request, LinkPreviewService $previews)
+    {
+        $data = $request->validate(['url' => 'required|url:http,https|max:2048']);
+
+        return $this->ok($previews->preview($data['url']), 'preview');
+    }
+
+    private function messageMedia(string $type, ?string $url, ?string $body, ?array $rawPayload): ?array
+    {
+        if (! in_array($type, ['image', 'audio', 'video', 'document', 'sticker'], true) || ! $url) {
+            return null;
+        }
+
+        $payload = (array) data_get($rawPayload, $type, []);
+
+        return array_filter([
+            'kind' => $type,
+            'url' => $url,
+            'caption' => $body,
+            'mime_type' => data_get($payload, 'mime_type'),
+            'filename' => data_get($payload, 'filename') ?: ($type === 'document' ? $body : null),
+            'file_size' => data_get($payload, 'file_size'),
+            'duration_seconds' => data_get($payload, 'duration'),
+        ], fn ($value) => $value !== null && $value !== '');
     }
 
     private function ok($value, string $key) { return response()->json(['status' => 'success', $key => $value]); }
@@ -469,7 +518,7 @@ class SocialCenterController extends Controller
         ];
     }
 
-    private function applyQuickFilter($query, string $quickFilter): void
+    private function applyQuickFilter($query, string $quickFilter, int $userId): void
     {
         match ($quickFilter) {
             'unread' => $query->where('unread_count', '>', 0),
@@ -478,6 +527,7 @@ class SocialCenterController extends Controller
                 ->whereNotNull('customer_id')
                 ->orWhereNotNull('supplier_id')),
             'needs_reply' => $this->applyNeedsReplyFilter($query),
+            'assigned_me' => $query->where('assigned_admin_id', $userId),
             default => null,
         };
     }

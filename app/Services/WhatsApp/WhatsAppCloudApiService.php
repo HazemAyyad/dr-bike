@@ -64,7 +64,10 @@ class WhatsAppCloudApiService
         return $this->send($phone, [
             'context' => $replyTo?->meta_message_id ? ['message_id' => $replyTo->meta_message_id] : null,
             'type' => 'text',
-            'text' => ['preview_url' => false, 'body' => $message],
+            'text' => [
+                'preview_url' => preg_match('~https?://[^\s]+~iu', $message) === 1,
+                'body' => $message,
+            ],
         ], [
             'message_type' => 'text',
             'body' => $message,
@@ -136,6 +139,13 @@ class WhatsAppCloudApiService
                 ? ($caption ?: $file->getClientOriginalName())
                 : $caption,
             'media_url' => $mediaId,
+            'raw_payload' => [
+                $type => array_filter([
+                    'mime_type' => $uploadMime,
+                    'filename' => $type === 'document' ? $file->getClientOriginalName() : null,
+                    'file_size' => $file->getSize(),
+                ]),
+            ],
         ], $adminId);
     }
 

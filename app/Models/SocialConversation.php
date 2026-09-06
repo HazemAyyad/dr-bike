@@ -18,5 +18,6 @@ class SocialConversation extends Model
 
     public function contact() { return $this->belongsTo(SocialContact::class, 'social_contact_id'); }
     public function messages() { return $this->hasMany(SocialMessage::class); }
+    public function latestMessage() { return $this->hasOne(SocialMessage::class)->ofMany(['created_at' => 'max', 'id' => 'max']); }
     public function assignedAdmin() { return $this->belongsTo(User::class, 'assigned_admin_id'); }
 }

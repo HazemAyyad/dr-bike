@@ -1247,6 +1247,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section
 Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section','refresh.token.expiry']] , function() {
     // Social Center — unified inbox for WhatsApp, Facebook, and Instagram.
     Route::get('/social/dashboard', [SocialCenterController::class, 'dashboard']);
+    Route::get('/social/link-preview', [SocialCenterController::class, 'linkPreview'])
+        ->middleware('throttle:30,1');
     Route::get('/social/conversations', [SocialCenterController::class, 'conversations']);
     Route::get('/social/conversations/{channel}/{id}', [SocialCenterController::class, 'showConversation'])
         ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
@@ -1275,31 +1277,31 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section',
         ->whereNumber('id');
 
     // WhatsApp-specific tools kept for QR, templates, product sharing, media, and compatibility.
-    Route::get('/whatsapp/dashboard', [WhatsAppController::class, 'dashboard']);
-    Route::get('/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
-    Route::get('/whatsapp/conversations/{id}', [WhatsAppController::class, 'showConversation'])->whereNumber('id');
-    Route::post('/whatsapp/conversations/{id}/send', [WhatsAppController::class, 'sendToConversation'])->whereNumber('id')->middleware('throttle:20,1');
-    Route::post('/whatsapp/conversations/{id}/request-continuation', [WhatsAppController::class, 'requestContinuation'])->whereNumber('id')->middleware('throttle:5,1');
-    Route::post('/whatsapp/conversations/{id}/send-media', [WhatsAppController::class, 'sendMediaToConversation'])->whereNumber('id')->middleware('throttle:10,1');
-    Route::post('/whatsapp/conversations/{id}/typing', [WhatsAppController::class, 'typing'])->whereNumber('id')->middleware('throttle:12,1');
-    Route::get('/whatsapp/products', [WhatsAppController::class, 'products']);
-    Route::post('/whatsapp/conversations/{id}/send-products', [WhatsAppController::class, 'sendProducts'])->whereNumber('id')->middleware('throttle:10,1');
-    Route::delete('/whatsapp/conversations/{id}/messages/{messageId}', [WhatsAppController::class, 'hideMessage'])->whereNumber(['id', 'messageId']);
-    Route::post('/whatsapp/conversations/{id}/link-person', [WhatsAppController::class, 'linkPerson'])->whereNumber('id');
-    Route::get('/whatsapp/messages/{id}/media', [WhatsAppController::class, 'media'])->whereNumber('id');
-    Route::get('/whatsapp/qr', [WhatsAppController::class, 'qr']);
-    Route::get('/whatsapp/qr/a4', [WhatsAppController::class, 'qrA4']);
-    Route::post('/whatsapp/send-text', [WhatsAppController::class, 'sendText'])->middleware('throttle:20,1');
-    Route::post('/whatsapp/send-template', [WhatsAppController::class, 'sendTemplate'])->middleware('throttle:20,1');
-    Route::get('/whatsapp/messages', [WhatsAppController::class, 'messages']);
-    Route::get('/whatsapp/templates', [WhatsAppTemplateController::class, 'index']);
-    Route::post('/whatsapp/templates', [WhatsAppTemplateController::class, 'store']);
-    Route::put('/whatsapp/templates/{id}', [WhatsAppTemplateController::class, 'update'])->whereNumber('id');
-    Route::delete('/whatsapp/templates/{id}', [WhatsAppTemplateController::class, 'destroy'])->whereNumber('id');
+    Route::get('/whatsapp/dashboard', [WhatsAppController::class, 'dashboard'])->middleware('check.permission:Social Center WhatsApp');
+    Route::get('/whatsapp/conversations', [WhatsAppController::class, 'conversations'])->middleware('check.permission:Social Center WhatsApp');
+    Route::get('/whatsapp/conversations/{id}', [WhatsAppController::class, 'showConversation'])->whereNumber('id')->middleware('check.permission:Social Center WhatsApp');
+    Route::post('/whatsapp/conversations/{id}/send', [WhatsAppController::class, 'sendToConversation'])->whereNumber('id')->middleware(['check.permission:Social Center WhatsApp', 'throttle:20,1']);
+    Route::post('/whatsapp/conversations/{id}/request-continuation', [WhatsAppController::class, 'requestContinuation'])->whereNumber('id')->middleware(['check.permission:Social Center WhatsApp', 'throttle:5,1']);
+    Route::post('/whatsapp/conversations/{id}/send-media', [WhatsAppController::class, 'sendMediaToConversation'])->whereNumber('id')->middleware(['check.permission:Social Center WhatsApp', 'throttle:10,1']);
+    Route::post('/whatsapp/conversations/{id}/typing', [WhatsAppController::class, 'typing'])->whereNumber('id')->middleware(['check.permission:Social Center WhatsApp', 'throttle:12,1']);
+    Route::get('/whatsapp/products', [WhatsAppController::class, 'products'])->middleware('check.permission:Social Center WhatsApp');
+    Route::post('/whatsapp/conversations/{id}/send-products', [WhatsAppController::class, 'sendProducts'])->whereNumber('id')->middleware(['check.permission:Social Center WhatsApp', 'throttle:10,1']);
+    Route::delete('/whatsapp/conversations/{id}/messages/{messageId}', [WhatsAppController::class, 'hideMessage'])->whereNumber(['id', 'messageId'])->middleware('check.permission:Social Center WhatsApp');
+    Route::post('/whatsapp/conversations/{id}/link-person', [WhatsAppController::class, 'linkPerson'])->whereNumber('id')->middleware('check.permission:Social Center WhatsApp');
+    Route::get('/whatsapp/messages/{id}/media', [WhatsAppController::class, 'media'])->whereNumber('id')->middleware('check.permission:Social Center WhatsApp');
+    Route::get('/whatsapp/qr', [WhatsAppController::class, 'qr'])->middleware('check.permission:Social Center WhatsApp');
+    Route::get('/whatsapp/qr/a4', [WhatsAppController::class, 'qrA4'])->middleware('check.permission:Social Center WhatsApp');
+    Route::post('/whatsapp/send-text', [WhatsAppController::class, 'sendText'])->middleware(['check.permission:Social Center WhatsApp', 'throttle:20,1']);
+    Route::post('/whatsapp/send-template', [WhatsAppController::class, 'sendTemplate'])->middleware(['check.permission:Social Center WhatsApp', 'throttle:20,1']);
+    Route::get('/whatsapp/messages', [WhatsAppController::class, 'messages'])->middleware('check.permission:Social Center WhatsApp');
+    Route::get('/whatsapp/templates', [WhatsAppTemplateController::class, 'index'])->middleware('check.permission:Social Center WhatsApp');
+    Route::post('/whatsapp/templates', [WhatsAppTemplateController::class, 'store'])->middleware('check.permission:Social Center WhatsApp');
+    Route::put('/whatsapp/templates/{id}', [WhatsAppTemplateController::class, 'update'])->whereNumber('id')->middleware('check.permission:Social Center WhatsApp');
+    Route::delete('/whatsapp/templates/{id}', [WhatsAppTemplateController::class, 'destroy'])->whereNumber('id')->middleware('check.permission:Social Center WhatsApp');
     Route::get('/whatsapp/settings', [WhatsAppSettingsController::class, 'show']);
     Route::post('/whatsapp/settings', [WhatsAppSettingsController::class, 'store']);
     Route::post('/whatsapp/settings/employees', [WhatsAppSettingsController::class, 'updateEmployees']);
-    Route::post('/whatsapp/test-message', [WhatsAppController::class, 'testMessage'])->middleware('throttle:10,1');
+    Route::post('/whatsapp/test-message', [WhatsAppController::class, 'testMessage'])->middleware(['check.permission:Social Center WhatsApp', 'throttle:10,1']);
 });
 
 // admin routes
