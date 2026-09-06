@@ -23,21 +23,21 @@
         .summary-label { display:block; margin-bottom:5px; color:var(--muted); font-size:11px; }
         .summary-value { font-size:15px; font-weight:800; }
         .taken { color:var(--green); } .given { color:var(--red); }
-        .transactions { display:grid; gap:9px; }
+        .transactions { display:grid; gap:5px; }
         .transaction { overflow:hidden; border:1px solid var(--line); border-radius:7px; background:#fff; break-inside:avoid; }
-        .transaction-main { padding:11px 12px; }
+        .transaction-main { display:grid; grid-template-columns:110px minmax(0,1fr) auto auto; align-items:center; gap:10px; padding:7px 9px; }
         .transaction-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
         .transaction-date { font-size:13px; font-weight:800; }
         .transaction-type { font-size:13px; font-weight:800; text-align:left; }
-        .transaction-note { margin-top:7px; color:var(--muted); font-size:12px; line-height:1.65; }
-        .transaction-balance { margin-top:5px; font-size:11px; }
-        .source { padding:10px 12px; background:#f7f7f9; border-top:1px solid var(--line); }
+        .transaction-note { overflow:hidden; color:var(--muted); font-size:11px; white-space:nowrap; text-overflow:ellipsis; }
+        .transaction-balance { font-size:10px; white-space:nowrap; }
+        .source { padding:6px 9px; background:#f7f7f9; border-top:1px solid var(--line); }
         .source-title { color:var(--purple); font-size:13px; font-weight:800; }
-        .source-meta { display:flex; flex-wrap:wrap; gap:5px 18px; margin-top:6px; color:var(--muted); font-size:11px; }
-        .products { display:grid; gap:7px; margin-top:9px; }
-        .product { display:grid; grid-template-columns:46px minmax(0,1fr) auto; align-items:center; gap:9px; padding:7px; background:#fff; border:1px solid #e5e7eb; border-radius:6px; }
+        .source-meta { display:flex; flex-wrap:wrap; gap:3px 14px; margin-top:3px; color:var(--muted); font-size:10px; }
+        .products { display:grid; gap:3px; margin-top:5px; }
+        .product { display:grid; grid-template-columns:34px minmax(0,1fr) auto; align-items:center; gap:6px; padding:4px 6px; background:#fff; border:1px solid #e5e7eb; border-radius:5px; }
         .product.no-image { grid-template-columns:minmax(0,1fr) auto; }
-        .product-img,.product-placeholder { width:46px; height:46px; border-radius:5px; }
+        .product-img,.product-placeholder { width:34px; height:34px; border-radius:4px; }
         .product-img { object-fit:cover; }
         .product-placeholder { display:grid; place-items:center; color:#9ca3af; background:#f3f4f6; font-size:10px; }
         .product-name { font-size:12px; font-weight:800; }
@@ -49,8 +49,8 @@
             body { padding:0; background:#fff; } .report { min-height:100vh; padding:18px 12px; border-radius:0; box-shadow:none; }
             .brand-name { font-size:19px; } .brand img { height:45px; } .meta { grid-template-columns:1fr; }
             .summary { grid-template-columns:1fr; gap:0; } .summary-item { display:flex; justify-content:space-between; align-items:center; border-left:0; border-bottom:1px solid rgba(107,101,189,.13); text-align:right; }
-            .summary-item:last-child { border-bottom:0; } .summary-label { margin:0; } .transaction-top { align-items:flex-start; }
-            .product { grid-template-columns:52px minmax(0,1fr); } .product-img,.product-placeholder { width:52px; height:52px; } .product-total { grid-column:2; }
+            .summary-item:last-child { border-bottom:0; } .summary-label { margin:0; } .transaction-main { grid-template-columns:auto 1fr auto; gap:6px; } .transaction-balance { grid-column:2 / 4; }
+            .product { grid-template-columns:38px minmax(0,1fr) auto; } .product-img,.product-placeholder { width:38px; height:38px; }
         }
     </style>
 </head>
@@ -89,11 +89,9 @@
             @endphp
             <article class="transaction">
                 <div class="transaction-main">
-                    <div class="transaction-top">
-                        <div class="transaction-date">{{ $index + 1 }}. {{ $transaction->transaction_date?->format('Y-m-d') ?? '—' }}</div>
-                        <div class="transaction-type {{ $isTaken ? 'taken' : 'given' }}">{{ $isTaken ? ($taken_label ?? 'أخذت') : ($given_label ?? 'أعطيت') }} &nbsp; {{ number_format($transaction->amount,2) }} {{ $currencyLabel }}</div>
-                    </div>
-                    @if(!empty(trim((string) $transaction->note)))<div class="transaction-note">{{ $transaction->note }}</div>@endif
+                    <div class="transaction-date">{{ $index + 1 }}. {{ $transaction->transaction_date?->format('Y-m-d') ?? '—' }}</div>
+                    <div class="transaction-note">{{ !empty(trim((string) $transaction->note)) ? $transaction->note : '—' }}</div>
+                    <div class="transaction-type {{ $isTaken ? 'taken' : 'given' }}">{{ $isTaken ? ($taken_label ?? 'أخذت') : ($given_label ?? 'أعطيت') }} {{ number_format($transaction->amount,2) }}</div>
                     <div class="transaction-balance">الرصيد بعد الحركة: <strong>{{ number_format($transaction->balance_after,2) }} {{ $currencyLabel }}</strong></div>
                 </div>
                 @if($showSourceDetails && $sourceDetail)
