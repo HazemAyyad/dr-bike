@@ -10,6 +10,7 @@ use App\Http\Resources\SmartDeviceScheduleResource;
 use App\Http\Resources\SmartHomeEventLogResource;
 use App\Http\Resources\SmartHomeResource;
 use App\Http\Resources\SmartRoomResource;
+use App\Http\Resources\SmartSceneResource;
 use App\Models\SmartDevice;
 use App\Models\SmartDeviceActivityLog;
 use App\Models\SmartDeviceFunction;
@@ -18,6 +19,7 @@ use App\Models\SmartHome;
 use App\Models\SmartHomeEventLog;
 use App\Models\SmartHomeTuyaUser;
 use App\Models\SmartRoom;
+use App\Models\SmartScene;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -26,6 +28,114 @@ use Illuminate\Validation\Rule;
 
 class SmartHomeController extends Controller
 {
+    public function bootstrap(Request $request)
+    {
+        $isAdmin = $request->user()?->type === 'admin';
+        $owners = collect();
+
+        if ($isAdmin) {
+            $owners = User::query()
+                ->select('id', 'name', 'phone', 'type')
+                ->whereHas('smartDevices')
+                ->withCount([
+                    'smartHomes as homes_count',
+                    'smartDevices as devices_count',
+                    'smartDevices as online_devices_count' => fn (Builder $query) => $query->where('online', true),
+                ])
+                ->orderBy('name')
+                ->get()
+                ->map(fn (User $user) => [
+                    'id' => (int) $user->id,
+                    'name' => $user->name,
+                    'phone' => $user->phone,
+                    'type' => $user->type,
+                    'homes_count' => (int) ($user->homes_count ?? 0),
+                    'devices_count' => (int) ($user->devices_count ?? 0),
+                    'online_devices_count' => (int) ($user->online_devices_count ?? 0),
+                ]);
+        }
+
+        $ownerId = $isAdmin
+            ? ($request->filled('user_id')
+                ? (int) $request->input('user_id')
+                : (int) ($owners->first()['id'] ?? $request->user()->id))
+            : (int) $request->user()->id;
+        $request->merge(['user_id' => $ownerId, 'include_debug' => true]);
+
+        $mapping = SmartHomeTuyaUser::firstOrCreate(['user_id' => $ownerId], [
+            'region' => config('services.tuya.region'),
+        ]);
+        $homes = SmartHome::query()
+            ->where('user_id', $ownerId)
+            ->withCount(['rooms', 'devices'])
+            ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)])
+            ->orderByDesc('is_default')
+            ->orderBy('name')
+            ->get();
+
+        $unassigned = (string) $request->input('home_id') === 'unassigned';
+        $home = null;
+        if (! $unassigned) {
+            $requestedHomeId = $request->integer('home_id');
+            $home = $requestedHomeId > 0
+                ? $homes->firstWhere('id', $requestedHomeId)
+                : ($homes->firstWhere('is_default', true) ?? $homes->first());
+            abort_if($requestedHomeId > 0 && ! $home, 404);
+        }
+
+        $rooms = collect();
+        $scenes = collect();
+        $devicesQuery = SmartDevice::query()
+            ->with(['room:id,name,tuya_room_id', 'functions'])
+            ->where(fn (Builder $query) => $query
+                ->where('user_id', $ownerId)
+                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $ownerId)));
+
+        if ($unassigned) {
+            $devicesQuery->whereNull('smart_home_id');
+        } elseif ($home) {
+            $rooms = SmartRoom::query()
+                ->where('smart_home_id', $home->id)
+                ->withCount('devices')
+                ->orderBy('sort_order')
+                ->orderBy('name')
+                ->get();
+            $devicesQuery->where('smart_home_id', $home->id);
+            $scenes = SmartScene::query()
+                ->where('user_id', $ownerId)
+                ->where('smart_home_id', $home->id)
+                ->orderByDesc('enabled')
+                ->orderBy('name')
+                ->get();
+        } else {
+            $devicesQuery->whereRaw('1 = 0');
+        }
+
+        $devices = $devicesQuery->orderBy('display_order')->orderBy('name')->get();
+        $devices->each(fn (SmartDevice $device) => $this->syncDeviceFunctions($device));
+        $devices->load(['room:id,name,tuya_room_id', 'functions']);
+
+        return response()->json([
+            'status' => 'success',
+            'selected_owner_id' => $ownerId,
+            'selected_home_id' => $home?->id,
+            'unassigned' => $unassigned,
+            'owners' => $owners,
+            'tuya_user' => [
+                'user_id' => (int) $mapping->user_id,
+                'tuya_uid' => $mapping->tuya_uid,
+                'region' => $mapping->region,
+                'last_login_at' => $mapping->last_login_at?->toISOString(),
+                'linked' => filled($mapping->tuya_uid),
+                'uid_login' => $this->tuyaUidLoginPayload($ownerId),
+            ],
+            'homes' => SmartHomeResource::collection($homes),
+            'rooms' => SmartRoomResource::collection($rooms),
+            'devices' => SmartDeviceResource::collection($devices),
+            'scenes' => SmartSceneResource::collection($scenes),
+        ]);
+    }
+
     public function homes(Request $request)
     {
         $userId = $this->requestedOwnerId($request);
@@ -990,7 +1100,9 @@ class SmartHomeController extends Controller
                 'sort_order' => $function->exists ? $function->sort_order : $definition['sort_order'],
                 'is_visible' => $function->exists ? $function->is_visible : true,
             ]);
-            $function->save();
+            if (! $function->exists || $function->isDirty()) {
+                $function->save();
+            }
         }
     }
 
