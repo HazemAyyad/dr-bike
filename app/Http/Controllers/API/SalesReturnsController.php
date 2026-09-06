@@ -39,7 +39,15 @@ class SalesReturnsController extends Controller
         ]);
 
         $returns = SalesReturn::query()
-            ->with(['customer:id,name,phone', 'seller:id,name,phone', 'refundBox:id,name,currency'])
+            ->with([
+                'customer:id,name,phone',
+                'seller:id,name,phone',
+                'refundBox:id,name,currency',
+                'items.instantSale:id,parent_id,serial_number',
+                'items.instantSale.parentSale:id,serial_number',
+                'items.salesOrderItem:id,sales_order_id',
+                'items.salesOrderItem.salesOrder:id,serial_number',
+            ])
             ->withCount('items')
             ->withSum('items as returned_quantity', 'quantity')
             ->where('return_type', 'direct')
@@ -49,6 +57,27 @@ class SalesReturnsController extends Controller
             )
             ->orderByDesc('id')
             ->paginate((int) ($data['per_page'] ?? 30));
+
+        $returns->getCollection()->each(function (SalesReturn $return): void {
+            $sourceNumbers = $return->items
+                ->map(function ($item): ?string {
+                    if ($item->instantSale) {
+                        $sale = $item->instantSale->parentSale ?: $item->instantSale;
+
+                        return $sale->serial_number ?: '#'.$sale->id;
+                    }
+
+                    $order = $item->salesOrderItem?->salesOrder;
+
+                    return $order?->serial_number ?: ($order ? '#'.$order->id : null);
+                })
+                ->filter()
+                ->unique()
+                ->values();
+
+            $return->setAttribute('source_invoice_numbers', $sourceNumbers);
+            $return->unsetRelation('items');
+        });
 
         return $this->success(['sales_returns' => $returns]);
     }
