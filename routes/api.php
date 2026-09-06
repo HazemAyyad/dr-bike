@@ -387,9 +387,9 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::get('/employee-points/reports', [EmployeePointsController::class, 'globalReport'])
         ->middleware('check.permission:Employees Points View,Employees Points Manage');
 
-    // Reward rules CRUD
-    Route::get('/employee-reward-rules', [EmployeeRewardRuleController::class, 'index'])
-        ->middleware('check.permission:Employees Rewards Rules Manage');
+    // The active rewards guide is readable by every authenticated employee.
+    // Mutating reward rules remains restricted to the management permission.
+    Route::get('/employee-reward-rules', [EmployeeRewardRuleController::class, 'index']);
     Route::post('/employee-reward-rules', [EmployeeRewardRuleController::class, 'store'])
         ->middleware('check.permission:Employees Rewards Rules Manage');
     Route::put('/employee-reward-rules/{id}', [EmployeeRewardRuleController::class, 'update'])
@@ -399,9 +399,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->whereNumber('id')
         ->middleware('check.permission:Employees Rewards Rules Manage');
 
-    // Point categories CRUD (admin defines the value of each behavior)
-    Route::get('/employee-point-categories', [EmployeePointCategoryController::class, 'index'])
-        ->middleware('check.permission:Employees Points View,Employees Points Manage');
+    // The guide uses the read endpoint; category mutations remain permission-protected.
+    Route::get('/employee-point-categories', [EmployeePointCategoryController::class, 'index']);
     Route::post('/employee-point-categories', [EmployeePointCategoryController::class, 'store'])
         ->middleware('check.permission:Employees Points Manage');
     Route::put('/employee-point-categories/{id}', [EmployeePointCategoryController::class, 'update'])
