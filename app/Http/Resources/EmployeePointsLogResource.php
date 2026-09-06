@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Facades\Storage;
 
 class EmployeePointsLogResource extends JsonResource
 {
@@ -30,6 +31,9 @@ class EmployeePointsLogResource extends JsonResource
             'source' => (string) $this->source,
             'reason' => $this->reason,
             'notes' => $this->notes,
+            'image_url' => $this->image_path
+                ? Storage::disk('public')->url($this->image_path)
+                : null,
             'points_date' => optional($this->points_date)->toDateString(),
             'created_by' => $this->created_by ? (int) $this->created_by : null,
             'created_by_name' => $this->whenLoaded('creator', fn () => optional($this->creator)->name),

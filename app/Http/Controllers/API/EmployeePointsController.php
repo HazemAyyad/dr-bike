@@ -13,6 +13,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -34,9 +35,18 @@ class EmployeePointsController extends Controller
 
     private function mutate(Request $request, int $employee, string $expectedOperation)
     {
+        $storedImagePath = null;
         try {
             $data = $this->validateMutation($request);
             $employeeModel = EmployeeDetail::findOrFail($employee);
+
+            if ($request->hasFile('image')) {
+                $storedImagePath = $request->file('image')->store(
+                    'employee-points/'.$employeeModel->id,
+                    'public',
+                );
+                $data['image_path'] = $storedImagePath;
+            }
 
             $category = null;
             if (! empty($data['category_id'])) {
@@ -76,17 +86,26 @@ class EmployeePointsController extends Controller
                 'log' => new EmployeePointsLogResource($log),
             ]);
         } catch (ValidationException $e) {
+            if ($storedImagePath !== null) {
+                Storage::disk('public')->delete($storedImagePath);
+            }
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
         } catch (ModelNotFoundException $e) {
+            if ($storedImagePath !== null) {
+                Storage::disk('public')->delete($storedImagePath);
+            }
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.employee_not_found'),
             ], 200);
         } catch (\Throwable $e) {
+            if ($storedImagePath !== null) {
+                Storage::disk('public')->delete($storedImagePath);
+            }
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
@@ -500,6 +519,7 @@ class EmployeePointsController extends Controller
             'category_id' => ['nullable', 'integer', 'min:1'],
             'reason' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
             'points_date' => ['nullable', 'date'],
             'source' => ['nullable', Rule::in(config('employee_points.sources', []))],
         ]);

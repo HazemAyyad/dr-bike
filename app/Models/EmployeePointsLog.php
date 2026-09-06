@@ -31,6 +31,7 @@ class EmployeePointsLog extends Model
         'source',
         'reason',
         'notes',
+        'image_path',
         'points_date',
         'created_by',
     ];

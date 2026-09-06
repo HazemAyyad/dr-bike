@@ -87,6 +87,7 @@ class EmployeePointsService
             'source' => $source,
             'reason' => isset($payload['reason']) ? (string) $payload['reason'] : null,
             'notes' => isset($payload['notes']) ? (string) $payload['notes'] : null,
+            'image_path' => isset($payload['image_path']) ? (string) $payload['image_path'] : null,
             'points_date' => $pointsDate,
             'created_by' => $createdBy,
         ]);
