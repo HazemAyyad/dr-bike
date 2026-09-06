@@ -33,13 +33,22 @@ class SalesReturnsController extends Controller
 
     public function index(Request $request)
     {
+        $data = $request->validate([
+            'date' => ['nullable', 'date_format:Y-m-d'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:100'],
+        ]);
+
         $returns = SalesReturn::query()
             ->with(['customer:id,name,phone', 'seller:id,name,phone', 'refundBox:id,name,currency'])
             ->withCount('items')
             ->withSum('items as returned_quantity', 'quantity')
             ->where('return_type', 'direct')
+            ->when(
+                $data['date'] ?? null,
+                fn ($query, $date) => $query->whereDate('completed_at', $date)
+            )
             ->orderByDesc('id')
-            ->paginate(min(100, max(10, (int) $request->query('per_page', 30))));
+            ->paginate((int) ($data['per_page'] ?? 30));
 
         return $this->success(['sales_returns' => $returns]);
     }
