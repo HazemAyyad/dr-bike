@@ -69,6 +69,15 @@ class SocialCenterController extends Controller
                         ->orWhereHas('contact', fn ($contact) => $contact->where('name', 'like', "%{$search}%"));
                 });
             }
+            if ($channel === 'whatsapp') {
+                $paginator = $query
+                    ->orderByDesc('last_message_at')
+                    ->orderByDesc('id')
+                    ->paginate($this->perPage($request, 20))
+                    ->through(fn ($item) => $this->serializeWhatsAppConversation($item));
+
+                return $this->ok($paginator, 'conversations');
+            }
             $items = $items->merge($query->latest('last_message_at')->limit(80)->get()->map(fn ($item) => $this->serializeWhatsAppConversation($item)));
         }
 
@@ -311,6 +320,7 @@ class SocialCenterController extends Controller
             'file' => 'required|file|max:16384|mimes:jpg,jpeg,png,webp,gif,pdf,doc,docx,xls,xlsx,mp3,m4a,ogg,wav,mp4,mov',
             'caption' => 'nullable|string|max:1024',
             'media_kind' => 'nullable|in:image,audio,video,document',
+            'duration_seconds' => 'nullable|integer|min:1|max:7200',
         ]);
 
         try {
@@ -323,7 +333,8 @@ class SocialCenterController extends Controller
                     $data['file'],
                     $data['caption'] ?? null,
                     $request->user()->id,
-                    $data['media_kind'] ?? null
+                    $data['media_kind'] ?? null,
+                    $data['duration_seconds'] ?? null
                 );
             } else {
                 $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
@@ -388,8 +399,12 @@ class SocialCenterController extends Controller
             'unread_count' => $conversation->unread_count,
             'failed_count' => (int) ($conversation->failed_count ?? $conversation->messages()->where('status', 'failed')->count()),
             'last_message_type' => $latestMessage?->message_type,
+            'last_message_id' => $latestMessage?->id,
             'last_message_direction' => $latestMessage?->direction,
             'last_message_status' => $latestMessage?->status,
+            'last_message_media' => $latestMessage
+                ? $this->messageMedia($latestMessage->message_type, $latestMessage->media_url, $latestMessage->body, $latestMessage->raw_payload)
+                : null,
             'needs_reply' => $this->needsReply($conversation, 'whatsapp'),
             'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
             'tags' => $this->conversationTags('whatsapp', $conversation->id),
@@ -415,8 +430,12 @@ class SocialCenterController extends Controller
             'unread_count' => $conversation->unread_count,
             'failed_count' => (int) ($conversation->failed_count ?? $conversation->messages()->where('status', 'failed')->count()),
             'last_message_type' => $latestMessage?->message_type,
+            'last_message_id' => $latestMessage?->id,
             'last_message_direction' => $latestMessage?->direction,
             'last_message_status' => $latestMessage?->status,
+            'last_message_media' => $latestMessage
+                ? $this->messageMedia($latestMessage->message_type, $latestMessage->media_url, $latestMessage->body, $latestMessage->raw_payload)
+                : null,
             'needs_reply' => $this->needsReply($conversation, $conversation->channel),
             'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
             'tags' => $this->conversationTags($conversation->channel, $conversation->id),

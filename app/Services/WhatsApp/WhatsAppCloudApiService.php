@@ -98,7 +98,8 @@ class WhatsAppCloudApiService
         UploadedFile $file,
         ?string $caption = null,
         ?int $adminId = null,
-        ?string $forcedType = null
+        ?string $forcedType = null,
+        ?int $durationSeconds = null
     ): array
     {
         $this->validateConfig();
@@ -144,6 +145,7 @@ class WhatsAppCloudApiService
                     'mime_type' => $uploadMime,
                     'filename' => $type === 'document' ? $file->getClientOriginalName() : null,
                     'file_size' => $file->getSize(),
+                    'duration' => $durationSeconds,
                 ]),
             ],
         ], $adminId);

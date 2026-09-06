@@ -126,6 +126,7 @@ class WhatsAppController extends Controller
             'file' => 'required|file|max:16384|mimes:jpg,jpeg,png,webp,pdf,doc,docx,xls,xlsx,mp3,m4a,ogg,wav,mp4',
             'caption' => 'nullable|string|max:1024',
             'media_kind' => 'nullable|in:image,audio,video,document',
+            'duration_seconds' => 'nullable|integer|min:1|max:7200',
         ]);
         $service = $this->serviceForConversation($service, $conversation);
         return $this->sendSafely(fn () => $service->sendMedia(
@@ -133,7 +134,8 @@ class WhatsAppController extends Controller
             $data['file'],
             $data['caption'] ?? null,
             $request->user()->id,
-            $data['media_kind'] ?? null
+            $data['media_kind'] ?? null,
+            $data['duration_seconds'] ?? null
         ));
     }
 
