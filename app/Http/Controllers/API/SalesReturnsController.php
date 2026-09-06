@@ -86,7 +86,9 @@ class SalesReturnsController extends Controller
     {
         $data = $request->validate(['sales_return_id' => ['required', 'integer', 'exists:sales_returns,id']]);
 
-        return $this->success(['sales_return' => $this->service->show((int) $data['sales_return_id'])]);
+        return $this->success([
+            'sales_return' => $this->service->show((int) $data['sales_return_id'], $request->user()),
+        ]);
     }
 
     public function store(Request $request)

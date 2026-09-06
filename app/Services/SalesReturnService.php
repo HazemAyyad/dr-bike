@@ -277,7 +277,7 @@ class SalesReturnService
     {
         return DB::transaction(function () use ($actor, $id, $reason) {
             $return = SalesReturn::query()
-                ->with(['items.product', 'refundBox'])
+                ->with(['items.product', 'refundBox', 'salesDailySession'])
                 ->lockForUpdate()
                 ->findOrFail($id);
 
@@ -286,6 +286,8 @@ class SalesReturnService
                     'sales_return_id' => ['فاتورة المرتجع ملغاة مسبقًا.'],
                 ]);
             }
+
+            $cancellationBox = $this->resolveCancellationBox($return, $actor);
             if ($return->return_type !== 'direct') {
                 throw ValidationException::withMessages([
                     'sales_return_id' => ['هذا المرتجع تابع لمسار الطلبيات ولا يمكن إلغاؤه من شاشة المرتجعات المباشرة.'],
@@ -305,12 +307,7 @@ class SalesReturnService
             }
 
             if ((float) $return->cash_refund_amount > 0) {
-                $box = Box::query()->lockForUpdate()->find($return->refund_box_id);
-                if (! $box) {
-                    throw ValidationException::withMessages([
-                        'refund_box_id' => ['صندوق رد المبلغ الأصلي غير موجود؛ لا يمكن عكس المرتجع آليًا.'],
-                    ]);
-                }
+                $box = $cancellationBox;
                 $box->increment('total', (float) $return->cash_refund_amount);
                 BoxLogs::createBoxLog(
                     $box->fresh(),
@@ -392,6 +389,73 @@ class SalesReturnService
         }
     }
 
+    private function resolveCancellationBox(SalesReturn $return, User $actor): ?Box
+    {
+        if ((float) $return->cash_refund_amount <= 0.0001) {
+            return null;
+        }
+
+        $originalSession = $return->salesDailySession;
+        if ($originalSession?->isClosingRequested()) {
+            throw ValidationException::withMessages([
+                'session' => ['صندوق المرتجع قيد الإغلاق. اطلب من المسؤول رفض طلب الإغلاق، ثم أعد محاولة إلغاء المرتجع.'],
+            ]);
+        }
+
+        if ($originalSession?->isOpen()) {
+            $box = $return->refund_box_id
+                ? Box::query()->lockForUpdate()->find($return->refund_box_id)
+                : $this->sessions->dailyBoxForSessionCurrency($originalSession, 'شيكل');
+            if (! $box) {
+                throw ValidationException::withMessages([
+                    'refund_box_id' => ['صندوق المرتجع المفتوح غير موجود. اطلب من المسؤول مراجعة صندوق جلسة المبيعات ثم أعد المحاولة.'],
+                ]);
+            }
+
+            return $box;
+        }
+
+        $currentSession = $this->sessions->assertCanCreateSale($actor);
+        $box = $this->sessions->dailyBoxForSessionCurrency($currentSession, 'شيكل');
+        if (! $box) {
+            throw ValidationException::withMessages([
+                'refund_box_id' => ['صندوق المرتجع الأصلي مغلق ولا يوجد صندوق شيكل مفتوح لليوم. افتح صندوق المبيعات ثم أعد المحاولة.'],
+            ]);
+        }
+
+        return Box::query()->lockForUpdate()->findOrFail($box->id);
+    }
+
+    /** @return array<int, string> */
+    private function cancellationInventoryIssues(SalesReturn $return): array
+    {
+        $return->loadMissing('items.product');
+        $layers = InventoryCostLayer::query()
+            ->where('source_type', 'sales_return_item')
+            ->whereIn('source_id', $return->items->pluck('id'))
+            ->get()
+            ->keyBy('source_id');
+        $issues = [];
+
+        foreach ($return->items as $item) {
+            $layer = $layers->get($item->id);
+            if (! $layer || (float) $layer->remaining_quantity + 0.0001 < (float) $item->quantity) {
+                $issues[] = $item->product_name.': الكمية المرتجعة أُعيد بيعها أو طبقة تكلفتها غير متاحة.';
+
+                continue;
+            }
+
+            $stock = $item->size_color_id
+                ? (int) SizeColor::query()->whereKey($item->size_color_id)->value('stock')
+                : (int) Product::withTrashed()->whereKey($item->product_id)->value('stock');
+            if ($stock < (int) $item->quantity) {
+                $issues[] = $item->product_name.': المتوفر '.$stock.' والمطلوب لعكس المرتجع '.$item->quantity.'.';
+            }
+        }
+
+        return array_values(array_unique($issues));
+    }
+
     private function reverseReturnedStock(SalesReturn $return, SalesReturnItem $item, User $actor): void
     {
         $layer = InventoryCostLayer::query()
@@ -432,7 +496,7 @@ class SalesReturnService
     }
 
     /** @return array<string, mixed> */
-    public function show(int $id): array
+    public function show(int $id, ?User $actor = null): array
     {
         $return = SalesReturn::query()->with($this->detailRelations())->findOrFail($id);
         $payload = $return->toArray();
@@ -454,6 +518,9 @@ class SalesReturnService
             'debt_transaction_id' => $return->debt_transaction_id,
             'refund_box_id' => $return->refund_box_id,
         ];
+        if ($actor) {
+            $payload['cancellation_preview'] = $this->cancellationPreview($return, $actor);
+        }
 
         return $payload;
     }
@@ -478,7 +545,118 @@ class SalesReturnService
             'customer:id,name,phone',
             'seller:id,name,phone',
             'refundBox:id,name,currency',
+            'salesDailySession:id,user_id,employee_id,business_date,status',
             'debtTransaction',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function cancellationPreview(SalesReturn $return, User $actor): array
+    {
+        $steps = [];
+        $warnings = [];
+        $scenario = 'ready';
+        $canCancel = true;
+        $title = 'يمكن إلغاء المرتجع';
+        $summary = 'سيتم عكس المخزون والقيود المالية المرتبطة بالمرتجع.';
+
+        if ($return->status === 'cancelled') {
+            return [
+                'can_cancel' => false,
+                'scenario' => 'already_cancelled',
+                'title' => 'المرتجع ملغى مسبقًا',
+                'summary' => 'لا يوجد إجراء إضافي مطلوب.',
+                'steps' => ['راجع سبب الإلغاء وسجل التدقيق في تفاصيل الفاتورة.'],
+                'warnings' => [],
+            ];
+        }
+
+        if ($return->return_type !== 'direct') {
+            return [
+                'can_cancel' => false,
+                'scenario' => 'order_return',
+                'title' => 'الإلغاء من مسار الطلبيات',
+                'summary' => 'هذا المرتجع تابع لطلبية ولا يُلغى من شاشة المرتجعات المباشرة.',
+                'steps' => ['افتح الطلبية الأصلية ونفّذ الإلغاء من إجراءات الطلبية.'],
+                'warnings' => [],
+            ];
+        }
+
+        $inventoryIssues = $this->cancellationInventoryIssues($return);
+        if ($inventoryIssues !== []) {
+            return [
+                'can_cancel' => false,
+                'scenario' => 'returned_stock_used',
+                'title' => 'يجب معالجة المخزون أولًا',
+                'summary' => 'لا يمكن عكس المرتجع لأن جزءًا من البضاعة المرتجعة خرج من المخزون أو أُعيد بيعه.',
+                'steps' => [
+                    'افتح الفاتورة اللاحقة التي باعت الكمية المرتجعة وألغها أو أعد الكمية إلى المخزون.',
+                    'تأكد أن الكمية المطلوبة موجودة بنفس المقاس واللون.',
+                    'ارجع إلى فاتورة المرتجع وأعد محاولة الإلغاء.',
+                ],
+                'warnings' => $inventoryIssues,
+            ];
+        }
+
+        $cash = (float) $return->cash_refund_amount;
+        $credit = (float) $return->credit_amount;
+        if ($cash <= 0.0001) {
+            $scenario = 'credit_only';
+            $title = 'مرتجع رصيد دون حركة نقدية';
+            $summary = 'هذا المرتجع لم يخرج منه نقد؛ سيُعكس المخزون ورصيد الطرف فقط.';
+            $steps[] = 'تأكد أن رصيد الزبون أو المورد لم تتم تسويته يدويًا خارج النظام.';
+        } else {
+            $session = $return->salesDailySession;
+            if ($session?->isClosingRequested()) {
+                $canCancel = false;
+                $scenario = 'closing_requested';
+                $title = 'صندوق المرتجع قيد الإغلاق';
+                $summary = 'لا يمكن إضافة عكس مالي أثناء مراجعة إغلاق الصندوق.';
+                $steps = [
+                    'اطلب من المسؤول رفض أو إلغاء طلب إغلاق صندوق يوم '.$session->business_date?->toDateString().'.',
+                    'بعد عودة الصندوق إلى حالة مفتوح، أعد محاولة إلغاء المرتجع.',
+                ];
+            } elseif ($session?->isOpen()) {
+                $scenario = 'original_box_open';
+                $title = 'الصندوق الأصلي مفتوح';
+                $summary = 'صندوق المرتجع الأصلي ما زال مفتوحًا؛ سيُعاد مبلغ '.round($cash, 2).' شيكل إلى نفس الصندوق.';
+                $steps[] = 'استلم مبلغ '.round($cash, 2).' شيكل من الزبون أو المورد فعليًا.';
+                $steps[] = 'نفّذ الإلغاء ليُسجل المبلغ في صندوق المرتجع المفتوح.';
+            } else {
+                $scenario = 'original_box_closed';
+                try {
+                    $currentSession = $this->sessions->assertCanCreateSale($actor);
+                    $title = 'الصندوق الأصلي مغلق — التسجيل اليوم';
+                    $summary = 'صندوق المرتجع الأصلي مغلق؛ سيُسجل مبلغ '.round($cash, 2).' شيكل كحركة اليوم في الصندوق المفتوح، دون تعديل إغلاق اليوم القديم.';
+                    $steps[] = 'استلم مبلغ '.round($cash, 2).' شيكل من الزبون أو المورد فعليًا.';
+                    $steps[] = 'سيُضاف المبلغ إلى صندوق المبيعات المفتوح ليوم '.$currentSession->business_date?->toDateString().'.';
+                    $warnings[] = 'لا تفتح أو تعدّل الصندوق القديم؛ العكس المالي يُسجل بتاريخ اليوم.';
+                } catch (ValidationException $e) {
+                    $canCancel = false;
+                    $title = 'افتح صندوق مبيعات أولًا';
+                    $summary = 'صندوق المرتجع الأصلي مغلق، ولا يوجد صندوق مبيعات مفتوح لتسجيل النقد المسترد اليوم.';
+                    $steps = [
+                        'افتح صندوق المبيعات لليوم أو أنهِ طلب الإغلاق المعلّق.',
+                        'استلم مبلغ '.round($cash, 2).' شيكل من الزبون أو المورد.',
+                        'ارجع إلى المرتجع وأعد محاولة الإلغاء.',
+                    ];
+                    $warnings[] = collect($e->errors())->flatten()->first() ?: 'لا توجد جلسة مبيعات مفتوحة.';
+                }
+            }
+        }
+
+        if ($credit > 0.0001) {
+            $steps[] = 'سيتم حذف قيد رصيد المرتجع بقيمة '.round($credit, 2).' شيكل من دفتر الطرف.';
+        }
+        $steps[] = 'سيتم سحب الكميات المرتجعة من المخزون وعكس طبقات التكلفة.';
+
+        return [
+            'can_cancel' => $canCancel,
+            'scenario' => $scenario,
+            'title' => $title,
+            'summary' => $summary,
+            'steps' => $steps,
+            'warnings' => $warnings,
         ];
     }
 

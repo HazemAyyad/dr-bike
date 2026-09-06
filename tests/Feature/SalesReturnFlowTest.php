@@ -189,6 +189,104 @@ class SalesReturnFlowTest extends TestCase
         $this->assertSame(1, DebtTransaction::where('source', 'sales_return')->where('source_id', $return->id)->count());
     }
 
+    public function test_cash_return_from_closed_session_requires_current_open_box_before_cancellation(): void
+    {
+        [$customer, $product, $sale] = $this->instantSale(quantity: 1, unitPrice: 30, stock: 4);
+        $originalSession = SalesDailySession::create([
+            'user_id' => $this->user->id,
+            'session_type' => 'instant_sales',
+            'business_date' => now()->subDay()->toDateString(),
+            'status' => 'open',
+            'opened_at' => now()->subDay(),
+            'opened_by_user_id' => $this->user->id,
+        ]);
+        $box = Box::create([
+            'name' => 'صندوق إلغاء مرتجع نقدي',
+            'type' => config('sales_daily.box_type'),
+            'user_id' => $this->user->id,
+            'currency' => 'شيكل',
+            'total' => 200,
+            'is_shown' => true,
+        ]);
+        $service = app(SalesReturnService::class);
+        $return = $service->create($this->user, [
+            'person_type' => 'customer',
+            'person_id' => $customer->id,
+            'cash_refund_amount' => 30,
+            'refund_box_id' => $box->id,
+            'items' => [[
+                'source_type' => 'instant_sale',
+                'source_item_id' => $sale->id,
+                'quantity' => 1,
+                'unit_price' => 30,
+            ]],
+        ]);
+        $originalSession->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $blocked = $service->show($return->id, $this->user)['cancellation_preview'];
+        $this->assertFalse($blocked['can_cancel']);
+        $this->assertSame('original_box_closed', $blocked['scenario']);
+
+        SalesDailySession::create([
+            'user_id' => $this->user->id,
+            'session_type' => 'instant_sales',
+            'business_date' => now()->toDateString(),
+            'status' => 'open',
+            'opened_at' => now(),
+            'opened_by_user_id' => $this->user->id,
+        ]);
+
+        $ready = $service->show($return->id, $this->user)['cancellation_preview'];
+        $this->assertTrue($ready['can_cancel']);
+        $this->assertSame('original_box_closed', $ready['scenario']);
+        $service->cancel($this->user, $return->id, 'استرجاع النقد من الزبون اليوم');
+
+        $this->assertSame(4, (int) $product->fresh()->stock);
+        $this->assertEquals(200, (float) $box->fresh()->total);
+    }
+
+    public function test_cash_return_cancellation_is_blocked_while_closing_is_under_review(): void
+    {
+        [$customer, , $sale] = $this->instantSale(quantity: 1, unitPrice: 25, stock: 3);
+        $session = SalesDailySession::create([
+            'user_id' => $this->user->id,
+            'session_type' => 'instant_sales',
+            'business_date' => now()->toDateString(),
+            'status' => 'open',
+            'opened_at' => now(),
+            'opened_by_user_id' => $this->user->id,
+        ]);
+        $box = Box::create([
+            'name' => 'صندوق قيد الإغلاق',
+            'type' => config('sales_daily.box_type'),
+            'user_id' => $this->user->id,
+            'currency' => 'شيكل',
+            'total' => 100,
+            'is_shown' => true,
+        ]);
+        $service = app(SalesReturnService::class);
+        $return = $service->create($this->user, [
+            'person_type' => 'customer',
+            'person_id' => $customer->id,
+            'cash_refund_amount' => 25,
+            'refund_box_id' => $box->id,
+            'items' => [[
+                'source_type' => 'instant_sale',
+                'source_item_id' => $sale->id,
+                'quantity' => 1,
+                'unit_price' => 25,
+            ]],
+        ]);
+        $session->update(['status' => 'closing_requested']);
+
+        $preview = $service->show($return->id, $this->user)['cancellation_preview'];
+        $this->assertFalse($preview['can_cancel']);
+        $this->assertSame('closing_requested', $preview['scenario']);
+
+        $this->expectException(ValidationException::class);
+        $service->cancel($this->user, $return->id, 'محاولة أثناء مراجعة الإغلاق');
+    }
+
     /** @return array{Customer, Product, InstantSale} */
     private function instantSale(int $quantity, float $unitPrice, int $stock): array
     {
