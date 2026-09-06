@@ -99,15 +99,19 @@ class WhatsAppCloudApiService
         ?string $caption = null,
         ?int $adminId = null,
         ?string $forcedType = null,
-        ?int $durationSeconds = null
+        ?int $durationSeconds = null,
+        bool $voiceNote = false
     ): array
     {
         $this->validateConfig();
         $type = $forcedType ?: $this->mediaType($file->getMimeType());
-        $uploadMime = $type === 'audio' && $file->getClientOriginalExtension() === 'mp4'
-            ? 'audio/mp4'
-            : $file->getMimeType();
-        $uploadName = $type === 'audio' && $file->getClientOriginalExtension() === 'mp4'
+        $extension = strtolower($file->getClientOriginalExtension());
+        $uploadMime = match (true) {
+            $type === 'audio' && $extension === 'ogg' => 'audio/ogg; codecs=opus',
+            $type === 'audio' && in_array($extension, ['mp4', 'm4a'], true) => 'audio/mp4',
+            default => $file->getMimeType(),
+        };
+        $uploadName = $type === 'audio' && $extension === 'mp4'
             ? pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME).'.m4a'
             : $file->getClientOriginalName();
         $upload = Http::withToken($this->accessToken())
@@ -127,6 +131,7 @@ class WhatsAppCloudApiService
         $mediaId = (string) $upload->json('id');
         $media = array_filter([
             'id' => $mediaId,
+            'voice' => $type === 'audio' && $voiceNote ? true : null,
             'caption' => in_array($type, ['image', 'video', 'document'], true) ? $caption : null,
             'filename' => $type === 'document' ? $file->getClientOriginalName() : null,
         ]);
@@ -146,6 +151,7 @@ class WhatsAppCloudApiService
                     'filename' => $type === 'document' ? $file->getClientOriginalName() : null,
                     'file_size' => $file->getSize(),
                     'duration' => $durationSeconds,
+                    'voice' => $type === 'audio' && $voiceNote ? true : null,
                 ]),
             ],
         ], $adminId);

@@ -321,6 +321,7 @@ class SocialCenterController extends Controller
             'caption' => 'nullable|string|max:1024',
             'media_kind' => 'nullable|in:image,audio,video,document',
             'duration_seconds' => 'nullable|integer|min:1|max:7200',
+            'voice_note' => 'nullable|boolean',
         ]);
 
         try {
@@ -334,7 +335,8 @@ class SocialCenterController extends Controller
                     $data['caption'] ?? null,
                     $request->user()->id,
                     $data['media_kind'] ?? null,
-                    $data['duration_seconds'] ?? null
+                    $data['duration_seconds'] ?? null,
+                    (bool) ($data['voice_note'] ?? false)
                 );
             } else {
                 $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
