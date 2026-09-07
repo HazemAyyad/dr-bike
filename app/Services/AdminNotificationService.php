@@ -17,6 +17,7 @@ use App\Models\StockImageExport;
 use App\Models\Store\StoreSalesOrder;
 use App\Support\EmployeePendingTasksForToday;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Log;
 
@@ -989,6 +990,94 @@ class AdminNotificationService
             (int) $check->id,
             true
         );
+    }
+
+    /**
+     * @param  Collection<int, IncomingCheck>  $incoming
+     * @param  Collection<int, OutgoingCheck>  $outgoing
+     */
+    public function notifyChecksDueSummary(
+        Collection $incoming,
+        Collection $outgoing,
+        string $reminderDate,
+        string $reminderSlot,
+        string $dueOn
+    ): ?AdminNotification {
+        if ($incoming->isEmpty() && $outgoing->isEmpty()) {
+            return null;
+        }
+
+        if (AdminNotification::query()
+            ->where('type', self::TYPE_CHECK_DUE_REMINDER)
+            ->where('related_type', 'checks_summary')
+            ->where('data->reminder_date', $reminderDate)
+            ->where('data->reminder_slot', $reminderSlot)
+            ->exists()) {
+            return null;
+        }
+
+        $checks = $incoming
+            ->map(fn (IncomingCheck $check) => $this->checkSummaryItem($check, 'incoming'))
+            ->concat($outgoing->map(fn (OutgoingCheck $check) => $this->checkSummaryItem($check, 'outgoing')))
+            ->values();
+
+        $totals = $checks
+            ->groupBy('currency')
+            ->map(fn (Collection $items, string $currency) => [
+                'currency' => $currency,
+                'amount' => round((float) $items->sum('amount'), 2),
+            ])
+            ->values();
+
+        $count = $checks->count();
+        $body = "لديك {$count} شيكات تستحق بتاريخ {$dueOn}: "
+            .$incoming->count().' واردة و'.$outgoing->count().' صادرة';
+
+        if ($totals->isNotEmpty()) {
+            $body .= ' - '.$totals->map(
+                fn (array $total) => number_format($total['amount'], 2).' '.$total['currency']
+            )->implode('، ');
+        }
+
+        return $this->create(
+            self::TYPE_CHECK_DUE_REMINDER,
+            'تذكير باستحقاق الشيكات',
+            $body,
+            [
+                'is_summary' => '1',
+                'incoming_count' => (string) $incoming->count(),
+                'outgoing_count' => (string) $outgoing->count(),
+                'checks_count' => (string) $count,
+                'due_date' => $dueOn,
+                'reminder_date' => $reminderDate,
+                'reminder_slot' => $reminderSlot,
+                'totals' => $totals->all(),
+                'checks' => $checks->all(),
+            ],
+            null,
+            'checks_summary',
+            null,
+            true
+        );
+    }
+
+    /** @return array<string, int|float|string> */
+    protected function checkSummaryItem(IncomingCheck|OutgoingCheck $check, string $direction): array
+    {
+        $owner = $check instanceof IncomingCheck
+            ? ($check->fromCustomer?->name ?? $check->fromSeller?->name ?? $check->toCustomer?->name ?? $check->toSeller?->name ?? '')
+            : ($check->customer?->name ?? $check->seller?->name ?? '');
+
+        return [
+            'id' => (int) $check->id,
+            'number' => (string) ($check->check_id ?? $check->id),
+            'direction' => $direction,
+            'owner' => (string) $owner,
+            'bank' => trim((string) ($check->bank_name ?? '')),
+            'amount' => round((float) ($check->total ?? 0), 2),
+            'currency' => (string) ($check->currency ?: 'شيكل'),
+            'due_date' => $check->due_date ? Carbon::parse($check->due_date)->toDateString() : '',
+        ];
     }
 
     public function checkDueReminderExists(string $relatedType, int $checkId, string $reminderDate): bool

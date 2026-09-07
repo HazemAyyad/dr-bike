@@ -20,8 +20,9 @@ class Kernel extends ConsoleKernel
             ->onOneServer();
 
         $schedule->command('checks:send-due-reminders')
-            ->dailyAt('00:00')
-            ->timezone('Asia/Hebron');
+            ->twiceDaily(0, 1)
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping();
 
         $schedule->command('checks:dispatch-sms-notifications')
             ->everyFiveMinutes()

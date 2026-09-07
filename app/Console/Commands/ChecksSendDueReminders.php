@@ -19,30 +19,34 @@ class ChecksSendDueReminders extends Command
         return $cronJobLogger->run(
             'checks:send-due-reminders',
             function () use ($adminNotificationService) {
-                $reminderDate = now()->toDateString();
-                $dueOn = now()->addDays(2)->toDateString();
+                $now = now();
+                $reminderDate = $now->toDateString();
+                $reminderSlot = $now->format('H:00');
+                $dueOn = $now->copy()->addDays(2)->toDateString();
 
                 $incoming = IncomingCheck::query()
+                    ->with(['fromCustomer:id,name', 'fromSeller:id,name', 'toCustomer:id,name', 'toSeller:id,name'])
                     ->whereDate('due_date', $dueOn)
                     ->where(function ($q) {
                         $q->where('status', 'not_cashed')->orWhereNull('status');
                     })
                     ->get();
-
-                foreach ($incoming as $check) {
-                    $adminNotificationService->notifyCheckDueSoon($check, 'incoming', $reminderDate);
-                }
 
                 $outgoing = OutgoingCheck::query()
+                    ->with(['customer:id,name', 'seller:id,name'])
                     ->whereDate('due_date', $dueOn)
                     ->where(function ($q) {
                         $q->where('status', 'not_cashed')->orWhereNull('status');
                     })
                     ->get();
 
-                foreach ($outgoing as $check) {
-                    $adminNotificationService->notifyCheckDueSoon($check, 'outgoing', $reminderDate);
-                }
+                $adminNotificationService->notifyChecksDueSummary(
+                    $incoming,
+                    $outgoing,
+                    $reminderDate,
+                    $reminderSlot,
+                    $dueOn,
+                );
 
                 $message = 'Processed '.$incoming->count().' incoming and '.$outgoing->count().' outgoing checks.';
                 $this->info($message);
@@ -50,7 +54,7 @@ class ChecksSendDueReminders extends Command
                 return self::SUCCESS;
             },
             'checks:send-due-reminders',
-            ['due_in_days' => 2],
+            ['due_in_days' => 2, 'summary' => true],
         );
     }
 }

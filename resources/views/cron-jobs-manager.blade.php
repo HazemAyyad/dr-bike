@@ -184,7 +184,7 @@
     <div class="warn">
         للاستخدام المحلي/الإداري. على الإنتاج عطّل الصفحة عبر
         <code>CRON_MANAGER_WEB_ENABLED=false</code> في <code>.env</code>.
-        المجدول: <code>checks:send-due-reminders</code> يومياً 00:00،
+        المجدول: <code>checks:send-due-reminders</code> يومياً 00:00 و01:00،
         <code>employees:send-daily-task-reminders</code> يومياً 10:00 بتوقيت فلسطين.
         عند إعادة الاختبار يدوياً فعّل <strong>«إرسال حتى لو أُرسل اليوم»</strong> وإلا يُتخطى من أُرسل لهم FCM بنجاح اليوم.
     </div>
