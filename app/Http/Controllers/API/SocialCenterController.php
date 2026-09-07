@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
 use App\Models\Permission;
 use App\Models\Product;
+use App\Models\Customer;
 use App\Models\SocialConversation;
 use App\Models\SocialMessage;
 use App\Models\WhatsAppConversation;
@@ -13,6 +14,7 @@ use App\Models\WhatsAppMessage;
 use App\Services\Meta\MetaMessagingService;
 use App\Services\Social\LinkPreviewService;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
+use App\Services\WhatsApp\WhatsAppCommerceMessageService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -375,6 +377,10 @@ class SocialCenterController extends Controller
             'product_ids.*' => 'required|string',
             'quantities' => 'nullable|array',
             'quantities.*' => 'required|integer|min:1|max:999',
+            'items' => 'nullable|array|min:1|max:30',
+            'items.*.product_id' => 'required|string',
+            'items.*.size_color_id' => 'nullable|string',
+            'items.*.quantity' => 'required|integer|min:1|max:999',
         ]);
 
         if ($channel === 'whatsapp') {
@@ -392,6 +398,91 @@ class SocialCenterController extends Controller
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 422);
         }
+    }
+
+    public function prepareWhatsAppCommerceDraft(
+        Request $request,
+        int $id,
+        int $messageId,
+        WhatsAppCommerceMessageService $commerce
+    ) {
+        $this->authorizeChannel($request, 'whatsapp');
+        $data = $request->validate(['target' => 'required|in:instant_sale,sales_order']);
+        $conversation = $this->activeWhatsAppConversations()
+            ->with(['contact.customer'])
+            ->findOrFail($id);
+        $message = $conversation->messages()->findOrFail($messageId);
+        $details = $commerce->details($message);
+
+        if (! $details || $details['kind'] !== 'order') {
+            throw ValidationException::withMessages([
+                'message' => ['هذه الرسالة ليست سلة منتجات مرسلة من الزبون.'],
+            ]);
+        }
+        if (! $details['can_convert']) {
+            throw ValidationException::withMessages([
+                'message' => ['تعذر ربط منتج أو أكثر من السلة بمنتجات المخزون. راجع مزامنة كتالوج Meta.'],
+            ]);
+        }
+
+        $customer = DB::transaction(function () use ($conversation) {
+            if ($conversation->contact?->customer) {
+                return $conversation->contact->customer;
+            }
+
+            $digits = preg_replace('/\D+/', '', (string) $conversation->phone) ?: '';
+            $suffix = substr($digits, -9);
+            $customer = $suffix === '' ? null : Customer::query()
+                ->where('phone', 'like', '%'.$suffix)
+                ->limit(20)
+                ->get()
+                ->first(function (Customer $item) use ($suffix) {
+                    $candidate = preg_replace('/\D+/', '', (string) $item->phone) ?: '';
+
+                    return $candidate !== '' && substr($candidate, -9) === $suffix;
+                });
+            $name = trim((string) ($conversation->contact?->name ?: 'زبون واتساب '.substr($digits, -4)));
+            $customer ??= Customer::query()->create([
+                'name' => $name,
+                'phone' => $this->erpWhatsAppPhone($digits),
+                'type' => 'retail',
+            ]);
+            $conversation->contact?->update([
+                'name' => $conversation->contact?->name ?: $customer->name,
+                'customer_id' => $customer->id,
+                'supplier_id' => null,
+            ]);
+
+            return $customer;
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'draft' => [
+                'source' => 'whatsapp_catalog_order',
+                'target' => $data['target'],
+                'conversation_id' => $conversation->id,
+                'message_id' => $message->id,
+                'customer' => [
+                    'id' => (int) $customer->id,
+                    'name' => $customer->name,
+                    'phone' => $customer->phone,
+                ],
+                'items' => collect($details['items'])->map(fn ($item) => [
+                    'product_id' => $item['product_id'],
+                    'product_name' => $item['name'],
+                    'size_color_id' => $item['size_color_id'],
+                    'size_id' => $item['size_id'],
+                    'size_label' => $item['size_label'],
+                    'color_label' => $item['color_label'],
+                    'variant_label' => $item['variant_label'],
+                    'quantity' => $item['quantity'],
+                    'unit_price' => $item['unit_price'],
+                    'stock' => $item['stock'],
+                    'image' => $item['image'],
+                ])->values(),
+            ],
+        ]);
     }
 
     private function serializeWhatsAppConversation(WhatsAppConversation $conversation): array
@@ -466,6 +557,7 @@ class SocialCenterController extends Controller
             'channel' => 'whatsapp',
             'link_url' => LinkPreviewService::firstUrl($message->body),
             'media' => $this->messageMedia($message->message_type, $message->media_url, $message->body, $message->raw_payload),
+            'commerce' => app(WhatsAppCommerceMessageService::class)->details($message),
         ]);
     }
 
@@ -531,6 +623,11 @@ class SocialCenterController extends Controller
     }
 
     private function perPage(Request $request, int $default = 20): int { return min(max((int) $request->input('per_page', $default), 1), 100); }
+
+    private function erpWhatsAppPhone(string $digits): string
+    {
+        return $digits === '' ? '' : '+'.substr($digits, 0, 3).' '.substr($digits, 3);
+    }
 
     private function channelStats(string $channel): array
     {

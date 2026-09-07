@@ -438,6 +438,7 @@ class WhatsAppCloudApiService
         $phone = $this->normalizePhone($phone);
         $contact = $this->findOrCreateContact($phone);
         $conversation = $this->findOrCreateConversation($phone);
+        $messageData['raw_payload'] ??= $payload;
         $message = WhatsAppMessage::query()->create(array_merge($messageData, [
             'whatsapp_conversation_id' => $conversation->id,
             'whatsapp_account_id' => $this->account?->id,

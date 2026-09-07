@@ -35,6 +35,7 @@
         .placeholder { color: #9793aa; font-size: 9px; }
         .product-index { color: #6b65bd; font-size: 9px; font-weight: bold; margin-bottom: 2px; }
         .product-name { color: #24233a; font-size: 12px; font-weight: bold; line-height: 1.45; margin-bottom: 4px; }
+        .variant-label { color: #706d82; font-size: 9px; margin: -1px 0 4px; }
         .product-price { color: #6b65bd; font-size: 12px; font-weight: bold; margin-bottom: 4px; }
         .quantity { display: inline-block; margin-top: 5px; padding: 3px 6px; color: #35324c; background: #eeecfb; border-radius: 5px; font-size: 9px; font-weight: bold; }
         .line-total { margin-top: 4px; color: #24233a; font-size: 9px; font-weight: bold; }
@@ -110,6 +111,9 @@
                                         <td class="product-details">
                                             <div class="product-index">منتج #{{ $productIndex }}</div>
                                             <div class="product-name">{{ $product['name'] }}</div>
+                                            @if($product['variant_label'])
+                                                <div class="variant-label">{{ $product['variant_label'] }}</div>
+                                            @endif
                                             <div class="product-price">السعر: {{ number_format($product['unit_price'], 2) }} ₪</div>
                                             <span class="quantity">الكمية: {{ $product['quantity'] }}</span>
                                             <div class="line-total">الإجمالي: {{ number_format($product['total'], 2) }} ₪</div>

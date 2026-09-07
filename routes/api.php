@@ -1267,6 +1267,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section',
         ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
         ->whereNumber('id')
         ->middleware('throttle:10,1');
+    Route::post('/social/conversations/whatsapp/{id}/messages/{messageId}/prepare-commerce', [SocialCenterController::class, 'prepareWhatsAppCommerceDraft'])
+        ->whereNumber(['id', 'messageId'])
+        ->middleware('throttle:10,1');
     Route::post('/social/conversations/{channel}/{id}/messages/{messageId}/resend', [SocialCenterController::class, 'resendMessage'])
         ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
         ->whereNumber(['id', 'messageId'])

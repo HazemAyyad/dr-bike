@@ -11,6 +11,7 @@ class WhatsAppProductsPdfViewTest extends TestCase
         $html = view('whatsapp.products-pdf', [
             'products' => [[
                 'name' => 'بطارية تجريبية',
+                'variant_label' => 'أحمر / كبير',
                 'unit_price' => 50.0,
                 'quantity' => 2,
                 'total' => 100.0,
@@ -33,6 +34,7 @@ class WhatsAppProductsPdfViewTest extends TestCase
         $this->assertStringContainsString('دكتور بايك - عرض منتجات', $html);
         $this->assertStringContainsString('زبون تجريبي', $html);
         $this->assertStringContainsString('بطارية تجريبية', $html);
+        $this->assertStringContainsString('أحمر / كبير', $html);
         $this->assertStringContainsString('الكمية: 2', $html);
         $this->assertStringContainsString('100.00', $html);
         $this->assertStringContainsString('الذكاء الاصطناعي', $html);
@@ -46,6 +48,7 @@ class WhatsAppProductsPdfViewTest extends TestCase
     {
         $product = [
             'name' => 'منتج تجريبي',
+            'variant_label' => null,
             'unit_price' => 10.0,
             'quantity' => 1,
             'total' => 10.0,

@@ -191,6 +191,7 @@ class WhatsAppController extends Controller
             ->with([
                 'normalImages' => fn ($q) => $q->select('id', 'itemId', 'imageUrl'),
                 'category:id,nameAr',
+                'sizes.colorSizes',
             ])
             ->where('isShow', 1);
 
@@ -214,6 +215,16 @@ class WhatsAppController extends Controller
                 'retailer_id' => $product->meta_catalog_retailer_id,
                 'catalog_synced' => $product->meta_catalog_sync_status === 'synced'
                     && filled($product->meta_catalog_retailer_id),
+                'variants' => $product->sizes->flatMap(
+                    fn ($size) => $size->colorSizes->map(fn ($variant) => [
+                        'id' => (string) $variant->id,
+                        'size' => $size->size,
+                        'color' => $variant->colorAr ?: $variant->colorEn,
+                        'price' => (float) ($variant->normailPrice ?? $product->normailPrice ?? 0),
+                        'stock' => (int) ($variant->stock ?? 0),
+                        'image' => $variant->image_url ?: $product->normalImages->first()?->imageUrl,
+                    ])
+                )->values(),
             ]), 'products');
     }
 
@@ -228,34 +239,83 @@ class WhatsAppController extends Controller
             'product_ids.*' => 'required|string',
             'quantities' => 'nullable|array',
             'quantities.*' => 'required|integer|min:1|max:999',
+            'items' => 'nullable|array|min:1|max:30',
+            'items.*.product_id' => 'required|string',
+            'items.*.size_color_id' => 'nullable|string',
+            'items.*.quantity' => 'required|integer|min:1|max:999',
         ]);
-        $productIds = array_values(array_unique(array_map('strval', $data['product_ids'])));
+        $requestedItems = collect($data['items'] ?? array_map(
+            fn ($productId) => [
+                'product_id' => (string) $productId,
+                'size_color_id' => null,
+                'quantity' => (int) (($data['quantities'] ?? [])[(string) $productId] ?? 1),
+            ],
+            $data['product_ids']
+        ));
+        $productIds = $requestedItems->pluck('product_id')->map(fn ($id) => (string) $id)->unique()->values()->all();
         $quantities = collect($data['quantities'] ?? [])
             ->mapWithKeys(fn ($quantity, $productId) => [(string) $productId => (int) $quantity]);
-        abort_if($quantities->keys()->diff($productIds)->isNotEmpty(), 422, 'A quantity was provided for an unselected product.');
+        abort_if(
+            empty($data['items']) && $quantities->keys()->diff($productIds)->isNotEmpty(),
+            422,
+            'A quantity was provided for an unselected product.'
+        );
 
         $products = Product::query()
-            ->with(['normalImages', 'category'])
+            ->with(['normalImages', 'sizes.colorSizes.size'])
             ->whereIn('id', $productIds)
-            ->get();
+            ->get()
+            ->keyBy(fn (Product $product) => (string) $product->id);
         abort_if($products->count() !== count($productIds), 422, 'Some products were not found.');
-        $order = array_flip($productIds);
-        $products = $products->sortBy(fn (Product $product) => $order[(string) $product->id] ?? PHP_INT_MAX);
-        $rows = $products->map(function (Product $product) use ($quantities) {
-            $quantity = $quantities->get((string) $product->id, 1);
-            $unitPrice = (float) ($product->normailPrice ?? 0);
+        $usesStructuredItems = ! empty($data['items']);
+        $rows = $requestedItems->map(function (array $item) use ($products, $usesStructuredItems) {
+            /** @var Product $product */
+            $product = $products->get((string) $item['product_id']);
+            $variantId = filled($item['size_color_id'] ?? null) ? (string) $item['size_color_id'] : null;
+            $variant = $variantId === null
+                ? null
+                : $product->sizes->flatMap->colorSizes->first(
+                    fn ($candidate) => (string) $candidate->id === $variantId
+                );
+            abort_if($variantId !== null && ! $variant, 422, 'A selected product variant was not found.');
+
+            $quantity = (int) $item['quantity'];
+            $productVariants = $product->sizes->flatMap->colorSizes;
+            if ($usesStructuredItems && $variantId === null && $productVariants->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'items' => ['يجب تحديد اللون أو المقاس للمنتج: '.($product->nameAr ?: $product->nameEng ?: 'منتج')],
+                ]);
+            }
+            $availableStock = $variant
+                ? (int) ($variant->stock ?? 0)
+                : ($productVariants->isNotEmpty()
+                    ? (int) $productVariants->sum('stock')
+                    : (int) ($product->stock ?? 0));
+            if ($availableStock < 1) {
+                throw ValidationException::withMessages([
+                    'items' => ['المنتج المحدد غير متوفر حاليًا: '.($product->nameAr ?: $product->nameEng ?: 'منتج')],
+                ]);
+            }
+            if ($quantity > $availableStock) {
+                throw ValidationException::withMessages([
+                    'items' => ['الكمية المطلوبة من '.($product->nameAr ?: $product->nameEng ?: 'المنتج').' أكبر من المتوفر ('.$availableStock.').'],
+                ]);
+            }
+            $unitPrice = (float) ($variant?->normailPrice ?? $product->normailPrice ?? 0);
+            $variantLabel = collect([
+                trim((string) ($variant?->colorAr ?: $variant?->colorEn)),
+                trim((string) $variant?->size?->size),
+            ])->filter()->implode(' / ');
 
             return [
                 'name' => $product->nameAr ?: $product->nameEng ?: 'منتج',
+                'variant_label' => $variantLabel ?: null,
                 'unit_price' => $unitPrice,
                 'quantity' => $quantity,
                 'total' => $unitPrice * $quantity,
-                'code' => $product->product_code,
-                'stock' => $product->stock ?? 0,
-                'model' => $product->model,
-                'category' => $product->category?->nameAr,
-                'description' => $product->descriptionAr,
-                'image' => $this->productImageDataUri($product->normalImages->first()?->imageUrl),
+                'image' => $this->productImageDataUri(
+                    $variant?->image_url ?: $product->normalImages->first()?->imageUrl
+                ),
             ];
         })->values();
 
