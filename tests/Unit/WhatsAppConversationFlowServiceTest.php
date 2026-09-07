@@ -28,6 +28,16 @@ class WhatsAppConversationFlowServiceTest extends TestCase
         DB::setDefaultConnection('sqlite');
         DB::reconnect('sqlite');
 
+        Schema::create('whatsapp_contacts', function (Blueprint $table) {
+            $table->id();
+            $table->string('name')->nullable();
+            $table->string('phone')->unique();
+            $table->unsignedBigInteger('customer_id')->nullable();
+            $table->unsignedBigInteger('supplier_id')->nullable();
+            $table->unsignedBigInteger('employee_id')->nullable();
+            $table->timestamp('last_message_at')->nullable();
+            $table->timestamps();
+        });
         Schema::create('whatsapp_conversations', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('whatsapp_account_id')->nullable();
@@ -274,6 +284,23 @@ class WhatsAppConversationFlowServiceTest extends TestCase
         $this->assertNull($conversation->automation_flow);
         $this->assertTrue($conversation->automation_data['handoff']);
         $this->assertDatabaseHas('conversation_tags', ['name' => 'تواصل مع موظف']);
+    }
+
+    public function test_sending_after_handoff_reuses_the_pending_conversation(): void
+    {
+        $contactId = DB::table('whatsapp_contacts')->insertGetId([
+            'phone' => '970599000000',
+        ]);
+        $conversation = $this->conversation([
+            'whatsapp_contact_id' => $contactId,
+            'status' => 'pending',
+        ]);
+
+        $resolved = (new WhatsAppCloudApiService)->findOrCreateConversation('970599000000');
+
+        $this->assertSame($conversation->id, $resolved->id);
+        $this->assertSame('pending', $resolved->status);
+        $this->assertSame(1, WhatsAppConversation::query()->count());
     }
 
     private function conversation(array $values = []): WhatsAppConversation

@@ -417,14 +417,19 @@ class WhatsAppCloudApiService
     public function findOrCreateConversation(string $phone): WhatsAppConversation
     {
         $contact = $this->findOrCreateContact($phone);
-        return WhatsAppConversation::query()->firstOrCreate(
-            [
-                'whatsapp_account_id' => $this->account?->id,
-                'whatsapp_contact_id' => $contact->id,
-                'status' => 'open',
-            ],
-            ['phone' => $contact->phone]
-        );
+        $conversation = WhatsAppConversation::query()
+            ->where('whatsapp_account_id', $this->account?->id)
+            ->where('whatsapp_contact_id', $contact->id)
+            ->whereIn('status', ['open', 'pending'])
+            ->latest('id')
+            ->first();
+
+        return $conversation ?: WhatsAppConversation::query()->create([
+            'whatsapp_account_id' => $this->account?->id,
+            'whatsapp_contact_id' => $contact->id,
+            'phone' => $contact->phone,
+            'status' => 'open',
+        ]);
     }
 
     private function send(string $phone, array $payload, array $messageData, ?int $adminId): array
