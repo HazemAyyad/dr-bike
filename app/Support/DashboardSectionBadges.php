@@ -3,13 +3,16 @@
 namespace App\Support;
 
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeAttendanceOvertimeRequest;
 use App\Models\EmployeeOrder;
 use App\Models\EmployeeSuggestion;
 use App\Models\Followup;
 use App\Models\IncomingCheck;
 use App\Models\Maintenance;
+use App\Models\MaintenanceDailyClosingRequest;
 use App\Models\OutgoingCheck;
 use App\Models\SpecialTask;
+use App\Models\SalesDailyClosingRequest;
 use App\Models\SupportConversation;
 use App\Models\SuspendedInstantSale;
 use App\Models\User;
@@ -52,6 +55,7 @@ class DashboardSectionBadges
         $employeeTasksWaitingReview = self::employeeTasksWaitingReview($user);
         $employeeTasksTodayPending = self::employeeTasksTodayPending($user);
         $pendingEmployeeLoans = self::pendingEmployeeLoans($user);
+        $pendingEmployeeOvertime = self::pendingEmployeeOvertime($user);
         $employeeTasksBadge = $user->type === 'admin'
             ? $employeeTasksWaitingReview + $employeeTasksTodayPending + $pendingEmployeeLoans
             : $employeeTasksTodayPending;
@@ -62,6 +66,9 @@ class DashboardSectionBadges
             'employee_tasks_today_remaining' => $employeeTasksTodayPending,
             'employee_tasks_waiting_review' => $employeeTasksWaitingReview,
             'employee_loan_orders_pending' => $pendingEmployeeLoans,
+            'employee_overtime_orders_pending' => $pendingEmployeeOvertime,
+            'sales_daily_closing_pending' => self::pendingSalesDailyClosings($user),
+            'maintenance_daily_closing_pending' => self::pendingMaintenanceDailyClosings($user),
             'special_tasks_today_pending' => self::specialTasksTodayPending(),
             'employees_absent_today' => self::employeesAbsentToday(),
             'maintenance' => (int) Maintenance::query()->where('status', '!=', 'delivered')->count(),
@@ -169,6 +176,47 @@ class DashboardSectionBadges
 
         return (int) EmployeeOrder::query()
             ->where('type', 'loan')
+            ->where('status', 'pending')
+            ->count();
+    }
+
+    private static function pendingEmployeeOvertime(User $user): int
+    {
+        if ($user->type !== 'admin') {
+            return 0;
+        }
+
+        $legacy = EmployeeOrder::query()
+            ->where('type', 'overtime')
+            ->where('status', 'pending')
+            ->count();
+        $attendance = Schema::hasTable('employee_attendance_overtime_requests')
+            ? EmployeeAttendanceOvertimeRequest::query()
+                ->where('status', EmployeeAttendanceOvertimeRequest::STATUS_PENDING)
+                ->count()
+            : 0;
+
+        return (int) $legacy + (int) $attendance;
+    }
+
+    private static function pendingSalesDailyClosings(User $user): int
+    {
+        if ($user->type !== 'admin' || ! Schema::hasTable('sales_daily_closing_requests')) {
+            return 0;
+        }
+
+        return (int) SalesDailyClosingRequest::query()
+            ->where('status', 'pending')
+            ->count();
+    }
+
+    private static function pendingMaintenanceDailyClosings(User $user): int
+    {
+        if ($user->type !== 'admin' || ! Schema::hasTable('maintenance_daily_closing_requests')) {
+            return 0;
+        }
+
+        return (int) MaintenanceDailyClosingRequest::query()
             ->where('status', 'pending')
             ->count();
     }
