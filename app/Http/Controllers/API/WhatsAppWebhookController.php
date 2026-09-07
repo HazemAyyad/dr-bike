@@ -8,6 +8,7 @@ use App\Models\WhatsAppAccount;
 use App\Models\MetaCatalogProductSync;
 use App\Models\Product;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
+use App\Services\WhatsApp\WhatsAppConversationFlowService;
 use App\Services\WhatsApp\WhatsAppIncomingNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -31,6 +32,7 @@ class WhatsAppWebhookController extends Controller
     public function handle(
         Request $request,
         WhatsAppCloudApiService $service,
+        WhatsAppConversationFlowService $flowService,
         WhatsAppIncomingNotificationService $notificationService
     )
     {
@@ -50,7 +52,10 @@ class WhatsAppWebhookController extends Controller
                         $message = $this->saveIncoming($accountService, $incoming, $names->get((string) data_get($incoming, 'from')), $account);
                         if ($message) {
                             $notificationService->notify($message);
-                            $this->sendWelcomeIfNeeded($accountService, $message);
+                            $handledByFlow = $flowService->handle($accountService, $message, $incoming);
+                            if (! $handledByFlow) {
+                                $this->sendWelcomeIfNeeded($accountService, $message);
+                            }
                         }
                     }
                     foreach ((array) data_get($value, 'statuses', []) as $status) {

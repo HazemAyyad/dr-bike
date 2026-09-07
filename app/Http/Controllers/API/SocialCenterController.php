@@ -727,7 +727,13 @@ class SocialCenterController extends Controller
     {
         $lastInbound = $conversation->messages()->where('direction', 'inbound')->max('created_at');
         if (! $lastInbound) return false;
-        $lastOutbound = $conversation->messages()->where('direction', 'outbound')->max('created_at');
+        $lastOutboundQuery = $conversation->messages()
+            ->where('direction', 'outbound')
+            ->whereIn('status', ['sent', 'delivered', 'read']);
+        if ($channel === 'whatsapp') {
+            $lastOutboundQuery->where('is_automatic', false);
+        }
+        $lastOutbound = $lastOutboundQuery->max('created_at');
         return ! $lastOutbound || \Carbon\Carbon::parse($lastInbound)->gt(\Carbon\Carbon::parse($lastOutbound));
     }
 

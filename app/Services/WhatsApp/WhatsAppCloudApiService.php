@@ -159,16 +159,27 @@ class WhatsAppCloudApiService
 
     public function sendProductList(string $phone, array $products, ?int $adminId = null): array
     {
+        $retailerIds = collect($products)
+            ->map(fn ($product) => $this->productRetailerIdForCatalog($product))
+            ->filter()
+            ->values()
+            ->all();
+
+        return $this->sendCatalogProductRetailerIds($phone, $retailerIds, $adminId);
+    }
+
+    public function sendCatalogProductRetailerIds(string $phone, array $retailerIds, ?int $adminId = null): array
+    {
         $catalogId = (string) ($this->account?->catalog_id ?: config('meta_commerce.catalog_id'));
         if ($catalogId === '') {
             throw new RuntimeException('META_CATALOG_ID is not configured.');
         }
 
-        $rows = collect($products)
-            ->map(fn ($product) => [
-                'product_retailer_id' => $this->productRetailerIdForCatalog($product),
-            ])
-            ->filter(fn ($row) => filled($row['product_retailer_id']))
+        $rows = collect($retailerIds)
+            ->filter()
+            ->unique()
+            ->take(30)
+            ->map(fn ($retailerId) => ['product_retailer_id' => (string) $retailerId])
             ->values()
             ->all();
 
@@ -226,7 +237,12 @@ class WhatsAppCloudApiService
                             [
                                 'id' => 'maintenance',
                                 'title' => 'الصيانة',
-                                'description' => 'طلب صيانة أو متابعة حالة الدراجة',
+                                'description' => 'صيانة دراجة أو قطعة أو جهاز',
+                            ],
+                            [
+                                'id' => 'sell',
+                                'title' => 'بيع',
+                                'description' => 'عرض شيء تملكه للبيع لد. بايك',
                             ],
                             [
                                 'id' => 'inquiries',
@@ -244,7 +260,62 @@ class WhatsAppCloudApiService
             ],
         ], [
             'message_type' => 'interactive',
-            'body' => 'قائمة الخدمات: المنتجات، الصيانة، الاستفسارات، والتواصل مع موظف',
+            'body' => 'قائمة الخدمات: المنتجات، الصيانة، بيع، الاستفسارات، والتواصل مع موظف',
+            'is_automatic' => true,
+        ], null);
+    }
+
+    public function sendInteractiveList(
+        string $phone,
+        string $header,
+        string $body,
+        string $button,
+        array $sections,
+        ?string $footer = null
+    ): array {
+        return $this->send($phone, [
+            'type' => 'interactive',
+            'interactive' => array_filter([
+                'type' => 'list',
+                'header' => ['type' => 'text', 'text' => $header],
+                'body' => ['text' => $body],
+                'footer' => $footer ? ['text' => $footer] : null,
+                'action' => [
+                    'button' => $button,
+                    'sections' => $sections,
+                ],
+            ]),
+        ], [
+            'message_type' => 'interactive',
+            'body' => $header.': '.$body,
+            'is_automatic' => true,
+        ], null);
+    }
+
+    public function sendReplyButtons(string $phone, string $body, array $buttons): array
+    {
+        $buttons = collect($buttons)
+            ->take(3)
+            ->map(fn (array $button) => [
+                'type' => 'reply',
+                'reply' => [
+                    'id' => (string) $button['id'],
+                    'title' => mb_substr((string) $button['title'], 0, 20),
+                ],
+            ])
+            ->values()
+            ->all();
+
+        return $this->send($phone, [
+            'type' => 'interactive',
+            'interactive' => [
+                'type' => 'button',
+                'body' => ['text' => $body],
+                'action' => ['buttons' => $buttons],
+            ],
+        ], [
+            'message_type' => 'interactive',
+            'body' => $body,
             'is_automatic' => true,
         ], null);
     }
@@ -388,7 +459,15 @@ class WhatsAppCloudApiService
                 'error_message' => $response->successful() ? null : (data_get($data, 'body.error.message') ?: 'Meta API request failed'),
             ]);
             if ($response->successful()) {
-                $conversation->update(['last_message' => $message->body, 'last_message_at' => now()]);
+                $conversationUpdate = ['last_message' => $message->body, 'last_message_at' => now()];
+                if ($adminId !== null) {
+                    $conversationUpdate = array_merge($conversationUpdate, [
+                        'automation_flow' => null,
+                        'automation_step' => null,
+                        'automation_completed_at' => now(),
+                    ]);
+                }
+                $conversation->update($conversationUpdate);
                 $contact->update(['last_message_at' => now()]);
             }
             return ['message' => $message->fresh(), 'api_response' => $data];
