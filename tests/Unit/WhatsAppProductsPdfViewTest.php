@@ -37,6 +37,9 @@ class WhatsAppProductsPdfViewTest extends TestCase
         $this->assertStringContainsString('100.00', $html);
         $this->assertStringContainsString('الذكاء الاصطناعي', $html);
         $this->assertStringContainsString('أخطاء في الأسعار أو الكميات', $html);
+        $this->assertStringNotContainsString('الرمز:', $html);
+        $this->assertStringNotContainsString('التصنيف:', $html);
+        $this->assertStringNotContainsString('المتوفر:', $html);
     }
 
     public function test_product_cards_are_split_into_six_products_per_page(): void
