@@ -519,7 +519,12 @@ class EmployeePointsController extends Controller
             'category_id' => ['nullable', 'integer', 'min:1'],
             'reason' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string'],
-            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:10240'],
+            'image' => [
+                'nullable',
+                'file',
+                'mimes:jpg,jpeg,png,webp,mp4,mov,3gp,webm',
+                'max:51200',
+            ],
             'points_date' => ['nullable', 'date'],
             'source' => ['nullable', Rule::in(config('employee_points.sources', []))],
         ]);

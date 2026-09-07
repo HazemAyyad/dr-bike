@@ -14,6 +14,13 @@ class EmployeePointsLogResource extends JsonResource
     public function toArray(Request $request): array
     {
         $categoryRelation = $this->whenLoaded('categoryRelation');
+        $mediaUrl = $this->image_path
+            ? Storage::disk('public')->url($this->image_path)
+            : null;
+        $extension = strtolower(pathinfo((string) $this->image_path, PATHINFO_EXTENSION));
+        $mediaType = in_array($extension, ['mp4', 'mov', '3gp', 'webm'], true)
+            ? 'video'
+            : 'image';
 
         return [
             'id' => (int) $this->id,
@@ -31,9 +38,9 @@ class EmployeePointsLogResource extends JsonResource
             'source' => (string) $this->source,
             'reason' => $this->reason,
             'notes' => $this->notes,
-            'image_url' => $this->image_path
-                ? Storage::disk('public')->url($this->image_path)
-                : null,
+            'image_url' => $mediaUrl,
+            'media_url' => $mediaUrl,
+            'media_type' => $this->image_path ? $mediaType : null,
             'points_date' => optional($this->points_date)->toDateString(),
             'created_by' => $this->created_by ? (int) $this->created_by : null,
             'created_by_name' => $this->whenLoaded('creator', fn () => optional($this->creator)->name),
