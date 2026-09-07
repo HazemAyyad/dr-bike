@@ -373,6 +373,8 @@ class SocialCenterController extends Controller
         $data = $request->validate([
             'product_ids' => 'required|array|min:1|max:30',
             'product_ids.*' => 'required|string',
+            'quantities' => 'nullable|array',
+            'quantities.*' => 'required|integer|min:1|max:999',
         ]);
 
         if ($channel === 'whatsapp') {

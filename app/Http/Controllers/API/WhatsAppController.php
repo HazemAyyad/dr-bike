@@ -219,33 +219,63 @@ class WhatsAppController extends Controller
 
     public function sendProducts(Request $request, int $id, WhatsAppCloudApiService $service)
     {
-        $conversation = WhatsAppConversation::query()->findOrFail($id);
+        $conversation = WhatsAppConversation::query()
+            ->with(['contact.customer'])
+            ->findOrFail($id);
         $this->ensureCustomerServiceWindow($conversation);
         $data = $request->validate([
             'product_ids' => 'required|array|min:1|max:30',
             'product_ids.*' => 'required|string',
+            'quantities' => 'nullable|array',
+            'quantities.*' => 'required|integer|min:1|max:999',
         ]);
+        $productIds = array_values(array_unique(array_map('strval', $data['product_ids'])));
+        $quantities = collect($data['quantities'] ?? [])
+            ->mapWithKeys(fn ($quantity, $productId) => [(string) $productId => (int) $quantity]);
+        abort_if($quantities->keys()->diff($productIds)->isNotEmpty(), 422, 'A quantity was provided for an unselected product.');
+
         $products = Product::query()
             ->with(['normalImages', 'category'])
-            ->whereIn('id', $data['product_ids'])
+            ->whereIn('id', $productIds)
             ->get();
-        abort_if($products->count() !== count(array_unique($data['product_ids'])), 422, 'Some products were not found.');
-        $order = array_flip(array_map('strval', $data['product_ids']));
+        abort_if($products->count() !== count($productIds), 422, 'Some products were not found.');
+        $order = array_flip($productIds);
         $products = $products->sortBy(fn (Product $product) => $order[(string) $product->id] ?? PHP_INT_MAX);
-        $rows = $products->map(fn (Product $product) => [
-            'name' => $product->nameAr ?: $product->nameEng ?: 'منتج',
-            'price' => number_format((float) $product->normailPrice, 2),
-            'code' => $product->product_code,
-            'stock' => $product->stock ?? 0,
-            'model' => $product->model,
-            'category' => $product->category?->nameAr,
-            'description' => $product->descriptionAr,
-            'image' => $this->productImageDataUri($product->normalImages->first()?->imageUrl),
-        ])->values()->all();
+        $rows = $products->map(function (Product $product) use ($quantities) {
+            $quantity = $quantities->get((string) $product->id, 1);
+            $unitPrice = (float) ($product->normailPrice ?? 0);
+
+            return [
+                'name' => $product->nameAr ?: $product->nameEng ?: 'منتج',
+                'unit_price' => $unitPrice,
+                'quantity' => $quantity,
+                'total' => $unitPrice * $quantity,
+                'code' => $product->product_code,
+                'stock' => $product->stock ?? 0,
+                'model' => $product->model,
+                'category' => $product->category?->nameAr,
+                'description' => $product->descriptionAr,
+                'image' => $this->productImageDataUri($product->normalImages->first()?->imageUrl),
+            ];
+        })->values();
+
+        $customerName = trim((string) ($conversation->contact?->name
+            ?: $conversation->contact?->customer?->name
+            ?: $conversation->phone));
+        $offerNumber = 'WA-'.$conversation->id.'-'.now()->format('ymdHis');
+        $offerQr = QrCode::format('svg')
+            ->size(260)
+            ->margin(1)
+            ->generate('Doctor Bike product offer '.$offerNumber);
 
         $html = view('whatsapp.products-pdf', [
-            'products' => $rows,
-            'generatedAt' => now()->format('Y-m-d H:i'),
+            'products' => $rows->all(),
+            'grandTotal' => $rows->sum('total'),
+            'generatedAt' => now()->format('Y-m-d h:i A'),
+            'offerNumber' => $offerNumber,
+            'customerName' => $customerName,
+            'customerPhone' => $conversation->phone,
+            'qr' => 'data:image/svg+xml;base64,'.base64_encode($offerQr),
             'logo' => 'data:image/jpeg;base64,'.base64_encode(
                 file_get_contents(public_path('appImages/logo.jpg'))
             ),
@@ -266,7 +296,7 @@ class WhatsAppController extends Controller
             return $this->sendSafely(fn () => $service->sendMedia(
                 $conversation->phone,
                 $file,
-                'تفاصيل المنتجات المختارة',
+                'عرض منتجات للزبون: '.$customerName,
                 $request->user()->id,
                 'document'
             ));
