@@ -158,14 +158,17 @@ class PurchaseReturnsController extends Controller
             ->when($search !== '', fn ($q) => $q->where(function ($inner) use ($search) {
                 $inner->where('nameAr', 'like', "%{$search}%")
                     ->orWhere('nameEng', 'like', "%{$search}%")
+                    ->orWhere('product_code', 'like', "%{$search}%")
                     ->orWhere('id', $search);
             }))
-            ->orderByDesc('id')->limit(100)->get()->map(function (Product $product) {
+            ->orderByDesc('id')->get()->map(function (Product $product) {
                 $images = ProductImageResolver::formatForList($product);
                 $productImages = $this->orderedProductImages($images);
                 return [
                     'product_id' => $product->id,
                     'product_name' => $product->nameAr,
+                    'product_name_en' => $product->nameEng,
+                    'product_code' => $product->product_code,
                     'product_image' => $images['product_image'] ?? 'no image',
                     'product_images' => $productImages,
                     'stock' => (float) $product->stock,
