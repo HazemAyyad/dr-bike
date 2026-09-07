@@ -44,6 +44,7 @@ class SmartSceneController extends Controller
         $data = $this->validated($request);
         $scene = DB::transaction(function () use ($request, $data) {
             $this->validateRelations($request, $data);
+
             return SmartScene::create([
                 ...$data,
                 'user_id' => $this->ownerId($request),
@@ -103,6 +104,7 @@ class SmartSceneController extends Controller
                 'last_executed_at' => $executedAt,
                 'last_execution_status' => $data['status'],
             ]);
+
             return $scene->executions()->create([
                 ...$data,
                 'source' => $data['source'] ?? 'app',
@@ -121,7 +123,7 @@ class SmartSceneController extends Controller
     private function validated(Request $request, bool $partial = false): array
     {
         $sometimes = $partial ? 'sometimes' : 'required';
-        return $request->validate([
+        $data = $request->validate([
             'smart_home_id' => [$sometimes, 'integer'],
             'smart_room_id' => ['nullable', 'integer'],
             'tuya_scene_id' => ['nullable', 'string', 'max:191'],
@@ -137,9 +139,17 @@ class SmartSceneController extends Controller
             'conditions.*.value' => ['nullable'],
             'conditions.*.time' => ['nullable', 'date_format:H:i'],
             'conditions.*.date' => ['nullable', 'date_format:Y-m-d'],
-            'conditions.*.repeat_type' => ['nullable', Rule::in(['once', 'daily', 'weekly'])],
+            'conditions.*.repeat_type' => ['nullable', Rule::in(['once', 'daily', 'weekly', 'monthly', 'yearly'])],
             'conditions.*.repeat_days' => ['nullable', 'array'],
             'conditions.*.repeat_days.*' => [Rule::in(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'])],
+            'conditions.*.recurrence_config' => ['nullable', 'array'],
+            'conditions.*.recurrence_config.monthly_mode' => ['nullable', Rule::in(['day_of_month', 'custom_dates'])],
+            'conditions.*.recurrence_config.month_day' => ['nullable', 'integer', 'between:1,31'],
+            'conditions.*.recurrence_config.custom_month_days' => ['nullable', 'array', 'max:31'],
+            'conditions.*.recurrence_config.custom_month_days.*' => ['integer', 'between:1,31'],
+            'conditions.*.recurrence_config.yearly_month' => ['nullable', 'integer', 'between:1,12'],
+            'conditions.*.recurrence_config.yearly_day' => ['nullable', 'integer', 'between:1,31'],
+            'conditions.*.recurrence_config.duration_type' => ['nullable', Rule::in(['forever'])],
             'conditions.*.timezone' => ['nullable', 'string', 'max:80'],
             'actions' => [$sometimes, 'array', 'min:1'],
             'actions.*.device_id' => ['required', 'integer'],
@@ -151,6 +161,23 @@ class SmartSceneController extends Controller
             'show_on_home' => ['sometimes', 'boolean'],
             'show_in_room' => ['sometimes', 'boolean'],
         ]);
+
+        foreach ($data['conditions'] ?? [] as $condition) {
+            if (($condition['type'] ?? null) !== 'schedule') {
+                continue;
+            }
+            $repeatType = $condition['repeat_type'] ?? 'once';
+            $config = $condition['recurrence_config'] ?? [];
+            abort_if(empty($condition['time']) || empty($condition['date']), 422, 'حدد وقت وتاريخ تشغيل المؤقت');
+            abort_if($repeatType === 'weekly' && empty($condition['repeat_days']), 422, 'اختر يومًا واحدًا على الأقل للتكرار الأسبوعي');
+            abort_if($repeatType === 'monthly' && ! in_array($config['monthly_mode'] ?? null, ['day_of_month', 'custom_dates'], true), 422, 'اختر طريقة التكرار الشهري');
+            abort_if($repeatType === 'monthly' && ($config['monthly_mode'] ?? null) === 'custom_dates' && empty($config['custom_month_days']), 422, 'اختر يومًا واحدًا على الأقل للتكرار الشهري');
+            abort_if($repeatType === 'monthly' && ($config['monthly_mode'] ?? null) === 'day_of_month' && empty($config['month_day']), 422, 'اختر يوم الشهر للتكرار الشهري');
+            abort_if($repeatType === 'yearly' && (empty($config['yearly_month']) || empty($config['yearly_day'])), 422, 'اختر الشهر واليوم للتكرار السنوي');
+            abort_if($repeatType === 'yearly' && ! checkdate((int) $config['yearly_month'], (int) $config['yearly_day'], 2024), 422, 'موعد التكرار السنوي غير صالح');
+        }
+
+        return $data;
     }
 
     private function validateRelations(Request $request, array $data): void
@@ -188,6 +215,7 @@ class SmartSceneController extends Controller
         if ($request->user()?->type === 'admin' && $request->filled('user_id')) {
             return (int) $request->input('user_id');
         }
+
         return (int) $request->user()->id;
     }
 }
