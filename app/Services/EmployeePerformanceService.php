@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\EmployeeDetail;
 use App\Models\Goal;
+use App\Enums\EmployeeTaskStatus;
+use App\Services\EmployeeTasks\EmployeeTaskRecurrenceService;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
@@ -36,6 +38,11 @@ class EmployeePerformanceService
             ],
             'rating' => $this->rating($current['score']),
             'improvement_tip' => $this->improvementTip($current['sections']),
+            'coverage' => [
+                'available' => collect($current['sections'])->where('available', true)->count(),
+                'total' => count($current['sections']),
+            ],
+            'monthly_trend' => $this->monthlyTrend($employee),
         ]);
     }
 
@@ -66,45 +73,130 @@ class EmployeePerformanceService
 
     private function tasks(EmployeeDetail $employee, CarbonInterface $start, CarbonInterface $end): array
     {
-        if (! Schema::hasTable('employee_tasks')) {
+        if (! Schema::hasTable('employee_tasks') && ! Schema::hasTable('employee_task_occurrences')) {
             return $this->section('tasks', 'المهام', 30, null, ['total' => 0, 'completed' => 0]);
         }
 
-        $query = DB::table('employee_tasks')
-            ->where(function ($query) use ($employee) {
-                if (Schema::hasColumn('employee_tasks', 'employee_id')) {
-                    $query->where('employee_tasks.employee_id', $employee->id);
-                } else {
-                    $query->whereRaw('1 = 0');
-                }
-                if (Schema::hasTable('employee_task_assignees')) {
-                    $query->orWhereExists(function ($sub) use ($employee) {
-                        $sub->selectRaw('1')
-                            ->from('employee_task_assignees')
-                            ->whereColumn('employee_task_assignees.employee_task_id', 'employee_tasks.id')
-                            ->where('employee_task_assignees.employee_id', $employee->id);
-                    });
-                }
-            });
-        if (Schema::hasColumn('employee_tasks', 'is_canceled')) {
-            $query->where(function ($query) {
-                $query->whereNull('is_canceled')->orWhere('is_canceled', false);
-            });
-        }
-
-        $dateColumn = Schema::hasColumn('employee_tasks', 'created_at') ? 'created_at' : 'start_time';
-        $query->whereBetween($dateColumn, [$start, $end]);
-        $total = (clone $query)->count();
-        $completed = Schema::hasColumn('employee_tasks', 'status')
-            ? (clone $query)->where('status', 'completed')->count()
-            : 0;
+        $rows = $this->taskRows($employee, $start, $end);
+        $total = $rows->count();
+        $completed = $rows->where('completed', true)->count();
         $score = $total > 0 ? round(($completed / $total) * 100, 1) : null;
 
         return $this->section('tasks', 'المهام', 30, $score, [
             'total' => $total,
             'completed' => $completed,
             'remaining' => max(0, $total - $completed),
+            'employee_tasks' => $rows->where('source', 'employee_task')->count(),
+            'fixed_tasks' => $rows->where('source', 'fixed_task')->count(),
         ]);
+    }
+
+    private function taskRows(EmployeeDetail $employee, CarbonInterface $start, CarbonInterface $end): Collection
+    {
+        if (Schema::hasTable('employee_task_templates') && Schema::hasTable('employee_task_occurrences')) {
+            app(EmployeeTaskRecurrenceService::class)->ensureActiveTemplateOccurrences((int) $employee->id);
+        }
+
+        $rows = collect();
+        if (Schema::hasTable('employee_tasks') && Schema::hasColumn('employee_tasks', 'start_time')) {
+            $query = DB::table('employee_tasks')
+                ->where(function ($query) use ($employee) {
+                    $query->where('employee_tasks.employee_id', $employee->id);
+                    if (Schema::hasTable('employee_task_assignees')) {
+                        $query->orWhereExists(function ($sub) use ($employee) {
+                            $sub->selectRaw('1')
+                                ->from('employee_task_assignees')
+                                ->whereColumn('employee_task_assignees.employee_task_id', 'employee_tasks.id')
+                                ->where('employee_task_assignees.employee_id', $employee->id);
+                        });
+                    }
+                })
+                ->whereBetween('start_time', [$start, $end]);
+            if (Schema::hasColumn('employee_tasks', 'occurrence_id')) {
+                $query->whereNull('occurrence_id');
+            }
+            if (Schema::hasColumn('employee_tasks', 'template_id')) {
+                $query->whereNull('template_id');
+            }
+            if (Schema::hasColumn('employee_tasks', 'is_canceled')) {
+                $query->where(fn ($q) => $q->whereNull('is_canceled')->orWhere('is_canceled', false));
+            }
+            $query->get(['id', 'status', 'start_time'])->each(function ($task) use ($rows) {
+                $rows->push([
+                    'id' => (int) $task->id,
+                    'date' => Carbon::parse($task->start_time)->toDateString(),
+                    'completed' => EmployeeTaskStatus::normalize($task->status)->value === 'completed',
+                    'source' => 'employee_task',
+                ]);
+            });
+        }
+
+        if (Schema::hasTable('employee_task_occurrences')) {
+            $dateExpression = Schema::hasColumn('employee_task_occurrences', 'scheduled_date')
+                ? 'COALESCE(scheduled_date, DATE(start_time))'
+                : 'DATE(start_time)';
+            $query = DB::table('employee_task_occurrences')
+                ->where(function ($query) use ($employee) {
+                    $query->where('employee_task_occurrences.employee_id', $employee->id);
+                    if (Schema::hasTable('employee_task_assignees') && Schema::hasColumn('employee_task_occurrences', 'legacy_task_id')) {
+                        $query->orWhereIn('legacy_task_id', DB::table('employee_task_assignees')
+                            ->select('employee_task_id')->where('employee_id', $employee->id));
+                    }
+                })
+                ->whereBetween(DB::raw($dateExpression), [$start->toDateString(), $end->toDateString()]);
+            if (Schema::hasColumn('employee_task_occurrences', 'is_canceled')) {
+                $query->where('is_canceled', false);
+            }
+            $query->get(['id', 'status', 'start_time', ...(Schema::hasColumn('employee_task_occurrences', 'scheduled_date') ? ['scheduled_date'] : [])])
+                ->each(function ($task) use ($rows) {
+                    $date = $task->scheduled_date ?? $task->start_time;
+                    $rows->push([
+                        'id' => (int) $task->id,
+                        'date' => Carbon::parse($date)->toDateString(),
+                        'completed' => EmployeeTaskStatus::normalize($task->status)->value === 'completed',
+                        'source' => 'fixed_task',
+                    ]);
+                });
+        }
+
+        return $rows->values();
+    }
+
+    private function monthlyTrend(EmployeeDetail $employee): array
+    {
+        $today = now(config('app.timezone'))->endOfDay();
+        $start = $today->copy()->startOfMonth();
+        $tasks = $this->taskRows($employee, $start, $today)->groupBy('date');
+        $attendance = Schema::hasTable('employee_attendances')
+            ? DB::table('employee_attendances')->where('employee_id', $employee->id)
+                ->whereBetween('date', [$start->toDateString(), $today->toDateString()])->get()->keyBy(fn ($row) => Carbon::parse($row->date)->toDateString())
+            : collect();
+        $points = [];
+
+        for ($day = $start->copy(); $day->lte($today); $day->addDay()) {
+            $key = $day->toDateString();
+            $parts = collect();
+            $dayTasks = $tasks->get($key, collect());
+            if ($dayTasks->isNotEmpty()) {
+                $parts->push(round(($dayTasks->where('completed', true)->count() / $dayTasks->count()) * 100, 1));
+            }
+            $row = $attendance->get($key);
+            if ($row) {
+                $required = (int) ($row->required_minutes ?? 0);
+                $parts->push(($row->missing_checkout ?? false) || empty($row->arrived_at)
+                    ? 0
+                    : ($required > 0 ? min(100, ((int) ($row->worked_minutes ?? 0) / $required) * 100) : (empty($row->left_at) ? 50 : 100)));
+            }
+            $points[] = [
+                'date' => $key,
+                'label' => $day->format('d/m'),
+                'score' => $parts->isEmpty() ? null : round((float) $parts->avg(), 1),
+                'tasks_total' => $dayTasks->count(),
+                'tasks_completed' => $dayTasks->where('completed', true)->count(),
+            ];
+        }
+
+        return ['from' => $start->toDateString(), 'to' => $today->toDateString(), 'points' => $points];
     }
 
     private function goals(EmployeeDetail $employee, CarbonInterface $start, CarbonInterface $end): array
