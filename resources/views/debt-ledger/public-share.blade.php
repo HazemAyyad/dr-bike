@@ -9,10 +9,9 @@
         * { box-sizing:border-box; }
         body { margin:0; padding:22px 12px; direction:rtl; color:var(--ink); background:#eef0f5; font-family:Tahoma,Arial,sans-serif; }
         .report { width:min(850px,100%); margin:auto; padding:28px; background:#fff; border-radius:12px; box-shadow:0 8px 30px rgba(31,41,55,.09); }
-        .brand { display:flex; align-items:center; justify-content:space-between; gap:18px; padding-bottom:10px; margin-bottom:18px; border-bottom:2px solid var(--purple); }
-        .brand-name { color:var(--purple); font-size:25px; font-weight:800; letter-spacing:.4px; }
-        .brand-subtitle { margin-top:3px; font-size:13px; font-weight:700; }
-        .brand img { width:auto; height:58px; object-fit:contain; }
+        .brand { direction:ltr; display:grid; grid-template-columns:130px 1fr 2fr; align-items:center; gap:18px; padding-bottom:10px; margin-bottom:16px; border-bottom:2px solid var(--purple); }
+        .brand-title { direction:rtl; color:var(--purple); font-size:21px; font-weight:800; text-align:right; }
+        .brand img { width:auto; height:78px; object-fit:contain; }
         h1 { margin:0 0 16px; color:var(--purple); text-align:center; font-size:21px; }
         .meta { display:grid; grid-template-columns:1fr 1fr; gap:7px 22px; margin-bottom:14px; }
         .meta div { font-size:13px; color:var(--muted); }
@@ -23,9 +22,12 @@
         .summary-label { display:block; margin-bottom:5px; color:var(--muted); font-size:11px; }
         .summary-value { font-size:15px; font-weight:800; }
         .taken { color:var(--green); } .given { color:var(--red); }
-        .transactions { display:grid; gap:5px; }
-        .transaction { overflow:hidden; border:1px solid var(--line); border-radius:7px; background:#fff; break-inside:avoid; }
-        .transaction-main { display:grid; grid-template-columns:110px minmax(0,1fr) auto auto; align-items:center; gap:10px; padding:7px 9px; }
+        .ledger-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:7px; }
+        .ledger { width:100%; min-width:700px; border-collapse:collapse; font-size:11px; }
+        .ledger th,.ledger td { padding:6px 5px; border-left:1px solid var(--line); border-bottom:1px solid var(--line); }
+        .ledger th { color:#fff; background:var(--purple); text-align:center; }
+        .ledger .statement { width:34%; }
+        .source-row td { padding:5px 7px; background:#f7f7f9; }
         .transaction-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
         .transaction-date { font-size:13px; font-weight:800; }
         .transaction-type { font-size:13px; font-weight:800; text-align:left; }
@@ -47,7 +49,7 @@
         @media print { body { padding:0; background:#fff; } .report { width:100%; padding:0; box-shadow:none; } }
         @media (max-width:600px) {
             body { padding:0; background:#fff; } .report { min-height:100vh; padding:18px 12px; border-radius:0; box-shadow:none; }
-            .brand-name { font-size:19px; } .brand img { height:45px; } .meta { grid-template-columns:1fr; }
+            .brand { grid-template-columns:85px 1fr; } .brand-space { display:none; } .brand-title { font-size:16px; } .brand img { height:54px; } .meta { grid-template-columns:1fr; }
             .summary { grid-template-columns:1fr; gap:0; } .summary-item { display:flex; justify-content:space-between; align-items:center; border-left:0; border-bottom:1px solid rgba(107,101,189,.13); text-align:right; }
             .summary-item:last-child { border-bottom:0; } .summary-label { margin:0; } .transaction-main { grid-template-columns:auto 1fr auto; gap:6px; } .transaction-balance { grid-column:2 / 4; }
             .product { grid-template-columns:38px minmax(0,1fr) auto; } .product-img,.product-placeholder { width:38px; height:38px; }
@@ -61,10 +63,7 @@
     $currencyLabel = $currency ?? 'شيكل';
 @endphp
 <main class="report">
-    <header class="brand">
-        <div><div class="brand-name">DOCTOR BIKE</div><div class="brand-subtitle">تقرير دفتر الديون</div></div>
-        <img src="{{ asset('appImages/logo.jpg') }}" alt="Doctor Bike">
-    </header>
+    <header class="brand"><img src="{{ asset('appImages/logo.jpg') }}" alt="Doctor Bike"><span class="brand-space"></span><div class="brand-title">دكتور بايك - تقرير دفتر الديون</div></header>
     <h1>كشف حساب</h1>
     <section class="meta">
         <div><strong>صاحب الحساب:</strong> {{ $person['name'] ?? '—' }}</div>
@@ -81,21 +80,22 @@
     @if($transactions->isEmpty())
         <div class="empty">لا توجد معاملات</div>
     @else
-        <section class="transactions">
+        <div class="ledger-wrap"><table class="ledger"><thead><tr><th>#</th><th>التاريخ</th><th class="statement">البيان</th><th>{{ $taken_label ?? 'أخذت' }}</th><th>{{ $given_label ?? 'أعطيت' }}</th><th>الرصيد</th></tr></thead><tbody>
         @foreach($transactions as $index => $transaction)
             @php
                 $isTaken = $transaction->type === 'taken';
                 $sourceDetail = $source_details[$transaction->id] ?? null;
             @endphp
-            <article class="transaction">
-                <div class="transaction-main">
-                    <div class="transaction-date">{{ $index + 1 }}. {{ $transaction->transaction_date?->format('Y-m-d') ?? '—' }}</div>
-                    <div class="transaction-note">{{ !empty(trim((string) $transaction->note)) ? $transaction->note : '—' }}</div>
-                    <div class="transaction-type {{ $isTaken ? 'taken' : 'given' }}">{{ $isTaken ? ($taken_label ?? 'أخذت') : ($given_label ?? 'أعطيت') }} {{ number_format($transaction->amount,2) }}</div>
-                    <div class="transaction-balance">الرصيد بعد الحركة: <strong>{{ number_format($transaction->balance_after,2) }} {{ $currencyLabel }}</strong></div>
-                </div>
+            <tr>
+                <td class="num">{{ $index + 1 }}</td>
+                <td class="num">{{ $transaction->transaction_date?->format('Y-m-d') ?? '—' }}</td>
+                <td>{{ !empty(trim((string) $transaction->note)) ? $transaction->note : '—' }}</td>
+                <td class="num taken">{{ $isTaken ? number_format($transaction->amount,2) : '—' }}</td>
+                <td class="num given">{{ !$isTaken ? number_format($transaction->amount,2) : '—' }}</td>
+                <td class="num {{ $transaction->balance_after >= 0 ? 'taken' : 'given' }}">{{ number_format($transaction->balance_after,2) }} {{ $currencyLabel }}</td>
+            </tr>
                 @if($showSourceDetails && $sourceDetail)
-                    <div class="source">
+                    <tr class="source-row"><td colspan="6"><div class="source">
                         <div class="source-title">{{ $sourceDetail['title'] }}</div>
                         @if(!empty($sourceDetail['meta']))<div class="source-meta">@foreach($sourceDetail['meta'] as $label => $value)<span><strong>{{ $label }}:</strong> {{ is_numeric($value) ? number_format((float)$value,2) : $value }}</span>@endforeach</div>@endif
                         @if(!empty($sourceDetail['items']))
@@ -109,11 +109,10 @@
                             @endforeach
                             </div>
                         @endif
-                    </div>
+                    </div></td></tr>
                 @endif
-            </article>
         @endforeach
-        </section>
+        </tbody></table></div>
     @endif
 </main>
 </body>

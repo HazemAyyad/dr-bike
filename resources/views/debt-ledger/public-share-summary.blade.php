@@ -9,9 +9,9 @@
         * { box-sizing:border-box; }
         body { margin:0; padding:20px 12px; direction:rtl; color:var(--text); background:#f5f6f8; font-family:Tahoma,Arial,sans-serif; }
         .report { width:min(760px,100%); margin:auto; padding:22px 24px; background:#fff; border-radius:14px; box-shadow:0 4px 18px rgba(16,24,40,.08); }
-        .header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:12px; margin-bottom:18px; border-bottom:2px solid var(--primary); }
-        .header h1 { margin:0; color:var(--primary); font-size:22px; }
-        .header img { width:auto; height:55px; object-fit:contain; border-radius:6px; }
+        .header { direction:ltr; display:grid; grid-template-columns:130px 1fr 2fr; align-items:center; gap:16px; padding-bottom:10px; margin-bottom:16px; border-bottom:2px solid var(--primary); }
+        .header h1 { direction:rtl; margin:0; color:var(--primary); font-size:21px; text-align:right; }
+        .header img { width:auto; height:78px; object-fit:contain; border-radius:6px; }
         h2 { margin:10px 0 18px; text-align:center; font-size:18px; }
         .meta { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px 20px; }
         .meta p { margin:0; color:var(--muted); font-size:14px; } .meta strong { color:var(--text); }
@@ -23,12 +23,12 @@
         th,td { padding:7px 5px; border-bottom:1px solid var(--border); border-left:1px solid var(--border); text-align:right; white-space:nowrap; }
         th:last-child,td:last-child { border-left:0; } tr:last-child td { border-bottom:0; } th { color:#fff; background:var(--primary); text-align:center; }
         tbody tr:nth-child(even) { background:#f8faff; } .num { direction:ltr; text-align:center; } .note { width:30%; white-space:normal; } .empty { padding:28px; color:var(--muted); text-align:center; }
-        @media(max-width:640px) { body{padding:0}.report{min-height:100vh;padding:18px 12px;border-radius:0;box-shadow:none}.header h1{font-size:17px}.header img{height:42px}.meta{grid-template-columns:1fr}.summary{grid-template-columns:1fr;gap:2px}.summary-item{display:flex;align-items:center;justify-content:space-between;padding:6px;text-align:right}.summary-label{margin:0}.summary-value{font-size:15px} }
+        @media(max-width:640px) { body{padding:0}.report{min-height:100vh;padding:18px 12px;border-radius:0;box-shadow:none}.header{grid-template-columns:85px 1fr}.header .header-space{display:none}.header h1{font-size:16px}.header img{height:54px}.meta{grid-template-columns:1fr}.summary{grid-template-columns:1fr;gap:2px}.summary-item{display:flex;align-items:center;justify-content:space-between;padding:6px;text-align:right}.summary-label{margin:0}.summary-value{font-size:15px} }
     </style>
 </head>
 <body>
 <main class="report">
-    <header class="header"><h1>دكتور بايك - دفتر الديون</h1><img src="{{ asset('appImages/logo.jpg') }}" alt="Doctor Bike"></header>
+    <header class="header"><img src="{{ asset('appImages/logo.jpg') }}" alt="Doctor Bike"><span class="header-space"></span><h1>دكتور بايك - تقرير دفتر الديون</h1></header>
     <h2>كشف حساب</h2>
     <section class="meta">
         <p><strong>الاسم:</strong> {{ $person['name'] ?? '—' }}</p><p><strong>الهاتف:</strong> {{ $person['phone'] ?? '—' }}</p>
