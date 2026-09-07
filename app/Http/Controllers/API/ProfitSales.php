@@ -256,10 +256,21 @@ class ProfitSales extends Controller
 
 }
 
-public function getProfitSales()
+public function getProfitSales(Request $request)
 {
     try {
-        $profitSales = ProfitSale::with(['customer:id,name', 'seller:id,name', 'paymentBox:id,name'])->get();
+        $data = $request->validate([
+            'date' => ['nullable', 'date_format:Y-m-d'],
+        ]);
+
+        $profitSales = ProfitSale::query()
+            ->with(['customer:id,name', 'seller:id,name', 'paymentBox:id,name'])
+            ->when(
+                $data['date'] ?? null,
+                fn ($query, $date) => $query->whereDate('created_at', $date)
+            )
+            ->orderByDesc('id')
+            ->get();
         $profitSales->transform(function (ProfitSale $sale) {
             if ($sale->customer && empty($sale->buyer_name)) {
                 $sale->buyer_name = $sale->customer->name;
