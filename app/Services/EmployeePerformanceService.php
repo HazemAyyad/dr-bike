@@ -43,6 +43,7 @@ class EmployeePerformanceService
                 'total' => count($current['sections']),
             ],
             'monthly_trend' => $this->monthlyTrend($employee),
+            'points_summary' => $this->pointsSummary($employee, $start, $end),
         ]);
     }
 
@@ -197,6 +198,62 @@ class EmployeePerformanceService
         }
 
         return ['from' => $start->toDateString(), 'to' => $today->toDateString(), 'points' => $points];
+    }
+
+    private function pointsSummary(EmployeeDetail $employee, CarbonInterface $start, CarbonInterface $end): array
+    {
+        if (! Schema::hasTable('employee_points_logs')) {
+            return [
+                'available' => false,
+                'earned_points' => 0,
+                'deducted_points' => 0,
+                'net_points' => 0,
+                'lifetime_net_points' => 0,
+                'recent_movements' => [],
+            ];
+        }
+
+        $dateExpression = Schema::hasColumn('employee_points_logs', 'points_date')
+            ? 'COALESCE(points_date, DATE(created_at))'
+            : 'DATE(created_at)';
+        $base = DB::table('employee_points_logs')
+            ->where('employee_id', $employee->id)
+            ->whereBetween(DB::raw($dateExpression), [$start->toDateString(), $end->toDateString()]);
+        $totals = (clone $base)
+            ->selectRaw('operation_type, COALESCE(SUM(points), 0) as total_points')
+            ->groupBy('operation_type')
+            ->pluck('total_points', 'operation_type');
+        $earned = (int) ($totals['add'] ?? 0);
+        $deducted = (int) ($totals['deduct'] ?? 0);
+        $lifetime = DB::table('employee_points_logs')
+            ->where('employee_id', $employee->id)
+            ->selectRaw("COALESCE(SUM(CASE WHEN operation_type = 'add' THEN points ELSE -points END), 0) as net")
+            ->value('net');
+        $columns = ['id', 'points', 'operation_type', 'created_at'];
+        foreach (['category', 'reason', 'notes', 'source', 'points_date'] as $column) {
+            if (Schema::hasColumn('employee_points_logs', $column)) $columns[] = $column;
+        }
+        $recent = (clone $base)
+            ->orderByDesc(DB::raw($dateExpression))
+            ->orderByDesc('id')
+            ->limit(5)
+            ->get($columns)
+            ->map(fn ($row) => [
+                'id' => (int) $row->id,
+                'operation_type' => (string) $row->operation_type,
+                'points' => (int) $row->points,
+                'label' => trim((string) ($row->reason ?? $row->category ?? $row->notes ?? $row->source ?? 'حركة نقاط')),
+                'date' => Carbon::parse($row->points_date ?? $row->created_at)->toDateString(),
+            ])->values()->all();
+
+        return [
+            'available' => true,
+            'earned_points' => max(0, $earned),
+            'deducted_points' => max(0, $deducted),
+            'net_points' => $earned - $deducted,
+            'lifetime_net_points' => (int) $lifetime,
+            'recent_movements' => $recent,
+        ];
     }
 
     private function goals(EmployeeDetail $employee, CarbonInterface $start, CarbonInterface $end): array

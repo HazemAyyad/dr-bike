@@ -42,6 +42,16 @@ class EmployeePerformanceServiceTest extends TestCase
             $table->date('scheduled_date')->nullable();
             $table->timestamps();
         });
+
+        Schema::create('employee_points_logs', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('employee_id');
+            $table->unsignedInteger('points');
+            $table->string('operation_type');
+            $table->string('reason')->nullable();
+            $table->date('points_date')->nullable();
+            $table->timestamps();
+        });
     }
 
     public function test_it_combines_employee_tasks_and_fixed_occurrences_in_monthly_score_and_chart(): void
@@ -62,6 +72,26 @@ class EmployeePerformanceServiceTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+        DB::table('employee_points_logs')->insert([
+            [
+                'employee_id' => 7,
+                'points' => 12,
+                'operation_type' => 'add',
+                'reason' => 'إنجاز ممتاز',
+                'points_date' => '2026-09-05',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'employee_id' => 7,
+                'points' => 3,
+                'operation_type' => 'deduct',
+                'reason' => 'تأخير',
+                'points_date' => '2026-09-06',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
 
         $employee = new EmployeeDetail(['user_id' => 70]);
         $employee->id = 7;
@@ -76,6 +106,10 @@ class EmployeePerformanceServiceTest extends TestCase
         $this->assertCount(7, $report['monthly_trend']['points']);
         $this->assertSame(100.0, $report['monthly_trend']['points'][2]['score']);
         $this->assertSame(0.0, $report['monthly_trend']['points'][3]['score']);
+        $this->assertSame(12, $report['points_summary']['earned_points']);
+        $this->assertSame(3, $report['points_summary']['deducted_points']);
+        $this->assertSame(9, $report['points_summary']['net_points']);
+        $this->assertSame('تأخير', $report['points_summary']['recent_movements'][0]['label']);
     }
 
     protected function tearDown(): void
