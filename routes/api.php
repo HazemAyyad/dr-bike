@@ -44,6 +44,7 @@ use App\Http\Controllers\API\EmployeeRemindersController;
 use App\Http\Controllers\API\EmployeeSuggestionsController;
 use App\Http\Controllers\API\SupportConversationController;
 use App\Http\Controllers\API\Employees\EmployeeData;
+use App\Http\Controllers\API\Employees\EmployeePerformanceController;
 use App\Http\Controllers\API\Employees\EmployeeOwnTasks;
 use App\Http\Controllers\API\Employees\OrdersAPI;
 use App\Http\Controllers\API\EmployeeTasks;
@@ -1485,6 +1486,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
     // employee home page
     Route::get('/employee/home/data', [EmployeeData::class, 'getEmployeeData']);
+    Route::get('/employee/performance', [EmployeePerformanceController::class, 'show']);
     Route::post('/employee/wifi-presence', [EmployeeDetails::class, 'updateWifiPresence']);
     Route::get('/employee/my/attendance/history', [EmployeeDetails::class, 'employeeMyAttendanceHistory']);
     Route::get('/get/attendance/details', [EmployeeData::class, 'attendanceReport']);

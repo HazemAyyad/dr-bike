@@ -197,6 +197,7 @@ class SocialCenterController extends Controller
                 $result = $meta->sendText($conversation, (string) $message->body, $request->user()->id);
             }
 
+            $this->claimAfterReply($conversation, (int) $request->user()->id);
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -299,6 +300,7 @@ class SocialCenterController extends Controller
                 $result = $meta->sendText($conversation, $data['message'], $request->user()->id);
             }
 
+            $this->claimAfterReply($conversation, (int) $request->user()->id);
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -350,6 +352,7 @@ class SocialCenterController extends Controller
                 );
             }
 
+            $this->claimAfterReply($conversation, (int) $request->user()->id);
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -380,6 +383,7 @@ class SocialCenterController extends Controller
             $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
             $this->ensureCustomerServiceWindow($conversation);
             $result = $this->sendSocialProducts($meta, $conversation, $data['product_ids'], $request->user()->id);
+            $this->claimAfterReply($conversation, (int) $request->user()->id);
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -512,6 +516,18 @@ class SocialCenterController extends Controller
     }
 
     private function ok($value, string $key) { return response()->json(['status' => 'success', $key => $value]); }
+
+    private function claimAfterReply($conversation, int $userId): void
+    {
+        DB::table($conversation->getTable())
+            ->where('id', $conversation->getKey())
+            ->whereNull('assigned_admin_id')
+            ->update([
+                'assigned_admin_id' => $userId,
+                'updated_at' => now(),
+            ]);
+    }
+
     private function perPage(Request $request, int $default = 20): int { return min(max((int) $request->input('per_page', $default), 1), 100); }
 
     private function channelStats(string $channel): array
