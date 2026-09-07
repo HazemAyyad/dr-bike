@@ -41,6 +41,10 @@ class DebtLedgerShareWebController extends Controller
             ->orderByDesc('id')
             ->get();
 
+        $instantSaleNumbers = InstantSale::query()
+            ->whereIn('id', $transactions->where('source', 'instant_sale')->pluck('source_id')->filter())
+            ->pluck('serial_number', 'id');
+
         $totals = $this->ledger->calculateTotals(
             $customerId,
             $sellerId,
@@ -67,6 +71,7 @@ class DebtLedgerShareWebController extends Controller
             'source_details' => $this->reportSourceDetails($transactions, $detailLevel),
             'taken_label' => $takenLabel,
             'given_label' => $givenLabel,
+            'instant_sale_numbers' => $instantSaleNumbers,
         ]);
     }
 
@@ -146,8 +151,12 @@ class DebtLedgerShareWebController extends Controller
 
         $rows = $sale->subProducts->isNotEmpty() ? $sale->subProducts : collect([$sale]);
 
+        $invoiceNumber = $sale->serial_number
+            ?: 'SAL-'.str_pad((string) $sale->id, 7, '0', STR_PAD_LEFT);
+
         return [
-            'title' => 'تفاصيل البيع الفوري #'.$sale->id,
+            'title' => 'تفاصيل فاتورة البيع '.$invoiceNumber,
+            'document_number' => $invoiceNumber,
             'meta' => array_filter([
                 'الإجمالي' => $sale->total_cost,
                 'المدفوع' => $sale->payment_box_value,

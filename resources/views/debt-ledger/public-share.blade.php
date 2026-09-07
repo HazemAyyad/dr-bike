@@ -8,7 +8,7 @@
         :root { --purple:#6b65bd; --ink:#263238; --soft:#f4f3fc; --line:#d9dce5; --muted:#667085; --green:#15803d; --red:#b91c1c; }
         * { box-sizing:border-box; }
         body { margin:0; padding:22px 12px; direction:rtl; color:var(--ink); background:#eef0f5; font-family:Tahoma,Arial,sans-serif; }
-        .report { width:min(850px,100%); margin:auto; padding:28px; background:#fff; border-radius:12px; box-shadow:0 8px 30px rgba(31,41,55,.09); }
+        .report { width:min(680px,100%); margin:auto; padding:22px 24px; background:#fff; border-radius:12px; box-shadow:0 8px 30px rgba(31,41,55,.09); }
         .brand { direction:ltr; display:grid; grid-template-columns:130px 1fr 2fr; align-items:center; gap:18px; padding-bottom:10px; margin-bottom:16px; border-bottom:2px solid var(--purple); }
         .brand-title { direction:rtl; color:var(--purple); font-size:21px; font-weight:800; text-align:right; }
         .brand img { width:auto; height:78px; object-fit:contain; }
@@ -26,25 +26,24 @@
         .ledger { width:100%; min-width:700px; border-collapse:collapse; font-size:11px; }
         .ledger th,.ledger td { padding:6px 5px; border-left:1px solid var(--line); border-bottom:1px solid var(--line); }
         .ledger th { color:#fff; background:var(--purple); text-align:center; }
-        .ledger .statement { width:34%; }
-        .source-row td { padding:5px 7px; background:#f7f7f9; }
+        .ledger .statement { width:42%; line-height:1.4; }
+        .source-row td { padding:0; background:#f7f7f9; }
         .transaction-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
         .transaction-date { font-size:13px; font-weight:800; }
         .transaction-type { font-size:13px; font-weight:800; text-align:left; }
         .transaction-note { overflow:hidden; color:var(--muted); font-size:11px; white-space:nowrap; text-overflow:ellipsis; }
         .transaction-balance { font-size:10px; white-space:nowrap; }
-        .source { padding:6px 9px; background:#f7f7f9; border-top:1px solid var(--line); }
-        .source-title { color:var(--purple); font-size:13px; font-weight:800; }
-        .source-meta { display:flex; flex-wrap:wrap; gap:3px 14px; margin-top:3px; color:var(--muted); font-size:10px; }
-        .products { display:grid; gap:3px; margin-top:5px; }
-        .product { display:grid; grid-template-columns:34px minmax(0,1fr) auto; align-items:center; gap:6px; padding:4px 6px; background:#fff; border:1px solid #e5e7eb; border-radius:5px; }
-        .product.no-image { grid-template-columns:minmax(0,1fr) auto; }
-        .product-img,.product-placeholder { width:34px; height:34px; border-radius:4px; }
+        .source { background:#f7f7f9; }
+        .source-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 7px; border-bottom:1px solid var(--line); }
+        .source-title { color:var(--purple); font-size:10px; font-weight:800; }
+        .source-meta { display:flex; flex-wrap:wrap; gap:2px 10px; color:var(--muted); font-size:8px; }
+        .products { width:100%; border-collapse:collapse; table-layout:fixed; }
+        .products th,.products td { padding:3px 5px; border-bottom:1px solid #e5e7eb; background:#fff; font-size:9px; }
+        .products th { color:#344054; background:#e6f1f2; }
+        .product-img,.product-placeholder { width:26px; height:26px; border-radius:3px; }
         .product-img { object-fit:cover; }
         .product-placeholder { display:grid; place-items:center; color:#9ca3af; background:#f3f4f6; font-size:10px; }
-        .product-name { font-size:12px; font-weight:800; }
-        .product-calc { margin-top:4px; color:var(--muted); font-size:10px; direction:rtl; }
-        .product-total { color:var(--ink); font-size:11px; font-weight:800; white-space:nowrap; }
+        .product-name { font-weight:700; }
         .empty { padding:38px; color:var(--muted); text-align:center; border:1px dashed var(--line); border-radius:8px; }
         @media print { body { padding:0; background:#fff; } .report { width:100%; padding:0; box-shadow:none; } }
         @media (max-width:600px) {
@@ -52,7 +51,7 @@
             .brand { grid-template-columns:85px 1fr; } .brand-space { display:none; } .brand-title { font-size:16px; } .brand img { height:54px; } .meta { grid-template-columns:1fr; }
             .summary { grid-template-columns:1fr; gap:0; } .summary-item { display:flex; justify-content:space-between; align-items:center; border-left:0; border-bottom:1px solid rgba(107,101,189,.13); text-align:right; }
             .summary-item:last-child { border-bottom:0; } .summary-label { margin:0; } .transaction-main { grid-template-columns:auto 1fr auto; gap:6px; } .transaction-balance { grid-column:2 / 4; }
-            .product { grid-template-columns:38px minmax(0,1fr) auto; } .product-img,.product-placeholder { width:38px; height:38px; }
+            .products { min-width:0; } .product-img,.product-placeholder { width:24px; height:24px; }
         }
     </style>
 </head>
@@ -85,29 +84,29 @@
             @php
                 $isTaken = $transaction->type === 'taken';
                 $sourceDetail = $source_details[$transaction->id] ?? null;
+                $saleNumber = $transaction->source === 'instant_sale'
+                    ? (($instant_sale_numbers[$transaction->source_id] ?? null) ?: 'SAL-'.str_pad((string)$transaction->source_id, 7, '0', STR_PAD_LEFT))
+                    : null;
+                $displayNote = $saleNumber ? 'فاتورة بيع '.$saleNumber : ($transaction->note ?? '—');
             @endphp
             <tr>
                 <td class="num">{{ $index + 1 }}</td>
                 <td class="num">{{ $transaction->transaction_date?->format('Y-m-d') ?? '—' }}</td>
-                <td>{{ !empty(trim((string) $transaction->note)) ? $transaction->note : '—' }}</td>
+                <td>{{ !empty(trim((string) $transaction->note)) ? $displayNote : '—' }}</td>
                 <td class="num taken">{{ $isTaken ? number_format($transaction->amount,2) : '—' }}</td>
                 <td class="num given">{{ !$isTaken ? number_format($transaction->amount,2) : '—' }}</td>
                 <td class="num {{ $transaction->balance_after >= 0 ? 'taken' : 'given' }}">{{ number_format($transaction->balance_after,2) }} {{ $currencyLabel }}</td>
             </tr>
                 @if($showSourceDetails && $sourceDetail)
                     <tr class="source-row"><td colspan="6"><div class="source">
-                        <div class="source-title">{{ $sourceDetail['title'] }}</div>
-                        @if(!empty($sourceDetail['meta']))<div class="source-meta">@foreach($sourceDetail['meta'] as $label => $value)<span><strong>{{ $label }}:</strong> {{ is_numeric($value) ? number_format((float)$value,2) : $value }}</span>@endforeach</div>@endif
+                        <div class="source-head"><div class="source-title">{{ $sourceDetail['title'] }}</div>
+                        @if(!empty($sourceDetail['meta']))<div class="source-meta">@foreach($sourceDetail['meta'] as $label => $value)<span><strong>{{ $label }}:</strong> {{ is_numeric($value) ? number_format((float)$value,2) : $value }}</span>@endforeach</div>@endif</div>
                         @if(!empty($sourceDetail['items']))
-                            <div class="products">
+                            <table class="products"><thead><tr>@if($showProductImages)<th style="width:34px">الصورة</th>@endif<th>المنتج</th><th style="width:12%">الكمية</th><th style="width:18%">السعر</th><th style="width:18%">الإجمالي</th></tr></thead><tbody>
                             @foreach($sourceDetail['items'] as $item)
-                                <div class="product {{ $showProductImages ? '' : 'no-image' }}">
-                                    @if($showProductImages && !empty($item['image_url']))<img class="product-img" src="{{ $item['image_url'] }}" alt="{{ $item['name'] }}">@elseif($showProductImages)<div class="product-placeholder">لا صورة</div>@endif
-                                    <div><div class="product-name">{{ $item['name'] }}</div><div class="product-calc">{{ number_format($item['quantity'],0) }} × {{ number_format($item['unit_price'],2) }} {{ $currencyLabel }}</div></div>
-                                    <div class="product-total">{{ number_format($item['line_total'],2) }} {{ $currencyLabel }}</div>
-                                </div>
+                                <tr>@if($showProductImages)<td class="num">@if(!empty($item['image_url']))<img class="product-img" src="{{ $item['image_url'] }}" alt="">@else — @endif</td>@endif<td class="product-name">{{ $item['name'] }}</td><td class="num">{{ number_format($item['quantity'],0) }}</td><td class="num">{{ number_format($item['unit_price'],2) }}</td><td class="num"><strong>{{ number_format($item['line_total'],2) }}</strong></td></tr>
                             @endforeach
-                            </div>
+                            </tbody></table>
                         @endif
                     </div></td></tr>
                 @endif
