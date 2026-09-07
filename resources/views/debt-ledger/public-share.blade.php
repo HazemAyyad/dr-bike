@@ -34,9 +34,6 @@
         .transaction-note { overflow:hidden; color:var(--muted); font-size:11px; white-space:nowrap; text-overflow:ellipsis; }
         .transaction-balance { font-size:10px; white-space:nowrap; }
         .source { background:#f7f7f9; }
-        .source-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 7px; border-bottom:1px solid var(--line); }
-        .source-title { color:var(--purple); font-size:10px; font-weight:800; }
-        .source-meta { display:flex; flex-wrap:wrap; gap:2px 10px; color:var(--muted); font-size:8px; }
         .products { width:100%; border-collapse:collapse; table-layout:fixed; }
         .products th,.products td { padding:3px 5px; border-bottom:1px solid #e5e7eb; background:#fff; font-size:9px; }
         .products th { color:#344054; background:#e6f1f2; }
@@ -99,12 +96,10 @@
             </tr>
                 @if($showSourceDetails && $sourceDetail)
                     <tr class="source-row"><td colspan="6"><div class="source">
-                        <div class="source-head"><div class="source-title">{{ $sourceDetail['title'] }}</div>
-                        @if(!empty($sourceDetail['meta']))<div class="source-meta">@foreach($sourceDetail['meta'] as $label => $value)<span><strong>{{ $label }}:</strong> {{ is_numeric($value) ? number_format((float)$value,2) : $value }}</span>@endforeach</div>@endif</div>
                         @if(!empty($sourceDetail['items']))
-                            <table class="products"><thead><tr>@if($showProductImages)<th style="width:34px">الصورة</th>@endif<th>المنتج</th><th style="width:12%">الكمية</th><th style="width:18%">السعر</th><th style="width:18%">الإجمالي</th></tr></thead><tbody>
+                            <table class="products"><tbody>
                             @foreach($sourceDetail['items'] as $item)
-                                <tr>@if($showProductImages)<td class="num">@if(!empty($item['image_url']))<img class="product-img" src="{{ $item['image_url'] }}" alt="">@else — @endif</td>@endif<td class="product-name">{{ $item['name'] }}</td><td class="num">{{ number_format($item['quantity'],0) }}</td><td class="num">{{ number_format($item['unit_price'],2) }}</td><td class="num"><strong>{{ number_format($item['line_total'],2) }}</strong></td></tr>
+                                <tr>@if($showProductImages)<td class="num" style="width:34px">@if(!empty($item['image_url']))<img class="product-img" src="{{ $item['image_url'] }}" alt="">@else — @endif</td>@endif<td class="product-name">{{ $item['name'] }}</td><td class="num" style="width:42%">{{ number_format($item['quantity'],2) }} × {{ number_format($item['unit_price'],2) }} = <strong>{{ number_format($item['line_total'],2) }} {{ $currencyLabel }}</strong></td></tr>
                             @endforeach
                             </tbody></table>
                         @endif
