@@ -23,10 +23,11 @@ class RunEmployeePointRulesCommandTest extends TestCase
         $engine = Mockery::mock(EmployeePointRuleEngineService::class);
         $engine->shouldReceive('run')
             ->once()
-            ->withArgs(function (Carbon $anchor, ?int $ruleId, bool $force): bool {
+            ->withArgs(function (Carbon $anchor, ?int $ruleId, bool $force, bool $completedPeriodsOnly): bool {
                 return $anchor->toDateString() === '2026-09-06'
                     && $ruleId === null
-                    && $force === false;
+                    && $force === false
+                    && $completedPeriodsOnly === true;
             })
             ->andReturn([
                 'rules' => 1,
@@ -48,10 +49,11 @@ class RunEmployeePointRulesCommandTest extends TestCase
         $engine = Mockery::mock(EmployeePointRuleEngineService::class);
         $engine->shouldReceive('run')
             ->once()
-            ->withArgs(function (Carbon $anchor, ?int $ruleId, bool $force): bool {
+            ->withArgs(function (Carbon $anchor, ?int $ruleId, bool $force, bool $completedPeriodsOnly): bool {
                 return $anchor->toDateString() === '2026-09-03'
                     && $ruleId === 2
-                    && $force === true;
+                    && $force === true
+                    && $completedPeriodsOnly === true;
             })
             ->andReturn([
                 'rules' => 1,

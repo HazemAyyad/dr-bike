@@ -125,7 +125,8 @@ class EmployeePointRuleController extends Controller
         $summary = $engine->run(
             ! empty($validated['date']) ? Carbon::parse($validated['date']) : Carbon::yesterday(),
             $id,
-            (bool) ($validated['force'] ?? false)
+            (bool) ($validated['force'] ?? false),
+            empty($validated['date'])
         );
 
         return response()->json([
@@ -212,6 +213,7 @@ class EmployeePointRuleController extends Controller
             'employee_ids.*' => ['integer', 'exists:employee_details,id'],
             'settings' => ['nullable', 'array'],
             'settings.cutoff_time' => ['nullable', 'date_format:H:i'],
+            'settings.grace_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
             'effective_policy' => ['nullable', Rule::in(['from_date', 'today', 'current_week', 'current_month'])],
             'effective_from' => ['nullable', 'date'],
             'is_active' => ['nullable', 'boolean'],
@@ -247,6 +249,9 @@ class EmployeePointRuleController extends Controller
             EmployeePointRule::CONDITION_EMPLOYEE_COMPLETED_ALL_TASKS_BEFORE_TIME,
             EmployeePointRule::CONDITION_ALL_EMPLOYEES_COMPLETED_TASKS,
             EmployeePointRule::CONDITION_EMPLOYEE_HAS_INCOMPLETE_TASKS,
+            EmployeePointRule::CONDITION_EMPLOYEE_COMPLETED_ALL_TASKS,
+            EmployeePointRule::CONDITION_EMPLOYEE_ATTENDED_ON_TIME,
+            EmployeePointRule::CONDITION_EMPLOYEE_PERFECT_ATTENDANCE_AND_TASKS,
         ];
     }
 

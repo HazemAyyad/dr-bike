@@ -4,6 +4,8 @@ namespace App\Services\EmployeePointRules;
 
 use App\Enums\EmployeeTaskStatus;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeeAttendance;
+use App\Models\EmployeeAttendanceScan;
 use App\Models\EmployeePointRule;
 use App\Models\EmployeePointRuleExecution;
 use App\Models\EmployeePointRuleOverride;
@@ -11,6 +13,7 @@ use App\Models\EmployeePointsLog;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeePointsService;
+use App\Services\AttendanceSalaryService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -25,7 +28,7 @@ class EmployeePointRuleEngineService
     /**
      * @return array{rules:int, employees:int, awarded:int, deducted:int, zero:int, skipped:int}
      */
-    public function run(?Carbon $anchor = null, ?int $ruleId = null, bool $force = false): array
+    public function run(?Carbon $anchor = null, ?int $ruleId = null, bool $force = false, bool $completedPeriodsOnly = false): array
     {
         $anchor ??= Carbon::now();
 
@@ -52,7 +55,7 @@ class EmployeePointRuleEngineService
             ->get();
 
         $summary = [
-            'rules' => $rules->count(),
+            'rules' => 0,
             'employees' => 0,
             'awarded' => 0,
             'deducted' => 0,
@@ -61,6 +64,11 @@ class EmployeePointRuleEngineService
         ];
 
         foreach ($rules as $rule) {
+            if ($completedPeriodsOnly && ! $this->isCompletedPeriodAnchor($rule->period_type, $anchor)) {
+                continue;
+            }
+
+            $summary['rules']++;
             [$periodStart, $periodEnd] = $this->periodRange($rule->period_type, $anchor);
             $employees = $this->employeesForRule($rule);
             $summary['employees'] += $employees->count();
@@ -115,6 +123,23 @@ class EmployeePointRuleEngineService
                 $employee,
                 $periodStart,
                 $periodEnd
+            ),
+            EmployeePointRule::CONDITION_EMPLOYEE_COMPLETED_ALL_TASKS => $this->employeeCompletedAllTasks(
+                $employee,
+                $periodStart,
+                $periodEnd
+            ),
+            EmployeePointRule::CONDITION_EMPLOYEE_ATTENDED_ON_TIME => $this->employeeAttendedOnTime(
+                $employee,
+                $periodStart,
+                $periodEnd,
+                (array) ($rule->settings ?? [])
+            ),
+            EmployeePointRule::CONDITION_EMPLOYEE_PERFECT_ATTENDANCE_AND_TASKS => $this->employeePerfectAttendanceAndTasks(
+                $employee,
+                $periodStart,
+                $periodEnd,
+                (array) ($rule->settings ?? [])
             ),
             default => [
                 'matched' => false,
@@ -257,6 +282,15 @@ class EmployeePointRuleEngineService
         };
     }
 
+    private function isCompletedPeriodAnchor(string $periodType, Carbon $anchor): bool
+    {
+        return match ($periodType) {
+            EmployeePointRule::PERIOD_WEEKLY => $anchor->isSunday(),
+            EmployeePointRule::PERIOD_MONTHLY => $anchor->isLastOfMonth(),
+            default => true,
+        };
+    }
+
     /**
      * @return array{matched:bool, reason:string, details:array<string,mixed>}
      */
@@ -305,6 +339,116 @@ class EmployeePointRuleEngineService
             'reason' => $stats['incomplete'] > 0 ? 'employee_has_incomplete_tasks' : 'employee_completed_all_tasks',
             'details' => $stats,
         ];
+    }
+
+    private function employeeCompletedAllTasks(EmployeeDetail $employee, Carbon $periodStart, Carbon $periodEnd): array
+    {
+        $stats = $this->taskStats($employee, $periodStart, $periodEnd);
+        if ($stats['total'] < 1) {
+            return ['matched' => false, 'reason' => 'no_tasks_in_period', 'details' => $stats];
+        }
+
+        return [
+            'matched' => $stats['incomplete'] === 0,
+            'reason' => $stats['incomplete'] === 0 ? 'employee_completed_all_tasks' : 'employee_has_incomplete_tasks',
+            'details' => $stats,
+        ];
+    }
+
+    private function employeeAttendedOnTime(
+        EmployeeDetail $employee,
+        Carbon $periodStart,
+        Carbon $periodEnd,
+        array $settings
+    ): array {
+        $graceMinutes = max(0, (int) ($settings['grace_minutes'] ?? 0));
+        $daysOff = app(AttendanceSalaryService::class)->effectiveWeeklyDaysOff($employee);
+        $workDays = 0;
+        $onTimeDays = 0;
+        $lateDays = 0;
+        $missingDays = 0;
+        $day = $periodStart->copy()->startOfDay();
+        $lastDay = $periodEnd->copy()->startOfDay();
+
+        while ($day->lte($lastDay)) {
+            if (! in_array(strtolower($day->format('l')), $daysOff, true)) {
+                $workDays++;
+                $arrival = $this->firstArrivalAt($employee, $day);
+                $scheduledStart = $this->scheduledStartAt($employee, $day);
+
+                if ($arrival === null || $scheduledStart === null) {
+                    $missingDays++;
+                } elseif ($arrival->lte($scheduledStart->copy()->addMinutes($graceMinutes))) {
+                    $onTimeDays++;
+                } else {
+                    $lateDays++;
+                }
+            }
+            $day->addDay();
+        }
+
+        $details = compact('workDays', 'onTimeDays', 'lateDays', 'missingDays', 'graceMinutes');
+        $matched = $workDays > 0 && $onTimeDays === $workDays;
+
+        return [
+            'matched' => $matched,
+            'reason' => $matched ? 'employee_attended_on_time' : ($lateDays > 0 ? 'employee_arrived_late' : 'employee_missing_attendance'),
+            'details' => $details,
+        ];
+    }
+
+    private function employeePerfectAttendanceAndTasks(
+        EmployeeDetail $employee,
+        Carbon $periodStart,
+        Carbon $periodEnd,
+        array $settings
+    ): array {
+        $attendance = $this->employeeAttendedOnTime($employee, $periodStart, $periodEnd, $settings);
+        $tasks = $this->taskStats($employee, $periodStart, $periodEnd);
+        $matched = $attendance['matched'] && $tasks['incomplete'] === 0;
+
+        return [
+            'matched' => $matched,
+            'reason' => $matched
+                ? 'employee_perfect_attendance_and_tasks'
+                : (! $attendance['matched'] ? $attendance['reason'] : 'employee_has_incomplete_tasks'),
+            'details' => [
+                'attendance' => $attendance['details'],
+                'tasks' => $tasks,
+            ],
+        ];
+    }
+
+    private function firstArrivalAt(EmployeeDetail $employee, Carbon $day): ?Carbon
+    {
+        $scan = EmployeeAttendanceScan::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('work_date', $day->toDateString())
+            ->where('direction', 'in')
+            ->orderBy('scanned_at')
+            ->value('scanned_at');
+
+        if ($scan !== null) {
+            return Carbon::parse($scan);
+        }
+
+        $arrival = EmployeeAttendance::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('date', $day->toDateString())
+            ->value('arrived_at');
+
+        return $arrival !== null
+            ? Carbon::parse($day->toDateString().' '.$arrival, config('app.timezone'))
+            : null;
+    }
+
+    private function scheduledStartAt(EmployeeDetail $employee, Carbon $day): ?Carbon
+    {
+        $start = trim((string) ($employee->start_work_time ?? ''));
+
+        return $start === ''
+            ? null
+            : Carbon::parse($day->toDateString().' '.$start, config('app.timezone'));
     }
 
     /**

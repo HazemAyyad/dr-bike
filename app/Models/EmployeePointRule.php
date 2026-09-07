@@ -16,6 +16,9 @@ class EmployeePointRule extends Model
     public const CONDITION_EMPLOYEE_COMPLETED_ALL_TASKS_BEFORE_TIME = 'employee_completed_all_tasks_before_time';
     public const CONDITION_ALL_EMPLOYEES_COMPLETED_TASKS = 'all_employees_completed_tasks';
     public const CONDITION_EMPLOYEE_HAS_INCOMPLETE_TASKS = 'employee_has_incomplete_tasks';
+    public const CONDITION_EMPLOYEE_COMPLETED_ALL_TASKS = 'employee_completed_all_tasks';
+    public const CONDITION_EMPLOYEE_ATTENDED_ON_TIME = 'employee_attended_on_time';
+    public const CONDITION_EMPLOYEE_PERFECT_ATTENDANCE_AND_TASKS = 'employee_perfect_attendance_and_tasks';
 
     protected $fillable = [
         'name',

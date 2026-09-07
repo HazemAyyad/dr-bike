@@ -22,7 +22,7 @@ class RunEmployeePointRules extends Command
             : Carbon::yesterday();
 
         $ruleId = $this->option('rule') !== null ? (int) $this->option('rule') : null;
-        $summary = $engine->run($anchor, $ruleId, (bool) $this->option('force'));
+        $summary = $engine->run($anchor, $ruleId, (bool) $this->option('force'), true);
 
         $this->info(sprintf(
             'Rules: %d, employees: %d, awarded: %d, deducted: %d, zero: %d, skipped: %d',
