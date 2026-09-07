@@ -9,7 +9,7 @@ use Illuminate\Console\Command;
 class RunEmployeePointRules extends Command
 {
     protected $signature = 'employee-points:run-rules
-        {--date= : Anchor date, for example 2026-08-09}
+        {--date= : Date to evaluate; defaults to yesterday, for example 2026-08-09}
         {--rule= : Run one rule id only}
         {--force : Delete and recreate existing rule logs for the same period}';
 
@@ -19,7 +19,7 @@ class RunEmployeePointRules extends Command
     {
         $anchor = $this->option('date')
             ? Carbon::parse((string) $this->option('date'))
-            : Carbon::now();
+            : Carbon::yesterday();
 
         $ruleId = $this->option('rule') !== null ? (int) $this->option('rule') : null;
         $summary = $engine->run($anchor, $ruleId, (bool) $this->option('force'));

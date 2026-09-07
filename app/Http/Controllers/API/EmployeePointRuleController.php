@@ -123,7 +123,7 @@ class EmployeePointRuleController extends Controller
         ]);
 
         $summary = $engine->run(
-            ! empty($validated['date']) ? Carbon::parse($validated['date']) : Carbon::now(),
+            ! empty($validated['date']) ? Carbon::parse($validated['date']) : Carbon::yesterday(),
             $id,
             (bool) ($validated['force'] ?? false)
         );
