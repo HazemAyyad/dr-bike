@@ -20,6 +20,7 @@ class AdminUiPreferencesController extends Controller
                         ?? $preferences['admin_dashboard']['hidden_button_ids']
                         ?? [],
                     'button_order_keys' => $preferences['admin_dashboard']['button_order_keys'] ?? [],
+                    'quick_access_count' => $preferences['admin_dashboard']['quick_access_count'] ?? 6,
                 ],
                 'debt_ledger' => [
                     'taken_label' => $preferences['debt_ledger']['taken_label'] ?? 'أخذت',
@@ -38,6 +39,7 @@ class AdminUiPreferencesController extends Controller
                 'admin_dashboard.hidden_button_keys.*' => ['string', 'max:128'],
                 'admin_dashboard.button_order_keys' => ['sometimes', 'array'],
                 'admin_dashboard.button_order_keys.*' => ['string', 'max:128'],
+                'admin_dashboard.quick_access_count' => ['sometimes', 'integer', 'min:3', 'max:30'],
                 'debt_ledger' => ['sometimes', 'array'],
                 'debt_ledger.taken_label' => ['sometimes', 'string', 'max:30'],
                 'debt_ledger.given_label' => ['sometimes', 'string', 'max:30'],
@@ -51,9 +53,12 @@ class AdminUiPreferencesController extends Controller
                     ?? ($dashboard['hidden_button_keys'] ?? []);
                 $buttonOrderKeys = $data['admin_dashboard']['button_order_keys']
                     ?? ($dashboard['button_order_keys'] ?? []);
+                $quickAccessCount = $data['admin_dashboard']['quick_access_count']
+                    ?? ($dashboard['quick_access_count'] ?? 6);
                 $preferences['admin_dashboard'] = [
                     'hidden_button_keys' => array_values(array_unique($hiddenButtonKeys)),
                     'button_order_keys' => array_values(array_unique($buttonOrderKeys)),
+                    'quick_access_count' => max(3, min(30, (int) $quickAccessCount)),
                 ];
             }
 
@@ -73,6 +78,7 @@ class AdminUiPreferencesController extends Controller
                     'admin_dashboard' => $preferences['admin_dashboard'] ?? [
                         'hidden_button_keys' => [],
                         'button_order_keys' => [],
+                        'quick_access_count' => 6,
                     ],
                     'debt_ledger' => $preferences['debt_ledger'] ?? [
                         'taken_label' => 'أخذت',
