@@ -16,15 +16,19 @@ class PayrollCalculationService
     {
         $start = Carbon::createFromFormat('Y-m', $month)->startOfMonth();
         $end = $start->copy()->endOfMonth();
-        $workedMinutes = $this->salaryService->sumWorkedMinutesBetween($employee->id, $start, $end);
+        $payrollMinutes = $this->salaryService->payrollEligibleMinutesBetween($employee, $start, $end);
         $attendance = $this->salaryService->buildAttendanceReportRow(
             $employee,
             $start,
             $end,
-            $workedMinutes,
+            $payrollMinutes['eligible_worked_minutes'],
             (int) $start->month,
             (int) $start->year
         );
+        $attendance['actual_worked_minutes'] = $payrollMinutes['actual_worked_minutes'];
+        $attendance['actual_worked_hours'] = $this->salaryService->formatHours($payrollMinutes['actual_worked_minutes']);
+        $attendance['approved_overtime_minutes'] = $payrollMinutes['approved_overtime_minutes'];
+        $attendance['excluded_unapproved_overtime_minutes'] = $payrollMinutes['excluded_overtime_minutes'];
 
         $normal = round((float) ($attendance['normal_salary'] ?? 0), 2);
         $overtime = round((float) ($attendance['overtime_salary'] ?? 0), 2);

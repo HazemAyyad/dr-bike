@@ -107,6 +107,105 @@ class AttendanceSalaryService
     }
 
     /**
+     * Minutes eligible for payroll, while preserving the monthly shortfall-offset policy.
+     *
+     * Regular minutes are capped at the employee's daily contractual minutes. Minutes
+     * above that cap are included only from the persisted overtime_minutes value. That
+     * value is zero while a checkout overtime request is pending/rejected, and is filled
+     * after approval. Admin day edits also replace the scans and persist their approved
+     * overtime split, so they remain authoritative here.
+     *
+     * @return array{actual_worked_minutes:int,eligible_worked_minutes:int,approved_overtime_minutes:int,excluded_overtime_minutes:int}
+     */
+    public function payrollEligibleMinutesBetween(EmployeeDetail $employee, Carbon $from, Carbon $to): array
+    {
+        $fromStr = $from->copy()->startOfDay()->toDateString();
+        $toStr = $to->copy()->startOfDay()->toDateString();
+
+        /** @phpstan-ignore-next-line */
+        $attendances = EmployeeAttendance::query()
+            ->where('employee_id', (int) $employee->id)
+            ->whereBetween('date', [$fromStr, $toStr])
+            ->get()
+            ->keyBy(fn (EmployeeAttendance $row) => $row->date instanceof Carbon
+                ? $row->date->format('Y-m-d')
+                : Carbon::parse($row->date)->format('Y-m-d'));
+
+        /** @phpstan-ignore-next-line */
+        $scans = EmployeeAttendanceScan::query()
+            ->where('employee_id', (int) $employee->id)
+            ->whereBetween('work_date', [$fromStr, $toStr])
+            ->orderBy('work_date')
+            ->orderBy('id')
+            ->get();
+
+        $workedByDate = [];
+        foreach ($scans->groupBy(fn ($scan) => $scan->work_date instanceof Carbon
+            ? $scan->work_date->format('Y-m-d')
+            : Carbon::parse($scan->work_date)->format('Y-m-d')) as $date => $dayScans) {
+            $attendance = $attendances->get($date);
+            $wasAdminEdited = $dayScans->contains(fn ($scan) => (string) ($scan->source ?? '') === 'admin_edit');
+            $workedByDate[$date] = $wasAdminEdited && $attendance
+                ? max(0, (int) ($attendance->worked_minutes ?? 0))
+                : EmployeeAttendanceScan::computeWorkedMinutes($dayScans);
+        }
+
+        foreach ($attendances as $date => $attendance) {
+            if (! array_key_exists($date, $workedByDate)) {
+                $workedByDate[$date] = max(0, (int) ($attendance->worked_minutes ?? 0));
+            }
+        }
+
+        $requiredPerDay = (int) $this->calculateDailyOvertime($employee, 0)['required_minutes'];
+        $actual = 0;
+        $eligible = 0;
+        $approvedOvertime = 0;
+        $excludedOvertime = 0;
+
+        foreach ($workedByDate as $date => $worked) {
+            $worked = max(0, (int) $worked);
+            $attendance = $attendances->get($date);
+            $required = $attendance && (int) ($attendance->required_minutes ?? 0) > 0
+                ? (int) $attendance->required_minutes
+                : $requiredPerDay;
+            $day = $this->payrollEligibleMinutesForDay(
+                $worked,
+                $required,
+                (int) ($attendance?->overtime_minutes ?? 0)
+            );
+
+            $actual += $worked;
+            $approvedOvertime += $day['approved_overtime_minutes'];
+            $excludedOvertime += $day['excluded_overtime_minutes'];
+            $eligible += $day['eligible_worked_minutes'];
+        }
+
+        return [
+            'actual_worked_minutes' => $actual,
+            'eligible_worked_minutes' => $eligible,
+            'approved_overtime_minutes' => $approvedOvertime,
+            'excluded_overtime_minutes' => $excludedOvertime,
+        ];
+    }
+
+    /**
+     * @return array{eligible_worked_minutes:int,approved_overtime_minutes:int,excluded_overtime_minutes:int}
+     */
+    public function payrollEligibleMinutesForDay(int $worked, int $required, int $storedOvertime): array
+    {
+        $worked = max(0, $worked);
+        $required = max(0, $required);
+        $dailyExcess = max(0, $worked - $required);
+        $approved = min($dailyExcess, max(0, $storedOvertime));
+
+        return [
+            'eligible_worked_minutes' => min($worked, $required) + $approved,
+            'approved_overtime_minutes' => $approved,
+            'excluded_overtime_minutes' => max(0, $dailyExcess - $approved),
+        ];
+    }
+
+    /**
      * Bulk worked minutes keyed by employee_id.
      *
      * @param  array<int,int>  $employeeIds
