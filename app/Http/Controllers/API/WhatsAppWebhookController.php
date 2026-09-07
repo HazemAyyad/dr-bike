@@ -5,6 +5,8 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\WhatsAppMessage;
 use App\Models\WhatsAppAccount;
+use App\Models\MetaCatalogProductSync;
+use App\Models\Product;
 use App\Services\WhatsApp\WhatsAppCloudApiService;
 use App\Services\WhatsApp\WhatsAppIncomingNotificationService;
 use Illuminate\Http\Request;
@@ -134,13 +136,17 @@ class WhatsAppWebhookController extends Controller
         $phone = $service->normalizePhone((string) data_get($incoming, 'from'));
         $contact = $service->findOrCreateContact($phone, $name);
         $conversation = $service->findOrCreateConversation($phone);
-        $type = (string) data_get($incoming, 'type', 'system');
+        $incomingType = (string) data_get($incoming, 'type', 'system');
+        $type = $incomingType;
         $allowed = ['text', 'image', 'document', 'audio', 'video', 'location', 'interactive'];
         $type = in_array($type, $allowed, true) ? $type : 'system';
         $body = match ($type) {
-            'text' => data_get($incoming, 'text.body'),
+            'text' => $this->textMessageBody($incoming),
             'interactive' => data_get($incoming, 'interactive.button_reply.title') ?: data_get($incoming, 'interactive.list_reply.title'),
             'location' => trim(data_get($incoming, 'location.latitude').' '.data_get($incoming, 'location.longitude')),
+            'system' => $incomingType === 'order'
+                ? $this->orderMessageBody($incoming)
+                : $this->unsupportedMessageBody($incomingType),
             default => data_get($incoming, $type.'.caption') ?: '['.$type.']',
         };
         $timestamp = data_get($incoming, 'timestamp') ? now()->setTimestamp((int) data_get($incoming, 'timestamp')) : now();
@@ -175,6 +181,65 @@ class WhatsAppWebhookController extends Controller
         $contact->update(['last_message_at' => $timestamp]);
 
         return $message;
+    }
+
+    private function textMessageBody(array $incoming): string
+    {
+        $text = trim((string) data_get($incoming, 'text.body'));
+        $retailerId = data_get($incoming, 'context.referred_product.product_retailer_id');
+        if (! filled($retailerId)) {
+            return $text;
+        }
+
+        $product = $this->catalogProductLabel((string) $retailerId);
+        return trim($text."\nالسلعة المشار إليها: ".$product);
+    }
+
+    private function orderMessageBody(array $incoming): string
+    {
+        $items = collect(data_get($incoming, 'order.product_items', []))
+            ->map(function ($item) {
+                $retailerId = (string) data_get($item, 'product_retailer_id');
+                $quantity = max(1, (int) data_get($item, 'quantity', 1));
+                return $this->catalogProductLabel($retailerId).' × '.$quantity;
+            })
+            ->filter()
+            ->values();
+
+        return $items->isEmpty()
+            ? 'شارك الزبون طلب منتجات من كتالوج واتساب'
+            : 'طلب من كتالوج واتساب: '.$items->join('، ');
+    }
+
+    private function catalogProductLabel(string $retailerId): string
+    {
+        if ($retailerId === '') {
+            return 'سلعة غير محددة';
+        }
+
+        $product = Product::query()
+            ->where('meta_catalog_retailer_id', $retailerId)
+            ->first(['id', 'nameAr']);
+        if (! $product) {
+            $productId = MetaCatalogProductSync::query()
+                ->where('meta_catalog_retailer_id', $retailerId)
+                ->value('product_id');
+            $product = $productId
+                ? Product::query()->find($productId, ['id', 'nameAr'])
+                : null;
+        }
+
+        return $product?->nameAr ?: 'رقم السلعة: '.$retailerId;
+    }
+
+    private function unsupportedMessageBody(string $type): string
+    {
+        return match ($type) {
+            'contacts' => 'شارك الزبون جهة اتصال',
+            'sticker' => 'أرسل الزبون ملصقًا',
+            'reaction' => 'تفاعل الزبون مع رسالة',
+            default => 'رسالة واتساب غير مدعومة ('.$type.')',
+        };
     }
 
     private function updateStatus(array $status): void
