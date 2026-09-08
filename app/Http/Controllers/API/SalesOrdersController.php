@@ -714,6 +714,10 @@ class SalesOrdersController extends Controller
                 'payment_amount' => 'nullable|numeric|min:0',
                 'payment_box_id' => 'nullable|integer|exists:boxes,id',
                 'delivery_settled_amount' => 'nullable|numeric|min:0',
+                'carrier_fee' => 'nullable|numeric|min:0',
+                'source' => 'nullable|string|in:carrier,customer_debt',
+                'idempotency_key' => 'nullable|string|max:100',
+                'notes' => 'nullable|string|max:2000',
             ]);
 
             $orderId = (int) $data['sales_order_id'];

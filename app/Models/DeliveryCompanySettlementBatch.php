@@ -9,11 +9,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class DeliveryCompanySettlementBatch extends Model
 {
     protected $fillable = [
-        'delivery_company_id', 'delivery_company_name', 'amount', 'orders_count',
+        'delivery_company_id', 'delivery_company_name', 'amount', 'cash_amount', 'carrier_fee', 'orders_count',
         'sales_daily_session_id', 'box_id', 'idempotency_key', 'notes', 'created_by',
     ];
 
-    protected $casts = ['amount' => 'float'];
+    protected $casts = ['amount' => 'float', 'cash_amount' => 'float', 'carrier_fee' => 'float'];
 
     public function company(): BelongsTo
     {

@@ -83,7 +83,7 @@ class ShiplyController extends Controller
             $delivery = $order->latestDelivery;
 
             if (! $delivery
-                || ($order->deliveryCompany?->code ?? '') !== 'shiply'
+                || $order->deliveryCompany?->operationalType() !== 'shiply'
                 || trim((string) $delivery->shiply_parcel_code) === '') {
                 return response()->json([
                     'status' => 'error',

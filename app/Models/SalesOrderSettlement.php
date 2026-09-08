@@ -9,12 +9,15 @@ class SalesOrderSettlement extends Model
 {
     protected $fillable = [
         'delivery_company_settlement_batch_id', 'sales_order_id', 'sales_daily_session_id', 'box_id', 'source', 'amount',
+        'cash_amount', 'carrier_fee', 'carrier_fee_expense_id',
         'customer_debt_before', 'customer_debt_after', 'carrier_receivable_before',
         'carrier_receivable_after', 'idempotency_key', 'notes', 'created_by',
     ];
 
     protected $casts = [
         'amount' => 'float',
+        'cash_amount' => 'float',
+        'carrier_fee' => 'float',
         'customer_debt_before' => 'float',
         'customer_debt_after' => 'float',
         'carrier_receivable_before' => 'float',

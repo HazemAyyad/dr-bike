@@ -78,7 +78,8 @@ class SalesOrdersDailyBoxService
             $collected = (float) SalesOrderSettlement::query()
                 ->where('sales_daily_session_id', $session->id)
                 ->where('box_id', $box->id)
-                ->sum('amount');
+                ->selectRaw('COALESCE(SUM(COALESCE(cash_amount, amount)), 0) as collected')
+                ->value('collected');
             $balance = round((float) $box->total, 2);
             $opening = round((float) (($session->sales_orders_opening_balances ?? [])[$box->currency] ?? 0), 2);
 

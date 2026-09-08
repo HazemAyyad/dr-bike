@@ -70,6 +70,7 @@ use App\Http\Controllers\API\CitiesController;
 use App\Http\Controllers\API\SalesDailySessionController;
 use App\Http\Controllers\API\SalesSettingsController;
 use App\Http\Controllers\API\DeliveryCompanyAccountsController;
+use App\Http\Controllers\API\DeliveryCompaniesController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
 use App\Http\Controllers\API\LegacyStoreImageController;
@@ -592,6 +593,12 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/sales/settings', [SalesSettingsController::class, 'show'])
           ->middleware('check.permission:Sales Settings');
       Route::put('/sales/settings', [SalesSettingsController::class, 'update'])
+          ->middleware('check.permission:Sales Settings');
+      Route::get('/sales/delivery-companies', [DeliveryCompaniesController::class, 'index'])
+          ->middleware('check.permission:Sales Settings');
+      Route::post('/sales/delivery-companies', [DeliveryCompaniesController::class, 'store'])
+          ->middleware('check.permission:Sales Settings');
+      Route::put('/sales/delivery-companies/{deliveryCompany}', [DeliveryCompaniesController::class, 'update'])
           ->middleware('check.permission:Sales Settings');
       Route::get('/sales/delivery-company-accounts', [DeliveryCompanyAccountsController::class, 'index'])
           ->middleware('check.permission:Delivery Company Accounts');

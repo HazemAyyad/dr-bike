@@ -3,22 +3,23 @@
 namespace App\Services;
 
 use App\Enums\SalesOrderStatus;
-use App\Support\ProductImageResolver;
-use App\Support\ShiplySettings;
 use App\Models\City;
 use App\Models\Customer;
-use App\Models\Product;
 use App\Models\DeliveryCompany;
+use App\Models\Product;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
 use App\Models\SalesOrderItem;
-use App\Models\Size;
-use App\Models\SizeColor;
 use App\Models\SalesOrderPackage;
+use App\Models\SalesOrderSettlement;
 use App\Models\SalesOrderStatusLog;
 use App\Models\ShiplyCity;
 use App\Models\ShiplyVillage;
+use App\Models\Size;
+use App\Models\SizeColor;
 use App\Models\User;
+use App\Support\ProductImageResolver;
+use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -138,7 +139,7 @@ class SalesOrderService
                 'customer:id,name,phone',
                 'city:id,name_ar',
                 'createdByUser:id,name',
-                'deliveryCompany:id,name,code',
+                'deliveryCompany:id,name,code,delivery_type',
             ])
             ->orderByDesc('created_at')
             ->orderByDesc('id');
@@ -246,7 +247,7 @@ class SalesOrderService
                 'items.product:id,nameAr',
                 'packages',
                 'statusLogs.user:id,name',
-                'deliveryCompany:id,name,code',
+                'deliveryCompany:id,name,code,delivery_type',
                 'media',
                 'deliveries',
                 'childOrders:id,parent_order_id,serial_number,status,total,created_at',
@@ -681,8 +682,8 @@ class SalesOrderService
             'payment_amount' => (float) $order->payment_amount,
             'delivery_company_id' => $order->delivery_company_id,
             'delivery_company_name' => $order->delivery_company_name,
-            'delivery_company_code' => $order->deliveryCompany?->code
-                ? strtolower((string) $order->deliveryCompany->code)
+            'delivery_company_code' => $order->deliveryCompany
+                ? $order->deliveryCompany->operationalType()
                 : null,
             'latest_handover' => ($latestDelivery = $order->deliveries->sortByDesc('id')->first())
                 ? $this->formatDeliveryRecord($latestDelivery, $order)
@@ -722,10 +723,18 @@ class SalesOrderService
             'stuck_resolved_at' => $order->stuck_resolved_at?->toIso8601String(),
             'customer_debt_balance' => (float) $order->customer_debt_balance,
             'carrier_receivable_balance' => (float) $order->carrier_receivable_balance,
+            'settlement_cash_total' => round((float) $order->settlements->sum(
+                fn (SalesOrderSettlement $settlement) => $settlement->cash_amount ?? $settlement->amount
+            ), 2),
+            'settlement_carrier_fee_total' => round((float) $order->settlements->sum('carrier_fee'), 2),
             'settlements' => $order->settlements->map(fn ($settlement) => [
                 'id' => $settlement->id,
                 'source' => $settlement->source,
                 'amount' => (float) $settlement->amount,
+                'cash_amount' => $settlement->cash_amount !== null
+                    ? (float) $settlement->cash_amount
+                    : (float) $settlement->amount,
+                'carrier_fee' => (float) $settlement->carrier_fee,
                 'box_id' => $settlement->box_id,
                 'created_at' => $settlement->created_at?->toIso8601String(),
                 'created_by' => $settlement->createdBy?->name,
@@ -755,24 +764,24 @@ class SalesOrderService
                     : 'no image';
 
                 return [
-                'id' => $item->id,
-                'product_id' => $item->product_id,
-                'product_name' => $item->product_name,
-                'product_image' => $productImage !== 'no image' ? $productImage : null,
-                'size_id' => $item->size_id,
-                'size_color_id' => $item->size_color_id,
-                'size_label' => $item->size?->size,
-                'color_label' => $item->sizeColor?->colorAr,
-                'quantity' => (int) $item->quantity,
-                'reserved_qty' => (int) $item->reserved_qty,
-                'dispatched_qty' => (int) $item->dispatched_qty,
-                'delivered_qty' => (int) ($item->delivered_qty ?? 0),
-                'returned_qty' => (int) ($item->returned_qty ?? 0),
-                'unit_price' => (float) $item->unit_price,
-                'line_total' => (float) $item->line_total,
-                'is_hidden' => (bool) $item->is_hidden,
-                'sales_order_package_id' => $item->sales_order_package_id,
-            ];
+                    'id' => $item->id,
+                    'product_id' => $item->product_id,
+                    'product_name' => $item->product_name,
+                    'product_image' => $productImage !== 'no image' ? $productImage : null,
+                    'size_id' => $item->size_id,
+                    'size_color_id' => $item->size_color_id,
+                    'size_label' => $item->size?->size,
+                    'color_label' => $item->sizeColor?->colorAr,
+                    'quantity' => (int) $item->quantity,
+                    'reserved_qty' => (int) $item->reserved_qty,
+                    'dispatched_qty' => (int) $item->dispatched_qty,
+                    'delivered_qty' => (int) ($item->delivered_qty ?? 0),
+                    'returned_qty' => (int) ($item->returned_qty ?? 0),
+                    'unit_price' => (float) $item->unit_price,
+                    'line_total' => (float) $item->line_total,
+                    'is_hidden' => (bool) $item->is_hidden,
+                    'sales_order_package_id' => $item->sales_order_package_id,
+                ];
             })->values()->all(),
             'packages' => $order->packages->map(fn (SalesOrderPackage $pkg) => [
                 'id' => $pkg->id,
@@ -819,11 +828,10 @@ class SalesOrderService
     {
         $companyCode = null;
         if ($delivery->delivery_company_id) {
-            $companyCode = DeliveryCompany::query()
-                ->where('id', $delivery->delivery_company_id)
-                ->value('code');
+            $company = DeliveryCompany::query()->find($delivery->delivery_company_id);
+            $companyCode = $company?->operationalType();
         }
-        $companyCode ??= $order?->deliveryCompany?->code;
+        $companyCode ??= $order?->deliveryCompany?->operationalType();
 
         return [
             'id' => $delivery->id,
@@ -865,8 +873,8 @@ class SalesOrderService
             'delivery_company_id' => $order->delivery_company_id,
             'delivery_company_name' => $order->delivery_company_name
                 ?: $order->deliveryCompany?->name,
-            'delivery_company_code' => $order->deliveryCompany?->code
-                ? strtolower((string) $order->deliveryCompany->code)
+            'delivery_company_code' => $order->deliveryCompany
+                ? $order->deliveryCompany->operationalType()
                 : null,
             'reserves_stock' => (bool) $order->reserves_stock,
         ];
@@ -888,7 +896,7 @@ class SalesOrderService
             'instantSale:id,serial_number',
             'packages',
             'statusLogs.user:id,name',
-            'deliveryCompany:id,name,code',
+            'deliveryCompany:id,name,code,delivery_type',
             'media',
             'deliveries',
             'childOrders:id,parent_order_id,serial_number,status,total,created_at',
@@ -1128,9 +1136,9 @@ class SalesOrderService
             : $this->resolveDeliveryFee($data, $order);
 
         $calculatedTotal = max(0, round($subtotal + $deliveryFee - $discount, 2));
-        $total = array_key_exists('total', $data)
-            ? round((float) $data['total'], 2)
-            : ($order !== null ? round((float) $order->total, 2) : $calculatedTotal);
+        // The payable total has one authoritative formula. Any negotiated
+        // reduction belongs in discount, not in a second editable total.
+        $total = $calculatedTotal;
 
         return [
             'subtotal' => round($subtotal, 2),
@@ -1274,11 +1282,11 @@ class SalesOrderService
 
     private function isShiplyDeliveryCompany(SalesOrder $order): bool
     {
-        $code = $order->relationLoaded('deliveryCompany')
-            ? $order->deliveryCompany?->code
-            : $order->deliveryCompany()->value('code');
+        $company = $order->relationLoaded('deliveryCompany')
+            ? $order->deliveryCompany
+            : $order->deliveryCompany()->first();
 
-        return strtolower((string) $code) === 'shiply';
+        return $company?->operationalType() === 'shiply';
     }
 
     public function markStuck(User $user, int $orderId, ?string $reason = null, array $meta = []): SalesOrder

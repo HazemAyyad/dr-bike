@@ -46,6 +46,7 @@ class DeliveryCompanyAccountsController extends Controller
                 'allocations' => 'required|array|min:1|max:100',
                 'allocations.*.order_id' => 'required|integer|exists:sales_orders,id',
                 'allocations.*.amount' => 'required|numeric|gt:0|max:999999999.99',
+                'carrier_fee' => 'nullable|numeric|min:0|max:999999999.99',
                 'payment_box_id' => 'nullable|integer|exists:boxes,id',
                 'idempotency_key' => 'required|string|max:100',
                 'notes' => 'nullable|string|max:2000',

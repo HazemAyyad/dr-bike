@@ -5,7 +5,6 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\City;
 use App\Models\DeliveryCompany;
-use Illuminate\Http\Request;
 
 class CitiesController extends Controller
 {
@@ -44,7 +43,19 @@ class CitiesController extends Controller
                 ->where('is_active', true)
                 ->orderBy('sort_order')
                 ->orderBy('name')
-                ->get(['id', 'name', 'code']);
+                ->get()
+                ->map(fn (DeliveryCompany $company) => [
+                    'id' => $company->id,
+                    'name' => $company->name,
+                    'code' => $company->code,
+                    'delivery_type' => $company->operationalType(),
+                    'default_carrier_fee' => $company->default_carrier_fee !== null
+                        ? (float) $company->default_carrier_fee
+                        : null,
+                    'contact_name' => $company->contact_name,
+                    'contact_phone' => $company->contact_phone,
+                    'vehicle_number' => $company->vehicle_number,
+                ]);
 
             return response()->json([
                 'status' => 'success',

@@ -6,6 +6,7 @@ use App\Enums\SalesOrderStatus;
 use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
 use App\Models\DeliveryCompany;
+use App\Models\Expense;
 use App\Models\InstantSale;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
@@ -14,6 +15,7 @@ use App\Models\SalesOrderMedia;
 use App\Models\SalesOrderSettlement;
 use App\Models\SalesOrderStatusLog;
 use App\Models\User;
+use App\Support\SalesOrderSettlementBreakdown;
 use App\Support\ShiplySettings;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
@@ -66,12 +68,33 @@ class SalesOrderFulfillmentService
         }
 
         $deliveryCompanyId = $data['delivery_company_id'] ?? $order->delivery_company_id;
-        $companyCode = $this->resolveDeliveryCompanyCode($deliveryCompanyId);
+        $deliveryCompany = $deliveryCompanyId
+            ? DeliveryCompany::query()->find($deliveryCompanyId)
+            : null;
+        $companyCode = $deliveryCompany?->operationalType();
         $isShiply = $companyCode === 'shiply';
+
+        if ($deliveryCompany) {
+            foreach ([
+                'carrier_contact_name' => $deliveryCompany->contact_name,
+                'carrier_contact_phone' => $deliveryCompany->contact_phone,
+                'carrier_vehicle_number' => $deliveryCompany->vehicle_number,
+            ] as $field => $defaultValue) {
+                if (trim((string) ($data[$field] ?? '')) === '' && $defaultValue) {
+                    $data[$field] = $defaultValue;
+                }
+            }
+            $data['carrier_delivery_cost'] ??= $deliveryCompany->default_carrier_fee;
+            if ($companyCode === 'office') {
+                if (trim((string) ($data['carrier_office_name'] ?? '')) === '') {
+                    $data['carrier_office_name'] = $deliveryCompany->name;
+                }
+            }
+        }
 
         $this->assertHandoverRecipient($order, $isShiply);
         $this->assertManualCarrierDetails($data, $companyCode);
-        if (in_array($companyCode, ['doctor_bike', 'self', 'pickup'], true)) {
+        if (in_array($companyCode, ['internal', 'pickup'], true)) {
             foreach ([
                 'tracking_number',
                 'carrier_contact_name',
@@ -99,6 +122,7 @@ class SalesOrderFulfillmentService
             $parcelCode = $parcel['parcel_code'];
             $qrCode = $parcel['qr_code'] ?? null;
             $data['tracking_number'] = $parcelCode;
+            $data['carrier_delivery_cost'] ??= $order->shiply_quoted_delivery_fee;
         }
 
         return DB::transaction(function () use ($user, $order, $data, $isShiply, $shiplyMode, $employeeEmail, $parcelCode, $qrCode, $deliveryCompanyId, $companyCode) {
@@ -360,6 +384,7 @@ class SalesOrderFulfillmentService
 
         $data = validator($payload, [
             'delivery_settled_amount' => 'required|numeric|gt:0',
+            'carrier_fee' => 'nullable|numeric|min:0',
             'payment_box_id' => 'nullable|integer|exists:boxes,id',
             'source' => 'nullable|string|in:carrier,customer_debt',
             'idempotency_key' => 'nullable|string|max:100',
@@ -368,12 +393,32 @@ class SalesOrderFulfillmentService
 
         $amount = (float) $data['delivery_settled_amount'];
         $source = $data['source'] ?? 'carrier';
+        $carrierFee = round((float) ($data['carrier_fee'] ?? 0), 2);
+        if ($source !== 'carrier' && $carrierFee > 0) {
+            throw ValidationException::withMessages([
+                'carrier_fee' => ['لا يمكن تسجيل أجرة شركة توصيل عند تحصيل دين من الزبون.'],
+            ]);
+        }
+        if ($carrierFee > round($amount, 2)) {
+            throw ValidationException::withMessages([
+                'carrier_fee' => ['أجرة شركة التوصيل لا يمكن أن تتجاوز إجمالي مبلغ التسوية.'],
+            ]);
+        }
+        $breakdown = SalesOrderSettlementBreakdown::from($amount, $carrierFee);
+        $amount = $breakdown['gross'];
+        $carrierFee = $breakdown['carrier_fee'];
+        $cashAmount = $breakdown['cash'];
+        if ($amount <= 0) {
+            throw ValidationException::withMessages([
+                'delivery_settled_amount' => ['مبلغ التسوية بعد التقريب يجب أن يكون أكبر من صفر.'],
+            ]);
+        }
         $resolvedBox = $this->ordersDailyBoxes->resolve(
             $user,
             isset($data['payment_box_id']) ? (int) $data['payment_box_id'] : null
         );
 
-        return DB::transaction(function () use ($user, $order, $amount, $source, $resolvedBox, $data) {
+        return DB::transaction(function () use ($user, $order, $amount, $cashAmount, $carrierFee, $source, $resolvedBox, $data) {
             $locked = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
             if (! empty($data['idempotency_key'])) {
                 $existing = SalesOrderSettlement::query()
@@ -399,14 +444,30 @@ class SalesOrderFulfillmentService
                 SalesDailySessionService::TYPE_SALES_ORDERS
             );
             $box = Box::lockForUpdate()->findOrFail($resolvedBox['id']);
-            $box->total = round((float) $box->total + $amount, 2);
-            $box->save();
+            if ($cashAmount > 0) {
+                $box->total = round((float) $box->total + $cashAmount, 2);
+                $box->save();
 
-            BoxLogs::createBoxLog(
-                $box,
-                $source === 'carrier' ? 'تسوية شركة توصيل — '.$locked->serial_number : 'تحصيل دين طلبية — '.$locked->serial_number,
-                'add', $amount, 'طلبية #'.$locked->id.' — '.$locked->serial_number
-            );
+                BoxLogs::createBoxLog(
+                    $box,
+                    $source === 'carrier' ? 'صافي تسوية شركة توصيل — '.$locked->serial_number : 'تحصيل دين طلبية — '.$locked->serial_number,
+                    'add', $cashAmount, 'طلبية #'.$locked->id.' — '.$locked->serial_number
+                );
+            }
+
+            $feeExpense = null;
+            if ($carrierFee > 0) {
+                $feeExpense = Expense::create([
+                    'name' => 'أجرة شركة توصيل — '.($locked->delivery_company_name ?: 'غير محددة'),
+                    'price' => $carrierFee,
+                    'payment_method' => 'carrier_withholding',
+                    'notes' => 'أجرة مخصومة من تحصيل الطلبية '.($locked->serial_number ?? '#'.$locked->id),
+                    'box_id' => null,
+                    'created_by_user_id' => $user->id,
+                    'expense_type' => 'general',
+                    'expense_date' => now()->toDateString(),
+                ]);
+            }
 
             SalesOrderSettlement::create([
                 'sales_order_id' => $locked->id,
@@ -414,6 +475,9 @@ class SalesOrderFulfillmentService
                 'box_id' => $box->id,
                 'source' => $source,
                 'amount' => $amount,
+                'cash_amount' => $cashAmount,
+                'carrier_fee' => $carrierFee,
+                'carrier_fee_expense_id' => $feeExpense?->id,
                 'customer_debt_before' => $customerBefore,
                 'customer_debt_after' => $customerAfter,
                 'carrier_receivable_before' => $carrierBefore,
@@ -441,7 +505,9 @@ class SalesOrderFulfillmentService
                 $locked,
                 $locked->status,
                 SalesOrderStatus::Delivered->value,
-                ($source === 'carrier' ? 'تسوية جزئية/كاملة مع شركة التوصيل' : 'تحصيل دين طلبية').' — '.$amount,
+                ($source === 'carrier'
+                    ? 'تسوية شركة التوصيل: إجمالي '.$amount.'، أجرة '.$carrierFee.'، صافي قبض '.$cashAmount
+                    : 'تحصيل دين طلبية — '.$amount),
                 $user->id
             );
 
@@ -620,7 +686,7 @@ class SalesOrderFulfillmentService
 
         $paidAmount = $this->resolvePaidAmountForTotal($order, $recognizedTotal, $payload);
         $companyCode = $this->resolveDeliveryCompanyCode($order->delivery_company_id);
-        $isExternalCarrier = $companyCode !== null && ! in_array($companyCode, ['doctor_bike', 'self', 'pickup'], true);
+        $isExternalCarrier = $companyCode !== null && ! in_array($companyCode, ['internal', 'pickup'], true);
         if ($isExternalCarrier && ! array_key_exists('payment_amount', $payload)) {
             $paidAmount = min((float) $order->payment_amount, $recognizedTotal);
         }
@@ -656,6 +722,8 @@ class SalesOrderFulfillmentService
                     'box_id' => $box->id,
                     'source' => 'order_payment',
                     'amount' => $amountToPost,
+                    'cash_amount' => $amountToPost,
+                    'carrier_fee' => 0,
                     'customer_debt_before' => (float) $order->customer_debt_balance,
                     'customer_debt_after' => (float) $order->customer_debt_balance,
                     'carrier_receivable_before' => (float) $order->carrier_receivable_balance,
@@ -734,6 +802,8 @@ class SalesOrderFulfillmentService
             'box_id' => $box->id,
             'source' => 'order_payment',
             'amount' => $amount,
+            'cash_amount' => $amount,
+            'carrier_fee' => 0,
             'customer_debt_before' => 0,
             'customer_debt_after' => 0,
             'carrier_receivable_before' => 0,
@@ -761,8 +831,14 @@ class SalesOrderFulfillmentService
         $amountsByCurrency = $settlements
             ->filter(fn (SalesOrderSettlement $settlement) => $settlement->box !== null)
             ->groupBy(fn (SalesOrderSettlement $settlement) => (string) $settlement->box->currency)
-            ->map(fn (Collection $rows) => round((float) $rows->sum('amount'), 2))
-            ->filter(fn (float $amount) => $amount > 0.0001);
+            ->map(fn (Collection $rows) => [
+                'gross' => round((float) $rows->sum('amount'), 2),
+                'cash' => round((float) $rows->sum(
+                    fn (SalesOrderSettlement $settlement) => $settlement->cash_amount ?? $settlement->amount
+                ), 2),
+                'fee' => round((float) $rows->sum('carrier_fee'), 2),
+            ])
+            ->filter(fn (array $amounts) => $amounts['gross'] > 0.0001);
 
         if ($amountsByCurrency->isNotEmpty()) {
             $session = $this->sessionService->assertCanCreateSale(
@@ -771,7 +847,7 @@ class SalesOrderFulfillmentService
             );
             $currentBoxes = $this->ordersDailyBoxes->ensureBoxes($user, $session)->keyBy('currency');
 
-            foreach ($amountsByCurrency as $currency => $amount) {
+            foreach ($amountsByCurrency as $currency => $amounts) {
                 $idempotencyKey = 'sales-order-cancel-'.$order->id.'-'.md5((string) $currency);
                 if (SalesOrderSettlement::query()->where('idempotency_key', $idempotencyKey)->exists()) {
                     continue;
@@ -786,22 +862,40 @@ class SalesOrderFulfillmentService
                 }
 
                 $box = Box::query()->lockForUpdate()->findOrFail($box->id);
-                $box->update(['total' => round((float) $box->total - $amount, 2)]);
+                if ($amounts['cash'] > 0) {
+                    $box->update(['total' => round((float) $box->total - $amounts['cash'], 2)]);
 
-                BoxLogs::createBoxLog(
-                    $box,
-                    'سحب — عكس دفعة طلبية ملغاة '.($order->serial_number ?? '#'.$order->id),
-                    'minus',
-                    -$amount,
-                    'إلغاء/إرجاع طلبية #'.$order->id.' — '.($order->serial_number ?? '')
-                );
+                    BoxLogs::createBoxLog(
+                        $box,
+                        'سحب — عكس دفعة طلبية ملغاة '.($order->serial_number ?? '#'.$order->id),
+                        'minus',
+                        -$amounts['cash'],
+                        'إلغاء/إرجاع طلبية #'.$order->id.' — '.($order->serial_number ?? '')
+                    );
+                }
+
+                $feeExpense = $amounts['fee'] > 0
+                    ? Expense::create([
+                        'name' => 'عكس أجرة شركة توصيل — '.($order->delivery_company_name ?: 'غير محددة'),
+                        'price' => -$amounts['fee'],
+                        'payment_method' => 'carrier_withholding_reversal',
+                        'notes' => 'عكس مصروف توصيل بسبب إلغاء/إرجاع الطلبية '.($order->serial_number ?? '#'.$order->id),
+                        'box_id' => null,
+                        'created_by_user_id' => $user->id,
+                        'expense_type' => 'general',
+                        'expense_date' => now()->toDateString(),
+                    ])
+                    : null;
 
                 SalesOrderSettlement::create([
                     'sales_order_id' => $order->id,
                     'sales_daily_session_id' => $session->id,
                     'box_id' => $box->id,
                     'source' => 'cancellation_reversal',
-                    'amount' => -$amount,
+                    'amount' => -$amounts['gross'],
+                    'cash_amount' => -$amounts['cash'],
+                    'carrier_fee' => -$amounts['fee'],
+                    'carrier_fee_expense_id' => $feeExpense?->id,
                     'customer_debt_before' => (float) $order->customer_debt_balance,
                     'customer_debt_after' => 0,
                     'carrier_receivable_before' => (float) $order->carrier_receivable_balance,
@@ -976,9 +1070,7 @@ class SalesOrderFulfillmentService
             return null;
         }
 
-        $code = DeliveryCompany::query()->where('id', $deliveryCompanyId)->value('code');
-
-        return $code !== null ? strtolower(trim((string) $code)) : null;
+        return DeliveryCompany::query()->find($deliveryCompanyId)?->operationalType();
     }
 
     private function assertHandoverRecipient(SalesOrder $order, bool $isShiply): void
@@ -1032,7 +1124,7 @@ class SalesOrderFulfillmentService
             return;
         }
 
-        if (in_array($companyCode, ['shiply', 'doctor_bike', 'self', 'pickup'], true)
+        if (in_array($companyCode, ['shiply', 'internal', 'pickup'], true)
             || $companyCode === null) {
             return;
         }
