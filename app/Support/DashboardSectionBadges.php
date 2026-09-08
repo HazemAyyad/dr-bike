@@ -73,9 +73,14 @@ class DashboardSectionBadges
             'employees_absent_today' => self::employeesAbsentToday(),
             'maintenance' => (int) Maintenance::query()->where('status', '!=', 'delivered')->count(),
             'follow_up' => (int) Followup::query()
-                ->where('status', 'ongoing')
+                ->whereIn('status', ['initial', 'inform', 'agreement'])
                 ->where(function ($query) {
                     $query->whereNull('is_canceled')->orWhere('is_canceled', 0);
+                })
+                ->when($user->type !== 'admin', function ($query) {
+                    $query->where(function ($visibility) {
+                        $visibility->whereNull('admin_only')->orWhere('admin_only', 0);
+                    });
                 })
                 ->count(),
             'sales' => (int) $salesQuery->count(),

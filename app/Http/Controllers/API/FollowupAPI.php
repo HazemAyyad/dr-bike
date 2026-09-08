@@ -50,6 +50,12 @@ class FollowupAPI extends Controller
         return $this->applyVisibility($query, $request);
     }
 
+    private function findVisibleFollowupOrFail(Request $request, int $followupId): Followup
+    {
+        return $this->applyVisibility(Followup::query(), $request)
+            ->findOrFail($followupId);
+    }
+
     private function formatFollowups($followups)
     {
         return $followups->map(function($followup){
@@ -199,10 +205,15 @@ public function updateFollowup(Request $request)
             ], 200);
         }
 
-        $followup = Followup::findOrFail($request->followup_id);
+        $followup = $this->findVisibleFollowupOrFail(
+            $request,
+            (int) $request->followup_id
+        );
         $before = $followup->only(['customer_id','seller_id','product_id','status','admin_only']);
         if ($request->has('admin_only') && $request->user()?->type === 'admin') {
             $data['admin_only'] = $request->boolean('admin_only');
+        } else {
+            unset($data['admin_only']);
         }
         $followup->update($data);
         $after = $followup->fresh()->only(['customer_id','seller_id','product_id','status','admin_only']);
@@ -257,7 +268,10 @@ public function updateFollowup(Request $request)
       try{
         $request->validate(['followup_id'=>'required|exists:followups,id']);
 
-        $followup = Followup::findOrFail($request->followup_id);
+        $followup = $this->findVisibleFollowupOrFail(
+            $request,
+            (int) $request->followup_id
+        );
         $name = $followup->customer_id? $followup->customer->name:$followup->seller->name;
         $this->logActivity(
             $followup,
@@ -414,7 +428,10 @@ public function updateFollowup(Request $request)
       try{
         $request->validate(['followup_id'=>'required|exists:followups,id']);
 
-        $followup = Followup::findOrFail($request->followup_id);
+        $followup = $this->findVisibleFollowupOrFail(
+            $request,
+            (int) $request->followup_id
+        );
 
        
         $followup->update(['is_canceled'=>1]);
@@ -503,20 +520,15 @@ public function updateFollowup(Request $request)
         try{
             $request->validate(['followup_id'=>'required|integer|exists:followups,id']);
 
-            $followup = Followup::with('customer:id,name,ID_image')
-            ->with('seller:id,name,ID_image')
-            ->with('createdBy:id,name,type')
-            ->with(['activityLogs' => function ($query) {
-                $query->with('user:id,name,type')->orderBy('created_at', 'desc');
-            }])->
-            findOrFail($request->followup_id);
-
-            if ($followup->admin_only && $request->user()?->type !== 'admin') {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.followup_not_found'),
-                ], 200);
-            }
+            $followup = $this->applyVisibility(
+                Followup::with('customer:id,name,ID_image')
+                    ->with('seller:id,name,ID_image')
+                    ->with('createdBy:id,name,type')
+                    ->with(['activityLogs' => function ($query) {
+                        $query->with('user:id,name,type')->orderBy('created_at', 'desc');
+                    }]),
+                $request
+            )->findOrFail($request->followup_id);
 
             $followup->makeHidden(['customer_id','seller_id','step','start_date','end_date']);
             if($followup->customer_id){
