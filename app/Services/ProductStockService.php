@@ -92,8 +92,7 @@ class ProductStockService
         int $quantity,
         ?int $sizeColorId = null,
         bool $allowNegative = false
-    ): array
-    {
+    ): array {
         if ($quantity < 1) {
             return ['ok' => false, 'message' => __('messages.cant_sale')];
         }
@@ -147,8 +146,7 @@ class ProductStockService
         int $quantity,
         int $sizeColorId,
         bool $allowNegative = false
-    ): array
-    {
+    ): array {
         $variant = SizeColor::query()
             ->with('size')
             ->find($sizeColorId);
@@ -540,7 +538,7 @@ class ProductStockService
     }
 
     /**
-     * @return array{total_in: int, total_out: int, current_stock: int}
+     * @return array{total_in: int, total_out: int, current_stock: int, purchased: int, sold: int, sales_returned: int, purchase_returned: int}
      */
     public function movementSummary(int $productId, ?string $dateFrom = null, ?string $dateTo = null): array
     {
@@ -553,15 +551,32 @@ class ProductStockService
             $query->whereDate('created_at', '<=', $dateTo);
         }
 
-        $rows = $query->get(['quantity']);
+        $rows = $query->get(['quantity', 'type']);
         $totalIn = 0;
         $totalOut = 0;
+        $purchased = 0;
+        $sold = 0;
+        $salesReturned = 0;
+        $purchaseReturned = 0;
         foreach ($rows as $row) {
             $q = (int) $row->quantity;
             if ($q > 0) {
                 $totalIn += $q;
             } else {
                 $totalOut += abs($q);
+            }
+            if (in_array($row->type, [ProductStockMovement::TYPE_PURCHASE, ProductStockMovement::TYPE_BILL_QUANTITY], true)) {
+                $purchased += max(0, $q);
+            } elseif ($row->type === ProductStockMovement::TYPE_SALE) {
+                $sold += abs(min(0, $q));
+            } elseif ($row->type === ProductStockMovement::TYPE_SALES_RETURN) {
+                $salesReturned += max(0, $q);
+            } elseif ($row->type === ProductStockMovement::TYPE_SALES_RETURN_CANCEL) {
+                $salesReturned -= abs(min(0, $q));
+            } elseif ($row->type === ProductStockMovement::TYPE_PURCHASE_RETURN) {
+                $purchaseReturned += abs(min(0, $q));
+            } elseif ($row->type === ProductStockMovement::TYPE_PURCHASE_RETURN_CANCEL) {
+                $purchaseReturned -= max(0, $q);
             }
         }
 
@@ -571,6 +586,10 @@ class ProductStockService
             'total_in' => $totalIn,
             'total_out' => $totalOut,
             'current_stock' => $product ? $this->resolveDisplayStock($product->load('sizes.colorSizes')) : 0,
+            'purchased' => $purchased,
+            'sold' => $sold,
+            'sales_returned' => max(0, $salesReturned),
+            'purchase_returned' => max(0, $purchaseReturned),
         ];
     }
 
@@ -704,13 +723,13 @@ class ProductStockService
 
             if ($maintenanceProductId) {
                 DB::table('maintenance_products')
-                ->where('id', $maintenanceProductId)
-                ->update([
-                    'inventory_cost_method' => $cost['method'],
-                    'inventory_unit_cost' => $cost['unit_cost'],
-                    'inventory_total_cost' => $cost['total_cost'],
-                    'updated_at' => now(),
-                ]);
+                    ->where('id', $maintenanceProductId)
+                    ->update([
+                        'inventory_cost_method' => $cost['method'],
+                        'inventory_unit_cost' => $cost['unit_cost'],
+                        'inventory_total_cost' => $cost['total_cost'],
+                        'updated_at' => now(),
+                    ]);
             }
         }
     }

@@ -6,9 +6,9 @@ use App\Http\Controllers\API\BoxLogs;
 use App\Http\Controllers\API\Logs;
 use App\Models\Box;
 use App\Models\Customer;
+use App\Models\InstantSale;
 use App\Models\InventoryCostAllocation;
 use App\Models\InventoryCostLayer;
-use App\Models\InstantSale;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\SalesOrderItem;
@@ -484,7 +484,7 @@ class SalesReturnService
         $this->stock->adjustStock(
             product: $item->product,
             quantityDelta: -1 * (int) $item->quantity,
-            type: 'sales_return_cancel',
+            type: ProductStockMovement::TYPE_SALES_RETURN_CANCEL,
             sizeColorId: $item->size_color_id ? (int) $item->size_color_id : null,
             referenceType: 'sales_return_cancel',
             referenceId: (int) $return->id,
@@ -800,6 +800,7 @@ class SalesReturnService
     private function availableRow(string $sourceType, int $sourceItemId, int $invoiceId, string $serial, object $line, int $sold, int $returned, int $available, float $price, ?string $date): array
     {
         $product = $line->product;
+
         return [
             'source_type' => $sourceType,
             'source_item_id' => $sourceItemId,

@@ -69,6 +69,46 @@ class PurchasingInventoryV2Test extends TestCase
         ]);
     }
 
+    public function test_product_stock_history_exposes_purchase_document_and_requires_adjustment_reason(): void
+    {
+        $seller = Seller::create(['name' => 'History Supplier', 'phone' => '059100']);
+        $product = $this->product(1099, 4);
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 2, 'purchase_price' => 7],
+            ],
+        ], $this->user->id);
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                [
+                    'bill_item_id' => $bill->items()->first()->id,
+                    'accepted_quantity' => 2,
+                    'unit_price' => 7,
+                ],
+            ],
+        ], $this->user->id);
+
+        Sanctum::actingAs($this->user);
+        $this->postJson('/api/product/stock/movements', [
+            'product_id' => $product->id,
+            'type' => ProductStockMovement::TYPE_PURCHASE,
+        ])->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('summary.purchased', 2)
+            ->assertJsonPath('movements.0.document.type', 'purchase')
+            ->assertJsonPath('movements.0.document.id', $bill->id)
+            ->assertJsonPath('movements.0.document.party_name', 'History Supplier')
+            ->assertJsonPath('movements.0.document.unit_price', 7);
+
+        $this->postJson('/api/product/stock/adjust', [
+            'product_id' => $product->id,
+            'quantity' => 1,
+        ])->assertOk()
+            ->assertJsonPath('status', 'error')
+            ->assertJsonStructure(['errors' => ['note']]);
+    }
+
     public function test_extra_quantity_becomes_amanat_then_can_be_purchased_at_negotiated_price(): void
     {
         $seller = Seller::create(['name' => 'Supplier', 'phone' => '0592']);
