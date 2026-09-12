@@ -5,6 +5,7 @@ namespace App\Services\EmployeeTasks;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
+use App\Models\EmployeeTaskTemplate;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -78,6 +79,30 @@ class EmployeeTaskAssigneeService
                 'updated_at' => $now,
             ]);
         }
+    }
+
+    /** @param array<int|string> $employeeIds */
+    public function syncForTemplate(EmployeeTaskTemplate $template, array $employeeIds): void
+    {
+        $this->syncPivot(
+            'employee_task_template_assignees',
+            'template_id',
+            (int) $template->id,
+            $employeeIds,
+            (int) $template->employee_id
+        );
+    }
+
+    /** @param array<int|string> $employeeIds */
+    public function syncForOccurrence(EmployeeTaskOccurrence $occurrence, array $employeeIds): void
+    {
+        $this->syncPivot(
+            'employee_task_occurrence_assignees',
+            'occurrence_id',
+            (int) $occurrence->id,
+            $employeeIds,
+            (int) $occurrence->employee_id
+        );
     }
 
     /**
@@ -163,18 +188,56 @@ class EmployeeTaskAssigneeService
 
     public function canAccessOccurrence(EmployeeTaskOccurrence $occurrence, int $employeeId): bool
     {
-        if ((int) $occurrence->employee_id === $employeeId) {
-            return true;
+        return in_array($employeeId, $this->idsForOccurrence($occurrence), true);
+    }
+
+    /** @return array<int> */
+    public function idsForTemplate(EmployeeTaskTemplate $template): array
+    {
+        $ids = $this->idsFromPivot(
+            'employee_task_template_assignees',
+            'template_id',
+            (int) $template->id
+        );
+
+        return $ids !== [] ? $ids : array_values(array_filter([(int) $template->employee_id]));
+    }
+
+    /** @return array<int> */
+    public function idsForOccurrence(EmployeeTaskOccurrence $occurrence): array
+    {
+        $ids = $this->idsFromPivot(
+            'employee_task_occurrence_assignees',
+            'occurrence_id',
+            (int) $occurrence->id
+        );
+
+        if ($ids !== []) {
+            return $ids;
         }
 
         if ($occurrence->legacy_task_id) {
             $legacy = EmployeeTask::find($occurrence->legacy_task_id);
-            if ($legacy instanceof EmployeeTask && $this->isAssignee($legacy, $employeeId)) {
-                return true;
+            if ($legacy instanceof EmployeeTask) {
+                $ids = $this->idsForTask($legacy);
+                if ($ids !== []) {
+                    return $ids;
+                }
             }
         }
 
-        return false;
+        $template = $occurrence->relationLoaded('template')
+            ? $occurrence->template
+            : EmployeeTaskTemplate::find($occurrence->template_id);
+
+        if ($template instanceof EmployeeTaskTemplate) {
+            $ids = $this->idsForTemplate($template);
+            if ($ids !== []) {
+                return $ids;
+            }
+        }
+
+        return array_values(array_filter([(int) $occurrence->employee_id]));
     }
 
     private function isDirectAssignee(EmployeeTask $task, int $employeeId): bool
@@ -216,7 +279,27 @@ class EmployeeTaskAssigneeService
      */
     public function profilesForTask(EmployeeTask $task, callable $photoResolver): array
     {
-        $ids = $this->idsForTask($task);
+        return $this->profilesForIds($this->idsForTask($task), $photoResolver);
+    }
+
+    /** @return array<int, array{id: int, name: string, photo: string}> */
+    public function profilesForOccurrence(EmployeeTaskOccurrence $occurrence, callable $photoResolver): array
+    {
+        return $this->profilesForIds($this->idsForOccurrence($occurrence), $photoResolver);
+    }
+
+    /**
+     * @param array<int|string> $ids
+     * @return array<int, array{id: int, name: string, photo: string}>
+     */
+    public function profilesForIds(array $ids, callable $photoResolver): array
+    {
+        $ids = collect($ids)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
 
         $employees = EmployeeDetail::with('user')
             ->whereIn('id', $ids)
@@ -241,5 +324,60 @@ class EmployeeTaskAssigneeService
         }
 
         return $profiles;
+    }
+
+    /** @param array<int|string> $employeeIds */
+    private function syncPivot(
+        string $table,
+        string $ownerColumn,
+        int $ownerId,
+        array $employeeIds,
+        int $fallbackEmployeeId
+    ): void {
+        if (! Schema::hasTable($table)) {
+            return;
+        }
+
+        $ids = collect($employeeIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty() && $fallbackEmployeeId > 0) {
+            $ids->push($fallbackEmployeeId);
+        }
+
+        DB::transaction(function () use ($table, $ownerColumn, $ownerId, $ids) {
+            DB::table($table)->where($ownerColumn, $ownerId)->delete();
+
+            $now = now();
+            foreach ($ids as $employeeId) {
+                DB::table($table)->insert([
+                    $ownerColumn => $ownerId,
+                    'employee_id' => $employeeId,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+        });
+    }
+
+    /** @return array<int> */
+    private function idsFromPivot(string $table, string $ownerColumn, int $ownerId): array
+    {
+        if (! Schema::hasTable($table)) {
+            return [];
+        }
+
+        return DB::table($table)
+            ->where($ownerColumn, $ownerId)
+            ->orderBy('id')
+            ->pluck('employee_id')
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values()
+            ->all();
     }
 }

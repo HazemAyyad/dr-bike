@@ -86,18 +86,7 @@ class EmployeeTaskNotificationService
         }
 
         $assigneeService = app(EmployeeTaskAssigneeService::class);
-        $ids = [];
-
-        if ($occurrence->legacy_task_id) {
-            $legacy = EmployeeTask::find($occurrence->legacy_task_id);
-            if ($legacy) {
-                $ids = $assigneeService->idsForTask($legacy);
-            }
-        }
-
-        if ($ids === []) {
-            $ids = [(int) $occurrence->employee_id];
-        }
+        $ids = $assigneeService->idsForOccurrence($occurrence);
 
         $notified = [];
         foreach ($ids as $employeeId) {
@@ -119,7 +108,7 @@ class EmployeeTaskNotificationService
     }
 
     public function notifyCoAssigneesSubtaskCompleted(
-        EmployeeTask $task,
+        EmployeeTask|EmployeeTaskOccurrence $task,
         string $subtaskName,
         int $actorEmployeeId,
         ?int $occurrenceId = null
@@ -139,7 +128,7 @@ class EmployeeTaskNotificationService
     }
 
     public function notifyCoAssigneesMainTaskSubmitted(
-        EmployeeTask $task,
+        EmployeeTask|EmployeeTaskOccurrence $task,
         int $actorEmployeeId,
         ?int $occurrenceId = null
     ): void {
@@ -157,7 +146,7 @@ class EmployeeTaskNotificationService
     }
 
     public function notifyCoAssigneesMainTaskCompleted(
-        EmployeeTask $task,
+        EmployeeTask|EmployeeTaskOccurrence $task,
         int $actorEmployeeId,
         ?int $occurrenceId = null
     ): void {
@@ -295,7 +284,7 @@ class EmployeeTaskNotificationService
     }
 
     private function notifyCoAssignees(
-        EmployeeTask $task,
+        EmployeeTask|EmployeeTaskOccurrence $task,
         int $actorEmployeeId,
         string $type,
         string $title,
@@ -306,12 +295,20 @@ class EmployeeTaskNotificationService
             return;
         }
 
-        $assigneeIds = app(EmployeeTaskAssigneeService::class)->idsForTask($task);
+        $assignees = app(EmployeeTaskAssigneeService::class);
+        $assigneeIds = $task instanceof EmployeeTaskOccurrence
+            ? $assignees->idsForOccurrence($task)
+            : $assignees->idsForTask($task);
         if (count($assigneeIds) <= 1) {
             return;
         }
 
-        $this->withArabicLocale(function () use ($task, $actorEmployeeId, $type, $title, $body, $occurrenceId, $assigneeIds) {
+        $taskId = $task instanceof EmployeeTaskOccurrence
+            ? (int) ($task->legacy_task_id ?? $task->id)
+            : (int) $task->id;
+        $occurrenceId ??= $task instanceof EmployeeTaskOccurrence ? (int) $task->id : null;
+
+        $this->withArabicLocale(function () use ($task, $taskId, $actorEmployeeId, $type, $title, $body, $occurrenceId, $assigneeIds) {
             foreach ($assigneeIds as $employeeId) {
                 if ((int) $employeeId === $actorEmployeeId) {
                     continue;
@@ -327,7 +324,7 @@ class EmployeeTaskNotificationService
                         $title,
                         $body,
                         array_filter([
-                            'task_id' => (string) $task->id,
+                            'task_id' => (string) $taskId,
                             'occurrence_id' => $occurrenceId ? (string) $occurrenceId : '',
                             'task_name' => $task->name,
                             'actor_employee_id' => (string) $actorEmployeeId,

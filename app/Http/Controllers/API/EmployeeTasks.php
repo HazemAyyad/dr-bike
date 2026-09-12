@@ -160,14 +160,7 @@ class EmployeeTasks extends Controller
 
     private function assigneeIdsForOccurrence(EmployeeTaskOccurrence $occurrence): array
     {
-        if ($occurrence->legacy_task_id) {
-            $legacy = EmployeeTask::find($occurrence->legacy_task_id);
-            if ($legacy) {
-                return app(EmployeeTaskAssigneeService::class)->idsForTask($legacy);
-            }
-        }
-
-        return [(int) $occurrence->employee_id];
+        return app(EmployeeTaskAssigneeService::class)->idsForOccurrence($occurrence);
     }
 
     private function assigneeNamesForOccurrence(EmployeeTaskOccurrence $occurrence): string
@@ -496,16 +489,7 @@ class EmployeeTasks extends Controller
 
         if ($request->filled('occurrence_id')) {
             $occurrence = EmployeeTaskOccurrence::with('employee.user')->findOrFail($request->occurrence_id);
-            $ids = [];
-            if ($occurrence->legacy_task_id) {
-                $legacy = EmployeeTask::find($occurrence->legacy_task_id);
-                if ($legacy) {
-                    $ids = $assigneeService->idsForTask($legacy);
-                }
-            }
-            if ($ids === []) {
-                $ids = [(int) $occurrence->employee_id];
-            }
+            $ids = $assigneeService->idsForOccurrence($occurrence);
 
             foreach (array_unique($ids) as $employeeId) {
                 $employee = \App\Models\EmployeeDetail::with('user')->find($employeeId);

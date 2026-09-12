@@ -8,6 +8,7 @@ use App\Models\EmployeeTask;
 use App\Models\EmployeeTaskOccurrence;
 use App\Services\EmployeePointsService;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class EmployeeTaskPerformanceService
 {
@@ -40,7 +41,7 @@ class EmployeeTaskPerformanceService
 
     private function legacyTaskStats(int $employeeId): array
     {
-        $base = EmployeeTask::where('employee_id', $employeeId)->where('is_canceled', 0);
+        $base = $this->legacyQueryForEmployee($employeeId)->where('is_canceled', 0);
 
         return [
             'completed' => (clone $base)->where('status', EmployeeTaskStatus::Completed->value)->count(),
@@ -51,11 +52,11 @@ class EmployeeTaskPerformanceService
 
     private function occurrenceStats(int $employeeId): array
     {
-        if (! \Illuminate\Support\Facades\Schema::hasTable('employee_task_occurrences')) {
+        if (! Schema::hasTable('employee_task_occurrences')) {
             return ['completed' => 0, 'overdue' => 0, 'total' => 0];
         }
 
-        $base = EmployeeTaskOccurrence::where('employee_id', $employeeId)->where('is_canceled', 0);
+        $base = $this->occurrenceQueryForEmployee($employeeId)->where('is_canceled', 0);
 
         return [
             'completed' => (clone $base)->where('status', EmployeeTaskStatus::Completed->value)->count(),
@@ -68,14 +69,14 @@ class EmployeeTaskPerformanceService
     {
         $dates = collect();
 
-        EmployeeTask::where('employee_id', $employeeId)
+        $this->legacyQueryForEmployee($employeeId)
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->whereNotNull('reviewed_at')
             ->pluck('reviewed_at')
             ->each(fn ($d) => $dates->push(Carbon::parse($d)->toDateString()));
 
-        if (\Illuminate\Support\Facades\Schema::hasTable('employee_task_occurrences')) {
-            EmployeeTaskOccurrence::where('employee_id', $employeeId)
+        if (Schema::hasTable('employee_task_occurrences')) {
+            $this->occurrenceQueryForEmployee($employeeId)
                 ->where('status', EmployeeTaskStatus::Completed->value)
                 ->whereNotNull('completed_at')
                 ->pluck('completed_at')
@@ -115,19 +116,19 @@ class EmployeeTaskPerformanceService
             $key = $cursor->toDateString();
             $labels[] = $cursor->format($period === 'week' ? 'D' : 'd/m');
 
-            $assigned[] = EmployeeTask::where('employee_id', $employeeId)
+            $assigned[] = $this->legacyQueryForEmployee($employeeId)
                 ->whereDate('start_time', $key)
                 ->where('is_canceled', 0)
                 ->count() + (
-                    \Illuminate\Support\Facades\Schema::hasTable('employee_task_occurrences')
-                        ? EmployeeTaskOccurrence::where('employee_id', $employeeId)
+                    Schema::hasTable('employee_task_occurrences')
+                        ? $this->occurrenceQueryForEmployee($employeeId)
                             ->whereDate('scheduled_date', $key)
                             ->where('is_canceled', 0)
                             ->count()
                         : 0
                 );
 
-            $completed[] = EmployeeTask::where('employee_id', $employeeId)
+            $completed[] = $this->legacyQueryForEmployee($employeeId)
                 ->where('status', EmployeeTaskStatus::Completed->value)
                 ->where(function ($q) use ($key) {
                     $q->whereDate('reviewed_at', $key)->orWhereDate('updated_at', $key);
@@ -142,6 +143,42 @@ class EmployeeTaskPerformanceService
             'assigned' => $assigned,
             'completed' => $completed,
         ];
+    }
+
+    private function legacyQueryForEmployee(int $employeeId)
+    {
+        return EmployeeTask::query()->where(function ($query) use ($employeeId) {
+            $query->where('employee_id', $employeeId);
+            if (Schema::hasTable('employee_task_assignees')) {
+                $query->orWhereExists(function ($subquery) use ($employeeId) {
+                    $subquery->selectRaw('1')
+                        ->from('employee_task_assignees')
+                        ->whereColumn('employee_task_assignees.employee_task_id', 'employee_tasks.id')
+                        ->where('employee_task_assignees.employee_id', $employeeId);
+                });
+            }
+        });
+    }
+
+    private function occurrenceQueryForEmployee(int $employeeId)
+    {
+        return EmployeeTaskOccurrence::query()->where(function ($query) use ($employeeId) {
+            $query->where('employee_id', $employeeId);
+            if (Schema::hasTable('employee_task_occurrence_assignees')) {
+                $query->orWhereExists(function ($subquery) use ($employeeId) {
+                    $subquery->selectRaw('1')
+                        ->from('employee_task_occurrence_assignees')
+                        ->whereColumn('employee_task_occurrence_assignees.occurrence_id', 'employee_task_occurrences.id')
+                        ->where('employee_task_occurrence_assignees.employee_id', $employeeId);
+                });
+            } elseif (Schema::hasTable('employee_task_assignees')) {
+                $query->orWhereIn('legacy_task_id', function ($subquery) use ($employeeId) {
+                    $subquery->select('employee_task_id')
+                        ->from('employee_task_assignees')
+                        ->where('employee_id', $employeeId);
+                });
+            }
+        });
     }
 
     private function leaderboard(int $limit): array

@@ -120,10 +120,9 @@ class EmployeeTaskWorkflowService
         $fresh = $occurrence->fresh(['employee']);
         $this->notifyAdminOccurrenceSubmitted($fresh);
         $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
-        $legacy = $this->legacyTaskForOccurrence($fresh);
-        if ($actorId && $legacy) {
+        if ($actorId) {
             app(EmployeeTaskNotificationService::class)->notifyCoAssigneesMainTaskSubmitted(
-                $legacy,
+                $fresh,
                 (int) $actorId,
                 (int) $fresh->id
             );
@@ -195,11 +194,10 @@ class EmployeeTaskWorkflowService
                 (int) $fresh->id
             );
             $this->notifyDailyTasksCompletedIfApplicable($fresh->employee);
-            $legacy = $this->legacyTaskForOccurrence($fresh);
             $completedBy = (int) ($fresh->completed_by_employee_id ?? $actorId ?? 0);
-            if ($legacy && $completedBy > 0) {
+            if ($completedBy > 0) {
                 app(EmployeeTaskNotificationService::class)->notifyCoAssigneesMainTaskCompleted(
-                    $legacy,
+                    $fresh,
                     $completedBy,
                     (int) $fresh->id
                 );
@@ -286,12 +284,7 @@ class EmployeeTaskWorkflowService
         $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_REOPENED, $adminNotes);
 
         $fresh = $occurrence->fresh(['employee']);
-        $legacy = $this->legacyTaskForOccurrence($fresh);
-        if ($legacy) {
-            $this->notifyAssigneesTaskReopened($legacy, $adminNotes, (int) $fresh->id);
-        } else {
-            $this->notifyEmployeeTaskReopened($fresh->employee, $fresh->name, $adminNotes, null, (int) $fresh->id);
-        }
+        $this->notifyAssigneesTaskReopened($fresh, $adminNotes, (int) $fresh->id);
 
         return $fresh;
     }
@@ -411,14 +404,21 @@ class EmployeeTaskWorkflowService
     }
 
     private function notifyAssigneesTaskReopened(
-        EmployeeTask $task,
+        EmployeeTask|EmployeeTaskOccurrence $task,
         ?string $adminNotes,
         ?int $occurrenceId
     ): void {
-        $assigneeIds = app(EmployeeTaskAssigneeService::class)->idsForTask($task);
+        $assignees = app(EmployeeTaskAssigneeService::class);
+        $assigneeIds = $task instanceof EmployeeTaskOccurrence
+            ? $assignees->idsForOccurrence($task)
+            : $assignees->idsForTask($task);
         if ($assigneeIds === []) {
             $assigneeIds = [(int) $task->employee_id];
         }
+
+        $legacyTaskId = $task instanceof EmployeeTaskOccurrence
+            ? ($task->legacy_task_id ? (int) $task->legacy_task_id : null)
+            : (int) $task->id;
 
         foreach ($assigneeIds as $employeeId) {
             $employee = EmployeeDetail::with('user')->find($employeeId);
@@ -429,7 +429,7 @@ class EmployeeTaskWorkflowService
                 $employee,
                 $task->name,
                 $adminNotes,
-                (int) $task->id,
+                $legacyTaskId,
                 $occurrenceId
             );
         }
@@ -520,10 +520,9 @@ class EmployeeTaskWorkflowService
         // لا نُشعر الإدارة عند إكمال مهمة فرعية — إشعار الإدارة يُرسَل فقط عند إكمال/تسليم المهمة كاملة.
         $subTask->loadMissing('occurrence.employee');
         $this->notifyDailyTasksCompletedIfApplicable($subTask->occurrence?->employee);
-        $legacy = $this->legacyTaskForOccurrence($subTask->occurrence);
-        if ($actorId > 0 && $legacy) {
+        if ($actorId > 0 && $subTask->occurrence) {
             app(EmployeeTaskNotificationService::class)->notifyCoAssigneesSubtaskCompleted(
-                $legacy,
+                $subTask->occurrence,
                 $subTask->name,
                 $actorId,
                 (int) $subTask->occurrence_id
@@ -706,15 +705,6 @@ class EmployeeTaskWorkflowService
         }
 
         return $subTask->fresh();
-    }
-
-    private function legacyTaskForOccurrence(?EmployeeTaskOccurrence $occurrence): ?EmployeeTask
-    {
-        if (! $occurrence?->legacy_task_id) {
-            return null;
-        }
-
-        return EmployeeTask::find($occurrence->legacy_task_id);
     }
 
     private function assertSubtasksComplete(EmployeeTask $task): void

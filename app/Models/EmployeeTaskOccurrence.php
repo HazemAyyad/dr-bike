@@ -6,6 +6,7 @@ use App\Enums\EmployeeTaskStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class EmployeeTaskOccurrence extends Model
 {
@@ -78,6 +79,16 @@ class EmployeeTaskOccurrence extends Model
     public function legacyTask(): BelongsTo
     {
         return $this->belongsTo(EmployeeTask::class, 'legacy_task_id');
+    }
+
+    public function assignees(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            \App\Models\EmployeeDetail::class,
+            'employee_task_occurrence_assignees',
+            'occurrence_id',
+            'employee_id'
+        )->withTimestamps();
     }
 
     public function normalizedStatus(): EmployeeTaskStatus

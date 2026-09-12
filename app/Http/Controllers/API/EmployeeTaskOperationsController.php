@@ -41,10 +41,13 @@ class EmployeeTaskOperationsController extends Controller
 
     private function shouldResetOccurrenceCompletion(
         EmployeeTaskOccurrence $occurrence,
-        int $oldEmployeeId,
-        int $newEmployeeId
+        array $oldAssigneeIds,
+        array $newAssigneeIds
     ): bool {
-        if ($oldEmployeeId <= 0 || $newEmployeeId <= 0 || $oldEmployeeId === $newEmployeeId) {
+        $old = collect($oldAssigneeIds)->map(fn ($id) => (int) $id)->filter()->unique()->sort()->values()->all();
+        $new = collect($newAssigneeIds)->map(fn ($id) => (int) $id)->filter()->unique()->sort()->values()->all();
+
+        if ($new === [] || $old === $new) {
             return false;
         }
 
@@ -67,31 +70,6 @@ class EmployeeTaskOperationsController extends Controller
         }
 
         $occurrence->subtasks()->update($payload);
-    }
-
-    private function resetLegacyTaskCompletion(EmployeeTask $task): void
-    {
-        $task->update([
-            'status' => EmployeeTaskStatus::Pending->value,
-            'completed_by_employee_id' => null,
-            'employee_img' => null,
-            'started_at' => null,
-            'submitted_at' => null,
-            'reviewed_at' => null,
-            'rejection_notes' => null,
-        ]);
-
-        $payload = ['status' => EmployeeTaskStatus::Pending->value];
-
-        if (Schema::hasColumn('sub_employee_tasks', 'completed_by_employee_id')) {
-            $payload['completed_by_employee_id'] = null;
-        }
-
-        if (Schema::hasColumn('sub_employee_tasks', 'employee_img')) {
-            $payload['employee_img'] = null;
-        }
-
-        $task->subTasks()->update($payload);
     }
 
     public function startTask(Request $request)
@@ -366,6 +344,7 @@ class EmployeeTaskOperationsController extends Controller
                 'audio' => $audio,
                 'created_by' => auth()->id(),
             ]);
+            $assigneeService->syncForTemplate($template, $assigneeIds);
 
             if ($request->has('sub_employee_tasks')) {
                 foreach ($request->sub_employee_tasks as $index => $sub) {
@@ -393,37 +372,7 @@ class EmployeeTaskOperationsController extends Controller
 
             $template->load('subtasks');
 
-            $legacyAnchor = null;
-            if (count($assigneeIds) > 1) {
-                $legacyAnchor = EmployeeTask::create([
-                    'display_number' => $template->display_number,
-                    'name' => $data['name'],
-                    'description' => $data['description'] ?? null,
-                    'notes' => $data['notes'] ?? null,
-                    'points' => $data['points'],
-                    'priority' => $data['priority'] ?? 'medium',
-                    'employee_id' => $data['employee_id'],
-                    'start_time' => $data['start_time'],
-                    'end_time' => $data['end_time'],
-                    'task_recurrence' => 'noRepeat',
-                    'status' => EmployeeTaskStatus::Pending->value,
-                    'is_forced_to_upload_img' => $proofRequired,
-                    'proof_media_type' => $proofMediaType,
-                    'requires_admin_review' => $request->boolean('requires_admin_review', true),
-                    'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
-                    'template_id' => $template->id,
-                    'admin_img' => $adminImg,
-                    'audio' => $audio,
-                ]);
-                $assigneeService->syncForTask($legacyAnchor, $assigneeIds);
-            }
-
             $occurrences = $this->recurrence->ensureOccurrences($template);
-            if ($legacyAnchor) {
-                EmployeeTaskOccurrence::query()
-                    ->where('template_id', $template->id)
-                    ->update(['legacy_task_id' => $legacyAnchor->id]);
-            }
             $summary = $this->recurrence->buildRecurrenceSummary($template);
             $notifier = app(EmployeeTaskNotificationService::class);
 
@@ -515,6 +464,10 @@ class EmployeeTaskOperationsController extends Controller
             }
 
             $template = EmployeeTaskTemplate::findOrFail($data['template_id']);
+            $oldTemplateAssigneeIds = $assigneeService->idsForTemplate($template);
+            $targetAssigneeIds = $assigneeIds !== []
+                ? $assigneeIds
+                : [(int) $data['employee_id']];
             $updateScope = $data['update_scope'] ?? 'occurrence_only';
             $proofRequired = $request->boolean('is_forced_to_upload_img');
             $proofMediaType = $this->proofMediaTypeFromInput($request, 'proof_media_type', $proofRequired);
@@ -571,21 +524,22 @@ class EmployeeTaskOperationsController extends Controller
             ];
             if ($updateScope === 'current_and_future') {
                 $template->update($templatePayload);
+                $assigneeService->syncForTemplate($template->fresh(), $targetAssigneeIds);
             }
 
             $occurrence = null;
-            $oldOccurrenceEmployeeId = null;
+            $oldOccurrenceAssigneeIds = [];
             if ($request->filled('occurrence_id') && $updateScope === 'occurrence_only') {
                 $occurrence = EmployeeTaskOccurrence::query()
                     ->where('id', $request->occurrence_id)
                     ->where('template_id', $template->id)
                     ->firstOrFail();
 
-                $oldOccurrenceEmployeeId = (int) $occurrence->employee_id;
+                $oldOccurrenceAssigneeIds = $assigneeService->idsForOccurrence($occurrence);
                 $shouldResetCompletion = $this->shouldResetOccurrenceCompletion(
                     $occurrence,
-                    $oldOccurrenceEmployeeId,
-                    (int) $data['employee_id']
+                    $oldOccurrenceAssigneeIds,
+                    $targetAssigneeIds
                 );
 
                 $occurrencePayload = [
@@ -618,68 +572,15 @@ class EmployeeTaskOperationsController extends Controller
                 }
 
                 $occurrence->update($occurrencePayload);
+                $assigneeService->syncForOccurrence($occurrence->fresh(), $targetAssigneeIds);
 
-                $legacy = $occurrence->legacy_task_id
-                    ? EmployeeTask::find($occurrence->legacy_task_id)
-                    : null;
-
-                if (count($assigneeIds) > 1 && ! $legacy) {
-                    $legacy = EmployeeTask::create([
-                        'display_number' => $template->display_number,
-                        'name' => $data['name'],
-                        'description' => $data['description'] ?? null,
-                        'notes' => $data['notes'] ?? null,
-                        'points' => $data['points'],
-                        'priority' => $data['priority'] ?? 'medium',
-                        'employee_id' => $data['employee_id'],
-                        'start_time' => $data['start_time'],
-                        'end_time' => $data['end_time'],
-                        'task_recurrence' => 'noRepeat',
-                        'status' => EmployeeTaskStatus::Pending->value,
-                        'is_forced_to_upload_img' => $proofRequired,
-                        'proof_media_type' => $proofMediaType,
-                        'requires_admin_review' => $request->boolean('requires_admin_review', true),
-                        'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
-                        'template_id' => $template->id,
-                    ]);
-
-                    EmployeeTaskOccurrence::query()
-                        ->where('template_id', $template->id)
-                        ->update(['legacy_task_id' => $legacy->id]);
-                }
-
-                if ($legacy) {
-                    $legacy->update([
-                        'name' => $data['name'],
-                        'description' => $data['description'] ?? null,
-                        'notes' => $data['notes'] ?? null,
-                        'points' => $data['points'],
-                        'priority' => $data['priority'] ?? 'medium',
-                        'employee_id' => $data['employee_id'],
-                        'start_time' => $data['start_time'],
-                        'end_time' => $data['end_time'],
-                        'is_forced_to_upload_img' => $proofRequired,
-                        'proof_media_type' => $proofMediaType,
-                        'requires_admin_review' => $request->boolean('requires_admin_review', true),
-                        'not_shown_for_employee' => $request->boolean('not_shown_for_employee'),
-                    ]);
-
-                    if ($shouldResetCompletion) {
-                        $this->resetLegacyTaskCompletion($legacy);
-                    }
-
-                    $assigneeService->syncForTaskAndNotifyNewAssignees(
-                        $legacy,
-                        $assigneeIds !== [] ? $assigneeIds : [(int) $data['employee_id']],
-                        (int) $occurrence->id
-                    );
-                } elseif (
-                    $oldOccurrenceEmployeeId > 0
-                    && (int) $data['employee_id'] !== $oldOccurrenceEmployeeId
-                    && ! $occurrence->fresh()->not_shown_for_employee
-                ) {
+                $addedAssigneeIds = array_values(array_diff(
+                    $targetAssigneeIds,
+                    $oldOccurrenceAssigneeIds
+                ));
+                if ($addedAssigneeIds !== [] && ! $occurrence->fresh()->not_shown_for_employee) {
                     app(EmployeeTaskNotificationService::class)->notifyEmployeesAssigned(
-                        [(int) $data['employee_id']],
+                        $addedAssigneeIds,
                         $data['name'],
                         $occurrence->legacy_task_id,
                         (int) $occurrence->id
@@ -701,6 +602,25 @@ class EmployeeTaskOperationsController extends Controller
                 $futureOccurrencesUpdated = $this->recurrence->syncCurrentAndFutureOccurrences(
                     $template->fresh()
                 );
+
+                $addedAssigneeIds = array_values(array_diff(
+                    $targetAssigneeIds,
+                    $oldTemplateAssigneeIds
+                ));
+                if ($addedAssigneeIds !== [] && ! $template->fresh()->not_shown_for_employee) {
+                    $firstOccurrence = EmployeeTaskOccurrence::query()
+                        ->where('template_id', $template->id)
+                        ->whereDate('scheduled_date', '>=', now()->toDateString())
+                        ->orderBy('scheduled_date')
+                        ->first();
+
+                    app(EmployeeTaskNotificationService::class)->notifyEmployeesAssigned(
+                        $addedAssigneeIds,
+                        $template->name,
+                        $firstOccurrence?->legacy_task_id,
+                        $firstOccurrence?->id
+                    );
+                }
             }
 
             if ($occurrence && isset($shouldResetCompletion) && $shouldResetCompletion) {

@@ -142,23 +142,8 @@ class EmployeeTaskDetailsService
         ];
 
         $assigneeService = app(EmployeeTaskAssigneeService::class);
-        if ($occurrence->legacy_task_id) {
-            $legacy = EmployeeTask::find($occurrence->legacy_task_id);
-            if ($legacy) {
-                $taskData['assignee_ids'] = $assigneeService->idsForTask($legacy);
-                $taskData['assignees'] = $assigneeService->profilesForTask($legacy, $photoResolver);
-            }
-        }
-        if (! isset($taskData['assignee_ids'])) {
-            $taskData['assignee_ids'] = [(int) $occurrence->employee_id];
-        }
-        if (! isset($taskData['assignees'])) {
-            $taskData['assignees'] = [[
-                'id' => (int) $occurrence->employee_id,
-                'name' => $occurrence->employee?->user?->name ?? '',
-                'photo' => $photoResolver($occurrence->employee),
-            ]];
-        }
+        $taskData['assignee_ids'] = $assigneeService->idsForOccurrence($occurrence);
+        $taskData['assignees'] = $assigneeService->profilesForOccurrence($occurrence, $photoResolver);
 
         return $this->enrichWithRecurrenceMeta($taskData, $occurrence->template, null, $occurrence);
     }

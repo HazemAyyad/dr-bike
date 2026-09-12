@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Facades\Schema;
 
 class EmployeeTaskTemplate extends Model
@@ -66,5 +67,15 @@ class EmployeeTaskTemplate extends Model
     public function occurrences(): HasMany
     {
         return $this->hasMany(EmployeeTaskOccurrence::class, 'template_id');
+    }
+
+    public function assignees(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            EmployeeDetail::class,
+            'employee_task_template_assignees',
+            'template_id',
+            'employee_id'
+        )->withTimestamps();
     }
 }

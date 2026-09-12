@@ -139,7 +139,14 @@ class EmployeePerformanceService
             $query = DB::table('employee_task_occurrences')
                 ->where(function ($query) use ($employee) {
                     $query->where('employee_task_occurrences.employee_id', $employee->id);
-                    if (Schema::hasTable('employee_task_assignees') && Schema::hasColumn('employee_task_occurrences', 'legacy_task_id')) {
+                    if (Schema::hasTable('employee_task_occurrence_assignees')) {
+                        $query->orWhereExists(function ($sub) use ($employee) {
+                            $sub->selectRaw('1')
+                                ->from('employee_task_occurrence_assignees')
+                                ->whereColumn('employee_task_occurrence_assignees.occurrence_id', 'employee_task_occurrences.id')
+                                ->where('employee_task_occurrence_assignees.employee_id', $employee->id);
+                        });
+                    } elseif (Schema::hasTable('employee_task_assignees') && Schema::hasColumn('employee_task_occurrences', 'legacy_task_id')) {
                         $query->orWhereIn('legacy_task_id', DB::table('employee_task_assignees')
                             ->select('employee_task_id')->where('employee_id', $employee->id));
                     }

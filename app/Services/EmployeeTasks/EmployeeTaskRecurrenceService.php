@@ -10,6 +10,7 @@ use App\Models\EmployeeTaskTimeline;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class EmployeeTaskRecurrenceService
 {
@@ -76,7 +77,15 @@ class EmployeeTaskRecurrenceService
 
         if ($occurrence->wasRecentlyCreated) {
             $this->copySubtasksFromTemplate($template, $occurrence);
+            $this->syncOccurrenceAssigneesFromTemplate($template, $occurrence);
             $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_CREATED);
+        } elseif (
+            Schema::hasTable('employee_task_occurrence_assignees')
+            && ! DB::table('employee_task_occurrence_assignees')
+                ->where('occurrence_id', $occurrence->id)
+                ->exists()
+        ) {
+            $this->syncOccurrenceAssigneesFromTemplate($template, $occurrence);
         }
 
         return collect([$occurrence]);
@@ -104,6 +113,7 @@ class EmployeeTaskRecurrenceService
         );
 
         $this->copySubtasksFromTemplate($template, $occurrence);
+        $this->syncOccurrenceAssigneesFromTemplate($template, $occurrence);
         $this->timeline->recordForOccurrence($occurrence, EmployeeTaskTimeline::EVENT_CREATED);
 
         return $occurrence;
@@ -335,7 +345,17 @@ class EmployeeTaskRecurrenceService
             ->where('recurrence_type', '!=', 'noRepeat');
 
         if ($employeeId !== null) {
-            $query->where('employee_id', $employeeId);
+            $query->where(function ($query) use ($employeeId) {
+                $query->where('employee_id', $employeeId);
+                if (Schema::hasTable('employee_task_template_assignees')) {
+                    $query->orWhereExists(function ($subquery) use ($employeeId) {
+                        $subquery->selectRaw('1')
+                            ->from('employee_task_template_assignees')
+                            ->whereColumn('employee_task_template_assignees.template_id', 'employee_task_templates.id')
+                            ->where('employee_task_template_assignees.employee_id', $employeeId);
+                    });
+                }
+            });
         }
 
         $from = now()->startOfDay();
@@ -381,6 +401,7 @@ class EmployeeTaskRecurrenceService
 
                 [$start, $end] = $this->windowForDate($template, $date);
                 $occurrence->update($this->occurrencePayloadFromTemplate($template, $start, $end, $date));
+                $this->syncOccurrenceAssigneesFromTemplate($template, $occurrence->fresh());
                 $occurrence->subtasks()->delete();
                 $this->copySubtasksFromTemplate($template, $occurrence);
                 $synced++;
@@ -390,5 +411,16 @@ class EmployeeTaskRecurrenceService
 
             return $synced;
         });
+    }
+
+    private function syncOccurrenceAssigneesFromTemplate(
+        EmployeeTaskTemplate $template,
+        EmployeeTaskOccurrence $occurrence
+    ): void {
+        $assignees = app(EmployeeTaskAssigneeService::class);
+        $assignees->syncForOccurrence(
+            $occurrence,
+            $assignees->idsForTemplate($template)
+        );
     }
 }

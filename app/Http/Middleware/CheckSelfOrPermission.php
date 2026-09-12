@@ -79,16 +79,7 @@ class CheckSelfOrPermission
                 return false;
             }
 
-            if ((int) $occurrence->employee_id === $employeeId) {
-                return true;
-            }
-
-            if ($occurrence->legacy_task_id) {
-                $legacy = EmployeeTask::find($occurrence->legacy_task_id);
-                if ($legacy && $this->employeeCanAccessTask($legacy, $employeeId, $assigneeService)) {
-                    return true;
-                }
-            }
+            return $assigneeService->canAccessOccurrence($occurrence, $employeeId);
         }
 
         return false;
@@ -106,4 +97,3 @@ class CheckSelfOrPermission
         return $assigneeService->isAssignee($task, $employeeId);
     }
 }
-

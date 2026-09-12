@@ -103,7 +103,7 @@ class EmployeeTaskListService
             'subtask_names' => $this->occurrenceSubtaskNames($task),
         ];
 
-        return $this->appendAssigneeFields($payload, $legacyTask, $photoResolver);
+        return $this->appendAssigneeFields($payload, $task, $photoResolver);
     }
 
     /**
@@ -329,14 +329,17 @@ class EmployeeTaskListService
      */
     private function appendAssigneeFields(
         array $payload,
-        ?EmployeeTask $legacyTask,
+        EmployeeTask|EmployeeTaskOccurrence|null $task,
         callable $photoResolver
     ): array {
         $assigneeService = app(EmployeeTaskAssigneeService::class);
 
-        if ($legacyTask instanceof EmployeeTask) {
-            $payload['assignee_ids'] = $assigneeService->idsForTask($legacyTask);
-            $payload['assignees'] = $assigneeService->profilesForTask($legacyTask, $photoResolver);
+        if ($task instanceof EmployeeTask) {
+            $payload['assignee_ids'] = $assigneeService->idsForTask($task);
+            $payload['assignees'] = $assigneeService->profilesForTask($task, $photoResolver);
+        } elseif ($task instanceof EmployeeTaskOccurrence) {
+            $payload['assignee_ids'] = $assigneeService->idsForOccurrence($task);
+            $payload['assignees'] = $assigneeService->profilesForOccurrence($task, $photoResolver);
         } else {
             $employeeId = (int) ($payload['employee_id'] ?? 0);
             $payload['assignee_ids'] = $employeeId > 0 ? [$employeeId] : [];

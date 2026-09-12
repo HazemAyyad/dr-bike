@@ -100,7 +100,14 @@ class EmployeeVisibleTasks
             ->where('is_canceled', 0)
             ->where(function ($query) use ($employeeId) {
                 $query->where('employee_id', $employeeId);
-                if (Schema::hasTable('employee_task_assignees')) {
+                if (Schema::hasTable('employee_task_occurrence_assignees')) {
+                    $query->orWhereExists(function ($sub) use ($employeeId) {
+                        $sub->selectRaw('1')
+                            ->from('employee_task_occurrence_assignees')
+                            ->whereColumn('employee_task_occurrence_assignees.occurrence_id', 'employee_task_occurrences.id')
+                            ->where('employee_task_occurrence_assignees.employee_id', $employeeId);
+                    });
+                } elseif (Schema::hasTable('employee_task_assignees')) {
                     $query->orWhereIn('legacy_task_id', function ($sub) use ($employeeId) {
                         $sub->select('employee_task_id')
                             ->from('employee_task_assignees')
@@ -300,13 +307,7 @@ class EmployeeVisibleTasks
             $completedByName = $completedBy?->user?->name;
         }
 
-        $assigneeIds = [(int) $task->employee_id];
-        if ($task->legacy_task_id) {
-            $legacy = EmployeeTask::find($task->legacy_task_id);
-            if ($legacy) {
-                $assigneeIds = app(EmployeeTaskAssigneeService::class)->idsForTask($legacy);
-            }
-        }
+        $assigneeIds = app(EmployeeTaskAssigneeService::class)->idsForOccurrence($task);
 
         return [
             'id' => $task->id,
@@ -486,17 +487,7 @@ class EmployeeVisibleTasks
 
     public static function canEmployeeExecuteOccurrence(EmployeeTaskOccurrence $task, int $viewerEmployeeId): bool
     {
-        $isPrimary = (int) $task->employee_id === $viewerEmployeeId;
-        $isCoAssignee = false;
-
-        if (! $isPrimary && $task->legacy_task_id) {
-            $legacy = EmployeeTask::find($task->legacy_task_id);
-            if ($legacy) {
-                $isCoAssignee = app(EmployeeTaskAssigneeService::class)->isAssignee($legacy, $viewerEmployeeId);
-            }
-        }
-
-        if (! $isPrimary && ! $isCoAssignee) {
+        if (! app(EmployeeTaskAssigneeService::class)->canAccessOccurrence($task, $viewerEmployeeId)) {
             return false;
         }
 
