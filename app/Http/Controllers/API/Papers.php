@@ -31,14 +31,24 @@ class Papers extends Controller
         return $imgNames;
     }
 
-    private function appendImagesWithoutDeleting(Request $request, Paper $paper): array
+    private function syncImagesWithoutDeletingFiles(Request $request, Paper $paper): array
     {
-        $files = collect($paper->img ?? [])->filter()->map(fn ($file) => basename((string) $file));
+        $currentFiles = collect($paper->img ?? [])
+            ->filter()
+            ->map(fn ($file) => $this->imageName((string) $file))
+            ->filter();
 
-        foreach ((array) $request->input('img', []) as $existing) {
-            if (is_string($existing) && $existing !== '') {
-                $files->push(basename($existing));
-            }
+        // Older app versions do not send retained_img. Preserve all current
+        // references for those clients, while newer versions may explicitly
+        // detach removed images from the paper record.
+        $files = $currentFiles;
+        if ($request->exists('retained_img')) {
+            $retained = collect(json_decode((string) $request->input('retained_img'), true) ?: [])
+                ->filter(fn ($file) => is_string($file) && $file !== '')
+                ->map(fn ($file) => $this->imageName($file))
+                ->filter();
+
+            $files = $currentFiles->filter(fn ($file) => $retained->contains($file));
         }
 
         if ($request->hasFile('img')) {
@@ -51,6 +61,13 @@ class Papers extends Controller
         }
 
         return $files->unique()->values()->all();
+    }
+
+    private function imageName(string $reference): string
+    {
+        $path = parse_url($reference, PHP_URL_PATH);
+
+        return basename(is_string($path) ? $path : $reference);
     }
     public function store(Request $request){
         try{
@@ -315,11 +332,13 @@ class Papers extends Controller
                         }
                     },
                 ],
+                'retained_img' => 'sometimes|string|json',
                 'notes'=>'nullable|string',
             ]);
 
             $paper = Paper::findOrFail($request->paper_id);
-            $data['img'] = $this->appendImagesWithoutDeleting($request, $paper);
+            $data['img'] = $this->syncImagesWithoutDeletingFiles($request, $paper);
+            unset($data['retained_img']);
             $paper->update($data);
             return response()->json([
                 'status'=>'success',
