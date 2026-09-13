@@ -69,7 +69,10 @@ class ProductStockService
     public function resolveAvailableStock(Product $product, ?int $sizeColorId = null): int
     {
         if ($sizeColorId !== null && $sizeColorId > 0) {
-            $variant = SizeColor::query()->find($sizeColorId);
+            $variant = SizeColor::query()
+                ->whereKey($sizeColorId)
+                ->whereHas('size', fn ($query) => $query->where('itemId', $product->id))
+                ->first();
             if (! $variant instanceof SizeColor) {
                 return 0;
             }
@@ -203,6 +206,12 @@ class ProductStockService
         bool $allowNegative = false,
     ): array {
         return DB::transaction(function () use ($product, $quantity, $sizeColorId, $sizeId, $referenceType, $referenceId, $note, $userId, $allowNegative) {
+            if ($quantity <= 0) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'quantity' => [__('messages.validation_failed')],
+                ]);
+            }
+
             $lockedProduct = Product::lockForUpdate()->findOrFail($product->id);
             $result = [
                 'product_id' => (int) $lockedProduct->id,
@@ -213,10 +222,19 @@ class ProductStockService
             ];
 
             if ($sizeColorId !== null && $sizeColorId > 0) {
-                $variant = SizeColor::lockForUpdate()->findOrFail($sizeColorId);
+                $variant = SizeColor::query()
+                    ->whereKey($sizeColorId)
+                    ->whereHas('size', fn ($query) => $query->where('itemId', $lockedProduct->id))
+                    ->lockForUpdate()
+                    ->firstOrFail();
                 $before = (int) $variant->stock;
-                $after = $allowNegative ? $before - $quantity : max(0, $before - $quantity);
-                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId);
+                if ($before < $quantity) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'quantity' => [__('messages.cant_sale')],
+                    ]);
+                }
+                $after = $before - $quantity;
+                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId ?? (int) $variant->sizeId);
                 $variant->update(['stock' => $after]);
                 $result = [
                     'product_id' => (int) $lockedProduct->id,
@@ -240,14 +258,20 @@ class ProductStockService
                     userId: $userId,
                     unitCost: $cost['unit_cost'] ?? null,
                     totalCost: $cost['total_cost'] ?? null,
+                    costingMethod: $cost['method'] ?? null,
                 );
                 $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
 
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
             } else {
                 $before = (int) $lockedProduct->stock;
-                $after = $allowNegative ? $before - $quantity : max(0, $before - $quantity);
-                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId);
+                if ($before < $quantity) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'quantity' => [__('messages.cant_sale')],
+                    ]);
+                }
+                $after = $before - $quantity;
+                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, null, null);
                 $lockedProduct->update(['stock' => $after]);
                 $result = [
                     'product_id' => (int) $lockedProduct->id,
@@ -271,6 +295,7 @@ class ProductStockService
                     userId: $userId,
                     unitCost: $cost['unit_cost'] ?? null,
                     totalCost: $cost['total_cost'] ?? null,
+                    costingMethod: $cost['method'] ?? null,
                 );
                 $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
             }
@@ -305,108 +330,43 @@ class ProductStockService
                 return;
             }
 
-            $restoredTotalCost = $totalCost ?? ($unitCost !== null ? $unitCost * $quantity : null);
+            $unitCost ??= $this->resolveRestorationUnitCost(
+                (int) $lockedProduct->id,
+                $sizeColorId,
+                $referenceType,
+                $referenceId,
+            );
+            $movementType = $referenceType === 'sales_return'
+                ? ProductStockMovement::TYPE_SALES_RETURN
+                : ProductStockMovement::TYPE_SALE_CANCEL;
 
-            if ($sizeColorId !== null && $sizeColorId > 0) {
-                $variant = SizeColor::lockForUpdate()->find($sizeColorId);
-                if (! $variant instanceof SizeColor) {
-                    return;
-                }
-
-                $before = (int) $variant->stock;
-                $after = $before + $quantity;
-                $this->createRestoredCostLayer(
-                    $lockedProduct,
-                    $quantity,
-                    $unitCost,
-                    $sizeId ?? (int) $variant->sizeId,
-                    $sizeColorId,
-                    $costSourceType ?? $referenceType ?? 'sale_return',
-                    $costSourceId ?? $referenceId,
-                );
-                $variant->update(['stock' => $after]);
-
-                $this->logMovement(
-                    productId: (int) $lockedProduct->id,
-                    sizeId: $sizeId ?? (int) $variant->sizeId,
+            if ($unitCost !== null) {
+                app(InventoryCostingService::class)->addOwnedStock(
+                    product: $lockedProduct,
+                    quantity: $quantity,
+                    unitCost: $unitCost,
+                    currency: 'شيكل',
+                    sourceType: $costSourceType ?? $referenceType ?? 'sale_return',
+                    sourceId: $costSourceId ?? $referenceId,
                     sizeColorId: $sizeColorId,
-                    type: $referenceType === 'sales_return'
-                        ? ProductStockMovement::TYPE_SALES_RETURN
-                        : ProductStockMovement::TYPE_SALE_CANCEL,
-                    quantity: $quantity,
-                    stockBefore: $before,
-                    stockAfter: $after,
-                    referenceType: $referenceType,
-                    referenceId: $referenceId,
-                    note: $note,
+                    sizeId: $sizeId,
                     userId: $userId,
-                    unitCost: $unitCost,
-                    totalCost: $restoredTotalCost,
+                    note: $note,
+                    movementType: $movementType,
+                    reason: $note,
+                    movementReferenceType: $referenceType,
+                    movementReferenceId: $referenceId,
                 );
 
-                $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
-            } else {
-                $before = (int) $lockedProduct->stock;
-                $after = $before + $quantity;
-                $this->createRestoredCostLayer(
-                    $lockedProduct,
-                    $quantity,
-                    $unitCost,
-                    null,
-                    null,
-                    $costSourceType ?? $referenceType ?? 'sale_return',
-                    $costSourceId ?? $referenceId,
-                );
-                Product::withTrashed()->where('id', $lockedProduct->id)->update(['stock' => $after]);
+                $this->refreshCloseoutStatus((int) $lockedProduct->id, reopen: true);
 
-                $this->logMovement(
-                    productId: (int) $lockedProduct->id,
-                    sizeId: null,
-                    sizeColorId: null,
-                    type: $referenceType === 'sales_return'
-                        ? ProductStockMovement::TYPE_SALES_RETURN
-                        : ProductStockMovement::TYPE_SALE_CANCEL,
-                    quantity: $quantity,
-                    stockBefore: $before,
-                    stockAfter: $after,
-                    referenceType: $referenceType,
-                    referenceId: $referenceId,
-                    note: $note,
-                    userId: $userId,
-                    unitCost: $unitCost,
-                    totalCost: $restoredTotalCost,
-                );
+                return;
             }
 
-            $this->refreshCloseoutStatus((int) $lockedProduct->id, reopen: true);
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'inventory' => ['تعذر تحديد تكلفة المخزون المرتجع من حركة البيع الأصلية. يلزم إجراء مراجعة إدارية قبل الاستعادة.'],
+            ]);
         });
-    }
-
-    private function createRestoredCostLayer(
-        Product $product,
-        int $quantity,
-        ?float $unitCost,
-        ?int $sizeId,
-        ?int $sizeColorId,
-        string $sourceType,
-        ?int $sourceId,
-    ): void {
-        if ($unitCost === null || ! Schema::hasTable('inventory_cost_layers')) {
-            return;
-        }
-
-        InventoryCostLayer::create([
-            'product_id' => $product->id,
-            'size_id' => $sizeId,
-            'size_color_id' => $sizeColorId,
-            'quantity' => $quantity,
-            'remaining_quantity' => $quantity,
-            'unit_cost' => $unitCost,
-            'currency' => 'شيكل',
-            'source_type' => $sourceType,
-            'source_id' => $sourceId,
-            'effective_at' => now(),
-        ]);
     }
 
     public function adjustStock(
@@ -420,18 +380,29 @@ class ProductStockService
         ?int $userId = null,
         ?float $unitCost = null,
         ?float $totalCost = null,
+        ?string $costingMethod = null,
+        ?string $reason = null,
     ): void {
         if ($quantityDelta === 0) {
             return;
         }
 
-        DB::transaction(function () use ($product, $quantityDelta, $type, $sizeColorId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost) {
+        DB::transaction(function () use ($product, $quantityDelta, $type, $sizeColorId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost, $costingMethod, $reason) {
             $lockedProduct = Product::lockForUpdate()->findOrFail($product->id);
 
             if ($sizeColorId !== null && $sizeColorId > 0) {
-                $variant = SizeColor::lockForUpdate()->findOrFail($sizeColorId);
+                $variant = SizeColor::query()
+                    ->whereKey($sizeColorId)
+                    ->whereHas('size', fn ($query) => $query->where('itemId', $lockedProduct->id))
+                    ->lockForUpdate()
+                    ->firstOrFail();
                 $before = (int) $variant->stock;
-                $after = max(0, $before + $quantityDelta);
+                $after = $before + $quantityDelta;
+                if ($after < 0) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'actual_quantity' => [__('messages.cant_sale')],
+                    ]);
+                }
                 $variant->update(['stock' => $after]);
 
                 $this->logMovement(
@@ -448,12 +419,19 @@ class ProductStockService
                     userId: $userId,
                     unitCost: $unitCost,
                     totalCost: $totalCost,
+                    costingMethod: $costingMethod,
+                    reason: $reason,
                 );
 
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
             } else {
                 $before = (int) $lockedProduct->stock;
-                $after = max(0, $before + $quantityDelta);
+                $after = $before + $quantityDelta;
+                if ($after < 0) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'actual_quantity' => [__('messages.cant_sale')],
+                    ]);
+                }
                 $lockedProduct->update(['stock' => $after]);
 
                 $this->logMovement(
@@ -470,6 +448,8 @@ class ProductStockService
                     userId: $userId,
                     unitCost: $unitCost,
                     totalCost: $totalCost,
+                    costingMethod: $costingMethod,
+                    reason: $reason,
                 );
             }
 
@@ -593,7 +573,7 @@ class ProductStockService
         ];
     }
 
-    private function logMovement(
+    public function logMovement(
         int $productId,
         ?int $sizeId,
         ?int $sizeColorId,
@@ -607,6 +587,9 @@ class ProductStockService
         ?int $userId,
         ?float $unitCost = null,
         ?float $totalCost = null,
+        ?string $costingMethod = null,
+        ?string $reason = null,
+        ?int $reversalOfId = null,
     ): void {
         if (! Schema::hasTable('product_stock_movements')) {
             return;
@@ -632,6 +615,15 @@ class ProductStockService
         if (Schema::hasColumn('product_stock_movements', 'total_cost')) {
             $payload['total_cost'] = $totalCost;
         }
+        if (Schema::hasColumn('product_stock_movements', 'costing_method')) {
+            $payload['costing_method'] = $costingMethod;
+        }
+        if (Schema::hasColumn('product_stock_movements', 'reason')) {
+            $payload['reason'] = $reason;
+        }
+        if (Schema::hasColumn('product_stock_movements', 'reversal_of_id')) {
+            $payload['reversal_of_id'] = $reversalOfId;
+        }
 
         ProductStockMovement::create($payload);
     }
@@ -643,31 +635,34 @@ class ProductStockService
         Product $product,
         int $quantity,
         ?string $referenceType,
-        ?int $referenceId
+        ?int $referenceId,
+        ?int $sizeColorId,
+        ?int $sizeId,
     ): ?array {
-        if ($quantity <= 0 || ! in_array($referenceType, ['instant_sale', 'sales_order', 'maintenance'], true)) {
+        if ($quantity <= 0 || ! in_array($referenceType, ['instant_sale', 'sales_order', 'maintenance', 'offer_package'], true)) {
             return null;
         }
 
         if (! Schema::hasTable('inventory_cost_layers') || ! Schema::hasTable('inventory_cost_allocations')) {
-            return null;
+            throw new \RuntimeException('Inventory costing tables are not available.');
         }
 
         $available = (float) InventoryCostLayer::query()
             ->where('product_id', $product->id)
+            ->when($sizeColorId !== null && $sizeColorId > 0,
+                fn ($query) => $query->where('size_color_id', $sizeColorId),
+                fn ($query) => $query->whereNull('size_color_id'))
             ->where('remaining_quantity', '>', 0)
             ->sum('remaining_quantity');
-
-        if ($available + 0.0001 < $quantity) {
-            return null;
-        }
 
         try {
             $cost = app(InventoryCostingService::class)->consumeCost(
                 $product,
                 $quantity,
                 $referenceType ?? 'stock_out',
-                $referenceId
+                $referenceId,
+                $sizeColorId,
+                $sizeId,
             );
 
             return [
@@ -688,6 +683,31 @@ class ProductStockService
 
             throw $e;
         }
+    }
+
+    private function resolveRestorationUnitCost(
+        int $productId,
+        ?int $sizeColorId,
+        ?string $referenceType,
+        ?int $referenceId,
+    ): ?float {
+        if (! Schema::hasTable('product_stock_movements')) {
+            return null;
+        }
+
+        $movement = ProductStockMovement::query()
+            ->where('product_id', $productId)
+            ->where('quantity', '<', 0)
+            ->when($sizeColorId !== null && $sizeColorId > 0,
+                fn ($query) => $query->where('size_color_id', $sizeColorId),
+                fn ($query) => $query->whereNull('size_color_id'))
+            ->when($referenceType, fn ($query) => $query->where('reference_type', $referenceType))
+            ->when($referenceId, fn ($query) => $query->where('reference_id', $referenceId))
+            ->whereNotNull('unit_cost')
+            ->latest('id')
+            ->first();
+
+        return $movement?->unit_cost !== null ? (float) $movement->unit_cost : null;
     }
 
     private function persistOutboundCostSnapshot(

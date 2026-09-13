@@ -160,6 +160,7 @@ class PurchasingService
                         sizeId: $billItem->size_id,
                         userId: $userId,
                         note: 'استلام شراء #'.$bill->id,
+                        idempotencyKey: 'purchase-receipt-item:'.$receiptItem->id,
                     );
                     $this->recordPurchasePrice($bill, $billItem, $unitPrice, $accepted, $bill->currency, $unitPrice !== (float) $billItem->price, $userId, $receiptItem->id);
                 }

@@ -216,7 +216,6 @@ class StoreSectionController extends Controller
                     'normalImages',
                     'image3d',
                     'storeSection:id,name',
-                    'purchasePrices' => fn ($q) => $q->latest('id'),
                 ])
                 ->select(
                     'id',
@@ -248,8 +247,13 @@ class StoreSectionController extends Controller
                     (int) $request->input('page', 1)
                 );
 
-            $formatted = $products->getCollection()->map(function (Product $product) {
+            $canViewCost = $request->user()?->canViewInventoryCost() ?? false;
+            $formatted = $products->getCollection()->map(function (Product $product) use ($canViewCost) {
                 $images = ProductImageResolver::formatForList($product);
+                $inventory = $canViewCost
+                    ? app(\App\Services\InventoryCostingService::class)->productSummary($product, true, 0)
+                    : null;
+                $cost = $inventory['average_inventory_unit_cost'] ?? null;
 
                 return [
                     'product_id' => $product->id,
@@ -259,8 +263,11 @@ class StoreSectionController extends Controller
                     'product_min_stock' => $product->min_stock,
                     'product_normail_price' => $product->normailPrice,
                     'product_wholesale_price' => $product->wholesalePrice,
-                    'cost_price' => optional($product->purchasePrices->first())->price,
-                    'has_cost_price' => optional($product->purchasePrices->first())->price !== null,
+                    'cost_price' => $cost,
+                    'has_cost_price' => $cost !== null,
+                    'inventory_value' => $inventory['inventory_value'] ?? null,
+                    'inventory_costing_method' => $inventory['costing_method'] ?? null,
+                    'cost_price_basis' => $canViewCost ? 'inventory_engine_average_remaining' : null,
                     'product_price' => $product->price,
                     'discount' => $product->discount,
                     'rotation_date' => $product->rotation_date,

@@ -19,6 +19,14 @@ class User extends Authenticatable
     /** اسم صلاحية عرض/تعديل سعر التكلفة (name_en في جدول permissions). */
     public const COST_PRICE_PERMISSION = 'Cost Price';
 
+    public const VIEW_INVENTORY_COST_PERMISSION = 'View Inventory Cost';
+
+    public const ADJUST_STOCK_PERMISSION = 'Adjust Stock';
+
+    public const ADJUST_INVENTORY_COST_PERMISSION = 'Adjust Inventory Cost';
+
+    public const MANAGE_PURCHASES_PERMISSION = 'Manage Purchases';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -106,6 +114,44 @@ class User extends Authenticatable
         }
 
         return false;
+    }
+
+    public function hasEmployeePermission(string ...$permissions): bool
+    {
+        if ($this->type === 'admin') {
+            return true;
+        }
+
+        if ($this->type !== 'employee' || ! $this->employee || $permissions === []) {
+            return false;
+        }
+
+        return $this->employee->permissions()
+            ->whereHas('permission', fn ($query) => $query->whereIn('name_en', $permissions))
+            ->exists();
+    }
+
+    public function canViewInventoryCost(): bool
+    {
+        return $this->hasEmployeePermission(
+            self::VIEW_INVENTORY_COST_PERMISSION,
+            self::COST_PRICE_PERMISSION,
+        );
+    }
+
+    public function canAdjustStock(): bool
+    {
+        return $this->hasEmployeePermission(self::ADJUST_STOCK_PERMISSION, 'Stock');
+    }
+
+    public function canAdjustInventoryCost(): bool
+    {
+        return $this->hasEmployeePermission(self::ADJUST_INVENTORY_COST_PERMISSION);
+    }
+
+    public function canManagePurchases(): bool
+    {
+        return $this->hasEmployeePermission(self::MANAGE_PURCHASES_PERMISSION, 'Purchasing Section');
     }
 
     public function adminDeviceTokens()

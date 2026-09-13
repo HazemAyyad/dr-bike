@@ -942,6 +942,8 @@ class SalesReturnService
 
     private function fallbackUnitCost(int $productId): float
     {
-        return (float) (Product::withTrashed()->find($productId)?->purchasePrices()->latest('id')->value('price') ?? 0);
+        throw ValidationException::withMessages([
+            'inventory' => ['لا توجد لقطة تكلفة تاريخية لعملية بيع المنتج #'.$productId.'. يجب مراجعة العملية إدارياً قبل تسجيل المرتجع.'],
+        ]);
     }
 }

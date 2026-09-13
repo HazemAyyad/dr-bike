@@ -10,6 +10,7 @@ use App\Support\ProductSearchFilter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use ZipArchive;
 
 class StockImagesZipExportService
@@ -114,10 +115,22 @@ class StockImagesZipExportService
         }
 
         if ($admin && ! empty($filters['cost_price_status'])) {
-            if ($filters['cost_price_status'] === 'with') {
-                $query->whereHas('purchasePrices', fn ($q) => $q->where('price', '>', 0));
-            } elseif ($filters['cost_price_status'] === 'without') {
-                $query->whereDoesntHave('purchasePrices', fn ($q) => $q->where('price', '>', 0));
+            $status = (string) $filters['cost_price_status'];
+            if (! Schema::hasTable('inventory_cost_layers')) {
+                if ($status === 'with') {
+                    $query->whereRaw('1 = 0');
+                }
+            } else {
+                $costLayerExists = fn ($subQuery) => $subQuery
+                    ->selectRaw('1')
+                    ->from('inventory_cost_layers')
+                    ->whereColumn('inventory_cost_layers.product_id', 'products.id')
+                    ->where('inventory_cost_layers.remaining_quantity', '>', 0);
+                if ($status === 'with') {
+                    $query->whereExists($costLayerExists);
+                } elseif ($status === 'without') {
+                    $query->whereNotExists($costLayerExists);
+                }
             }
         }
 

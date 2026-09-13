@@ -6,11 +6,17 @@ use App\Http\Controllers\Controller;
 use App\Models\Bill;
 use App\Models\BillItem;
 use App\Models\BillQuantity;
+use App\Models\Category;
 use App\Models\Debt;
 use App\Models\Product;
+use App\Models\Size;
+use App\Models\SizeColor;
+use App\Models\SubCategory;
+use App\Models\SubCategoryProduct;
 use App\Models\PurchaseAmanatStock;
 use App\Models\PurchaseAttachment;
 use App\Models\PurchaseProduct;
+use App\Models\PurchaseReceiptItem;
 use App\Services\PurchaseAccountService;
 use App\Services\PurchaseAttachmentService;
 use App\Services\PurchasingService;
@@ -20,10 +26,113 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class Bills extends Controller
 {
+
+    public function purchaseProductOptions()
+    {
+        return response()->json([
+            'status' => 'success',
+            'categories' => Category::query()->select('id', 'nameAr')->orderBy('nameAr')->get(),
+            'sub_categories' => SubCategory::query()->select('id', 'nameAr', 'mainCategoryId')->orderBy('nameAr')->get(),
+        ]);
+    }
+
+    /** Create master data only. Stock remains zero until Purchase Receive. */
+    public function quickCreateProduct(Request $request)
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:500'],
+            'product_code' => ['nullable', 'string', 'max:6', 'unique:products,product_code'],
+            'category_id' => ['required', 'integer', 'exists:categories,id'],
+            'sub_category_id' => ['nullable', 'integer', 'exists:sub_categories,id'],
+            'retail_price' => ['required', 'numeric', 'min:0'],
+            'wholesale_price' => ['nullable', 'numeric', 'min:0'],
+            'minimum_sale_price' => ['nullable', 'numeric', 'min:0'],
+            'minimum_stock' => ['nullable', 'numeric', 'min:0'],
+            'size' => ['nullable', 'string', 'max:50'],
+            'color' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $product = DB::transaction(function () use ($data, $request) {
+            $lastProductId = (int) (Product::withTrashed()->orderByDesc('id')->lockForUpdate()->value('id') ?? 0);
+            $product = Product::query()->create([
+                'id' => $lastProductId + 1,
+                'product_code' => $data['product_code'] ?? null,
+                'category_id' => (int) $data['category_id'],
+                'nameAr' => trim($data['name']),
+                'nameEng' => trim($data['name']),
+                'nameAbree' => trim($data['name']),
+                'descriptionAr' => '',
+                'descriptionEng' => '',
+                'descriptionAbree' => '',
+                'normailPrice' => (float) $data['retail_price'],
+                'wholesalePrice' => (float) ($data['wholesale_price'] ?? 0),
+                'min_sale_price' => $data['minimum_sale_price'] ?? null,
+                'min_stock' => (float) ($data['minimum_stock'] ?? 0),
+                'discount' => 0,
+                'stock' => 0,
+                'isShow' => true,
+                'is_sold_with_paper' => 0,
+                'userIdAdd' => $request->user()?->id,
+                'dateAdd' => now(),
+            ]);
+
+            if (! empty($data['sub_category_id'])) {
+                $subCategory = SubCategory::query()
+                    ->whereKey($data['sub_category_id'])
+                    ->where('mainCategoryId', $data['category_id'])
+                    ->firstOrFail();
+                SubCategoryProduct::query()->create([
+                    'product_id' => $product->id,
+                    'sub_category_id' => $subCategory->id,
+                ]);
+            }
+
+            if (! empty($data['size']) || ! empty($data['color'])) {
+                $lastSizeId = (int) (Size::query()->orderByDesc('id')->lockForUpdate()->value('id') ?? 0);
+                $size = Size::query()->create([
+                    'id' => $lastSizeId + 1,
+                    'itemId' => $product->id,
+                    'size' => trim((string) ($data['size'] ?? 'عام')) ?: 'عام',
+                ]);
+                $lastVariantId = (int) (SizeColor::query()->orderByDesc('id')->lockForUpdate()->value('id') ?? 0);
+                SizeColor::query()->create([
+                    'id' => $lastVariantId + 1,
+                    'sizeId' => $size->id,
+                    'colorAr' => trim((string) ($data['color'] ?? 'عام')) ?: 'عام',
+                    'colorEn' => '',
+                    'colorAbbr' => '',
+                    'normailPrice' => (float) $data['retail_price'],
+                    'wholesalePrice' => (float) ($data['wholesale_price'] ?? 0),
+                    'discount' => 0,
+                    'stock' => 0,
+                ]);
+            }
+
+            return $product->fresh(['sizes.colorSizes']);
+        }, 3);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => __('messages.product_created'),
+            'product' => [
+                'id' => (string) $product->id,
+                'nameAr' => $product->nameAr,
+                'product_code' => $product->product_code,
+                'stock' => '0',
+                'normailPrice' => (float) $product->normailPrice,
+                'wholesalePrice' => (float) $product->wholesalePrice,
+                'purchase_cost' => 0,
+                'has_variants' => $product->sizes->isNotEmpty(),
+                'sizes' => $product->sizes,
+                'projects' => [],
+            ],
+        ]);
+    }
 
         //DONE
     public function createBill(Request $request){
@@ -885,70 +994,11 @@ private function getBills($statuses)
 
 
     public function createBillQuantity(Request $request){
-                try{
-            $data = $request->validate([
-                'products.*'=>['required','array'],
-
-                'products.*.product_id'=>['required','integer','exists:products,id'],
-                'products.*.quantity'=>['required','integer','min:1'],
-
-            ]);
-
-                $storeSyncWarnings = [];
-                foreach($request->products as $item){
-                    $product = Product::findOrFail($item['product_id']);
-                    $product->update(['stock'=> $product->stock+ $item['quantity']]);
-
-                    BillQuantity::create([
-                        'product_id'=> $product->id,
-                        'quantity' => $item['quantity'],
-                    ]);
-
-                    $sync = app(StoreManageItemService::class)->syncProductStockToStore($product->fresh());
-                    if (! ($sync['ok'] ?? false)) {
-                        $storeSyncWarnings[] = ($sync['error'] ?? __('messages.something_wrong')).' (منتج '.$product->id.')';
-                    }
-
-                }
-
-                $payload = [
-                'status'=>'success',
-                'message'=> __('messages.bill_quantity_added'),
-            ];
-                if (count($storeSyncWarnings) > 0) {
-                    $payload['store_sync_warnings'] = $storeSyncWarnings;
-                }
-
-                return response()->json($payload,200);
-            
-        }
-
-             catch(ValidationException $e){
-                return response([
-                    'status'=>'error',
-                    'message' => __('messages.validation_failed'),
-                    'error' => $e->errors(),
-                ],200);
-            }
-
-
-        catch(QueryException $e){
-                return response([
-                    'status'=>'error',
-                    'message' => __('messages.something_wrong'),
-                ],200);
-            }
-            
-
-            catch (\Exception $e) {
-                return response()->json([
-                    'status' => 'error',
-                    'message' => __('messages.something_wrong'),
-                ], 200);
-            }
-
-
-}
+        return response()->json([
+            'status' => 'error',
+            'message' => 'تم إيقاف إضافة الكمية المباشرة. استخدم استلام المشتريات أو تسوية المخزون.',
+        ], 422);
+    }
 
     // *********************BILL STATUS ***********************
     // غير معالجة
@@ -1172,9 +1222,6 @@ private function getBills($statuses)
                 $bill->total -= $amountToReduce;
                 $bill->save();
 
-               $billItem->product()->decrement('stock', $request->missing_amount);
-
-
                 $billItem->update(['status'=>'finished']);
                 $this->changeProductStatusToFinished($billItem, $request->bill_id);
 
@@ -1199,10 +1246,6 @@ private function getBills($statuses)
                 $bill->total -= $amountToReduce;
                 $bill->save();
          
-                $product = $billItem->product;
-                $product->stock -= $request->not_compatible_amount;
-                $product->save();
-
             }
 
             elseif($request->status==='extra'){
@@ -1316,10 +1359,6 @@ private function getBills($statuses)
             $bill->total += $amountToAdd;
             $bill->save();
 
-
-            $product = Product::findOrFail($billItem->product_id);
-            $product->stock += $billItem->extra_amount;
-            $product->save();
 
             $billItem->update(['status'=>'finished']);
             $this->changeProductStatusToFinished($billItem, $request->bill_id);
@@ -1508,20 +1547,26 @@ private function getBills($statuses)
                 'bill_id'=>'required|integer|exists:bills,id',
             ]);
 
-            $bill = Bill::findOrFail($request->bill_id);
-            $bill->update(['status'=>'cancelled']);
-            $bill->items()->update(['status'=>'cancelled']);
+            $bill = DB::transaction(function () use ($request) {
+                $bill = Bill::query()->lockForUpdate()->findOrFail($request->bill_id);
+                $hasReceipts = PurchaseReceiptItem::query()
+                    ->whereHas('receipt', fn ($query) => $query->where('bill_id', $bill->id))
+                    ->exists();
+                if ($hasReceipts) {
+                    throw ValidationException::withMessages([
+                        'bill_id' => ['لا يمكن إلغاء فاتورة استُلم منها مخزون. استخدم مرتجع شراء موثق.'],
+                    ]);
+                }
+                $bill->update(['status'=>'cancelled', 'workflow_status' => 'cancelled']);
+                $bill->items()->update(['status'=>'cancelled']);
+
+                return $bill->fresh(['seller', 'customer']);
+            });
 
 
-
-            foreach($bill->items as $item){
-                $item->product->update(['stock' => $item->product->stock - $item->quantity ]);
-                    PurchaseProduct::where('seller_id',$bill->seller_id)
-                    ->where('product_id',$item->product_id)->delete();
-            }
 
             Logs::createLog('ارجاع فاتورة ','تم ارجاع فاتورة  للتاجر'.' '
-            .$bill->seller->name.' '.'بقيمة'.' '.$bill->total,'bills');
+            .($bill->seller?->name ?? $bill->customer?->name ?? '').' '.'بقيمة'.' '.$bill->total,'bills');
 
 
             return response()->json([

@@ -55,7 +55,6 @@ class Products extends Controller
                 'image3d',
                 'storeSection:id,name',
                 'sizes.colorSizes',
-                'purchasePrices' => fn ($q) => $q->orderByDesc('id'),
             ]);
 
         ProductSearchFilter::apply($products, $request->input('search'));
@@ -88,7 +87,7 @@ class Products extends Controller
                 'store_section_id',
             ]);
 
-        $canViewCostPrice = $request->user()?->canViewCostPrice() ?? false;
+        $canViewCostPrice = $request->user()?->canViewInventoryCost() ?? false;
 
         $formatted = $products
           ->reject(fn ($product) => (bool) ($settings->get($product->id)?->is_hidden ?? false))
@@ -150,7 +149,7 @@ class Products extends Controller
 
         $stockService = app(ProductStockService::class);
         $settings = $this->personProductSettingsForRequest($request);
-        $canViewCostPrice = $request->user()?->canViewCostPrice() ?? false;
+        $canViewCostPrice = $request->user()?->canViewInventoryCost() ?? false;
         $products = Product::query()
             ->with([
                 'projects:product_id,project_id',
@@ -159,7 +158,6 @@ class Products extends Controller
                 'image3d',
                 'storeSection:id,name',
                 'sizes.colorSizes',
-                'purchasePrices' => fn ($q) => $q->orderByDesc('id'),
             ])
             ->get([
                 'id',
@@ -532,8 +530,15 @@ class Products extends Controller
                 ->all();
 
         if ($includeCostPrice) {
-            $row['purchase_cost'] = (float) ($product->purchasePrices->first()?->price ?? 0);
+            $inventory = app(\App\Services\InventoryCostingService::class)
+                ->productSummary($product, true, 0);
+            $row['purchase_cost'] = (float) ($inventory['average_inventory_unit_cost'] ?? 0);
+            // Deprecated compatibility alias: authoritative average remaining inventory cost.
             $row['cost_price'] = $row['purchase_cost'];
+            $row['inventory_value'] = (float) ($inventory['inventory_value'] ?? 0);
+            $row['next_fifo_unit_cost'] = $inventory['next_fifo_unit_cost'] ?? null;
+            $row['inventory_costing_method'] = $inventory['costing_method'];
+            $row['inventory_cost_coverage_complete'] = (bool) $inventory['cost_coverage_complete'];
         }
 
         return $row;

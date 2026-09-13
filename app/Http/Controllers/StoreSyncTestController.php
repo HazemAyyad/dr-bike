@@ -45,9 +45,9 @@ class StoreSyncTestController extends Controller
 
         $addQty = (int) ($validated['add_quantity'] ?? 0);
         if ($addQty > 0) {
-            $product->stock = (int) $product->stock + $addQty;
-            $product->save();
-            $pageLog('زيادة محلية', ['add_quantity' => $addQty, 'stock_بعد' => $product->stock]);
+            return back()->withErrors([
+                'add_quantity' => 'تم إيقاف الزيادة المباشرة. استخدم تسوية المخزون مع تكلفة الوحدة وسبب التسوية.',
+            ]);
         }
 
         $product = $product->fresh();

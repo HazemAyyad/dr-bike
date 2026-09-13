@@ -1690,11 +1690,12 @@ public function store(Request $request)
                 $mainInstantSale->fresh(['product', 'offerPackage', 'paymentBox'])
             );
 
+            $stockService = app(ProductStockService::class);
             foreach ($package->items as $item) {
                 $lineQty = (int) $item->quantity * $packagesSold;
                 $subProduct = Product::findOrFail($item->product_id);
 
-                InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
+                $packageLine = InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                     'product_id' => $item->product_id,
                     'cost' => 0,
                     'quantity' => $lineQty,
@@ -1705,16 +1706,14 @@ public function store(Request $request)
                     'project_id' => $data['project_id'] ?? null,
                 ], $buyerPayload)));
 
-                $subProduct->stock -= $lineQty;
-                $subProduct->save();
-
-                if ((float) $subProduct->stock === 0.0) {
-                    $closeout = $subProduct->closeout;
-                    if ($closeout) {
-                        $closeout->status = 'archived';
-                        $closeout->save();
-                    }
-                }
+                $stockService->deductForSale(
+                    product: $subProduct,
+                    quantity: $lineQty,
+                    referenceType: 'instant_sale',
+                    referenceId: (int) $packageLine->id,
+                    note: 'بيع مكوّن ضمن حزمة #'.$package->id,
+                    userId: $request->user()?->id,
+                );
             }
 
             $offerPackageService->decrementPackageQuantity($package, $packagesSold);
@@ -1749,7 +1748,7 @@ public function store(Request $request)
                     $lineQty = (float) $item['quantity'];
                     $lineTotal = $lineCost * $lineQty;
 
-                    InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
+                    $extraLine = InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                         'product_id' => $item['product_id'],
                         'cost' => $lineCost,
                         'quantity' => $lineQty,
@@ -1760,16 +1759,14 @@ public function store(Request $request)
                         'project_id' => $item['project_id'] ?? null,
                     ], $buyerPayload)));
 
-                    $subProduct->stock -= $lineQty;
-                    $subProduct->save();
-
-                    if ((float) $subProduct->stock === 0.0) {
-                        $closeout = $subProduct->closeout;
-                        if ($closeout) {
-                            $closeout->status = 'archived';
-                            $closeout->save();
-                        }
-                    }
+                    $stockService->deductForSale(
+                        product: $subProduct,
+                        quantity: (int) round($lineQty),
+                        referenceType: 'instant_sale',
+                        referenceId: (int) $extraLine->id,
+                        note: 'منتج إضافي ضمن بيع حزمة #'.$package->id,
+                        userId: $request->user()?->id,
+                    );
 
                     $extraProductNames[] = $subProduct->nameAr ?? 'بدون اسم';
                 }
@@ -2266,19 +2263,10 @@ public function edit(Request $request)
                 $newQuantity = (float) $data['quantity'];
                 $quantityDelta = $newQuantity - $oldQuantity;
 
-                if (! $isAdjustmentSale && $quantityDelta > 0) {
-                    $product = $instantSale->product ?? Product::findOrFail($instantSale->product_id);
-                    if ($product->stock < $quantityDelta) {
-                        throw ValidationException::withMessages([
-                            'quantity' => [__('messages.cant_sale')],
-                        ]);
-                    }
-                    $product->stock -= $quantityDelta;
-                    $product->save();
-                } elseif (! $isAdjustmentSale && $quantityDelta < 0) {
-                    $product = $instantSale->product ?? Product::findOrFail($instantSale->product_id);
-                    $product->stock += abs($quantityDelta);
-                    $product->save();
+                if (! $isAdjustmentSale && abs($quantityDelta) > 0.0001) {
+                    throw ValidationException::withMessages([
+                        'quantity' => ['تعديل كمية البيع يتطلب إعادة إرسال بنود الفاتورة كاملة حتى يتم عكس المخزون والتكلفة ثم احتسابهما من جديد.'],
+                    ]);
                 }
 
                 $newTotal = (float) $data['total_cost'];

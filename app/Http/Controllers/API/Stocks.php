@@ -8,11 +8,11 @@ use App\Models\AppSetting;
 use App\Models\Category;
 use App\Models\Closeout;
 use App\Models\Combination;
+use App\Models\InventoryAdjustment;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\ProductAssemblyRecipe;
 use App\Models\Project;
-use App\Models\PurchaseProduct;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\StockImageExport;
@@ -20,6 +20,7 @@ use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\WholesaleProduct;
 use App\Services\ProductFormService;
+use App\Services\InventoryCostingService;
 use App\Services\StockImagesZipExportService;
 use App\Services\ProductTagService;
 use App\Services\StoreManageItemService;
@@ -109,7 +110,7 @@ class Stocks extends Controller
             };
 
             $query = Product::query()
-                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'purchasePrices' => fn ($q) => $q->latest('id'), 'tags' => function ($q) {
+                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'tags' => function ($q) {
                     $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                 }])
                 ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at');
@@ -149,12 +150,7 @@ class Stocks extends Controller
             }
 
             if ($this->isAdminRequest($request) && $request->filled('cost_price_status')) {
-                $status = (string) $request->input('cost_price_status');
-                if ($status === 'with') {
-                    $query->whereHas('purchasePrices', fn ($q) => $q->where('price', '>', 0));
-                } elseif ($status === 'without') {
-                    $query->whereDoesntHave('purchasePrices', fn ($q) => $q->where('price', '>', 0));
-                }
+                $this->applyInventoryCostStatusFilter($query, (string) $request->input('cost_price_status'));
             }
 
             if ($request->filled('date_from')) {
@@ -205,7 +201,7 @@ class Stocks extends Controller
             $perPage = min(max((int) $request->input('per_page', 15), 1), 100);
 
             $query = Product::onlyTrashed()
-                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'purchasePrices' => fn ($q) => $q->latest('id'), 'tags' => function ($q) {
+                ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'tags' => function ($q) {
                     $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                 }])
                 ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at', 'deleted_at');
@@ -359,7 +355,6 @@ class Stocks extends Controller
                     'normalImages:id,itemId,imageUrl',
                     'image3d:id,itemId,imageUrl',
                     'purchase:id,name',
-                    'purchasePrices' => fn ($q) => $q->latest('id'),
                 ])
                 ->select([
                     'id',
@@ -412,7 +407,8 @@ class Stocks extends Controller
                             $product->storeSection?->name,
                             $product->normailPrice,
                             $product->wholesalePrice,
-                            optional($product->purchasePrices->first())->price ?? 0,
+                            app(InventoryCostingService::class)
+                                ->productSummary($product, true, 0)['average_inventory_unit_cost'] ?? 0,
                             $product->price,
                             $product->min_sale_price,
                             $product->stock,
@@ -493,7 +489,6 @@ class Stocks extends Controller
                 'normalImages:id,itemId,imageUrl',
                 'image3d:id,itemId,imageUrl',
                 'purchase:id,name',
-                'purchasePrices' => fn ($q) => $q->latest('id'),
             ])
             ->select([
                 'id',
@@ -566,10 +561,8 @@ class Stocks extends Controller
             'descriptionAbree' => ['nullable', 'string'],
             'normailPrice' => ['nullable', 'numeric', 'min:0'],
             'wholesalePrice' => ['nullable', 'numeric', 'min:0'],
-            'cost_price' => ['nullable', 'numeric', 'min:0'],
             'price' => ['nullable', 'numeric', 'min:0'],
             'min_sale_price' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
             'min_stock' => ['nullable', 'numeric', 'min:0'],
             'discount' => ['nullable', 'numeric', 'min:0'],
             'isShow' => ['nullable', 'boolean'],
@@ -599,7 +592,6 @@ class Stocks extends Controller
                     'wholesalePrice',
                     'price',
                     'min_sale_price',
-                    'stock',
                     'min_stock',
                     'discount',
                     'isShow',
@@ -623,24 +615,6 @@ class Stocks extends Controller
 
             $product->forceFill($productData)->save();
 
-            if (array_key_exists('cost_price', $data)) {
-                $price = (float) ($data['cost_price'] ?? 0);
-                $row = PurchaseProduct::query()
-                    ->where('product_id', $product->id)
-                    ->orderByDesc('id')
-                    ->first();
-
-                if ($row !== null) {
-                    $row->update(['price' => $price]);
-                } else {
-                    PurchaseProduct::create([
-                        'product_id' => $product->id,
-                        'seller_id' => null,
-                        'price' => $price,
-                    ]);
-                }
-            }
-
             $this->recordProductPriceUpdateMovement(
                 $product,
                 $priceChanges,
@@ -655,7 +629,6 @@ class Stocks extends Controller
                 'normalImages:id,itemId,imageUrl',
                 'image3d:id,itemId,imageUrl',
                 'purchase:id,name',
-                'purchasePrices' => fn ($q) => $q->latest('id'),
             ]);
         });
 
@@ -674,7 +647,7 @@ class Stocks extends Controller
 
         $data = $request->validate([
             'product_id' => ['required', 'integer', 'exists:products,id'],
-            'field' => ['required', 'string', 'in:product_code,nameAr,normailPrice,wholesalePrice,cost_price,price,min_sale_price,stock,min_stock,discount,rotation_date'],
+            'field' => ['required', 'string', 'in:product_code,nameAr,normailPrice,wholesalePrice,price,min_sale_price,min_stock,discount,rotation_date'],
             'value' => ['nullable'],
         ]);
 
@@ -682,12 +655,9 @@ class Stocks extends Controller
             $product = Product::query()->findOrFail($data['product_id']);
             $field = $data['field'];
             $new = $data['value'];
-            $isCostPrice = $field === 'cost_price';
-            $old = $isCostPrice
-                ? optional($product->purchasePrices()->latest('id')->first())->price
-                : $product->{$field};
+            $old = $product->{$field};
 
-            if (in_array($field, ['normailPrice', 'wholesalePrice', 'cost_price', 'price', 'min_sale_price', 'stock', 'min_stock', 'discount'], true)) {
+            if (in_array($field, ['normailPrice', 'wholesalePrice', 'price', 'min_sale_price', 'min_stock', 'discount'], true)) {
                 validator(['value' => $new], ['value' => ['required', 'numeric', 'min:0']])->validate();
             }
             if (in_array($field, ['product_code', 'nameAr'], true)) {
@@ -697,29 +667,11 @@ class Stocks extends Controller
                 validator(['value' => $new], ['value' => ['nullable', 'numeric', 'min:0']])->validate();
             }
 
-            if ($isCostPrice) {
-                $price = (float) ($new ?? 0);
-                $row = PurchaseProduct::query()
-                    ->where('product_id', $product->id)
-                    ->orderByDesc('id')
-                    ->first();
-
-                if ($row !== null) {
-                    $row->update(['price' => $price]);
-                } else {
-                    PurchaseProduct::create([
-                        'product_id' => $product->id,
-                        'seller_id' => null,
-                        'price' => $price,
-                    ]);
-                }
-            } else {
-                $product->forceFill([
-                    $field => $new,
-                    'userIdUpdate' => $request->user()?->id,
-                    'dateUpdate' => now(),
-                ])->save();
-            }
+            $product->forceFill([
+                $field => $new,
+                'userIdUpdate' => $request->user()?->id,
+                'dateUpdate' => now(),
+            ])->save();
 
             $this->recordProductPriceUpdateMovement(
                 $product,
@@ -737,7 +689,6 @@ class Stocks extends Controller
                 'normalImages:id,itemId,imageUrl',
                 'image3d:id,itemId,imageUrl',
                 'storeSection:id,name',
-                'purchasePrices' => fn ($q) => $q->latest('id'),
                 'tags' => function ($q) {
                     $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                 },
@@ -776,7 +727,6 @@ class Stocks extends Controller
             'normalImages:id,itemId,imageUrl',
             'image3d:id,itemId,imageUrl',
             'purchase:id,name',
-            'purchasePrices' => fn ($q) => $q->latest('id'),
         ]);
 
         return response()->json([
@@ -1128,12 +1078,7 @@ class Stocks extends Controller
         }
 
         if ($this->isAdminRequest($request) && $request->filled('cost_price_status')) {
-            $status = (string) $request->input('cost_price_status');
-            if ($status === 'with') {
-                $query->whereHas('purchasePrices', fn ($q) => $q->where('price', '>', 0));
-            } elseif ($status === 'without') {
-                $query->whereDoesntHave('purchasePrices', fn ($q) => $q->where('price', '>', 0));
-            }
+            $this->applyInventoryCostStatusFilter($query, (string) $request->input('cost_price_status'));
         }
 
         if ($request->filled('date_from')) {
@@ -1382,6 +1327,7 @@ class Stocks extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تمت قراءة الملف',
+            'inventory_notice' => 'أعمدة الكمية وسعر التكلفة للعرض والتحقق فقط؛ لا يغيّر استيراد بيانات المنتج المخزون أو تكلفة المحاسبة.',
             'changes_count' => count($result['changes']),
             'changes' => $result['changes'],
             'errors' => $result['errors'],
@@ -1403,6 +1349,7 @@ class Stocks extends Controller
         return response()->json([
             'status' => 'success',
             'message' => "تم استيراد {$result['updated']} منتج",
+            'inventory_notice' => 'لم يتم استيراد الكمية أو سعر التكلفة. استخدم استلام المشتريات أو المخزون الافتتاحي أو تسوية المخزون.',
             'updated' => $result['updated'],
             'errors' => $result['errors'],
         ]);
@@ -1524,7 +1471,7 @@ class Stocks extends Controller
 
             $product = $isNewProduct
                 ? null
-                : Product::with(['purchasePrices' => fn ($q) => $q->latest('id')])->find($productId);
+                : Product::query()->find($productId);
 
             if (! $isNewProduct && ! $product) {
                 $errors[] = "السطر {$rowNumber}: المنتج غير موجود";
@@ -1586,11 +1533,6 @@ class Stocks extends Controller
                     $errors[] = "السطر {$rowNumber}: العدد غير صحيح";
                     continue;
                 }
-                $updates['stock'] = (int) $quantityNumber;
-                $this->addProductImportChange($rowChanges, 'العدد', $product?->stock ?? 0, (int) $quantityNumber);
-            } elseif ($isNewProduct) {
-                $errors[] = "السطر {$rowNumber}: العدد مطلوب للمنتج الجديد";
-                continue;
             }
 
             $cost = $this->csvValue($row, $columns, 'cost_price');
@@ -1602,35 +1544,17 @@ class Stocks extends Controller
                     continue;
                 }
 
-                $purchasePrice = $product?->purchasePrices->first();
-                $oldCost = $purchasePrice?->price ?? 0;
-                $this->addProductImportChange($rowChanges, 'سعر التكلفة', $oldCost, $costNumber);
-            } elseif ($isNewProduct) {
-                $errors[] = "السطر {$rowNumber}: سعر التكلفة مطلوب للمنتج الجديد";
-                continue;
             }
 
             if ($apply && $rowChanges['fields'] !== []) {
                 if ($isNewProduct) {
-                    $product = $this->createImportedProduct($updates, $costNumber);
+                    $product = $this->createImportedProduct($updates);
                     $rowChanges['product_id'] = $product->id;
                 } else {
                     if ($updates !== []) {
                         $product->update($updates);
                     }
 
-                    if ($costNumber !== null) {
-                        $purchasePrice = $product->purchasePrices->first();
-                        if ($purchasePrice) {
-                            $purchasePrice->update(['price' => $costNumber]);
-                        } else {
-                            PurchaseProduct::create([
-                                'product_id' => $product->id,
-                                'seller_id' => null,
-                                'price' => $costNumber,
-                            ]);
-                        }
-                    }
                 }
             }
 
@@ -1663,9 +1587,9 @@ class Stocks extends Controller
 
         $product = null;
         if ($productId !== '') {
-            $product = Product::with(['purchasePrices' => fn ($q) => $q->latest('id')])->find($productId);
+            $product = Product::query()->find($productId);
         } elseif ($productCode !== null && $productCode !== '') {
-            $product = Product::with(['purchasePrices' => fn ($q) => $q->latest('id')])
+            $product = Product::query()
                 ->where('product_code', $productCode)
                 ->first();
         }
@@ -1718,7 +1642,6 @@ class Stocks extends Controller
             'wholesale_price' => ['field' => 'wholesalePrice', 'label' => 'سعر الجملة', 'required' => true],
             'price' => ['field' => 'price', 'label' => 'السعر', 'required' => false],
             'min_sale_price' => ['field' => 'min_sale_price', 'label' => 'أقل سعر بيع', 'required' => false],
-            'quantity' => ['field' => 'stock', 'label' => 'العدد', 'required' => true, 'integer' => true],
             'min_stock' => ['field' => 'min_stock', 'label' => 'الحد الأدنى للمخزون', 'required' => false],
             'discount' => ['field' => 'discount', 'label' => 'الخصم', 'required' => false],
             'rate' => ['field' => 'rate', 'label' => 'التقييم', 'required' => false],
@@ -1768,30 +1691,15 @@ class Stocks extends Controller
             if ($costNumber === null || $costNumber < 0) {
                 return ['error' => "السطر {$rowNumber}: سعر التكلفة غير صحيح", 'change' => null];
             }
-            $this->addProductImportChange($rowChanges, 'سعر التكلفة', $product?->purchasePrices->first()?->price ?? 0, $costNumber);
-        } elseif ($isNewProduct) {
-            return ['error' => "السطر {$rowNumber}: سعر التكلفة مطلوب للمنتج الجديد", 'change' => null];
         }
 
         if ($apply && $rowChanges['fields'] !== []) {
             if ($isNewProduct) {
-                $product = $this->createImportedProduct($updates, $costNumber);
+                $product = $this->createImportedProduct($updates);
                 $rowChanges['product_id'] = $product->id;
             } else {
                 if ($updates !== []) {
                     $product->update($updates);
-                }
-                if ($costNumber !== null) {
-                    $purchasePrice = $product->purchasePrices->first();
-                    if ($purchasePrice) {
-                        $purchasePrice->update(['price' => $costNumber]);
-                    } else {
-                        PurchaseProduct::create([
-                            'product_id' => $product->id,
-                            'seller_id' => null,
-                            'price' => $costNumber,
-                        ]);
-                    }
                 }
             }
         }
@@ -1884,17 +1792,20 @@ class Stocks extends Controller
                     $size->id = DB::getPdo()->lastInsertId();
                 }
 
-                SizeColor::query()->updateOrCreate([
+                $variant = SizeColor::query()->firstOrNew([
                     'sizeId' => $size->id,
                     'colorAr' => $colorAr,
                     'colorEn' => $colorEn,
                     'colorAbbr' => $colorAbbr,
-                ], [
+                ]);
+                if (! $variant->exists) {
+                    $variant->stock = 0;
+                }
+                $variant->fill([
                     'normailPrice' => $numbers['retail_price'],
                     'wholesalePrice' => $numbers['wholesale_price'],
                     'discount' => $numbers['discount'],
-                    'stock' => $numbers['quantity'],
-                ]);
+                ])->save();
                 $updated++;
             }
 
@@ -1904,9 +1815,9 @@ class Stocks extends Controller
         return ['updated' => $updated, 'changes' => $changes, 'errors' => $errors];
     }
 
-    private function createImportedProduct(array $fields, ?float $cost): Product
+    private function createImportedProduct(array $fields): Product
     {
-        return DB::transaction(function () use ($fields, $cost) {
+        return DB::transaction(function () use ($fields) {
             $newId = (int) (Product::query()->lockForUpdate()->max('id') ?? 0) + 1;
 
             $product = Product::query()->create([
@@ -1919,7 +1830,7 @@ class Stocks extends Controller
                 'descriptionAbree' => $fields['descriptionAbree'] ?? ($fields['descriptionAr'] ?? ''),
                 'normailPrice' => $fields['normailPrice'],
                 'wholesalePrice' => $fields['wholesalePrice'],
-                'stock' => $fields['stock'],
+                'stock' => 0,
                 'price' => $fields['price'] ?? null,
                 'min_sale_price' => $fields['min_sale_price'] ?? null,
                 'discount' => $fields['discount'] ?? 0,
@@ -1933,14 +1844,6 @@ class Stocks extends Controller
                 'rotation_date' => $fields['rotation_date'] ?? null,
                 'min_stock' => $fields['min_stock'] ?? 0,
             ]);
-
-            if ($cost !== null) {
-                PurchaseProduct::create([
-                    'product_id' => $product->id,
-                    'seller_id' => null,
-                    'price' => $cost,
-                ]);
-            }
 
             return $product;
         });
@@ -1960,6 +1863,29 @@ class Stocks extends Controller
             'old' => (string) $old,
             'new' => (string) $new,
         ];
+    }
+
+    private function applyInventoryCostStatusFilter($query, string $status): void
+    {
+        if (! Schema::hasTable('inventory_cost_layers')) {
+            if ($status === 'with') {
+                $query->whereRaw('1 = 0');
+            }
+
+            return;
+        }
+
+        $callback = fn ($subQuery) => $subQuery
+            ->selectRaw('1')
+            ->from('inventory_cost_layers')
+            ->whereColumn('inventory_cost_layers.product_id', 'products.id')
+            ->where('inventory_cost_layers.remaining_quantity', '>', 0);
+
+        if ($status === 'with') {
+            $query->whereExists($callback);
+        } elseif ($status === 'without') {
+            $query->whereNotExists($callback);
+        }
     }
 
     private function isAdminRequest(Request $request): bool
@@ -2174,7 +2100,10 @@ class Stocks extends Controller
     private function formatProductListItem(Product $product, bool $includeCostPrice = false): array
     {
         $images = \App\Support\ProductImageResolver::formatForList($product);
-        $costPrice = optional($product->purchasePrices->first())->price;
+        $inventory = $includeCostPrice
+            ? app(InventoryCostingService::class)->productSummary($product, true, 0)
+            : null;
+        $costPrice = $inventory['average_inventory_unit_cost'] ?? null;
 
         $row = [
             'product_id' => $product->id,
@@ -2197,7 +2126,11 @@ class Stocks extends Controller
 
         if ($includeCostPrice) {
             $row['cost_price'] = $costPrice !== null ? (float) $costPrice : null;
-            $row['has_cost_price'] = $costPrice !== null && (float) $costPrice > 0;
+            $row['has_cost_price'] = $costPrice !== null;
+            $row['inventory_value'] = $inventory['inventory_value'] ?? null;
+            $row['next_fifo_unit_cost'] = $inventory['next_fifo_unit_cost'] ?? null;
+            $row['inventory_costing_method'] = $inventory['costing_method'] ?? null;
+            $row['cost_price_basis'] = 'inventory_engine_average_remaining';
         }
 
         return $row;
@@ -2207,6 +2140,7 @@ class Stocks extends Controller
     {
         $markedAt = $product->last_edit_marked_at;
         $images = ProductImageResolver::formatForList($product);
+        $inventory = app(InventoryCostingService::class)->productSummary($product, true, 0);
 
         return [
             'product_id' => (int) $product->id,
@@ -2223,7 +2157,10 @@ class Stocks extends Controller
             'store_section_name' => $product->storeSection?->name,
             'normailPrice' => $product->normailPrice,
             'wholesalePrice' => $product->wholesalePrice,
-            'cost_price' => optional($product->purchasePrices->first())->price,
+            'cost_price' => $inventory['average_inventory_unit_cost'] ?? null,
+            'inventory_value' => $inventory['inventory_value'] ?? null,
+            'inventory_costing_method' => $inventory['costing_method'] ?? null,
+            'cost_price_basis' => 'inventory_engine_average_remaining',
             'price' => $product->price,
             'min_sale_price' => $product->min_sale_price,
             'stock' => $product->stock,
@@ -2248,42 +2185,13 @@ class Stocks extends Controller
 
     public function updateProductCostPrice(Request $request)
     {
-        if (! $this->isAdminRequest($request)) {
-            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
-        }
-
-        $data = $request->validate([
-            'product_id' => ['required', 'integer', 'exists:products,id'],
-            'cost_price' => ['nullable', 'numeric', 'min:0'],
-        ]);
-
-        $price = (float) ($data['cost_price'] ?? 0);
-
-        $row = PurchaseProduct::query()
-            ->where('product_id', $data['product_id'])
-            ->orderByDesc('id')
-            ->first();
-
-        if ($row !== null) {
-            $row->update(['price' => $price]);
-        } else {
-            PurchaseProduct::create([
-                'product_id' => $data['product_id'],
-                'seller_id' => null,
-                'price' => $price,
-            ]);
-        }
-
         return response()->json([
-            'status' => 'success',
-            'message' => 'تم تحديث سعر التكلفة',
-            'product_id' => (int) $data['product_id'],
-            'cost_price' => $price,
-            'has_cost_price' => $price > 0,
-        ], 200);
+            'status' => 'error',
+            'message' => 'تم إيقاف تعديل سعر التكلفة القديم. استخدم مسار إعادة تقييم تكلفة المخزون مع السبب والصلاحية المخصصة.',
+        ], 410);
     }
 
-    public function showProduct(Request $request)
+    public function showProduct(Request $request, InventoryCostingService $inventoryCostingService)
     {
         try {
 
@@ -2362,24 +2270,70 @@ class Stocks extends Controller
             $product->unsetRelation('category');
             unset($product->subCategories);
 
-            $canViewCostPrice = $request->user()?->canViewCostPrice() ?? false;
+            $canViewCostPrice = $request->user()?->canViewInventoryCost() ?? false;
             $product['can_view_cost_price'] = $canViewCostPrice;
+            $product['can_view_inventory_cost'] = $canViewCostPrice;
+            $inventory = $inventoryCostingService->productSummary($product, $canViewCostPrice);
+            $inventory['recent_movements'] = ProductStockMovement::query()
+                ->with(['size:id,size', 'sizeColor:id,colorAr,sizeId', 'creator:id,name'])
+                ->where('product_id', $product->id)
+                ->latest('id')
+                ->limit(5)
+                ->get()
+                ->map(fn (ProductStockMovement $movement) => [
+                    'id' => (int) $movement->id,
+                    'type' => (string) $movement->type,
+                    'quantity' => (int) $movement->quantity,
+                    'stock_before' => (int) $movement->stock_before,
+                    'stock_after' => (int) $movement->stock_after,
+                    'unit_cost' => $canViewCostPrice ? $movement->unit_cost : null,
+                    'total_cost' => $canViewCostPrice ? $movement->total_cost : null,
+                    'costing_method' => $movement->costing_method,
+                    'reason' => $movement->reason,
+                    'note' => $movement->note,
+                    'size' => $movement->size?->size,
+                    'color_ar' => $movement->sizeColor?->colorAr,
+                    'created_by_name' => $movement->creator?->name,
+                    'created_at' => $movement->created_at?->format('Y-m-d H:i'),
+                ])->values();
+            $inventory['last_adjustments'] = InventoryAdjustment::query()
+                ->with(['size:id,size', 'sizeColor:id,colorAr,sizeId', 'creator:id,name'])
+                ->where('product_id', $product->id)
+                ->latest('id')
+                ->limit(5)
+                ->get()
+                ->map(fn (InventoryAdjustment $adjustment) => [
+                    'id' => (int) $adjustment->id,
+                    'reference' => (string) $adjustment->reference,
+                    'adjustment_type' => (string) $adjustment->adjustment_type,
+                    'stock_before' => (float) $adjustment->stock_before,
+                    'stock_after' => (float) $adjustment->stock_after,
+                    'quantity_difference' => (float) $adjustment->quantity_difference,
+                    'value_difference' => $canViewCostPrice ? (float) $adjustment->value_difference : null,
+                    'reason' => (string) $adjustment->reason,
+                    'notes' => $adjustment->notes,
+                    'size' => $adjustment->size?->size,
+                    'color_ar' => $adjustment->sizeColor?->colorAr,
+                    'created_by_name' => $adjustment->creator?->name,
+                    'created_at' => $adjustment->created_at?->format('Y-m-d H:i'),
+                ])->values();
+            $inventory['can_adjust_stock'] = $request->user()?->canAdjustStock() ?? false;
+            $inventory['can_adjust_inventory_cost'] = $request->user()?->canAdjustInventoryCost() ?? false;
+            $product['inventory'] = $inventory;
 
             if ($canViewCostPrice) {
-                $purchase_prices = $product->purchasePrices->map(function ($pivot) {
-                    return [
-                        'seller_id' => $pivot->seller_id,
-                        'seller_name' => $pivot->seller?->name,
-                        'price' => $pivot->price,
-
-                    ];
-                });
-                $product['purchase_prices'] = $purchase_prices;
+                $averageCost = $inventory['average_inventory_unit_cost'] ?? null;
+                $product['purchase_prices'] = $averageCost === null ? [] : [[
+                    'seller_id' => null,
+                    'seller_name' => null,
+                    'price' => (float) $averageCost,
+                    'source' => 'inventory_engine_average_remaining',
+                ]];
+                $product['cost_price'] = $averageCost;
+                $product['cost_price_basis'] = 'inventory_engine_average_remaining';
             } else {
                 $product['purchase_prices'] = [];
             }
-
-            unset($product->purchasePrices);
 
             $product['product_normalImages'] = $product->normalImages->map(function ($img) {
                 return $img->imageUrl
@@ -2588,6 +2542,9 @@ class Stocks extends Controller
         $sizesToDelete = array_diff($existingSizeIds, $newSizeIds);
 
         if (! empty($sizesToDelete)) {
+            $this->assertVariantDeletionIsSafe(
+                SizeColor::query()->whereIn('sizeId', $sizesToDelete)->pluck('id')->all()
+            );
             Size::whereIn('id', $sizesToDelete)->delete(); // cascade delete colorSizes if foreign key is set
         }
 
@@ -2619,6 +2576,7 @@ class Stocks extends Controller
 
             $colorsToDelete = array_diff($existingColorIds, $newColorIds);
             if (! empty($colorsToDelete)) {
+                $this->assertVariantDeletionIsSafe($colorsToDelete);
                 SizeColor::whereIn('id', $colorsToDelete)->delete();
             }
 
@@ -2633,7 +2591,6 @@ class Stocks extends Controller
                         'normailPrice' => $colorData['normailPrice'] ?? $color->normailPrice,
                         'wholesalePrice' => $colorData['wholesalePrice'] ?? $color->wholesalePrice,
                         'discount' => $colorData['discount'] ?? $color->discount,
-                        'stock' => $colorData['stock'] ?? $color->stock,
                     ]);
                 } else {
                     // Create new color
@@ -2645,10 +2602,29 @@ class Stocks extends Controller
                         'normailPrice' => $colorData['normailPrice'] ?? 0,
                         'wholesalePrice' => $colorData['wholesalePrice'] ?? 0,
                         'discount' => $colorData['discount'] ?? 0,
-                        'stock' => $colorData['stock'] ?? 0,
+                        'stock' => 0,
                     ]);
                 }
             }
+        }
+    }
+
+    /** @param array<int, int|string> $variantIds */
+    private function assertVariantDeletionIsSafe(array $variantIds): void
+    {
+        $ids = array_values(array_filter(array_map('intval', $variantIds)));
+        if ($ids === []) {
+            return;
+        }
+
+        $hasStock = SizeColor::query()->whereIn('id', $ids)->where('stock', '!=', 0)->exists();
+        $hasHistory = (Schema::hasTable('inventory_cost_layers') && DB::table('inventory_cost_layers')->whereIn('size_color_id', $ids)->exists())
+            || (Schema::hasTable('product_stock_movements') && DB::table('product_stock_movements')->whereIn('size_color_id', $ids)->exists())
+            || (Schema::hasTable('inventory_adjustments') && DB::table('inventory_adjustments')->whereIn('size_color_id', $ids)->exists());
+        if ($hasStock || $hasHistory) {
+            throw ValidationException::withMessages([
+                'sizes' => ['لا يمكن حذف متغير لديه مخزون أو سجل محاسبي.'],
+            ]);
         }
     }
 
@@ -2687,7 +2663,6 @@ class Stocks extends Controller
                 'sizes.*.color_sizes.*.id' => ['nullable', 'integer', 'exists:size_colors,id'],
                 'sizes.*.color_sizes.*.colorAr' => ['required', 'string', 'max:100'],
                 'sizes.*.color_sizes.*.normailPrice' => ['required', 'numeric', 'min:0'],
-                'sizes.*.color_sizes.*.stock' => ['required', 'integer', 'min:0'],
 
                 'tag_ids' => ['nullable', 'array'],
                 'tag_ids.*' => ['integer', 'exists:product_tags,id'],
@@ -2696,7 +2671,10 @@ class Stocks extends Controller
 
             $product = Product::findOrFail($request->product_id);
 
-            $updateData = $request->except(['product_id', 'sub_categories', 'wholesales', 'sizes', 'price', 'product_code', 'tag_ids']);
+            $updateData = $request->except([
+                'product_id', 'sub_categories', 'wholesales', 'sizes', 'price',
+                'product_code', 'tag_ids', 'stock', 'purchase_price', 'cost_price',
+            ]);
 
             $newCategoryId = (int) $request->input('category_id');
             $product->update(array_merge($updateData, [
@@ -2711,7 +2689,6 @@ class Stocks extends Controller
 
             if ($request->filled('project_id')) {
                 $product->update([
-                    'stock' => 0,
                     'normailPrice' => 0,
                 ]);
                 $closeout = $product->closeout;
@@ -2779,7 +2756,8 @@ class Stocks extends Controller
     public function createProduct(Request $request, ProductFormService $productFormService)
     {
         try {
-            $out = $productFormService->create($request);
+            // Product master data and optional opening inventory must commit together.
+            $out = DB::transaction(fn () => $productFormService->create($request), 3);
 
             if (empty($out['success'])) {
                 $payload = [
@@ -2820,9 +2798,14 @@ class Stocks extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Product creation failed', [
+                'message' => $e->getMessage(),
+                'exception' => $e::class,
+            ]);
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
+                'debug' => config('app.debug') ? $e->getMessage() : null,
             ], 200);
         }
     }
@@ -3062,7 +3045,7 @@ class Stocks extends Controller
                 'main_product_id' => 'required|integer|exists:products,id',
                 'added_products' => 'required|array',
                 'added_products.*.product_id' => ['required', 'integer', 'exists:products,id'],
-                'added_products.*.quantity' => ['required', 'integer'],
+                'added_products.*.quantity' => ['required', 'integer', 'min:1'],
 
             ]);
 
@@ -3078,25 +3061,27 @@ class Stocks extends Controller
                     ], 200);
                 }
             }
-            foreach ($request->added_products as $addedProduct) {
-                $subProduct = Product::findOrFail($addedProduct['product_id']);
+            DB::transaction(function () use ($request, $mainProduct) {
+                foreach ($request->added_products as $addedProduct) {
+                    $subProduct = Product::query()->lockForUpdate()->findOrFail($addedProduct['product_id']);
+                    $combination = Combination::create([
+                        'main_product_id' => $mainProduct->id,
+                        'added_product_id' => $subProduct->id,
+                        'quantity' => $addedProduct['quantity'],
+                    ]);
 
-                Combination::create([
-                    'main_product_id' => $mainProduct->id,
-                    'added_product_id' => $subProduct->id,
-                    'quantity' => $addedProduct['quantity'],
-                ]);
-                $subProduct->stock -= $addedProduct['quantity'];
-                $subProduct->save();
-                if ($subProduct->stock === 0) {
-                    $closeout = $subProduct->closeout;
-                    if ($closeout) {
-                        $closeout->status = 'archived';
-                        $closeout->save();
-                    }
+                    app(InventoryCostingService::class)->consumeOwnedStock(
+                        product: $subProduct,
+                        quantity: (int) $addedProduct['quantity'],
+                        movementType: ProductStockMovement::TYPE_ASSEMBLY_COMPONENT,
+                        referenceType: 'product_combination',
+                        referenceId: (int) $combination->id,
+                        userId: auth()->id() ? (int) auth()->id() : null,
+                        note: 'استهلاك مكوّن ضمن تجميعة المنتج #'.$mainProduct->id,
+                        reason: 'product_combination',
+                    );
                 }
-
-            }
+            });
 
             return response()->json([
                 'status' => 'success',

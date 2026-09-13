@@ -1159,13 +1159,12 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::get('/get/product/size-options' , [Stocks::class,'productSizeOptions']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
     Route::post('/edit/product' , [Stocks::class,'editProduct']);
-    Route::post('/product/cost-price' , [Stocks::class,'updateProductCostPrice']);
     /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */
     Route::post('/create/product' , [Stocks::class,'createProduct']);
     Route::post('/update/product/full' , [Stocks::class,'updateProductFull']);
     Route::post('/delete/products' , [Stocks::class,'deleteProducts']);
-    Route::post('/product/stock/adjust' , [ProductStockController::class,'adjust']);
     Route::post('/product/stock/movements' , [ProductStockController::class,'movements']);
+    Route::post('/product/inventory/summary' , [ProductStockController::class,'summary']);
     Route::get('/product/assembly/recipes' , [ProductAssemblyController::class,'recipes']);
     Route::get('/product/assembly/operations' , [ProductAssemblyController::class,'operations']);
     Route::get('/product/assembly/products' , [ProductAssemblyController::class,'products']);
@@ -1199,9 +1198,21 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
 
 });
 
-Route::group(['middleware'=>['auth:sanctum','check.permission:Purchasing Section','refresh.token.expiry']] , function() {
+Route::group(['middleware'=>['auth:sanctum','check.permission:Adjust Stock','refresh.token.expiry']] , function() {
+    Route::post('/product/stock/adjust' , [ProductStockController::class,'adjust']);
+});
+
+Route::group(['middleware'=>['auth:sanctum','check.permission:Adjust Inventory Cost','refresh.token.expiry']] , function() {
+    Route::post('/product/inventory/revalue' , [ProductStockController::class,'revalue']);
+    // Legacy URI retained as a compatibility alias; it now creates an audited revaluation.
+    Route::post('/product/cost-price' , [ProductStockController::class,'revalue']);
+});
+
+Route::group(['middleware'=>['auth:sanctum','check.permission:Manage Purchases,Purchasing Section','refresh.token.expiry']] , function() {
       //bills
     Route::post('/add/bill' , [Bills::class,'createBill']);
+    Route::get('/purchase/products/quick-create-options' , [Bills::class,'purchaseProductOptions']);
+    Route::post('/purchase/products/quick-create' , [Bills::class,'quickCreateProduct']);
     Route::post('/purchase/receive' , [Bills::class,'receivePurchase']);
     Route::post('/purchase/update-draft' , [Bills::class,'updateDraftPurchase']);
     Route::post('/purchase/delete-draft' , [Bills::class,'deleteDraftPurchase']);

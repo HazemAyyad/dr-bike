@@ -35,6 +35,14 @@ class ProductStockMovement extends Model
 
     public const TYPE_MANUAL_SET = 'manual_set';
 
+    public const TYPE_STOCK_ADJUSTMENT_IN = 'stock_adjustment_in';
+
+    public const TYPE_STOCK_ADJUSTMENT_OUT = 'stock_adjustment_out';
+
+    public const TYPE_OPENING_STOCK = 'opening_stock';
+
+    public const TYPE_COST_REVALUATION = 'cost_revaluation';
+
     public const TYPE_IMPORT = 'import';
 
     public const TYPE_ASSEMBLY_COMPONENT = 'assembly_component';
@@ -59,10 +67,13 @@ class ProductStockMovement extends Model
         'stock_after',
         'unit_cost',
         'total_cost',
+        'costing_method',
         'reference_type',
         'reference_id',
+        'reason',
         'note',
         'created_by',
+        'reversal_of_id',
     ];
 
     protected $casts = [

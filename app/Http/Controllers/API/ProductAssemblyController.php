@@ -8,6 +8,7 @@ use App\Models\ProductAssemblyOperation;
 use App\Models\ProductAssemblyRecipe;
 use App\Services\ProductAssemblyService;
 use App\Services\ProductStockService;
+use App\Services\InventoryCostingService;
 use App\Support\ProductSearchFilter;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -32,12 +33,11 @@ class ProductAssemblyController extends Controller
                     'image3d',
                     'storeSection:id,name',
                     'sizes.colorSizes',
-                    'purchasePrices' => fn ($q) => $q->latest('id'),
                 ]);
 
             ProductSearchFilter::apply($products, $request->input('search'));
 
-            $canViewCost = $request->user()?->canViewCostPrice() ?? false;
+            $canViewCost = $request->user()?->canViewInventoryCost() ?? false;
 
             $rows = $products
                 ->get([
@@ -59,7 +59,10 @@ class ProductAssemblyController extends Controller
                     }
 
                     $variantPayload = $stockService->formatProductForSaleApi($product);
-                    $cost = (float) ($product->purchasePrices->first()?->price ?? 0);
+                    $inventory = $canViewCost
+                        ? app(InventoryCostingService::class)->productSummary($product, true, 0)
+                        : null;
+                    $cost = (float) ($inventory['average_inventory_unit_cost'] ?? 0);
 
                     $row = array_merge(
                         [
@@ -86,6 +89,10 @@ class ProductAssemblyController extends Controller
                         $row['purchase_cost'] = $cost;
                         $row['cost_price'] = $cost;
                         $row['has_cost_price'] = $cost > 0;
+                        $row['inventory_value'] = $inventory['inventory_value'] ?? 0;
+                        $row['next_fifo_unit_cost'] = $inventory['next_fifo_unit_cost'] ?? null;
+                        $row['inventory_costing_method'] = $inventory['costing_method'] ?? null;
+                        $row['cost_price_basis'] = 'inventory_engine_average_remaining';
                     }
 
                     return $row;

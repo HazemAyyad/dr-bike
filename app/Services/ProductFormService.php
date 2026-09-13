@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Models\Image3dProduct;
+use App\Models\InventoryAdjustment;
+use App\Models\InventoryCostLayer;
 use App\Models\NormalImageProduct;
 use App\Models\Product;
-use App\Models\PurchaseProduct;
+use App\Models\ProductStockMovement;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SubCategoryProduct;
@@ -13,6 +15,7 @@ use App\Models\ViewImageProduct;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -24,6 +27,7 @@ class ProductFormService
         private readonly StoreManageItemService $storeManageItemService,
         private readonly ProductTagService $productTagService,
         private readonly ProductStockService $productStockService,
+        private readonly InventoryCostingService $inventoryCostingService,
     ) {}
 
     /**
@@ -46,7 +50,6 @@ class ProductFormService
             'discount' => ['required', 'numeric', 'min:0'],
             'normailPrice' => ['required', 'numeric', 'min:0'],
             'wholesalePrice' => ['nullable', 'numeric', 'min:0'],
-            'stock' => ['nullable', 'integer', 'min:0'],
             'rate' => ['nullable', 'numeric', 'min:0'],
             'isShow' => ['nullable', 'boolean'],
             'isNewItem' => ['nullable', 'boolean'],
@@ -57,7 +60,11 @@ class ProductFormService
             'min_sale_price' => ['nullable', 'numeric', 'min:0'],
             'rotation_date' => ['nullable', 'numeric', 'min:0'],
             'price' => ['nullable', 'numeric', 'min:0'],
-            'purchase_price' => ['nullable', 'numeric', 'min:0'],
+            'opening_stock' => ['nullable', 'boolean'],
+            'opening_quantity' => ['nullable', 'integer', 'min:1'],
+            'opening_unit_cost' => ['nullable', 'numeric', 'min:0'],
+            'opening_currency' => ['nullable', 'string', 'max:10'],
+            'opening_notes' => ['nullable', 'string', 'max:1000'],
             'category_id' => ['required', 'integer', 'exists:categories,id'],
             'sub_categories' => ['nullable', 'array'],
             'sub_categories.*' => ['integer', 'exists:sub_categories,id'],
@@ -70,7 +77,10 @@ class ProductFormService
             'sizes.*.color_sizes.*.colorEn' => ['nullable', 'string', 'max:100'],
             'sizes.*.color_sizes.*.colorAbbr' => ['nullable', 'string', 'max:100'],
             'sizes.*.color_sizes.*.normailPrice' => ['nullable', 'numeric', 'min:0'],
-            'sizes.*.color_sizes.*.stock' => ['nullable', 'integer', 'min:0'],
+            'sizes.*.color_sizes.*.opening_quantity' => ['nullable', 'integer', 'min:0'],
+            'sizes.*.color_sizes.*.opening_unit_cost' => ['nullable', 'numeric', 'min:0'],
+            'sizes.*.color_sizes.*.opening_currency' => ['nullable', 'string', 'max:10'],
+            'sizes.*.color_sizes.*.opening_notes' => ['nullable', 'string', 'max:1000'],
             'sizes.*.color_sizes.*.image' => ['nullable', 'image', 'max:10240'],
             'sizes.*.color_sizes.*.delete_image' => ['nullable', 'boolean'],
             'video' => ['nullable', 'file', 'mimes:mp4,mov,avi,webm', 'max:51200'],
@@ -112,8 +122,8 @@ class ProductFormService
         $trace = $this->makeTracer($step);
 
         $nameAr = $validated['nameAr'];
-        $nameEng = $validated['nameEng'] !== null && $validated['nameEng'] !== '' ? $validated['nameEng'] : $nameAr;
-        $nameAbree = $validated['nameAbree'] !== null && $validated['nameAbree'] !== '' ? $validated['nameAbree'] : $nameAr;
+        $nameEng = ! empty($validated['nameEng'] ?? null) ? $validated['nameEng'] : $nameAr;
+        $nameAbree = ! empty($validated['nameAbree'] ?? null) ? $validated['nameAbree'] : $nameAr;
 
         $insert = [
             'category_id' => (int) $validated['category_id'],
@@ -137,9 +147,6 @@ class ProductFormService
             'stock' => 0,
         ];
 
-        if ($request->filled('stock')) {
-            $insert['stock'] = (int) $validated['stock'];
-        }
         if ($request->filled('min_sale_price')) {
             $insert['min_sale_price'] = $validated['min_sale_price'];
         }
@@ -182,7 +189,6 @@ class ProductFormService
 
             Product::query()->create(array_merge($insert, ['id' => $newId]));
             $trace('تم إنشاء المنتج محلياً (بدون متجر)', ['product_id' => $newId]);
-            $this->applyPurchasePriceFromRequest($request, $newId);
 
             foreach ($subIds as $sid) {
                 SubCategoryProduct::create([
@@ -197,6 +203,7 @@ class ProductFormService
             $this->replaceSizesFromTestForm($sizesInput, $newId);
             $this->applySizeColorImagesFromRequest($request, $newId, $sizesInput);
             $this->productStockService->afterVariantsSaved(Product::with('sizes.colorSizes')->findOrFail($newId));
+            $this->createOpeningStock($request, Product::with('sizes.colorSizes')->findOrFail($newId), $sizesInput);
             $trace('مقاسات/ألوان محلية', ['count' => count($sizesInput)]);
 
             $this->syncProductTagsFromRequest($request, $newId);
@@ -265,7 +272,6 @@ class ProductFormService
 
         Product::query()->create(array_merge($insert, ['id' => $newId]));
         $trace('تم إنشاء المنتج محلياً', ['product_id' => $newId]);
-        $this->applyPurchasePriceFromRequest($request, $newId);
 
         foreach ($subIds as $sid) {
             SubCategoryProduct::create([
@@ -282,6 +288,7 @@ class ProductFormService
         $this->replaceSizesFromTestForm($sizesInput, $newId);
         $this->applySizeColorImagesFromRequest($request, $newId, $sizesInput);
         $this->productStockService->afterVariantsSaved(Product::with('sizes.colorSizes')->findOrFail($newId));
+        $this->createOpeningStock($request, Product::with('sizes.colorSizes')->findOrFail($newId), $sizesInput);
         $trace('تم حفظ المقاسات/الألوان محلياً', ['count' => count($sizesInput)]);
 
         $this->syncProductTagsFromRequest($request, $newId);
@@ -320,8 +327,8 @@ class ProductFormService
         $product = Product::findOrFail($validated['product_id']);
 
         $nameAr = $validated['nameAr'];
-        $nameEng = $validated['nameEng'] !== null && $validated['nameEng'] !== '' ? $validated['nameEng'] : $nameAr;
-        $nameAbree = $validated['nameAbree'] !== null && $validated['nameAbree'] !== '' ? $validated['nameAbree'] : $nameAr;
+        $nameEng = ! empty($validated['nameEng'] ?? null) ? $validated['nameEng'] : $nameAr;
+        $nameAbree = ! empty($validated['nameAbree'] ?? null) ? $validated['nameAbree'] : $nameAr;
 
         $update = [
             'category_id' => (int) $validated['category_id'],
@@ -344,9 +351,6 @@ class ProductFormService
             'model' => $validated['model'] ?? '',
         ];
 
-        if ($request->filled('stock')) {
-            $update['stock'] = (int) $validated['stock'];
-        }
         if ($request->filled('min_sale_price')) {
             $update['min_sale_price'] = $validated['min_sale_price'];
         }
@@ -360,7 +364,6 @@ class ProductFormService
 
         $product->update($update);
         $trace('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
-        $this->applyPurchasePriceFromRequest($request, (int) $product->id);
 
         $mainCatId = (int) $validated['category_id'];
         $pruned = SubCategoryProduct::deleteForProductOutsideMain((int) $product->id, $mainCatId);
@@ -616,7 +619,7 @@ class ProductFormService
                     'normailPrice' => $colorData['normailPrice'] ?? 0,
                     'wholesalePrice' => 0,
                     'discount' => 0,
-                    'stock' => (int) ($colorData['stock'] ?? 0),
+                    'stock' => 0,
                     'sizeId' => 0,
                 ]);
                 $color->id = 0;
@@ -637,6 +640,9 @@ class ProductFormService
     private function replaceSizesFromTestForm(array $newSizes, $productId): void
     {
         if ($newSizes === []) {
+            $this->assertVariantsCanBeDeleted(
+                SizeColor::query()->whereIn('sizeId', Size::query()->where('itemId', $productId)->select('id'))->pluck('id')->all()
+            );
             Size::where('itemId', $productId)->delete();
 
             return;
@@ -647,6 +653,9 @@ class ProductFormService
         $sizesToDelete = array_diff($existingSizeIds, $newSizeIds);
 
         if (! empty($sizesToDelete)) {
+            $this->assertVariantsCanBeDeleted(
+                SizeColor::query()->whereIn('sizeId', $sizesToDelete)->pluck('id')->all()
+            );
             Size::whereIn('id', $sizesToDelete)->delete();
         }
 
@@ -683,6 +692,7 @@ class ProductFormService
             $colorsToDelete = array_diff($existingColorIds, $newColorIds);
 
             if (! empty($colorsToDelete)) {
+                $this->assertVariantsCanBeDeleted($colorsToDelete);
                 SizeColor::whereIn('id', $colorsToDelete)->delete();
             }
 
@@ -700,7 +710,6 @@ class ProductFormService
                             'normailPrice' => $colorData['normailPrice'] ?? $color->normailPrice,
                             'wholesalePrice' => $colorData['wholesalePrice'] ?? $color->wholesalePrice,
                             'discount' => $colorData['discount'] ?? $color->discount,
-                            'stock' => $colorData['stock'] ?? $color->stock,
                             'image_url' => $colorData['image_url'] ?? $color->image_url,
                         ]);
                     }
@@ -713,7 +722,7 @@ class ProductFormService
                         'normailPrice' => $colorData['normailPrice'] ?? 0,
                         'wholesalePrice' => $colorData['wholesalePrice'] ?? 0,
                         'discount' => $colorData['discount'] ?? 0,
-                        'stock' => $colorData['stock'] ?? 0,
+                        'stock' => 0,
                     ]);
                 }
             }
@@ -721,40 +730,127 @@ class ProductFormService
     }
 
     /**
-     * حفظ سعر التكلفة في purchase_products (بدون بائع — مثل الاستيراد).
+     * Product creation is master-data only unless opening stock is explicitly
+     * requested. Every opening quantity enters through the costing engine.
+     *
+     * @param array<int, mixed> $sizesInput
      */
-    private function applyPurchasePriceFromRequest(Request $request, int $productId): void
+    private function createOpeningStock(Request $request, Product $product, array $sizesInput): void
     {
-        // سعر التكلفة لا يُحفظ إلا للأدمن أو الموظف المصرّح له بصلاحية "Cost Price".
-        if (! ($request->user()?->canViewCostPrice() ?? false)) {
+        if (! $request->boolean('opening_stock')) {
             return;
         }
 
-        if (! $request->filled('purchase_price')) {
+        $currency = trim((string) $request->input('opening_currency', 'NIS')) ?: 'NIS';
+        $notes = $request->input('opening_notes');
+        $userId = $request->user()?->id;
+
+        if (! $this->productStockService->productHasVariants($product)) {
+            $quantity = (int) $request->input('opening_quantity', 0);
+            $unitCost = $request->input('opening_unit_cost');
+            if ($quantity <= 0 || $unitCost === null || (float) $unitCost < 0) {
+                throw ValidationException::withMessages([
+                    'opening_quantity' => ['كمية وتكلفة مخزون الافتتاح مطلوبتان عند تفعيل مخزون الافتتاح.'],
+                ]);
+            }
+
+            $this->inventoryCostingService->addOwnedStock(
+                product: $product,
+                quantity: $quantity,
+                unitCost: (float) $unitCost,
+                currency: $currency,
+                sourceType: 'opening_stock',
+                sourceId: (int) $product->id,
+                userId: $userId,
+                note: $notes,
+                movementType: ProductStockMovement::TYPE_OPENING_STOCK,
+                reason: 'opening_stock',
+                idempotencyKey: 'opening-stock:product:'.$product->id.':main',
+            );
+
             return;
         }
 
-        $price = (float) $request->input('purchase_price');
-        if ($price < 0) {
+        $created = 0;
+        foreach ($sizesInput as $sizeData) {
+            if (! is_array($sizeData)) {
+                continue;
+            }
+            $size = $product->sizes->first(fn (Size $row) =>
+                (! empty($sizeData['id']) && (int) $row->id === (int) $sizeData['id'])
+                || trim((string) $row->size) === trim((string) ($sizeData['size'] ?? ''))
+            );
+            if (! $size) {
+                continue;
+            }
+            foreach ((array) ($sizeData['color_sizes'] ?? []) as $colorData) {
+                if (! is_array($colorData)) {
+                    continue;
+                }
+                $quantity = (int) ($colorData['opening_quantity'] ?? 0);
+                if ($quantity <= 0) {
+                    continue;
+                }
+                if (! array_key_exists('opening_unit_cost', $colorData) || (float) $colorData['opening_unit_cost'] < 0) {
+                    throw ValidationException::withMessages([
+                        'sizes' => ['تكلفة الافتتاح مطلوبة لكل متغير لديه كمية افتتاح.'],
+                    ]);
+                }
+                $variant = $size->colorSizes->first(fn (SizeColor $row) =>
+                    (! empty($colorData['id']) && (int) $row->id === (int) $colorData['id'])
+                    || trim((string) $row->colorAr) === trim((string) ($colorData['colorAr'] ?? ''))
+                );
+                if (! $variant) {
+                    continue;
+                }
+
+                $this->inventoryCostingService->addOwnedStock(
+                    product: $product,
+                    quantity: $quantity,
+                    unitCost: (float) $colorData['opening_unit_cost'],
+                    currency: trim((string) ($colorData['opening_currency'] ?? $currency)) ?: $currency,
+                    sourceType: 'opening_stock',
+                    sourceId: (int) $product->id,
+                    sizeColorId: (int) $variant->id,
+                    sizeId: (int) $size->id,
+                    userId: $userId,
+                    note: $colorData['opening_notes'] ?? $notes,
+                    movementType: ProductStockMovement::TYPE_OPENING_STOCK,
+                    reason: 'opening_stock',
+                    idempotencyKey: 'opening-stock:product:'.$product->id.':variant:'.$variant->id,
+                );
+                $created++;
+            }
+        }
+
+        if ($created === 0) {
+            throw ValidationException::withMessages([
+                'sizes' => ['أدخل كمية وتكلفة افتتاح لمتغير واحد على الأقل.'],
+            ]);
+        }
+    }
+
+    /** @param array<int, int|string> $variantIds */
+    private function assertVariantsCanBeDeleted(array $variantIds): void
+    {
+        $ids = array_values(array_filter(array_map('intval', $variantIds)));
+        if ($ids === []) {
             return;
         }
 
-        $row = PurchaseProduct::query()
-            ->where('product_id', $productId)
-            ->orderByDesc('id')
-            ->first();
+        $hasStock = SizeColor::query()->whereIn('id', $ids)->where('stock', '!=', 0)->exists();
+        $hasAccountingHistory = (Schema::hasTable('inventory_cost_layers')
+                && InventoryCostLayer::query()->whereIn('size_color_id', $ids)->exists())
+            || (Schema::hasTable('product_stock_movements')
+                && ProductStockMovement::query()->whereIn('size_color_id', $ids)->exists())
+            || (Schema::hasTable('inventory_adjustments')
+                && InventoryAdjustment::query()->whereIn('size_color_id', $ids)->exists());
 
-        if ($row !== null) {
-            $row->update(['price' => $price]);
-
-            return;
+        if ($hasStock || $hasAccountingHistory) {
+            throw ValidationException::withMessages([
+                'sizes' => ['لا يمكن حذف متغير لديه مخزون أو سجل محاسبي. يمكن إبقاؤه وتعديل بياناته الوصفية فقط.'],
+            ]);
         }
-
-        PurchaseProduct::create([
-            'product_id' => $productId,
-            'seller_id' => null,
-            'price' => $price,
-        ]);
     }
 
     /**

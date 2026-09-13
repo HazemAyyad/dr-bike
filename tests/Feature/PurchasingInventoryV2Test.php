@@ -106,7 +106,7 @@ class PurchasingInventoryV2Test extends TestCase
             'quantity' => 1,
         ])->assertOk()
             ->assertJsonPath('status', 'error')
-            ->assertJsonStructure(['errors' => ['note']]);
+            ->assertJsonStructure(['errors' => ['actual_quantity', 'reason']]);
     }
 
     public function test_extra_quantity_becomes_amanat_then_can_be_purchased_at_negotiated_price(): void

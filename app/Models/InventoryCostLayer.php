@@ -13,9 +13,11 @@ class InventoryCostLayer extends Model
         'quantity',
         'remaining_quantity',
         'unit_cost',
+        'original_unit_cost',
         'currency',
         'source_type',
         'source_id',
+        'idempotency_key',
         'effective_at',
     ];
 
@@ -23,6 +25,7 @@ class InventoryCostLayer extends Model
         'quantity' => 'float',
         'remaining_quantity' => 'float',
         'unit_cost' => 'float',
+        'original_unit_cost' => 'float',
         'effective_at' => 'datetime',
     ];
 }

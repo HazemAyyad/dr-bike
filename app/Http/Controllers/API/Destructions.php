@@ -31,6 +31,7 @@ class Destructions extends Controller
                     'items' => 'required|array|min:1|max:100',
                     'items.*.product_id' => 'required|integer|exists:products,id',
                     'items.*.pieces_number' => 'required|integer|min:1',
+                    'items.*.size_color_id' => 'nullable|integer|exists:size_colors,id',
                     'items.*.cost_layer_id' => 'nullable|integer|exists:inventory_cost_layers,id',
                     'destruction_reason' => 'nullable|string',
                 ]
@@ -52,6 +53,7 @@ class Destructions extends Controller
                         media: $files,
                         userId: $request->user()?->id,
                         costLayerId: isset($item['cost_layer_id']) ? (int) $item['cost_layer_id'] : null,
+                        sizeColorId: isset($item['size_color_id']) ? (int) $item['size_color_id'] : null,
                     );
                 }
                 return $rows;
@@ -70,9 +72,9 @@ class Destructions extends Controller
         }
     }
 
-    private function createAccountingLine(Product $product, int $quantity, ?string $reason, array $media, ?int $userId, ?int $costLayerId): Destruction
+    private function createAccountingLine(Product $product, int $quantity, ?string $reason, array $media, ?int $userId, ?int $costLayerId, ?int $sizeColorId): Destruction
     {
-        if ($quantity < 1 || (int) $product->stock < $quantity) {
+        if ($quantity < 1 || app(ProductStockService::class)->resolveAvailableStock($product, $sizeColorId) < $quantity) {
             throw ValidationException::withMessages(['items' => [__('messages.stcok_failed')]]);
         }
         $destruction = Destruction::create([
@@ -82,28 +84,17 @@ class Destructions extends Controller
             'media' => $media,
             'created_by_user_id' => $userId,
         ]);
-        $hasLayers = Schema::hasTable('inventory_cost_layers')
-            && Schema::hasTable('inventory_cost_allocations')
-            && (float) InventoryCostLayer::query()->where('product_id', $product->id)->where('remaining_quantity', '>', 0)->sum('remaining_quantity') >= $quantity;
-
         if ($costLayerId) {
             $layer = InventoryCostLayer::query()->findOrFail($costLayerId);
             $cost = app(InventoryCostingService::class)->consumeOwnedStockFromLayer(
                 $product, $layer, $quantity, ProductStockMovement::TYPE_DESTRUCTION,
                 'destruction', $destruction->id, $userId, $reason
             );
-        } elseif ($hasLayers) {
+        } else {
             $cost = app(InventoryCostingService::class)->consumeOwnedStock(
                 $product, $quantity, ProductStockMovement::TYPE_DESTRUCTION,
-                'destruction', $destruction->id, userId: $userId, note: $reason
-            );
-        } else {
-            $unitCost = (float) ($product->purchasePrices()->latest('id')->value('price') ?? $product->price ?? 0);
-            $cost = ['method' => 'legacy_product_cost_estimate', 'unit_cost' => $unitCost, 'total_cost' => $unitCost * $quantity];
-            app(ProductStockService::class)->adjustStock(
-                $product, -$quantity, ProductStockMovement::TYPE_DESTRUCTION,
-                referenceType: 'destruction', referenceId: $destruction->id,
-                note: $reason, userId: $userId, unitCost: $unitCost, totalCost: $cost['total_cost']
+                'destruction', $destruction->id, sizeColorId: $sizeColorId,
+                userId: $userId, note: $reason, reason: $reason
             );
         }
         $destruction->update([
@@ -126,11 +117,15 @@ class Destructions extends Controller
     }
     public function costLayers(Request $request)
     {
-        $data = $request->validate(['product_id' => 'required|integer|exists:products,id']);
-        $product = Product::query()->findOrFail($data['product_id']);
-        $legacyCost = (float) ($product->purchasePrices()->latest('id')->value('price') ?? $product->price ?? 0);
+        $data = $request->validate([
+            'product_id' => 'required|integer|exists:products,id',
+            'size_color_id' => 'nullable|integer|exists:size_colors,id',
+        ]);
         $layers = InventoryCostLayer::query()
             ->where('product_id', $data['product_id'])
+            ->when(! empty($data['size_color_id']),
+                fn ($query) => $query->where('size_color_id', $data['size_color_id']),
+                fn ($query) => $query->whereNull('size_color_id'))
             ->where('remaining_quantity', '>', 0)
             ->orderByDesc('effective_at')
             ->orderByDesc('id')
@@ -147,8 +142,8 @@ class Destructions extends Controller
         return response()->json([
             'status' => 'success',
             'layers' => $layers,
-            'fallback_unit_cost' => round($legacyCost, 6),
-            'fallback_cost_source' => 'legacy_cost_price',
+            'fallback_unit_cost' => null,
+            'fallback_cost_source' => null,
         ]);
     }
 
@@ -184,12 +179,13 @@ class Destructions extends Controller
                 'media' => 'nullable|array|max:15',
                 'media.*' => 'file|max:30720|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
                 'cost_layer_id' => 'nullable|integer|exists:inventory_cost_layers,id',
+                'size_color_id' => 'nullable|integer|exists:size_colors,id',
             ]);
 
             $files = $this->fileStorage($request);
             $data['media'] = $files;
             $product = Product::findOrFail($request->product_id);
-            if( ($product->stock <= 0) || ($product->stock < $request->pieces_number)){
+            if(app(ProductStockService::class)->resolveAvailableStock($product, $request->integer('size_color_id') ?: null) < (int) $request->pieces_number){
                 return response()->json([
                     'status'=>'error',
                     'message'=>__('messages.stcok_failed'),
@@ -201,13 +197,6 @@ class Destructions extends Controller
                 ]));
 
                 $quantity = (int) $request->pieces_number;
-                $hasCostLayers = Schema::hasTable('inventory_cost_layers')
-                    && Schema::hasTable('inventory_cost_allocations')
-                    && (float) InventoryCostLayer::query()
-                        ->where('product_id', $product->id)
-                        ->where('remaining_quantity', '>', 0)
-                        ->sum('remaining_quantity') >= $quantity;
-
                 if (! empty($data['cost_layer_id'])) {
                     $selectedLayer = InventoryCostLayer::query()->findOrFail($data['cost_layer_id']);
                     $cost = app(InventoryCostingService::class)->consumeOwnedStockFromLayer(
@@ -220,33 +209,17 @@ class Destructions extends Controller
                         userId: $request->user()?->id,
                         note: $request->destruction_reason,
                     );
-                } elseif ($hasCostLayers) {
+                } else {
                     $cost = app(InventoryCostingService::class)->consumeOwnedStock(
                         product: $product,
                         quantity: $quantity,
                         movementType: ProductStockMovement::TYPE_DESTRUCTION,
                         referenceType: 'destruction',
                         referenceId: $destruction->id,
+                        sizeColorId: $request->integer('size_color_id') ?: null,
                         userId: $request->user()?->id,
                         note: $request->destruction_reason,
-                    );
-                } else {
-                    $unitCost = (float) ($product->price ?? 0);
-                    $cost = [
-                        'method' => 'legacy_product_price_estimate',
-                        'unit_cost' => $unitCost,
-                        'total_cost' => $unitCost * $quantity,
-                    ];
-                    app(ProductStockService::class)->adjustStock(
-                        product: $product,
-                        quantityDelta: -$quantity,
-                        type: ProductStockMovement::TYPE_DESTRUCTION,
-                        referenceType: 'destruction',
-                        referenceId: $destruction->id,
-                        note: $request->destruction_reason,
-                        userId: $request->user()?->id,
-                        unitCost: $cost['unit_cost'],
-                        totalCost: $cost['total_cost'],
+                        reason: $request->destruction_reason,
                     );
                 }
 

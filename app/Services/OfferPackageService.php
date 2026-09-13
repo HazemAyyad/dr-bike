@@ -12,6 +12,10 @@ class OfferPackageService
 {
     private const IMAGE_DIR = 'Images/OfferPackages';
 
+    public function __construct(private readonly ProductStockService $stockService)
+    {
+    }
+
     public function imagePublicPath(?string $imagePath): string
     {
         if ($imagePath === null || $imagePath === '') {
@@ -240,8 +244,14 @@ class OfferPackageService
                 continue;
             }
 
-            $product->stock = max(0, (float) $product->stock - $qty);
-            $product->save();
+            $this->stockService->deductForSale(
+                product: $product,
+                quantity: $qty,
+                referenceType: 'offer_package',
+                referenceId: (int) $package->id,
+                note: 'بيع حزمة منتجات #'.$package->id,
+            );
+            $product->refresh();
 
             if ((float) $product->stock === 0.0) {
                 $closeout = Closeout::where('product_id', $product->id)->first();
@@ -260,11 +270,20 @@ class OfferPackageService
             $qty = (int) $item->quantity * $packagesSold;
             $productId = (int) $item->product_id;
 
-            Product::withTrashed()
-                ->where('id', $productId)
-                ->increment('stock', $qty);
-
             $product = Product::withTrashed()->find($productId);
+
+            if ($product) {
+                $this->stockService->restoreForSale(
+                    product: $product,
+                    quantity: $qty,
+                    referenceType: 'offer_package',
+                    referenceId: (int) $package->id,
+                    note: 'إلغاء بيع حزمة منتجات #'.$package->id,
+                    costSourceType: 'offer_package_cancel',
+                    costSourceId: (int) $package->id,
+                );
+                $product->refresh();
+            }
 
             if ($product && (float) $product->stock > 0) {
                 $closeout = Closeout::where('product_id', $productId)->first();

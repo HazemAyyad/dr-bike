@@ -9,6 +9,8 @@ class InventoryCostAllocation extends Model
     protected $fillable = [
         'inventory_cost_layer_id',
         'product_id',
+        'size_id',
+        'size_color_id',
         'quantity',
         'unit_cost',
         'total_cost',

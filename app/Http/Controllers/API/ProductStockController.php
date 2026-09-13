@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\BillItem;
+use App\Models\InventoryAdjustment;
 use App\Models\InstantSale;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
@@ -14,6 +15,8 @@ use App\Models\SalesOrder;
 use App\Models\SalesReturn;
 use App\Models\SizeColor;
 use App\Services\ProductStockService;
+use App\Services\InventoryAdjustmentService;
+use App\Services\InventoryCostingService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -21,7 +24,9 @@ use Illuminate\Validation\ValidationException;
 class ProductStockController extends Controller
 {
     public function __construct(
-        private readonly ProductStockService $stockService
+        private readonly ProductStockService $stockService,
+        private readonly InventoryAdjustmentService $adjustments,
+        private readonly InventoryCostingService $costing,
     ) {}
 
     public function adjust(Request $request)
@@ -30,8 +35,11 @@ class ProductStockController extends Controller
             $data = $request->validate([
                 'product_id' => ['required', 'integer', 'exists:products,id'],
                 'size_color_id' => ['nullable', 'integer', 'exists:size_colors,id'],
-                'quantity' => ['required', 'integer', 'not_in:0'],
-                'note' => ['required', 'string', 'max:500'],
+                'actual_quantity' => ['required', 'integer', 'min:0'],
+                'unit_cost' => ['nullable', 'numeric', 'min:0'],
+                'currency' => ['nullable', 'string', 'max:10'],
+                'reason' => ['required', 'string', 'max:190'],
+                'notes' => ['nullable', 'string', 'max:1000'],
             ]);
 
             $product = Product::query()->findOrFail($data['product_id']);
@@ -52,18 +60,14 @@ class ProductStockController extends Controller
                 ], 200);
             }
 
-            $delta = (int) $data['quantity'];
-            $type = $delta > 0
-                ? ProductStockMovement::TYPE_MANUAL_ADD
-                : ProductStockMovement::TYPE_MANUAL_SET;
-
-            $this->stockService->adjustStock(
+            $adjustment = $this->adjustments->adjustQuantity(
                 product: $product,
-                quantityDelta: $delta,
-                type: $type,
+                actualQuantity: (int) $data['actual_quantity'],
+                reason: $data['reason'],
+                notes: $data['notes'] ?? null,
+                positiveUnitCost: array_key_exists('unit_cost', $data) ? (float) $data['unit_cost'] : null,
+                currency: $data['currency'] ?? 'NIS',
                 sizeColorId: $sizeColorId,
-                referenceType: 'manual_adjust',
-                note: $data['note'] ?? null,
                 userId: auth()->id() ? (int) auth()->id() : null,
             );
 
@@ -73,6 +77,8 @@ class ProductStockController extends Controller
                 'status' => 'success',
                 'message' => __('messages.product_updated'),
                 'product_stock' => $this->stockService->resolveDisplayStock($fresh),
+                'adjustment' => $this->adjustmentPayload($adjustment, true),
+                'inventory' => $this->costing->productSummary($fresh, $request->user()?->canViewInventoryCost() ?? false),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -90,6 +96,66 @@ class ProductStockController extends Controller
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
             ], 200);
+        }
+    }
+
+    public function summary(Request $request)
+    {
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+        ]);
+
+        $product = Product::query()->with('sizes.colorSizes')->findOrFail($data['product_id']);
+        $canViewCost = $request->user()?->canViewInventoryCost() ?? false;
+        $inventory = $this->costing->productSummary($product, $canViewCost);
+        $inventory['recent_movements'] = ProductStockMovement::query()
+            ->with(['size:id,size', 'sizeColor:id,colorAr,sizeId', 'creator:id,name'])
+            ->where('product_id', $product->id)
+            ->latest('id')->limit(10)->get()
+            ->map(fn (ProductStockMovement $movement) => $this->movementPayload($movement, $canViewCost))
+            ->values();
+        $inventory['last_adjustments'] = InventoryAdjustment::query()
+            ->with(['size:id,size', 'sizeColor:id,colorAr,sizeId', 'creator:id,name'])
+            ->where('product_id', $product->id)
+            ->latest('id')->limit(10)->get()
+            ->map(fn (InventoryAdjustment $adjustment) => $this->adjustmentPayload($adjustment, $canViewCost))
+            ->values();
+        $inventory['can_view_inventory_cost'] = $canViewCost;
+        $inventory['can_adjust_stock'] = $request->user()?->canAdjustStock() ?? false;
+        $inventory['can_adjust_inventory_cost'] = $request->user()?->canAdjustInventoryCost() ?? false;
+
+        return response()->json(['status' => 'success', 'inventory' => $inventory]);
+    }
+
+    public function revalue(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'product_id' => ['required', 'integer', 'exists:products,id'],
+                'size_color_id' => ['nullable', 'integer', 'exists:size_colors,id'],
+                'new_unit_cost' => ['required', 'numeric', 'min:0'],
+                'currency' => ['nullable', 'string', 'max:10'],
+                'reason' => ['required', 'string', 'max:190'],
+                'notes' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $product = Product::query()->findOrFail($data['product_id']);
+            $adjustment = $this->adjustments->revalue(
+                product: $product,
+                newUnitCost: (float) $data['new_unit_cost'],
+                reason: $data['reason'],
+                notes: $data['notes'] ?? null,
+                currency: $data['currency'] ?? 'NIS',
+                sizeColorId: isset($data['size_color_id']) ? (int) $data['size_color_id'] : null,
+                userId: $request->user()?->id,
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'adjustment' => $this->adjustmentPayload($adjustment, true),
+                'inventory' => $this->costing->productSummary($product->fresh(['sizes.colorSizes']), true),
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
         }
     }
 
@@ -121,6 +187,10 @@ class ProductStockController extends Controller
                     ProductStockMovement::TYPE_DISASSEMBLY_OUTPUT,
                     ProductStockMovement::TYPE_PRICE_UPDATE,
                     ProductStockMovement::TYPE_PRODUCT_UPDATE,
+                    ProductStockMovement::TYPE_STOCK_ADJUSTMENT_IN,
+                    ProductStockMovement::TYPE_STOCK_ADJUSTMENT_OUT,
+                    ProductStockMovement::TYPE_OPENING_STOCK,
+                    ProductStockMovement::TYPE_COST_REVALUATION,
                 ])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);
@@ -152,7 +222,7 @@ class ProductStockController extends Controller
             }
 
             $paginated = $query->paginate($perPage);
-            $canViewCostPrice = $request->user()?->canViewCostPrice() ?? false;
+            $canViewCostPrice = $request->user()?->canViewInventoryCost() ?? false;
             $canViewPurchases = $this->canAccessSection($request, 'Purchasing Section');
             $canViewSales = $this->canAccessSection($request, 'Sales');
             $documentMaps = $this->loadDocumentMaps($paginated->getCollection());
@@ -175,6 +245,8 @@ class ProductStockController extends Controller
                     'size' => $m->size?->size,
                     'color_ar' => $m->sizeColor?->colorAr,
                     'note' => $m->note,
+                    'reason' => $m->reason,
+                    'costing_method' => $m->costing_method,
                     'reference_type' => $m->reference_type,
                     'reference_id' => $m->reference_id,
                     'invoice_number' => $invoiceNumber,
@@ -439,6 +511,56 @@ class ProductStockController extends Controller
         return $user->employee->permissions()
             ->whereHas('permission', fn ($query) => $query->where('name_en', $permission))
             ->exists();
+    }
+
+    private function movementPayload(ProductStockMovement $movement, bool $includeCost): array
+    {
+        return [
+            'id' => (int) $movement->id,
+            'type' => $movement->type,
+            'quantity' => (int) $movement->quantity,
+            'stock_before' => (int) $movement->stock_before,
+            'stock_after' => (int) $movement->stock_after,
+            'unit_cost' => $includeCost ? (float) ($movement->unit_cost ?? 0) : null,
+            'total_cost' => $includeCost ? (float) ($movement->total_cost ?? 0) : null,
+            'costing_method' => $movement->costing_method,
+            'reason' => $movement->reason,
+            'notes' => $movement->note,
+            'reference_type' => $movement->reference_type,
+            'reference_id' => $movement->reference_id ? (int) $movement->reference_id : null,
+            'size' => $movement->size?->size,
+            'color_ar' => $movement->sizeColor?->colorAr,
+            'created_by_name' => $movement->creator?->name,
+            'created_at' => optional($movement->created_at)->toIso8601String(),
+        ];
+    }
+
+    private function adjustmentPayload(InventoryAdjustment $adjustment, bool $includeCost): array
+    {
+        return [
+            'id' => (int) $adjustment->id,
+            'reference' => $adjustment->reference,
+            'adjustment_type' => $adjustment->adjustment_type,
+            'product_id' => (int) $adjustment->product_id,
+            'size_id' => $adjustment->size_id ? (int) $adjustment->size_id : null,
+            'size_color_id' => $adjustment->size_color_id ? (int) $adjustment->size_color_id : null,
+            'stock_before' => (float) $adjustment->stock_before,
+            'stock_after' => (float) $adjustment->stock_after,
+            'quantity_difference' => (float) $adjustment->quantity_difference,
+            'old_unit_cost' => $includeCost ? (float) ($adjustment->old_unit_cost ?? 0) : null,
+            'new_unit_cost' => $includeCost ? (float) ($adjustment->new_unit_cost ?? 0) : null,
+            'old_value' => $includeCost ? (float) $adjustment->old_value : null,
+            'new_value' => $includeCost ? (float) $adjustment->new_value : null,
+            'value_difference' => $includeCost ? (float) $adjustment->value_difference : null,
+            'currency' => $adjustment->currency,
+            'costing_method' => $adjustment->costing_method,
+            'reason' => $adjustment->reason,
+            'notes' => $adjustment->notes,
+            'size' => $adjustment->size?->size,
+            'color_ar' => $adjustment->sizeColor?->colorAr,
+            'created_by_name' => $adjustment->creator?->name,
+            'created_at' => optional($adjustment->created_at)->toIso8601String(),
+        ];
     }
 
     private function documentPayload(

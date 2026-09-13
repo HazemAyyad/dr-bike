@@ -15,7 +15,8 @@ use Illuminate\Validation\ValidationException;
 class ProductAssemblyService
 {
     public function __construct(
-        private readonly ProductStockService $stockService
+        private readonly ProductStockService $stockService,
+        private readonly InventoryCostingService $costing,
     ) {}
 
     /**
@@ -69,9 +70,23 @@ class ProductAssemblyService
                 userId: $userId,
             );
 
+            $actualComponentsCost = 0.0;
             foreach ($recipe->items as $item) {
                 $totalQuantity = (int) $item->quantity_per_unit * $quantity;
                 $componentProduct = Product::query()->findOrFail($item->component_product_id);
+
+                $consumed = $this->costing->consumeOwnedStock(
+                    product: $componentProduct,
+                    quantity: $totalQuantity,
+                    movementType: ProductStockMovement::TYPE_ASSEMBLY_COMPONENT,
+                    referenceType: 'product_assembly',
+                    referenceId: (int) $operation->id,
+                    sizeColorId: $item->component_size_color_id ? (int) $item->component_size_color_id : null,
+                    userId: $userId,
+                    note: 'تركيب منتج - خصم مكوّن #'.$operation->id,
+                    reason: 'product_assembly',
+                );
+                $actualComponentsCost += (float) $consumed['total_cost'];
 
                 ProductAssemblyOperationItem::create([
                     'operation_id' => $operation->id,
@@ -79,35 +94,28 @@ class ProductAssemblyService
                     'component_size_color_id' => $item->component_size_color_id,
                     'quantity_per_unit' => $item->quantity_per_unit,
                     'total_quantity' => $totalQuantity,
-                    'unit_cost' => $item->unit_cost,
-                    'total_cost' => $item->unit_cost * $totalQuantity,
+                    'unit_cost' => $consumed['unit_cost'],
+                    'total_cost' => $consumed['total_cost'],
                 ]);
-
-                $this->stockService->adjustStock(
-                    product: $componentProduct,
-                    quantityDelta: -$totalQuantity,
-                    type: ProductStockMovement::TYPE_ASSEMBLY_COMPONENT,
-                    sizeColorId: $item->component_size_color_id ? (int) $item->component_size_color_id : null,
-                    referenceType: 'product_assembly',
-                    referenceId: (int) $operation->id,
-                    note: $this->stockNote('تركيب منتج - خصم مكوّن', $operation, (float) $item->unit_cost, (float) $item->unit_cost * $totalQuantity),
-                    userId: $userId,
-                    unitCost: (float) $item->unit_cost,
-                    totalCost: (float) $item->unit_cost * $totalQuantity,
-                );
             }
 
-            $this->stockService->adjustStock(
+            $unitCost = round(($actualComponentsCost / $quantity) + $additionalCost, 6);
+            $operation->update(['unit_cost' => $unitCost, 'total_cost' => round($unitCost * $quantity, 6)]);
+            $recipe->update(['unit_cost' => $unitCost]);
+
+            $this->costing->addOwnedStock(
                 product: $targetProduct,
-                quantityDelta: $quantity,
-                type: ProductStockMovement::TYPE_ASSEMBLY_OUTPUT,
+                quantity: $quantity,
+                unitCost: $unitCost,
+                currency: 'NIS',
+                sourceType: 'product_assembly',
+                sourceId: (int) $operation->id,
                 sizeColorId: $targetSizeColorId,
-                referenceType: 'product_assembly',
-                referenceId: (int) $operation->id,
-                note: $this->stockNote('تركيب منتج - زيادة المنتج الناتج', $operation, (float) $unitCost, (float) $unitCost * $quantity, $additionalCost),
                 userId: $userId,
-                unitCost: (float) $unitCost,
-                totalCost: (float) $unitCost * $quantity,
+                note: $this->stockNote('تركيب منتج - زيادة المنتج الناتج', $operation, (float) $unitCost, (float) $unitCost * $quantity, $additionalCost),
+                movementType: ProductStockMovement::TYPE_ASSEMBLY_OUTPUT,
+                reason: 'product_assembly',
+                idempotencyKey: 'product-assembly-output:'.$operation->id,
             );
 
             return $operation->fresh([
@@ -153,17 +161,16 @@ class ProductAssemblyService
                 userId: $userId,
             );
 
-            $this->stockService->adjustStock(
+            $this->costing->consumeOwnedStock(
                 product: $targetProduct,
-                quantityDelta: -$quantity,
-                type: ProductStockMovement::TYPE_DISASSEMBLY_OUTPUT,
-                sizeColorId: $recipe->target_size_color_id ? (int) $recipe->target_size_color_id : null,
+                quantity: $quantity,
+                movementType: ProductStockMovement::TYPE_DISASSEMBLY_OUTPUT,
                 referenceType: 'product_disassembly',
                 referenceId: (int) $operation->id,
+                sizeColorId: $recipe->target_size_color_id ? (int) $recipe->target_size_color_id : null,
                 note: $this->stockNote('فك تركيب - خصم المنتج المركب', $operation, (float) $recipe->unit_cost, (float) $recipe->unit_cost * $quantity),
                 userId: $userId,
-                unitCost: (float) $recipe->unit_cost,
-                totalCost: (float) $recipe->unit_cost * $quantity,
+                reason: 'product_disassembly',
             );
 
             foreach ($recipe->items as $item) {
@@ -180,17 +187,19 @@ class ProductAssemblyService
                     'total_cost' => $item->unit_cost * $totalQuantity,
                 ]);
 
-                $this->stockService->adjustStock(
+                $this->costing->addOwnedStock(
                     product: $componentProduct,
-                    quantityDelta: $totalQuantity,
-                    type: ProductStockMovement::TYPE_DISASSEMBLY_COMPONENT,
+                    quantity: $totalQuantity,
+                    unitCost: (float) $item->unit_cost,
+                    currency: 'NIS',
+                    sourceType: 'product_disassembly',
+                    sourceId: (int) $operation->id,
                     sizeColorId: $item->component_size_color_id ? (int) $item->component_size_color_id : null,
-                    referenceType: 'product_disassembly',
-                    referenceId: (int) $operation->id,
                     note: $this->stockNote('فك تركيب - إرجاع مكوّن', $operation, (float) $item->unit_cost, (float) $item->unit_cost * $totalQuantity),
                     userId: $userId,
-                    unitCost: (float) $item->unit_cost,
-                    totalCost: (float) $item->unit_cost * $totalQuantity,
+                    movementType: ProductStockMovement::TYPE_DISASSEMBLY_COMPONENT,
+                    reason: 'product_disassembly',
+                    idempotencyKey: 'product-disassembly:'.$operation->id.':component:'.$item->id,
                 );
             }
 
@@ -250,7 +259,9 @@ class ProductAssemblyService
                     'product_id' => $productId,
                     'quantity' => 0,
                     'size_color_id' => $sizeColorId,
-                    'unit_cost' => $this->latestPurchaseCost($product),
+                    'unit_cost' => (float) $this->costing
+                        ->identitySummary($product, $sizeColorId, $sizeColorId ? (int) SizeColor::query()->whereKey($sizeColorId)->value('sizeId') : null, true, 0)
+                        ['average_inventory_unit_cost'],
                 ];
             }
             $merged[$key]['quantity'] += $quantity;
@@ -390,11 +401,6 @@ class ProductAssemblyService
                 'size_color_id' => ['المقاس/اللون لا يتبع المنتج المحدد.'],
             ]);
         }
-    }
-
-    private function latestPurchaseCost(Product $product): float
-    {
-        return (float) $product->purchasePrices()->latest('id')->value('price');
     }
 
     private function stockNote(string $prefix, ProductAssemblyOperation $operation, ?float $unitCost = null, ?float $totalCost = null, ?float $additionalCost = null): string

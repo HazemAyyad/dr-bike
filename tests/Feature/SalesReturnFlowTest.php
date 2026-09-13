@@ -12,6 +12,8 @@ use App\Models\ProductStockMovement;
 use App\Models\SalesDailySession;
 use App\Models\User;
 use App\Services\SalesReturnService;
+use App\Services\InventoryCostingService;
+use App\Services\ProductStockService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
@@ -297,7 +299,7 @@ class SalesReturnFlowTest extends TestCase
             'product_code' => (string) $productId,
             'nameAr' => 'منتج مرتجع '.$productId,
             'nameEng' => 'Return product '.$productId,
-            'stock' => $stock,
+            'stock' => 0,
             'normailPrice' => $unitPrice,
             'wholesalePrice' => $unitPrice,
         ]));
@@ -315,6 +317,21 @@ class SalesReturnFlowTest extends TestCase
             'status' => 'active',
             'created_by' => $this->user->id,
         ]);
+        app(InventoryCostingService::class)->addOwnedStock(
+            product: $product,
+            quantity: $stock + $quantity,
+            unitCost: $unitPrice / 2,
+            currency: 'شيكل',
+            sourceType: 'opening_stock',
+            sourceId: $product->id,
+        );
+        app(ProductStockService::class)->deductForSale(
+            product: $product->fresh(),
+            quantity: $quantity,
+            referenceType: 'instant_sale',
+            referenceId: $sale->id,
+            userId: $this->user->id,
+        );
 
         return [$customer, $product, $sale];
     }

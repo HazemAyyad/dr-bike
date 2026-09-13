@@ -10,6 +10,7 @@ use App\Http\Controllers\API\Test;
 use App\Http\Controllers\CronJobWebController;
 use App\Http\Controllers\DebtLedgerShareWebController;
 use App\Http\Controllers\EmployeeNotificationWebController;
+use App\Http\Controllers\InventoryLegacyAuditWebController;
 use App\Http\Controllers\ProductEditTestController;
 use App\Http\Controllers\SecurityCenterWebController;
 use App\Http\Controllers\SmsTestWebController;
@@ -36,6 +37,9 @@ Route::get('/', function () {
 
 Route::view('/privacy-policy', 'legal.privacy-policy')->name('privacy-policy');
 Route::view('/data-deletion', 'legal.data-deletion')->name('data-deletion');
+
+Route::middleware('auth')->get('/inventory/legacy-audit', [InventoryLegacyAuditWebController::class, 'index'])
+    ->name('inventory.legacy-audit');
 
 /** مركز أمان الويب: مراقبة دخول التطبيق وإدارة حظر Laravel لعناوين IP */
 Route::get('/security-center/login', [SecurityCenterWebController::class, 'loginForm'])->name('security-center.login');

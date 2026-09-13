@@ -89,13 +89,10 @@ class Reports extends Controller
 
             $totalGoods = 0; // تكلفة البضاعة
 
-            foreach (Product::all() as $product) {
-                $salePrice = $product->purchasePrices->last();
-                if ($salePrice) {
-                    $singleGood = $salePrice->price * $product->stock ?? 0;
-                    $totalGoods += $singleGood;
-                }
-
+            $costingService = app(\App\Services\InventoryCostingService::class);
+            foreach (Product::query()->with('sizes.colorSizes')->get() as $product) {
+                $summary = $costingService->productSummary($product, true, 0);
+                $totalGoods += (float) ($summary['inventory_value'] ?? 0);
             }
 
             $shopCapital = $totalBoxes + $totalChecks + $totalDebtsOwedToUs + $totalGoods; // رأس مال المحل
@@ -470,33 +467,20 @@ class Reports extends Controller
             ]);
         }
 
-        $inventoryLayers = Schema::hasTable('inventory_cost_layers')
-            ? InventoryCostLayer::query()
-                ->where('remaining_quantity', '>', 0)
-                ->get(['product_id', 'remaining_quantity', 'unit_cost'])
-                ->groupBy('product_id')
-            : collect();
         $stockService = app(ProductStockService::class);
+        $costingService = app(\App\Services\InventoryCostingService::class);
         $inventory = Product::query()
             ->with([
-                'purchasePrices' => fn ($query) => $query->orderByDesc('id'),
                 'sizes.colorSizes',
                 'normalImages' => fn ($query) => $query->orderBy('id'),
                 'viewImages' => fn ($query) => $query->orderBy('id'),
                 'image3d' => fn ($query) => $query->orderBy('id'),
             ])
             ->get()
-            ->map(function (Product $product) use ($inventoryLayers, $stockService) {
+            ->map(function (Product $product) use ($stockService, $costingService) {
                 $stock = (float) $stockService->resolveDisplayStock($product);
-                $fallbackUnitCost = (float) ($product->purchasePrices->first()?->price ?? 0);
-                $productLayers = collect($inventoryLayers[$product->id] ?? []);
-                $layerQuantity = (float) $productLayers->sum('remaining_quantity');
-                $layerValue = (float) $productLayers->sum(
-                    fn (InventoryCostLayer $layer) => (float) $layer->remaining_quantity * (float) $layer->unit_cost
-                );
-                $inventoryValue = $layerQuantity > 0
-                    ? $layerValue + (($stock - $layerQuantity) * $fallbackUnitCost)
-                    : $stock * $fallbackUnitCost;
+                $cost = $costingService->productSummary($product, true, 0);
+                $inventoryValue = (float) ($cost['inventory_value'] ?? 0);
 
                 return [
                     'id' => $product->id,
@@ -511,6 +495,7 @@ class Reports extends Controller
                     ])->filter()->map(fn ($image) => ApiImageUrl::normalize($image))->values(),
                     'quantity' => round($stock, 3),
                     'value' => round($inventoryValue, 3),
+                    'cost_coverage_complete' => (bool) ($cost['cost_coverage_complete'] ?? false),
                 ];
             });
         $soldByProduct = InstantSale::query()
@@ -737,16 +722,13 @@ class Reports extends Controller
                 $lineColumns[] = 'inventory_total_cost';
             }
             $costByInvoice = InstantSale::query()
-                ->with(['product.purchasePrices' => fn ($query) => $query->orderByDesc('id')])
                 ->where(function ($query) use ($parentIds) {
                     $query->whereIn('id', $parentIds)->orWhereIn('parent_id', $parentIds);
                 })
                 ->get($lineColumns)
                 ->groupBy(fn (InstantSale $line) => (int) ($line->parent_id ?: $line->id))
                 ->map(fn ($lines) => (float) $lines->sum(fn (InstantSale $line) => $this->analyticsLineCost(
-                    $instantHasCost ? $line->inventory_total_cost : null,
-                    (float) ($line->quantity ?? 0),
-                    (float) ($line->product?->purchasePrices->first()?->price ?? 0)
+                    $instantHasCost ? $line->inventory_total_cost : null
                 )
                 ));
         }
@@ -800,11 +782,9 @@ class Reports extends Controller
         return ['key' => $key, 'value' => round($current, 3), 'previous_value' => round($previous, 3), 'change_percent' => round($change, 1)];
     }
 
-    private function analyticsLineCost($snapshotCost, float $quantity, float $purchasePrice): float
+    private function analyticsLineCost($snapshotCost): float
     {
-        return $snapshotCost !== null
-            ? (float) $snapshotCost
-            : $quantity * $purchasePrice;
+        return $snapshotCost !== null ? (float) $snapshotCost : 0.0;
     }
 
     private function financialNetSales(float $storedSalesTotal, float $completedReturns): float
@@ -1309,7 +1289,6 @@ class Reports extends Controller
     {
         $products = Product::query()
             ->with([
-                'purchasePrices' => fn ($query) => $query->orderByDesc('id'),
                 'sizes.colorSizes',
             ])
             ->orderBy('nameAr')
@@ -1323,33 +1302,23 @@ class Reports extends Controller
                 ->get(['product_id', 'quantity', 'unit_cost', 'total_cost', 'created_at'])
                 ->groupBy('product_id')
             : collect();
-        $layers = Schema::hasTable('inventory_cost_layers')
-            ? InventoryCostLayer::query()
-                ->where('remaining_quantity', '>', 0)
-                ->get(['product_id', 'remaining_quantity', 'unit_cost'])
-                ->groupBy('product_id')
-            : collect();
         $stockService = app(ProductStockService::class);
+        $costingService = app(\App\Services\InventoryCostingService::class);
         $movementRowsCount = 0;
         $costedMovementRowsCount = 0;
 
         $rows = $products->map(function (Product $product) use (
             $movements,
-            $layers,
             $stockService,
+            $costingService,
             $toDate,
             &$movementRowsCount,
             &$costedMovementRowsCount
         ) {
             $stock = (float) $stockService->resolveDisplayStock($product);
-            $fallbackUnitCost = (float) ($product->purchasePrices->first()?->price ?? 0);
-            $productLayers = collect($layers[$product->id] ?? []);
-            $layerQuantity = (float) $productLayers->sum('remaining_quantity');
-            $layerValue = (float) $productLayers->sum(fn (InventoryCostLayer $layer) => (float) $layer->remaining_quantity * (float) $layer->unit_cost);
-            $currentValue = $layerQuantity > 0
-                ? $layerValue + (($stock - $layerQuantity) * $fallbackUnitCost)
-                : $stock * $fallbackUnitCost;
-            $unitCost = abs($stock) > 0.0001 ? $currentValue / $stock : $fallbackUnitCost;
+            $inventory = $costingService->productSummary($product, true, 0);
+            $currentValue = (float) ($inventory['inventory_value'] ?? 0);
+            $unitCost = (float) ($inventory['average_inventory_unit_cost'] ?? 0);
 
             $periodQuantity = 0.0;
             $periodValue = 0.0;
@@ -1360,7 +1329,7 @@ class Reports extends Controller
                 $hasSnapshot = $movement->total_cost !== null || $movement->unit_cost !== null;
                 $absoluteCost = $movement->total_cost !== null
                     ? abs((float) $movement->total_cost)
-                    : abs($quantity) * ($movement->unit_cost !== null ? (float) $movement->unit_cost : $fallbackUnitCost);
+                    : abs($quantity) * ($movement->unit_cost !== null ? (float) $movement->unit_cost : 0);
                 $signedValue = $quantity < 0 ? -$absoluteCost : $absoluteCost;
                 $movementRowsCount++;
                 if ($hasSnapshot) {
@@ -1390,6 +1359,7 @@ class Reports extends Controller
                 'total_cost' => round($endingValue, 3),
                 'opening_value' => round($openingValue, 3),
                 'ending_value' => round($endingValue, 3),
+                'cost_coverage_complete' => (bool) ($inventory['cost_coverage_complete'] ?? false),
             ];
         });
 
@@ -1513,10 +1483,7 @@ class Reports extends Controller
     private function productProfitReportPayload(Carbon $from, Carbon $to): array
     {
         $invoices = InstantSale::query()
-            ->with([
-                'product.purchasePrices' => fn ($query) => $query->orderByDesc('id'),
-                'subProducts.product.purchasePrices' => fn ($query) => $query->orderByDesc('id'),
-            ])
+            ->with(['product', 'subProducts.product'])
             ->whereNull('parent_id')
             ->whereNull('maintenance_id')
             ->whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
@@ -1544,9 +1511,7 @@ class Reports extends Controller
                 );
                 $hasSnapshot = $line->inventory_total_cost !== null;
                 $costTotal = $this->analyticsLineCost(
-                    $line->inventory_total_cost,
-                    $quantity,
-                    (float) ($line->product->purchasePrices->first()?->price ?? 0),
+                    $line->inventory_total_cost
                 );
                 $totalLines++;
                 if ($hasSnapshot) {
