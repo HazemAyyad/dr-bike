@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\ProfitSale;
+use App\Models\Seller;
 use App\Services\DebtLedgerService;
 use App\Services\SalesDailySessionService;
 use Illuminate\Support\Facades\DB;
@@ -134,10 +135,32 @@ class ProfitSales extends Controller
     $buyerName = trim((string) $request->input('buyer_name', ''));
     $buyerPhone = trim((string) $request->input('buyer_phone', ''));
 
+    if ($request->filled('buyer_id') && $request->filled('seller_id')) {
+        throw ValidationException::withMessages([
+            'buyer_id' => [__('messages.must_select_either_customer_or_seller')],
+        ]);
+    }
+    if ($buyerType === 'customer' && ! $request->filled('buyer_id') && $buyerName === '') {
+        throw ValidationException::withMessages([
+            'buyer_id' => [__('messages.must_select_customer_or_seller')],
+        ]);
+    }
+    if ($buyerType === 'seller' && ! $request->filled('seller_id')) {
+        throw ValidationException::withMessages([
+            'seller_id' => [__('messages.must_select_customer_or_seller')],
+        ]);
+    }
+    if ($buyerType === 'unknown' && ($request->filled('buyer_id') || $request->filled('seller_id'))) {
+        throw ValidationException::withMessages([
+            'buyer_type' => [__('messages.must_select_either_customer_or_seller')],
+        ]);
+    }
+
     $profitSale = DB::transaction(function () use ($data, $request, $buyerType, $buyerName, $buyerPhone, $dailySession) {
         unset($data['buyer_id'], $data['buyer_phone']);
 
         if ($buyerType === 'customer') {
+            unset($data['seller_id']);
             if ($request->filled('buyer_id')) {
                 $data['customer_id'] = (int) $request->input('buyer_id');
                 unset($data['buyer_name']);
@@ -155,6 +178,7 @@ class ProfitSales extends Controller
                 $data['buyer_name'] = $customer->name;
             }
         } elseif ($buyerType === 'seller' && $request->filled('seller_id')) {
+            unset($data['customer_id']);
             $data['seller_id'] = (int) $request->input('seller_id');
             unset($data['buyer_name']);
         } else {
@@ -403,18 +427,154 @@ public function getProfitSales(Request $request)
 
     public function edit(Request $request){
         try{
-        $data =  $request->validate([
-            'profit_sale_id'=>'required|exists:instant_sales,id',
+        if ($request->has('total_cost')) {
+            $request->merge(['total_cost' => $this->normalizeNumericInput($request->input('total_cost'))]);
+        }
+        if ($request->has('payment_box_value')) {
+            $request->merge(['payment_box_value' => $this->normalizeNumericInput($request->input('payment_box_value'))]);
+        }
+
+        $data = $request->validate([
+            'profit_sale_id' => 'required|integer|exists:profit_sales,id',
             'total_cost' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
-
+            'buyer_type' => 'required|string|in:customer,seller,unknown',
+            'buyer_id' => 'nullable|integer|exists:customers,id',
+            'seller_id' => 'nullable|integer|exists:sellers,id',
+            'buyer_name' => 'nullable|string|max:255',
+            'payment_box_value' => 'nullable|numeric|min:0',
+            'image' => 'nullable|image|max:10240',
+            'video' => 'nullable|file|mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/x-matroska|max:51200',
         ]);
 
-        $profitSale = ProfitSale::findOrFail($request->profit_sale_id);
-        $profitSale->update($data);
-        Logs::createLog('تعديل ربح نقدي ','تم تعديل ربح نقدي ','profit_sales');
+        if ($data['buyer_type'] === 'customer' && ! $request->filled('buyer_id')) {
+            throw ValidationException::withMessages([
+                'buyer_id' => [__('messages.must_select_customer_or_seller')],
+            ]);
+        }
+        if ($data['buyer_type'] === 'seller' && ! $request->filled('seller_id')) {
+            throw ValidationException::withMessages([
+                'seller_id' => [__('messages.must_select_customer_or_seller')],
+            ]);
+        }
+        if ($request->filled('buyer_id') && $request->filled('seller_id')) {
+            throw ValidationException::withMessages([
+                'buyer_id' => [__('messages.must_select_either_customer_or_seller')],
+            ]);
+        }
+        if ($data['buyer_type'] === 'unknown'
+            && ($request->filled('buyer_id') || $request->filled('seller_id'))) {
+            throw ValidationException::withMessages([
+                'buyer_type' => [__('messages.must_select_either_customer_or_seller')],
+            ]);
+        }
 
+        $profitSale = DB::transaction(function () use ($request, $data) {
+            $profitSale = ProfitSale::query()
+                ->with('salesDailySession')
+                ->lockForUpdate()
+                ->findOrFail($data['profit_sale_id']);
 
+            if ($profitSale->isCancelled()) {
+                throw ValidationException::withMessages([
+                    'profit_sale_id' => [__('messages.instant_sale_already_cancelled')],
+                ]);
+            }
+
+            $dailySessions = app(SalesDailySessionService::class);
+            $dailySessions->assertCanDirectCancelSale($request->user(), $profitSale);
+            if ($dailySessions->saleBelongsToClosedSession($profitSale)) {
+                throw ValidationException::withMessages([
+                    'profit_sale_id' => ['لا يمكن تعديل بيع ربحي تابع لصندوق يومي مغلق.'],
+                ]);
+            }
+
+            $newTotal = round((float) $data['total_cost'], 2);
+            $oldPaid = round((float) ($profitSale->payment_box_value ?? 0), 2);
+            $newPaid = array_key_exists('payment_box_value', $data)
+                ? round((float) $data['payment_box_value'], 2)
+                : $oldPaid;
+            if ($newPaid > $newTotal + 0.0001) {
+                throw ValidationException::withMessages([
+                    'payment_box_value' => [__('messages.validation_failed')],
+                ]);
+            }
+
+            $customerId = null;
+            $sellerId = null;
+            $buyerName = trim((string) ($data['buyer_name'] ?? ''));
+            if ($data['buyer_type'] === 'customer') {
+                $customer = Customer::findOrFail((int) $data['buyer_id']);
+                $customerId = (int) $customer->id;
+                $buyerName = (string) $customer->name;
+            } elseif ($data['buyer_type'] === 'seller') {
+                $seller = Seller::findOrFail((int) $data['seller_id']);
+                $sellerId = (int) $seller->id;
+                $buyerName = (string) $seller->name;
+            }
+
+            $delta = round($newPaid - $oldPaid, 2);
+            if (abs($delta) > 0.0001) {
+                $boxId = (int) ($profitSale->payment_box_id ?? 0);
+                $box = $boxId > 0
+                    ? Box::query()->lockForUpdate()->find($boxId)
+                    : null;
+                if (! $box) {
+                    throw ValidationException::withMessages([
+                        'payment_box_value' => [__('messages.sales_daily_box_required')],
+                    ]);
+                }
+                $nextBoxTotal = round((float) ($box->total ?? 0) + $delta, 2);
+                if ($nextBoxTotal < -0.0001) {
+                    throw ValidationException::withMessages([
+                        'payment_box_value' => [__('messages.box_out_of_money')],
+                    ]);
+                }
+                $box->total = max(0, $nextBoxTotal);
+                $box->save();
+                BoxLogs::createBoxLog(
+                    $box,
+                    $delta > 0 ? 'إضافة — فرق تعديل بيع ربحي' : 'سحب — فرق تعديل بيع ربحي',
+                    $delta > 0 ? 'add' : 'minus',
+                    abs($delta),
+                    'تعديل بيع ربحي #'.$profitSale->id.' — فرق المقبوض '.number_format($delta, 2, '.', '')
+                );
+            }
+
+            $update = [
+                'total_cost' => $newTotal,
+                'notes' => $data['notes'] ?? null,
+                'buyer_type' => $data['buyer_type'],
+                'customer_id' => $customerId,
+                'seller_id' => $sellerId,
+                'buyer_name' => $buyerName !== '' ? $buyerName : null,
+                'payment_box_value' => $newPaid,
+            ];
+            if ($request->hasFile('image')) {
+                $update['image_path'] = $this->storeProfitSaleFile($request, 'image');
+            }
+            if ($request->hasFile('video')) {
+                $update['video_path'] = $this->storeProfitSaleFile($request, 'video');
+            }
+
+            $profitSale->update($update);
+            $fresh = $profitSale->fresh(['paymentBox', 'customer:id,name', 'seller:id,name']);
+            app(DebtLedgerService::class)->syncProfitSaleToLedger($fresh);
+
+            return $fresh;
+        });
+
+        Logs::createLog(
+            'تعديل ربح نقدي',
+            'تم تعديل ربح نقدي #'.$profitSale->id.' '.$this->profitSalePersonLabel($profitSale),
+            'profit_sales'
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => __('messages.profit_sale_updated_successfully'),
+            'profit_sale' => $profitSale,
+        ], 200);
     }
         catch (ValidationException $e) {
             return response()->json([

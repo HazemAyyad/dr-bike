@@ -304,6 +304,7 @@ return [
     'one_extra_hours_should_filled' => 'عليك اضافة اما ساعات عمل عادية او اوفرتايم',
        //profit sales
     'profit_sale_created_successfully' => 'تم انشاء ربح نقدي جديد',
+    'profit_sale_updated_successfully' => 'تم تعديل البيع الربحي بنجاح',
     'profit_sale_cancelled_successfully' => 'تم إلغاء البيع الربحي',
 
     //instant sales
@@ -560,6 +561,7 @@ return [
     'store_shelf_deleted' => 'تم حذف الرف',
 
     'sales_daily_no_session' => 'لا توجد جلسة مبيعات يومية مفتوحة. افتح الصندوق يدوياً أولاً.',
+    'sales_orders_daily_no_session' => 'يجب فتح صندوق الطلبيات اليومي قبل تأكيد الطلبية.',
     'sales_daily_opened' => 'تم فتح صندوق المبيعات بنجاح.',
     'sales_daily_opening_variance' => 'يوجد فرق بين الكاش المستلم والمتوقع من الصندوق السابق. أكد المتابعة إذا أردت فتح الصندوق بهذا الفرق.',
     'sales_daily_drawer_open_by_other' => 'صندوق المبيعات مفتوح لدى :employee. يجب إغلاقه قبل فتح صندوق آخر.',

@@ -760,10 +760,9 @@ class SalesOrderFulfillmentService
     }
 
     /**
-     * Post the amount entered while creating the order immediately to the
-     * currently open sales-orders drawer. The settlement row makes the daily
-     * drawer summary and closing count the movement without posting it again
-     * when the order is delivered.
+     * Post the amount entered while creating the draft when the order is
+     * confirmed. The settlement row makes the daily drawer summary and closing
+     * count the movement without posting it again when the order is delivered.
      */
     public function postInitialPayment(SalesOrder $order, User $user): void
     {
@@ -781,10 +780,7 @@ class SalesOrderFulfillmentService
             $user,
             SalesDailySessionService::TYPE_SALES_ORDERS
         );
-        $paymentBox = $this->ordersDailyBoxes->resolve(
-            $user,
-            $order->payment_box_id ? (int) $order->payment_box_id : null
-        );
+        $paymentBox = $this->ordersDailyBoxes->resolve($user);
         $box = Box::lockForUpdate()->findOrFail($paymentBox['id']);
         $box->update(['total' => round((float) $box->total + $amount, 2)]);
 

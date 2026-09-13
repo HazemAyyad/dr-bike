@@ -155,6 +155,7 @@ class Bills extends Controller
                 'initial_payment' => ['nullable', 'numeric', 'min:0'],
                 'box_id' => ['nullable', 'integer', 'exists:boxes,id'],
             ]);
+            $this->assertSinglePurchaseParty($request);
             $bill = app(PurchasingService::class)->createPurchase($data, $request->user()?->id);
 
             Logs::createLog('انشاء فاتورة جديدة','انشاء فاتورة جديدة للتاجر'.' '
@@ -248,6 +249,7 @@ class Bills extends Controller
                 'currency' => ['nullable', 'string'],
                 'notes' => ['nullable', 'string'],
             ]);
+            $this->assertSinglePurchaseParty($request);
 
             $bill = $purchases->updateDraft(
                 Bill::findOrFail($data['bill_id']),
@@ -264,6 +266,22 @@ class Bills extends Controller
             return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    private function assertSinglePurchaseParty(Request $request): void
+    {
+        $hasSeller = $request->filled('seller_id');
+        $hasCustomer = $request->filled('customer_id');
+
+        if ($hasSeller === $hasCustomer) {
+            throw ValidationException::withMessages([
+                'seller_id' => [
+                    $hasSeller
+                        ? __('messages.must_select_either_customer_or_seller')
+                        : __('messages.must_select_customer_or_seller'),
+                ],
+            ]);
         }
     }
 
@@ -440,6 +458,7 @@ class Bills extends Controller
                 'allocations.*.bill_id' => ['required_with:allocations', 'integer', 'exists:bills,id'],
                 'allocations.*.amount' => ['required_with:allocations', 'numeric', 'min:0.01'],
             ]);
+            $this->assertSinglePurchaseParty($request);
             $data['receipt_images'] = $this->storeDebtReceiptImages($request);
 
             $payment = $accounts->paySupplierOnAccount($data, $request->user()?->id);
@@ -485,6 +504,7 @@ class Bills extends Controller
                 'customer_id' => ['nullable', 'integer', 'exists:customers,id', 'required_without:seller_id'],
                 'currency' => ['nullable', 'string'],
             ]);
+            $this->assertSinglePurchaseParty($request);
 
             $currency = $data['currency'] ?? 'شيكل';
             $bills = Bill::query()

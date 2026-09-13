@@ -197,7 +197,9 @@ class SalesDailySessionService
 
         if (! $session) {
             throw ValidationException::withMessages([
-                'session' => [__('messages.sales_daily_no_session')],
+                'session' => [__($type === self::TYPE_SALES_ORDERS
+                    ? 'messages.sales_orders_daily_no_session'
+                    : 'messages.sales_daily_no_session')],
             ]);
         }
 
@@ -557,7 +559,9 @@ class SalesDailySessionService
 
         if (! $session) {
             throw ValidationException::withMessages([
-                'session' => [__('messages.sales_daily_no_session')],
+                'session' => [__($type === self::TYPE_SALES_ORDERS
+                    ? 'messages.sales_orders_daily_no_session'
+                    : 'messages.sales_daily_no_session')],
             ]);
         }
 

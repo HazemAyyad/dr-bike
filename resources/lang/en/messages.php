@@ -295,6 +295,7 @@ return [
     'one_extra_hours_should_filled' => 'you should either add extra normal hours or overtime hours',
     //profit sales
     'profit_sale_created_successfully' => 'profit sale was created successfully',
+    'profit_sale_updated_successfully' => 'Profit sale updated successfully',
     'profit_sale_cancelled_successfully' => 'Profit sale cancelled successfully',
 
     //instant sales
@@ -548,6 +549,7 @@ return [
     'store_shelf_deleted' => 'Shelf deleted',
 
     'sales_daily_no_session' => 'No open daily sales session. Open the drawer manually first.',
+    'sales_orders_daily_no_session' => 'Open the daily sales-orders drawer before confirming the order.',
     'sales_daily_opened' => 'Sales drawer opened successfully.',
     'sales_daily_opening_variance' => 'Opening cash differs from the expected float from the previous drawer. Confirm to continue opening with this variance.',
     'sales_daily_drawer_open_by_other' => 'Sales drawer is already open by :employee. Close it before opening another.',

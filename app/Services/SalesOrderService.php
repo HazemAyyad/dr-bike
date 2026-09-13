@@ -35,6 +35,7 @@ class SalesOrderService
         protected ShiplyService $shiplyService,
         protected SalesOrderMediaRequirementService $mediaRequirements,
         protected SalesOrderStockShortageService $shortages,
+        protected SalesDailySessionService $sessionService,
     ) {}
 
     /**
@@ -312,8 +313,6 @@ class SalesOrderService
                 $order->created_at
             );
 
-            $this->fulfillmentService->postInitialPayment($order, $user);
-
             if (! $order->is_debt_collection) {
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
                 $freshOrder = $order->fresh(['items.product']);
@@ -431,6 +430,10 @@ class SalesOrderService
             SalesOrderStatus::Unconfirmed,
             SalesOrderStatus::Postponed,
         ]);
+        $this->sessionService->assertCanCreateSale(
+            $user,
+            SalesDailySessionService::TYPE_SALES_ORDERS
+        );
 
         if ($order->is_debt_collection) {
             return DB::transaction(function () use ($user, $order) {

@@ -12,6 +12,7 @@ use App\Models\Seller;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class OutgoingChecks extends Controller
@@ -31,6 +32,13 @@ class OutgoingChecks extends Controller
             'notes' => 'nullable|string',
 
         ]);
+
+        if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => __('messages.must_select_customer_or_seller'),
+            ], 200);
+        }
 
         if ($request->filled('customer_id') && $request->filled('seller_id')) {
             return response()->json([
@@ -594,20 +602,44 @@ class OutgoingChecks extends Controller
                 'img'   => 'nullable',
                 'back_image' => 'nullable',
                 'notes' => 'nullable|string',
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
 
             ]);
 
+            if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+                throw ValidationException::withMessages([
+                    'customer_id' => [__('messages.must_select_customer_or_seller')],
+                ]);
+            }
+            if ($request->filled('customer_id') && $request->filled('seller_id')) {
+                throw ValidationException::withMessages([
+                    'customer_id' => [__('messages.must_select_either_customer_or_seller')],
+                ]);
+            }
+
             $outgoingCheck = OutgoingCheck::
             findOrFail($request->outgoing_check_id);
+
+            $data['customer_id'] = $request->filled('customer_id')
+                ? (int) $request->customer_id
+                : null;
+            $data['seller_id'] = $request->filled('seller_id')
+                ? (int) $request->seller_id
+                : null;
 
             $data = IncomingChecks::handleImages($request, $data, [
                 'img' => 'OutgoingChecksImages',
                 'back_image' => 'OutgoingChecksImages/back',
             ], $outgoingCheck);
 
-            $outgoingCheck->update($data);
-
-            app(DebtLedgerService::class)->syncOutgoingCheckToLedger($outgoingCheck->fresh());
+            DB::transaction(function () use ($outgoingCheck, $data) {
+                $lockedCheck = OutgoingCheck::query()
+                    ->lockForUpdate()
+                    ->findOrFail($outgoingCheck->id);
+                $lockedCheck->update($data);
+                app(DebtLedgerService::class)->syncOutgoingCheckToLedger($lockedCheck->fresh());
+            });
 
             return response()->json([
                 'status'=>'success',

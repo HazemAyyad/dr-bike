@@ -840,18 +840,44 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
                 'front_image'   => 'nullable',
                 'back_image'    => 'nullable',
                 'notes' => 'nullable|string',
+                'from_customer' => 'nullable|exists:customers,id',
+                'from_seller' => 'nullable|exists:sellers,id',
           
             ]);
 
+            if (! $request->filled('from_customer') && ! $request->filled('from_seller')) {
+                throw ValidationException::withMessages([
+                    'from_customer' => [__('messages.must_select_customer_or_seller')],
+                ]);
+            }
+            if ($request->filled('from_customer') && $request->filled('from_seller')) {
+                throw ValidationException::withMessages([
+                    'from_customer' => [__('messages.must_select_either_customer_or_seller')],
+                ]);
+            }
+
             $incomingCheck = IncomingCheck::
             findOrFail($request->incoming_check_id);
+
+            $data['from_customer'] = $request->filled('from_customer')
+                ? (int) $request->from_customer
+                : null;
+            $data['from_seller'] = $request->filled('from_seller')
+                ? (int) $request->from_seller
+                : null;
 
             $data = $this->handleImages($request, $data, [
                 'front_image' => 'IncomingCheckImages/front',
                 'back_image'  => 'IncomingCheckImages/back',
             ], $incomingCheck);
     
-           $incomingCheck->update($data);
+           DB::transaction(function () use ($incomingCheck, $data) {
+               $lockedCheck = IncomingCheck::query()
+                   ->lockForUpdate()
+                   ->findOrFail($incomingCheck->id);
+               $lockedCheck->update($data);
+               app(DebtLedgerService::class)->syncIncomingCheckToLedger($lockedCheck->fresh());
+           });
 
             return response()->json([
                 'status'=>'success',

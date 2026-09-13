@@ -8,10 +8,12 @@ use App\Models\Box;
 use App\Models\InstantSale;
 use App\Models\OfferPackage;
 use App\Models\Product;
+use App\Models\ProductStockMovement;
 use App\Models\ProfitSale;
 use App\Models\SalesCancellationRequest;
 use App\Models\SalesDailySession;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
@@ -216,6 +218,17 @@ class SalesCancellationExecutor
         $quantity = max(0, (int) round((float) ($line->quantity ?? 0)));
         $productId = (int) $line->product_id;
 
+        if ($productId > 0 && $quantity > 0 && $this->isDailySessionSaleLineWithoutStockDeduction($line)) {
+            Log::warning('Skipping stock restoration for an incomplete instant-sale line.', [
+                'instant_sale_id' => (int) $line->id,
+                'parent_id' => $line->parent_id ? (int) $line->parent_id : null,
+                'product_id' => $productId,
+            ]);
+            $this->markSaleLineStockRestored($line);
+
+            return;
+        }
+
         if ($productId > 0 && $quantity > 0) {
             $product = Product::withTrashed()->find($productId);
             if ($product instanceof Product) {
@@ -230,6 +243,40 @@ class SalesCancellationExecutor
             }
         }
 
+        $this->markSaleLineStockRestored($line);
+    }
+
+    private function isDailySessionSaleLineWithoutStockDeduction(InstantSale $line): bool
+    {
+        if (
+            ! Schema::hasTable('product_stock_movements')
+            || ! Schema::hasColumn('instant_sales', 'sales_daily_session_id')
+        ) {
+            return false;
+        }
+
+        $belongsToDailySession = (int) ($line->sales_daily_session_id ?? 0) > 0;
+        if (! $belongsToDailySession && (int) ($line->parent_id ?? 0) > 0) {
+            $belongsToDailySession = InstantSale::query()
+                ->whereKey((int) $line->parent_id)
+                ->whereNotNull('sales_daily_session_id')
+                ->exists();
+        }
+
+        if (! $belongsToDailySession) {
+            return false;
+        }
+
+        return ! ProductStockMovement::query()
+            ->where('product_id', (int) $line->product_id)
+            ->where('reference_type', 'instant_sale')
+            ->where('reference_id', (int) $line->id)
+            ->where('quantity', '<', 0)
+            ->exists();
+    }
+
+    private function markSaleLineStockRestored(InstantSale $line): void
+    {
         if (Schema::hasColumn('instant_sales', 'stock_restored')) {
             $line->update(['stock_restored' => true]);
         }

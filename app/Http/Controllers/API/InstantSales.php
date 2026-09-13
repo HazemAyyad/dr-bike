@@ -10,6 +10,7 @@ use App\Models\Customer;
 use App\Models\InstantSale;
 use App\Models\OfferPackage;
 use App\Models\Product;
+use App\Models\ProductStockMovement;
 use App\Models\Project;
 use App\Models\SalesDailySession;
 use App\Models\SalesOrder;
@@ -322,6 +323,17 @@ class InstantSales extends Controller
             return;
         }
 
+        if ($this->isDailySessionSaleLineWithoutStockDeduction($line)) {
+            Log::warning('Skipping stock restoration for an incomplete instant-sale line.', [
+                'instant_sale_id' => (int) $line->id,
+                'parent_id' => $line->parent_id ? (int) $line->parent_id : null,
+                'product_id' => $productId,
+            ]);
+            $this->markSaleLineStockRestored($line);
+
+            return;
+        }
+
         $product = Product::withTrashed()->find($productId);
         if (! $product instanceof Product) {
             $this->markSaleLineStockRestored($line);
@@ -340,6 +352,35 @@ class InstantSales extends Controller
         );
 
         $this->markSaleLineStockRestored($line);
+    }
+
+    private function isDailySessionSaleLineWithoutStockDeduction(InstantSale $line): bool
+    {
+        if (
+            ! Schema::hasTable('product_stock_movements')
+            || ! Schema::hasColumn('instant_sales', 'sales_daily_session_id')
+        ) {
+            return false;
+        }
+
+        $belongsToDailySession = (int) ($line->sales_daily_session_id ?? 0) > 0;
+        if (! $belongsToDailySession && (int) ($line->parent_id ?? 0) > 0) {
+            $belongsToDailySession = InstantSale::query()
+                ->whereKey((int) $line->parent_id)
+                ->whereNotNull('sales_daily_session_id')
+                ->exists();
+        }
+
+        if (! $belongsToDailySession) {
+            return false;
+        }
+
+        return ! ProductStockMovement::query()
+            ->where('product_id', (int) $line->product_id)
+            ->where('reference_type', 'instant_sale')
+            ->where('reference_id', (int) $line->id)
+            ->where('quantity', '<', 0)
+            ->exists();
     }
 
     private function saleLineStockAlreadyRestored(InstantSale $line): bool
@@ -1275,8 +1316,8 @@ public function store(Request $request)
         $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
         $stockService = app(ProductStockService::class);
 
+        DB::beginTransaction();
         if ($replaceId > 0) {
-            DB::beginTransaction();
             $beforeHistorySnapshot = app(InstantSaleHistoryService::class)->snapshot($replaceId);
             $this->prepareInstantSaleReplacement(
                 $replaceId,
@@ -1291,7 +1332,7 @@ public function store(Request $request)
         if (! $isAdjustmentSale) {
             $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId, allowNegative: true);
             if (! ($mainStockCheck['ok'] ?? false)) {
-                if ($replaceId > 0) {
+                if (DB::transactionLevel() > 0) {
                     DB::rollBack();
                 }
                 return response()->json([
@@ -1319,7 +1360,7 @@ public function store(Request $request)
                 $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId, allowNegative: true);
             }
             if (! ($lineCheck['ok'] ?? false)) {
-                    if ($replaceId > 0) {
+                    if (DB::transactionLevel() > 0) {
                         DB::rollBack();
                     }
                     return response()->json([
@@ -1333,7 +1374,7 @@ public function store(Request $request)
 
 
         if($mainData['type']==='project' && $productProjects->isEmpty()){
-            if ($replaceId > 0) {
+            if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
             return response()->json([
@@ -1395,7 +1436,7 @@ public function store(Request $request)
 
 
                 if($product['type']==='project' && $subProductProjects->isEmpty()){
-                    if ($replaceId > 0) {
+                    if (DB::transactionLevel() > 0) {
                         DB::rollBack();
                     }
                     return response()->json([
@@ -1411,7 +1452,7 @@ public function store(Request $request)
                     $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId, allowNegative: true);
                 }
                 if (! ($lineCheck['ok'] ?? false)) {
-                    if ($replaceId > 0) {
+                    if (DB::transactionLevel() > 0) {
                         DB::rollBack();
                     }
                     return response()->json([
@@ -1504,9 +1545,7 @@ public function store(Request $request)
             ['closed_day_edit_mode' => $closedDayEditMode]
         );
 
-        if ($replaceId > 0) {
-            DB::commit();
-        }
+        DB::commit();
 
         return response()->json([
                     'status' => 'success',
@@ -1519,7 +1558,7 @@ public function store(Request $request)
             }
 
         catch (ValidationException $e) {
-            if ($replaceId > 0 && DB::transactionLevel() > 0) {
+            if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
             return response()->json([
@@ -1529,7 +1568,7 @@ public function store(Request $request)
             ], 200);
         }
             catch (QueryException $e) {
-            if ($replaceId > 0 && DB::transactionLevel() > 0) {
+            if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
             Log::error('InstantSales::store QueryException', [
@@ -1545,7 +1584,7 @@ public function store(Request $request)
             ], 200);
         }
         catch (\Exception $e) {
-            if ($replaceId > 0 && DB::transactionLevel() > 0) {
+            if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
             Log::error('InstantSales::store error', [

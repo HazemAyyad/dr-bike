@@ -902,11 +902,9 @@ class DebtLedgerService
         }
 
         if ($check->status === 'cashed_to_box') {
-            return DebtTransaction::query()
-                ->active()
-                ->where('source', 'incoming_check')
-                ->where('source_id', (int) $check->id)
-                ->first();
+            $this->deleteSourceLedger('incoming_check_disposal', (int) $check->id);
+
+            return $this->syncIncomingCheckReceiveToLedger($check);
         }
 
         if ($check->status === 'cashed_to_person') {
