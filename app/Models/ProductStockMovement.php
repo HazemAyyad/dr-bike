@@ -43,6 +43,8 @@ class ProductStockMovement extends Model
 
     public const TYPE_COST_REVALUATION = 'cost_revaluation';
 
+    public const TYPE_COST_INITIALIZATION = 'cost_initialization';
+
     public const TYPE_IMPORT = 'import';
 
     public const TYPE_ASSEMBLY_COMPONENT = 'assembly_component';

@@ -8,6 +8,7 @@ use App\Models\Category;
 use App\Models\EmployeeDetail;
 use App\Models\InstantSale;
 use App\Models\InventoryCostAllocation;
+use App\Models\InventoryAdjustment;
 use App\Models\InventoryCostLayer;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
@@ -233,6 +234,90 @@ class InventoryArchitectureTest extends TestCase
         $this->assertEqualsWithDelta(70 / 15, $before['average_inventory_unit_cost'], 0.0001);
         $this->assertEqualsWithDelta($before['average_inventory_unit_cost'], $after['average_inventory_unit_cost'], 0.0001);
         $this->assertEqualsWithDelta(56, $after['inventory_value'], 0.0001);
+    }
+
+    public function test_missing_inventory_cost_can_be_initialized_without_changing_stock(): void
+    {
+        $product = $this->product(10);
+        $existingLayer = InventoryCostLayer::query()->create([
+            'product_id' => $product->id,
+            'quantity' => 2,
+            'remaining_quantity' => 2,
+            'unit_cost' => 5,
+            'original_unit_cost' => 5,
+            'currency' => 'شيكل',
+            'source_type' => 'purchase_receipt_item',
+            'source_id' => 7001,
+            'effective_at' => now(),
+        ]);
+
+        $adjustment = app(InventoryAdjustmentService::class)->initializeMissingCost(
+            $product,
+            3,
+            'اعتماد تكلفة المخزون القديم',
+            'اعتماد موثق من صاحب المتجر',
+            'NIS',
+            null,
+            $this->admin->id,
+        );
+        $summary = app(InventoryCostingService::class)->productSummary($product->fresh(), true);
+        $openingLayer = InventoryCostLayer::query()
+            ->where('product_id', $product->id)
+            ->where('source_type', 'inventory_cost_initialization')
+            ->sole();
+
+        $this->assertSame(10, (int) $product->fresh()->stock);
+        $this->assertSame(InventoryAdjustment::TYPE_COST_INITIALIZATION, $adjustment->adjustment_type);
+        $this->assertSame(0, (int) $adjustment->quantity_difference);
+        $this->assertEqualsWithDelta(8, $openingLayer->remaining_quantity, 0.0001);
+        $this->assertTrue($openingLayer->effective_at->lt($existingLayer->effective_at));
+        $this->assertEqualsWithDelta(34, $summary['inventory_value'], 0.0001);
+        $this->assertEqualsWithDelta(3.4, $summary['average_inventory_unit_cost'], 0.0001);
+        $this->assertEqualsWithDelta(3, $summary['next_fifo_unit_cost'], 0.0001);
+        $this->assertEqualsWithDelta(0, $summary['missing_cost_quantity'], 0.0001);
+        $this->assertTrue($summary['cost_coverage_complete']);
+        $this->assertDatabaseHas('product_stock_movements', [
+            'product_id' => $product->id,
+            'type' => ProductStockMovement::TYPE_COST_INITIALIZATION,
+            'quantity' => 0,
+            'stock_before' => 10,
+            'stock_after' => 10,
+        ]);
+
+        try {
+            app(InventoryAdjustmentService::class)->initializeMissingCost(
+                $product->fresh(), 3, 'محاولة مكررة', null, 'NIS', null, $this->admin->id,
+            );
+            $this->fail('Fully covered inventory must not receive duplicate cost coverage.');
+        } catch (ValidationException) {
+            // Expected: no duplicate layer or value is created.
+        }
+
+        $this->assertSame(1, InventoryCostLayer::query()
+            ->where('product_id', $product->id)
+            ->where('source_type', 'inventory_cost_initialization')
+            ->count());
+    }
+
+    public function test_inventory_cost_initialization_permission_is_enforced_by_backend(): void
+    {
+        $employeeUser = User::factory()->create(['type' => 'employee']);
+        EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $product = $this->product(5);
+        Sanctum::actingAs($employeeUser);
+        $this->withoutMiddleware(RefreshSanctumTokenExpiry::class);
+
+        $this->postJson('/api/product/inventory/initialize-cost', [
+            'product_id' => $product->id,
+            'unit_cost' => 4,
+            'reason' => 'غير مصرح',
+        ])->assertOk()->assertJsonPath('status', 'error');
+
+        $this->assertSame(5, (int) $product->fresh()->stock);
+        $this->assertFalse(InventoryCostLayer::query()
+            ->where('product_id', $product->id)
+            ->where('source_type', 'inventory_cost_initialization')
+            ->exists());
     }
 
     public function test_variant_costing_never_consumes_another_variant_layer(): void

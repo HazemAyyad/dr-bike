@@ -240,6 +240,105 @@ class InventoryAdjustmentService
         });
     }
 
+    public function initializeMissingCost(
+        Product $product,
+        float $unitCost,
+        string $reason,
+        ?string $notes,
+        string $currency,
+        ?int $sizeColorId,
+        ?int $userId,
+    ): InventoryAdjustment {
+        $currency = $this->costing->normalizeCurrency($currency);
+        if ($unitCost <= 0) {
+            throw ValidationException::withMessages(['unit_cost' => ['تكلفة الوحدة يجب أن تكون أكبر من صفر.']]);
+        }
+
+        return DB::transaction(function () use ($product, $unitCost, $reason, $notes, $currency, $sizeColorId, $userId) {
+            $product = Product::query()->lockForUpdate()->findOrFail($product->id);
+            $this->costing->assertCurrencyCompatible($product, $currency);
+            $sizeId = $this->validateIdentity($product, $sizeColorId);
+            $method = $this->costing->currentMethod();
+            $before = $this->costing->identitySummary($product, $sizeColorId, $sizeId, true, 0);
+            $quantity = (float) $before['quantity_on_hand'];
+            $missingQuantity = round($quantity - (float) $before['costed_quantity'], 4);
+            if ($quantity <= self::EPSILON || $missingQuantity <= self::EPSILON) {
+                throw ValidationException::withMessages([
+                    'inventory' => ['لا توجد كمية مخزون موجبة ناقصة التغطية لإضافة تكلفة لها.'],
+                ]);
+            }
+
+            $adjustment = InventoryAdjustment::query()->create([
+                'reference' => $this->reference('CST'),
+                'product_id' => $product->id,
+                'size_id' => $sizeId,
+                'size_color_id' => $sizeColorId,
+                'adjustment_type' => InventoryAdjustment::TYPE_COST_INITIALIZATION,
+                'stock_before' => $quantity,
+                'stock_after' => $quantity,
+                'quantity_difference' => 0,
+                'old_unit_cost' => $before['average_inventory_unit_cost'],
+                'old_value' => $before['inventory_value'] ?? 0,
+                'new_value' => 0,
+                'value_difference' => 0,
+                'currency' => $currency,
+                'costing_method' => $method,
+                'reason' => $reason,
+                'notes' => $notes,
+                'created_by' => $userId,
+            ]);
+
+            $layer = $this->costing->coverMissingCost(
+                product: $product,
+                unitCost: $unitCost,
+                currency: $currency,
+                sourceType: 'inventory_cost_initialization',
+                sourceId: $adjustment->id,
+                sizeColorId: $sizeColorId,
+                sizeId: $sizeId,
+                userId: $userId,
+                idempotencyKey: 'inventory-cost-initialization:'.$adjustment->id,
+            );
+            $after = $this->costing->identitySummary($product->fresh(), $sizeColorId, $sizeId, true, 0);
+
+            InventoryCostRevaluationLine::query()->create([
+                'inventory_adjustment_id' => $adjustment->id,
+                'inventory_cost_layer_id' => $layer->id,
+                'quantity' => $missingQuantity,
+                'old_unit_cost' => 0,
+                'new_unit_cost' => $unitCost,
+                'old_value' => 0,
+                'new_value' => round($missingQuantity * $unitCost, 6),
+            ]);
+
+            $adjustment->update([
+                'new_unit_cost' => $after['average_inventory_unit_cost'],
+                'new_value' => $after['inventory_value'] ?? 0,
+                'value_difference' => round((float) ($after['inventory_value'] ?? 0) - (float) ($before['inventory_value'] ?? 0), 6),
+            ]);
+
+            $this->stock->logMovement(
+                productId: (int) $product->id,
+                sizeId: $sizeId,
+                sizeColorId: $sizeColorId,
+                type: ProductStockMovement::TYPE_COST_INITIALIZATION,
+                quantity: 0,
+                stockBefore: (int) $quantity,
+                stockAfter: (int) $quantity,
+                referenceType: 'inventory_adjustment',
+                referenceId: (int) $adjustment->id,
+                note: $notes,
+                userId: $userId,
+                unitCost: $unitCost,
+                totalCost: (float) $adjustment->value_difference,
+                costingMethod: $method,
+                reason: $reason,
+            );
+
+            return $adjustment->fresh();
+        });
+    }
+
     private function validateIdentity(Product $product, ?int $sizeColorId): ?int
     {
         if ($sizeColorId === null || $sizeColorId <= 0) {

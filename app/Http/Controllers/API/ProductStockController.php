@@ -155,7 +155,47 @@ class ProductStockController extends Controller
                 'inventory' => $this->costing->productSummary($product->fresh(['sizes.colorSizes']), true),
             ]);
         } catch (ValidationException $e) {
-            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?? __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        }
+    }
+
+    public function initializeCost(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'product_id' => ['required', 'integer', 'exists:products,id'],
+                'size_color_id' => ['nullable', 'integer', 'exists:size_colors,id'],
+                'unit_cost' => ['required', 'numeric', 'gt:0'],
+                'currency' => ['nullable', 'string', 'max:10'],
+                'reason' => ['required', 'string', 'max:120'],
+                'notes' => ['nullable', 'string', 'max:1000'],
+            ]);
+            $product = Product::query()->findOrFail($data['product_id']);
+            $adjustment = $this->adjustments->initializeMissingCost(
+                product: $product,
+                unitCost: (float) $data['unit_cost'],
+                reason: $data['reason'],
+                notes: $data['notes'] ?? null,
+                currency: $data['currency'] ?? 'NIS',
+                sizeColorId: isset($data['size_color_id']) ? (int) $data['size_color_id'] : null,
+                userId: $request->user()?->id,
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'adjustment' => $this->adjustmentPayload($adjustment, true),
+                'inventory' => $this->costing->productSummary($product->fresh(['sizes.colorSizes']), true),
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?? __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
         }
     }
 
@@ -191,6 +231,7 @@ class ProductStockController extends Controller
                     ProductStockMovement::TYPE_STOCK_ADJUSTMENT_OUT,
                     ProductStockMovement::TYPE_OPENING_STOCK,
                     ProductStockMovement::TYPE_COST_REVALUATION,
+                    ProductStockMovement::TYPE_COST_INITIALIZATION,
                 ])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);

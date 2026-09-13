@@ -1204,6 +1204,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Adjust Stock','ref
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Adjust Inventory Cost','refresh.token.expiry']] , function() {
     Route::post('/product/inventory/revalue' , [ProductStockController::class,'revalue']);
+    Route::post('/product/inventory/initialize-cost' , [ProductStockController::class,'initializeCost']);
     // Legacy URI retained as a compatibility alias; it now creates an audited revaluation.
     Route::post('/product/cost-price' , [ProductStockController::class,'revalue']);
 });

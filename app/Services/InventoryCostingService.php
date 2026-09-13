@@ -402,6 +402,7 @@ class InventoryCostingService
         if ($variants !== []) {
             $quantity = array_sum(array_column($variants, 'quantity_on_hand'));
             $costedQuantity = array_sum(array_column($variants, 'costed_quantity'));
+            $missingCostQuantity = array_sum(array_column($variants, 'missing_cost_quantity'));
             $value = $includeCost ? array_sum(array_column($variants, 'inventory_value')) : null;
             $nextLayer = collect($variants)
                 ->filter(fn (array $row) => isset($row['next_fifo_effective_at']) && $row['next_fifo_effective_at'])
@@ -416,12 +417,14 @@ class InventoryCostingService
             return [
                 'quantity_on_hand' => $quantity,
                 'costed_quantity' => $costedQuantity,
+                'missing_cost_quantity' => round($missingCostQuantity, 4),
                 'costing_method' => $method,
                 'currency' => $currency,
                 'inventory_value' => $includeCost ? round((float) $value, 6) : null,
                 'average_inventory_unit_cost' => $includeCost && $quantity > self::EPSILON ? round((float) $value / $quantity, 6) : null,
                 'next_fifo_unit_cost' => $includeCost && $method === self::METHOD_FIFO ? ($nextLayer['next_fifo_unit_cost'] ?? null) : null,
-                'cost_coverage_complete' => $currencyConsistent && abs($quantity - $costedQuantity) <= self::EPSILON,
+                'cost_coverage_complete' => $currencyConsistent
+                    && collect($variants)->every(fn (array $row) => $row['cost_coverage_complete']),
                 'has_variants' => true,
                 'variants' => $variants,
                 'cost_layers' => $includeCost ? collect($variants)->flatMap(fn (array $row) => $row['cost_layers'])->values()->all() : [],
@@ -482,6 +485,7 @@ class InventoryCostingService
             'size_color_id' => $sizeColorId,
             'quantity_on_hand' => $physical,
             'costed_quantity' => $costedQuantity,
+            'missing_cost_quantity' => max(0, round($physical - $costedQuantity, 4)),
             'costing_method' => $method,
             'currency' => $currency,
             'inventory_value' => $includeCost ? round($value, 6) : null,
@@ -491,6 +495,107 @@ class InventoryCostingService
             'cost_coverage_complete' => abs($physical - $costedQuantity) <= self::EPSILON,
             'cost_layers' => $layers,
         ];
+    }
+
+    /**
+     * Adds accounting coverage for physical stock that predates the costing
+     * engine. This deliberately does not change physical stock.
+     */
+    public function coverMissingCost(
+        Product $product,
+        float $unitCost,
+        string $currency,
+        string $sourceType,
+        ?int $sourceId,
+        ?int $sizeColorId = null,
+        ?int $sizeId = null,
+        ?int $userId = null,
+        ?string $idempotencyKey = null,
+    ): InventoryCostLayer {
+        $currency = $this->normalizeCurrency($currency);
+        if ($unitCost <= 0) {
+            throw ValidationException::withMessages([
+                'unit_cost' => ['تكلفة الوحدة يجب أن تكون أكبر من صفر.'],
+            ]);
+        }
+
+        return DB::transaction(function () use ($product, $unitCost, $currency, $sourceType, $sourceId, $sizeColorId, $sizeId, $userId, $idempotencyKey) {
+            $product = Product::withTrashed()->lockForUpdate()->findOrFail($product->id);
+            $sizeId = $this->validateAndResolveSizeId($product, $sizeColorId, $sizeId);
+
+            if ($idempotencyKey !== null) {
+                $existing = InventoryCostLayer::query()
+                    ->where('idempotency_key', $idempotencyKey)
+                    ->lockForUpdate()
+                    ->first();
+                if ($existing instanceof InventoryCostLayer) {
+                    return $existing;
+                }
+            }
+
+            $this->assertCurrencyCompatible($product, $currency);
+            $before = $this->identitySummary($product, $sizeColorId, $sizeId, true, 0);
+            $missingQuantity = round((float) $before['quantity_on_hand'] - (float) $before['costed_quantity'], 4);
+            if ($missingQuantity <= self::EPSILON) {
+                throw ValidationException::withMessages([
+                    'inventory' => ['لا توجد كمية مخزون ناقصة التغطية لإضافة تكلفة لها.'],
+                ]);
+            }
+
+            $balance = $this->lockedBalance($product, $sizeColorId, $sizeId, $currency);
+            $oldQuantity = (float) $before['costed_quantity'];
+            $oldValue = (float) ($before['inventory_value'] ?? 0);
+            $addedValue = round($missingQuantity * $unitCost, 6);
+            $newQuantity = round($oldQuantity + $missingQuantity, 4);
+            $newValue = round($oldValue + $addedValue, 6);
+
+            $earliestLayerAt = $this->layerIdentityQuery((int) $product->id, $sizeColorId)
+                ->where('remaining_quantity', '>', 0)
+                ->orderBy('effective_at')
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->value('effective_at');
+            $effectiveAt = $earliestLayerAt
+                ? \Illuminate\Support\Carbon::parse($earliestLayerAt)->subSecond()
+                : ($product->created_at ?? now());
+
+            $layer = InventoryCostLayer::query()->create([
+                'product_id' => $product->id,
+                'size_id' => $sizeId,
+                'size_color_id' => $sizeColorId,
+                'quantity' => $missingQuantity,
+                'remaining_quantity' => $missingQuantity,
+                'unit_cost' => $unitCost,
+                'original_unit_cost' => $unitCost,
+                'currency' => $currency,
+                'source_type' => $sourceType,
+                'source_id' => $sourceId,
+                'idempotency_key' => $idempotencyKey,
+                'effective_at' => $effectiveAt,
+            ]);
+
+            $balance->update([
+                'quantity' => $newQuantity,
+                'inventory_value' => $newValue,
+                'moving_average_unit_cost' => $newQuantity > self::EPSILON ? $newValue / $newQuantity : 0,
+                'currency' => $currency,
+                'needs_review' => false,
+                'review_reason' => null,
+            ]);
+
+            InventoryCostReview::query()
+                ->where('identity_key', $this->identityKey((int) $product->id, $sizeColorId))
+                ->update([
+                    'physical_quantity' => $before['quantity_on_hand'],
+                    'costed_quantity' => $newQuantity,
+                    'missing_quantity' => 0,
+                    'status' => 'resolved',
+                    'resolved_by' => $userId,
+                    'resolved_at' => now(),
+                ]);
+
+            return $layer;
+        });
     }
 
     public function lockedBalance(Product $product, ?int $sizeColorId = null, ?int $sizeId = null, string $currency = 'شيكل'): InventoryCostBalance
