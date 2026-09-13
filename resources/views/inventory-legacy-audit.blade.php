@@ -22,12 +22,12 @@
         .card small { display:block; color:var(--muted); margin-bottom:8px; }
         .card strong { font-size:22px; }
         form.filters { display:flex; flex-wrap:wrap; gap:8px; background:var(--card); border:1px solid var(--line); padding:12px; border-radius:13px; margin-bottom:12px; }
-        form.operation { background:var(--card); border:1px solid var(--line); padding:14px; border-radius:13px; margin:12px 0; }
-        form.operation .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:9px; margin:10px 0; }
-        form.operation label { display:flex; flex-direction:column; gap:6px; color:var(--muted); font-size:13px; }
-        form.operation label.check { flex-direction:row; align-items:center; color:var(--ink); }
-        form.operation label.check input { width:auto; }
-        form.operation input,form.operation select { width:100%; min-width:0; }
+        .operation { background:var(--card); border:1px solid var(--line); padding:14px; border-radius:13px; margin:12px 0; }
+        .operation .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:9px; margin:10px 0; }
+        .operation label { display:flex; flex-direction:column; gap:6px; color:var(--muted); font-size:13px; }
+        .operation label.check { flex-direction:row; align-items:center; color:var(--ink); }
+        .operation label.check input { width:auto; }
+        .operation input,.operation select { width:100%; min-width:0; }
         .breakdown { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin:12px 0; }
         .breakdown ul { margin:8px 0 0; padding-right:20px; line-height:1.9; }
         input,select,button,a.button { min-height:40px; border:1px solid var(--line); border-radius:9px; padding:8px 11px; background:#fff; color:var(--ink); font:inherit; }
@@ -101,6 +101,15 @@
             @endif
         </section>
     @endif
+    @if(session('review_import_result'))
+        @php($batch = session('review_import_result'))
+        <section class="notice {{ $batch['failed'] ? 'danger' : 'success' }}">
+            نتيجة ملف الأسعار: مجموعات {{ $batch['selected_groups'] }}، هويات {{ $batch['selected'] }}، إنشاء {{ $batch['created'] }}، تجاوز {{ $batch['skipped'] }}، فشل {{ $batch['failed'] }}.
+            @if($batch['errors'])
+                <ul>@foreach($batch['errors'] as $error)<li>{{ $error }}</li>@endforeach</ul>
+            @endif
+        </section>
+    @endif
 
     <section class="notice {{ in_array(false, $schema, true) ? 'danger' : '' }}">
         @if(in_array(false, $schema, true))
@@ -164,6 +173,70 @@
         <label class="check"><input type="checkbox" name="backup_confirmed" value="1" required> راجعت قاعدة الاعتماد وأؤكد وجود نسخة احتياطية حديثة.</label>
         <button type="submit" @disabled($productReferenceBatch['identities'] === 0 || in_array(false, $schema, true))>تنفيذ دفعة المتغيرات</button>
     </form>
+
+    <section class="operation">
+        <strong>ملف Excel لمراجعة الأسعار المتبقية مع صاحب المتجر</strong>
+        <p class="lead">
+            يحتوي الملف الحالي على {{ number_format($manualReviewSummary['groups']) }} قرار تكلفة تغطي {{ number_format($manualReviewSummary['identities']) }} هوية بكمية {{ number_format($manualReviewSummary['quantity'], 2) }}.
+            صفوف الألوان والأحجام مجمعة حسب المنتج. يعبئ صاحب المتجر تكلفة الوحدة ومصدرها ويكتب APPROVE للحالات المؤكدة، ويمكنه ترك الحالات غير المعروفة فارغة.
+        </p>
+        <a class="button" href="{{ route('inventory.legacy-audit.review-workbook', ['token' => $token]) }}">تنزيل ملف Excel للأسعار الناقصة</a>
+        <form method="post" enctype="multipart/form-data" action="{{ route('inventory.legacy-audit.review-workbook.preview') }}" style="margin-top:14px">
+            @csrf
+            <input type="hidden" name="token" value="{{ $token }}">
+            <div class="fields">
+                <label>ملف Excel بعد تعبئته<input type="file" name="file" accept=".xlsx" required></label>
+            </div>
+            <button type="submit" @disabled($manualReviewSummary['groups'] === 0 || in_array(false, $schema, true))>رفع الملف ومعاينته فقط</button>
+        </form>
+    </section>
+
+    @if($reviewImportPreview)
+        <section class="operation">
+            <strong>معاينة ملف الأسعار: {{ $reviewImportPreview['file_name'] ?? '—' }}</strong>
+            <p class="lead">
+                مجموعات معتمدة {{ number_format($reviewImportPreview['summary']['groups'] ?? 0) }}، هويات {{ number_format($reviewImportPreview['summary']['identities'] ?? 0) }}، كمية {{ number_format($reviewImportPreview['summary']['quantity'] ?? 0, 2) }}، قيمة {{ number_format($reviewImportPreview['summary']['value'] ?? 0, 2) }}.
+                لم تُكتب أي بيانات حتى الآن.
+            </p>
+            @if($reviewImportPreview['errors'] ?? [])
+                <section class="notice danger"><strong>يجب تصحيح الملف وإعادة رفعه:</strong><ul>@foreach($reviewImportPreview['errors'] as $error)<li>{{ $error }}</li>@endforeach</ul></section>
+            @endif
+            @if($reviewImportPreview['rows'] ?? [])
+                <div class="scroll">
+                    <table>
+                        <thead><tr><th>المنتج</th><th>النطاق</th><th>الهويات</th><th>الكمية</th><th>تكلفة الوحدة</th><th>العملة</th><th>مصدر التكلفة</th></tr></thead>
+                        <tbody>
+                        @foreach($reviewImportPreview['rows'] as $row)
+                            <tr>
+                                <td class="product"><strong>{{ $row['product_name'] }}</strong><br><span class="muted">#{{ $row['product_id'] }} · {{ $row['product_code'] }}</span></td>
+                                <td>{{ $row['scope_label'] }}</td>
+                                <td>{{ count($row['identities']) }}</td>
+                                <td>{{ number_format($row['missing_quantity'], 2) }}</td>
+                                <td>{{ number_format($row['unit_cost'], 6) }}</td>
+                                <td>{{ $row['currency'] }}</td>
+                                <td class="product">{{ $row['cost_evidence'] }}</td>
+                            </tr>
+                        @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
+
+            @if(($reviewImportPreview['errors'] ?? []) === [] && ($reviewImportPreview['rows'] ?? []) !== [])
+                <form method="post" action="{{ route('inventory.legacy-audit.review-workbook.apply') }}">
+                    @csrf
+                    <input type="hidden" name="token" value="{{ $token }}">
+                    <input type="hidden" name="preview_token" value="{{ $reviewImportPreview['preview_token'] }}">
+                    <div class="fields">
+                        <label>اسم منفذ الاستيراد<input name="operator" required maxlength="120" value="{{ old('operator') }}"></label>
+                        <label>اكتب IMPORT للتأكيد<input name="confirmation" required autocomplete="off"></label>
+                    </div>
+                    <label class="check"><input type="checkbox" name="backup_confirmed" value="1" required> راجعت المعاينة وأؤكد وجود نسخة احتياطية حديثة.</label>
+                    <button type="submit">اعتماد الأسعار وإنشاء التغطية</button>
+                </form>
+            @endif
+        </section>
+    @endif
 
     @if($resolveRow)
         <form class="operation" method="post" action="{{ route('inventory.legacy-audit.reviewed-cost') }}">

@@ -177,6 +177,128 @@ class LegacyInventoryAuditService
     }
 
     /**
+     * Collapse unresolved identities into one accounting decision per regular
+     * product or per variant-owning product.
+     *
+     * @param  array<int, array<string, mixed>>|null  $rows
+     * @return array<int, array<string, mixed>>
+     */
+    public function manualReviewGroups(?array $rows = null): array
+    {
+        $eligible = collect($rows ?? $this->run(false)['rows'])
+            ->filter(fn (array $row) => $row['status'] === 'review'
+                && $row['reason'] === 'reliable_opening_unit_cost_not_found'
+                && $row['reference_unit_cost'] === null);
+        $groups = collect();
+
+        foreach ($eligible->whereNull('size_color_id') as $row) {
+            $groups->push([
+                'group_key' => 'product:'.$row['product_id'].':scope:main',
+                'product_id' => (int) $row['product_id'],
+                'product_code' => (string) $row['product_code'],
+                'product_name' => (string) $row['product_name'],
+                'scope' => 'main',
+                'scope_label' => 'منتج عادي',
+                'variant_count' => 0,
+                'missing_quantity' => (float) $row['missing_quantity'],
+                'variant_details' => 'بدون ألوان أو أحجام',
+                'identities' => [[
+                    'identity_key' => $row['identity_key'],
+                    'missing_quantity' => (float) $row['missing_quantity'],
+                ]],
+            ]);
+        }
+
+        foreach ($eligible->whereNotNull('size_color_id')->groupBy('product_id') as $productRows) {
+            $first = $productRows->first();
+            $groups->push([
+                'group_key' => 'product:'.$first['product_id'].':scope:variants',
+                'product_id' => (int) $first['product_id'],
+                'product_code' => (string) $first['product_code'],
+                'product_name' => (string) $first['product_name'],
+                'scope' => 'variants',
+                'scope_label' => 'كل الألوان والأحجام بتكلفة موحدة',
+                'variant_count' => $productRows->count(),
+                'missing_quantity' => (float) $productRows->sum('missing_quantity'),
+                'variant_details' => $productRows
+                    ->map(fn (array $row) => ($row['variant_label'] ?: '#'.$row['size_color_id']).' ('.number_format((float) $row['missing_quantity'], 2).')')
+                    ->implode("\n"),
+                'identities' => $productRows->map(fn (array $row) => [
+                    'identity_key' => $row['identity_key'],
+                    'missing_quantity' => (float) $row['missing_quantity'],
+                ])->values()->all(),
+            ]);
+        }
+
+        return $groups->sortByDesc('missing_quantity')->values()->all();
+    }
+
+    /**
+     * Apply owner-approved workbook rows. Every identity is rechecked inside
+     * its transaction against the quantity shown during preview.
+     *
+     * @param  array<int, array<string, mixed>>  $groups
+     * @return array{selected_groups: int, selected: int, created: int, skipped: int, failed: int, errors: array<int, string>}
+     */
+    public function applyReviewedWorkbook(array $groups, string $operator, string $workbookHash): array
+    {
+        $result = [
+            'selected_groups' => count($groups),
+            'selected' => collect($groups)->sum(fn (array $group) => count($group['identities'] ?? [])),
+            'created' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+            'errors' => [],
+        ];
+
+        foreach ($groups as $group) {
+            $unitCost = (float) ($group['unit_cost'] ?? 0);
+            $currency = (string) ($group['currency'] ?? 'شيكل');
+            $costEvidence = trim((string) ($group['cost_evidence'] ?? ''));
+            if ($unitCost <= 0 || $costEvidence === '') {
+                throw ValidationException::withMessages(['file' => ['تحتوي معاينة ملف الأسعار على بيانات اعتماد غير صالحة.']]);
+            }
+
+            foreach ($group['identities'] ?? [] as $identity) {
+                $identityKey = (string) ($identity['identity_key'] ?? '');
+                if (! preg_match('/^product:(\d+):variant:(main|\d+)$/', $identityKey, $matches)) {
+                    throw ValidationException::withMessages(['file' => ['تحتوي المعاينة على هوية مخزون غير صالحة.']]);
+                }
+
+                try {
+                    $notes = 'مصدر التكلفة الذي وثقه صاحب المتجر: '.$costEvidence;
+                    if (filled($group['notes'] ?? null)) {
+                        $notes .= '. ملاحظات: '.trim((string) $group['notes']);
+                    }
+                    $outcome = $this->createCoverageLayer(
+                        productId: (int) $matches[1],
+                        sizeColorId: $matches[2] === 'main' ? null : (int) $matches[2],
+                        explicitCost: $unitCost,
+                        explicitCurrency: $currency,
+                        operator: $operator,
+                        reason: 'اعتماد تكلفة المخزون القديم من ملف مراجعة صاحب المتجر',
+                        notes: $notes,
+                        expectedMissing: (float) ($identity['missing_quantity'] ?? 0),
+                        explicitSource: 'administrative_review_workbook',
+                        requireNoReliableCost: true,
+                        additionalEvidence: [
+                            'workbook_sha256' => $workbookHash,
+                            'workbook_group_key' => (string) ($group['group_key'] ?? ''),
+                            'owner_cost_evidence' => $costEvidence,
+                        ],
+                    );
+                    $result[$outcome === 'created' ? 'created' : 'skipped']++;
+                } catch (\Throwable $exception) {
+                    $result['failed']++;
+                    $result['errors'][] = ($group['product_name'] ?? '#'.$matches[1]).' — '.$identityKey.': '.$exception->getMessage();
+                }
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Resolve one reviewed identity with an explicitly approved opening cost.
      */
     public function applyReviewedCost(
@@ -335,6 +457,10 @@ class LegacyInventoryAuditService
         string $reason,
         ?string $notes,
         bool $useProductReference = false,
+        ?float $expectedMissing = null,
+        string $explicitSource = 'administrative_manual_cost',
+        bool $requireNoReliableCost = false,
+        array $additionalEvidence = [],
     ): string {
         $schema = $this->schemaReadiness();
         if (in_array(false, $schema, true)) {
@@ -346,7 +472,7 @@ class LegacyInventoryAuditService
             throw ValidationException::withMessages(['operator' => ['اسم منفذ المراجعة مطلوب.']]);
         }
 
-        return DB::transaction(function () use ($productId, $sizeColorId, $explicitCost, $explicitCurrency, $operator, $reason, $notes, $useProductReference) {
+        return DB::transaction(function () use ($productId, $sizeColorId, $explicitCost, $explicitCurrency, $operator, $reason, $notes, $useProductReference, $expectedMissing, $explicitSource, $requireNoReliableCost, $additionalEvidence) {
             $product = Product::query()->lockForUpdate()->findOrFail($productId);
             $sizeId = null;
             if ($sizeColorId !== null) {
@@ -395,9 +521,25 @@ class LegacyInventoryAuditService
 
                 return 'covered';
             }
+            if ($expectedMissing !== null && abs($missing - $expectedMissing) > 0.0001) {
+                throw ValidationException::withMessages([
+                    'file' => ['تغيرت كمية المخزون منذ معاينة ملف الأسعار. صدّر ملفاً جديداً وأعد المراجعة.'],
+                ]);
+            }
+            if ($requireNoReliableCost) {
+                $variantCost = $this->resolveOpeningCost($product, $sizeColorId, true);
+                $productReference = $sizeColorId !== null
+                    ? $this->resolveProductLevelReferenceCost($product, true)
+                    : null;
+                if ($variantCost['unit_cost'] !== null || $productReference !== null) {
+                    throw ValidationException::withMessages([
+                        'file' => ['ظهر مصدر تكلفة موثوق بعد تصدير الملف. صدّر ملفاً جديداً وأعد المراجعة.'],
+                    ]);
+                }
+            }
 
             if ($explicitCost !== null) {
-                $cost = ['unit_cost' => $explicitCost, 'currency' => $explicitCurrency ?: 'شيكل', 'source' => 'administrative_manual_cost', 'source_id' => null];
+                $cost = ['unit_cost' => $explicitCost, 'currency' => $explicitCurrency ?: 'شيكل', 'source' => $explicitSource, 'source_id' => null];
             } elseif ($useProductReference) {
                 $cost = $this->resolveProductLevelReferenceCost($product, true)
                     ?? ['unit_cost' => null, 'currency' => 'شيكل', 'source' => 'admin_review_required', 'source_id' => null];
@@ -483,7 +625,7 @@ class LegacyInventoryAuditService
                     'missing_quantity' => 0,
                     'status' => 'resolved',
                     'reason' => 'legacy_opening_cost_backfill',
-                    'evidence' => [
+                    'evidence' => array_merge($additionalEvidence, [
                         'cost_source' => $cost['source'],
                         'cost_source_id' => $cost['source_id'] ?? null,
                         'approved_unit_cost' => (float) $cost['unit_cost'],
@@ -492,7 +634,7 @@ class LegacyInventoryAuditService
                         'reason' => trim($reason),
                         'notes' => filled($notes) ? trim((string) $notes) : null,
                         'layer_id' => (int) $layer->id,
-                    ],
+                    ]),
                     'resolved_by' => null,
                     'resolved_at' => now(),
                 ]

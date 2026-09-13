@@ -382,6 +382,9 @@ class InventoryArchitectureTest extends TestCase
             ->assertOk()
             ->assertSee('مراجعة تغطية تكلفة المخزون القديم')
             ->assertSee('جاهز لإنشاء طبقة');
+        $this->get('/inventory/legacy-audit/review-workbook?token=eshterelyDeploy2026SecureToken123')
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
         $this->assertSame(6, (int) $product->fresh()->stock);
         $this->assertSame($layersBefore, InventoryCostLayer::query()->count());
@@ -597,6 +600,51 @@ class InventoryArchitectureTest extends TestCase
             'remaining_quantity' => 2,
             'unit_cost' => 4,
         ]);
+    }
+
+    public function test_reviewed_workbook_preserves_stock_records_evidence_and_rejects_stale_quantity(): void
+    {
+        $product = $this->product(3);
+        $service = app(LegacyInventoryAuditService::class);
+        $group = collect($service->manualReviewGroups())->firstWhere('product_id', $product->id);
+        $approved = array_merge($group, [
+            'unit_cost' => 7,
+            'currency' => 'شيكل',
+            'cost_evidence' => 'فاتورة المورد رقم 25',
+            'notes' => 'راجعها صاحب المتجر',
+        ]);
+
+        $result = $service->applyReviewedWorkbook([$approved], 'Inventory tester', 'workbook-sha256');
+
+        $this->assertSame(1, $result['selected_groups']);
+        $this->assertSame(1, $result['created']);
+        $this->assertSame(0, $result['failed']);
+        $this->assertSame(3, (int) $product->fresh()->stock);
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'remaining_quantity' => 3,
+            'unit_cost' => 7,
+            'source_type' => 'opening_stock_backfill',
+        ]);
+        $review = \App\Models\InventoryCostReview::query()
+            ->where('identity_key', app(InventoryCostingService::class)->identityKey($product->id))
+            ->sole();
+        $this->assertSame('administrative_review_workbook', $review->evidence['cost_source']);
+        $this->assertSame('workbook-sha256', $review->evidence['workbook_sha256']);
+        $this->assertSame('فاتورة المورد رقم 25', $review->evidence['owner_cost_evidence']);
+
+        $stale = $this->product(2);
+        $staleGroup = collect($service->manualReviewGroups())->firstWhere('product_id', $stale->id);
+        $stale->update(['stock' => 4]);
+        $staleResult = $service->applyReviewedWorkbook([array_merge($staleGroup, [
+            'unit_cost' => 5,
+            'currency' => 'شيكل',
+            'cost_evidence' => 'اعتماد صاحب المتجر',
+        ])], 'Inventory tester', 'stale-workbook');
+
+        $this->assertSame(1, $staleResult['failed']);
+        $this->assertFalse(InventoryCostLayer::query()->where('product_id', $stale->id)->exists());
+        $this->assertSame(4, (int) $stale->fresh()->stock);
     }
 
     public function test_legacy_audit_web_batch_requires_token_backup_and_confirmation(): void

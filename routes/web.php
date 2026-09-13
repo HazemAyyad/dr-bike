@@ -43,6 +43,15 @@ Route::get('/inventory/legacy-audit', [InventoryLegacyAuditWebController::class,
 Route::get('/inventory/legacy-audit/export', [InventoryLegacyAuditWebController::class, 'export'])
     ->middleware('throttle:10,1')
     ->name('inventory.legacy-audit.export');
+Route::get('/inventory/legacy-audit/review-workbook', [InventoryLegacyAuditWebController::class, 'exportReviewWorkbook'])
+    ->middleware('throttle:10,1')
+    ->name('inventory.legacy-audit.review-workbook');
+Route::post('/inventory/legacy-audit/review-workbook/preview', [InventoryLegacyAuditWebController::class, 'previewReviewWorkbook'])
+    ->middleware('throttle:10,1')
+    ->name('inventory.legacy-audit.review-workbook.preview');
+Route::post('/inventory/legacy-audit/review-workbook/apply', [InventoryLegacyAuditWebController::class, 'applyReviewWorkbook'])
+    ->middleware('throttle:10,1')
+    ->name('inventory.legacy-audit.review-workbook.apply');
 Route::post('/inventory/legacy-audit/backfill-ready', [InventoryLegacyAuditWebController::class, 'applyReadyBatch'])
     ->middleware('throttle:10,1')
     ->name('inventory.legacy-audit.backfill-ready');
