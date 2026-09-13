@@ -11,6 +11,7 @@ use App\Models\InventoryCostAllocation;
 use App\Models\InventoryCostLayer;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
+use App\Models\PurchasePriceHistory;
 use App\Models\PurchaseProduct;
 use App\Models\Seller;
 use App\Models\Size;
@@ -18,6 +19,7 @@ use App\Models\SizeColor;
 use App\Models\User;
 use App\Services\InventoryAdjustmentService;
 use App\Services\InventoryCostingService;
+use App\Services\LegacyInventoryAuditService;
 use App\Services\ProductStockService;
 use App\Services\PurchasingService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -384,6 +386,165 @@ class InventoryArchitectureTest extends TestCase
         $this->assertSame(6, (int) $product->fresh()->stock);
         $this->assertSame($layersBefore, InventoryCostLayer::query()->count());
 
+    }
+
+    public function test_legacy_ready_batch_preserves_stock_is_idempotent_and_places_opening_layer_first(): void
+    {
+        $product = $this->product(10);
+        PurchaseProduct::query()->create(['product_id' => $product->id, 'seller_id' => null, 'price' => 3]);
+        $receiptLayer = InventoryCostLayer::query()->create([
+            'product_id' => $product->id,
+            'quantity' => 2,
+            'remaining_quantity' => 2,
+            'unit_cost' => 5,
+            'original_unit_cost' => 5,
+            'currency' => 'شيكل',
+            'source_type' => 'purchase_receipt_item',
+            'source_id' => 999,
+            'effective_at' => now(),
+        ]);
+
+        $service = app(LegacyInventoryAuditService::class);
+        $first = $service->applyReadyBatch(10, 'Inventory tester');
+        $second = $service->applyReadyBatch(10, 'Inventory tester');
+
+        $this->assertSame(1, $first['created']);
+        $this->assertSame(0, $second['created']);
+        $this->assertSame(10, (int) $product->fresh()->stock);
+        $opening = InventoryCostLayer::query()
+            ->where('product_id', $product->id)
+            ->where('source_type', 'opening_stock_backfill')
+            ->sole();
+        $this->assertSame(8.0, (float) $opening->remaining_quantity);
+        $this->assertTrue($opening->effective_at->lt($receiptLayer->effective_at));
+        $this->assertDatabaseHas('inventory_cost_balances', [
+            'product_id' => $product->id,
+            'quantity' => 10,
+            'inventory_value' => 34,
+            'needs_review' => 0,
+        ]);
+        $this->assertDatabaseHas('product_stock_movements', [
+            'product_id' => $product->id,
+            'type' => ProductStockMovement::TYPE_OPENING_STOCK,
+            'quantity' => 0,
+            'stock_before' => 10,
+            'stock_after' => 10,
+        ]);
+        $this->assertDatabaseHas('inventory_cost_reviews', [
+            'product_id' => $product->id,
+            'status' => 'resolved',
+            'missing_quantity' => 0,
+        ]);
+    }
+
+    public function test_reviewed_variant_cost_is_explicit_and_never_uses_product_cost_automatically(): void
+    {
+        $product = $this->product();
+        $size = Size::query()->create([
+            'id' => (int) (Size::query()->max('id') ?? 0) + 1,
+            'itemId' => $product->id,
+            'size' => 'M',
+        ]);
+        $variant = $this->variant($size, 'أحمر');
+        $variant->update(['stock' => 7]);
+        PurchaseProduct::query()->create(['product_id' => $product->id, 'seller_id' => null, 'price' => 4]);
+        PurchasePriceHistory::query()->create([
+            'product_id' => $product->id,
+            'unit_price' => 6,
+            'quantity' => 7,
+            'currency' => 'شيكل',
+            'priced_at' => now()->toDateString(),
+        ]);
+
+        $service = app(LegacyInventoryAuditService::class);
+        $row = collect($service->run(false)['rows'])
+            ->firstWhere('identity_key', app(InventoryCostingService::class)->identityKey($product->id, $variant->id));
+
+        $this->assertSame('review', $row['status']);
+        $this->assertNull($row['suggested_unit_cost']);
+        $this->assertSame(4.0, (float) $row['reference_unit_cost']);
+        $write = $service->run(true, [$product->id]);
+        $this->assertSame(0, $write['created_layers']);
+        $this->assertFalse(InventoryCostLayer::query()->where('product_id', $product->id)->exists());
+
+        $service->applyReviewedCost(
+            $row['identity_key'],
+            5,
+            'NIS',
+            'Inventory tester',
+            'مراجعة تكلفة المتغير',
+            'تم التحقق من فاتورة المورد',
+        );
+
+        $this->assertSame(7, (int) $variant->fresh()->stock);
+        $this->assertSame(0, (int) $product->fresh()->stock);
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'size_color_id' => $variant->id,
+            'remaining_quantity' => 7,
+            'unit_cost' => 5,
+            'source_type' => 'opening_stock_backfill',
+        ]);
+        $this->assertFalse(InventoryCostLayer::query()
+            ->where('product_id', $product->id)
+            ->whereNull('size_color_id')
+            ->exists());
+    }
+
+    public function test_legacy_audit_web_batch_requires_token_backup_and_confirmation(): void
+    {
+        $product = $this->product(3);
+        PurchaseProduct::query()->create(['product_id' => $product->id, 'seller_id' => null, 'price' => 2]);
+
+        $this->post('/inventory/legacy-audit/backfill-ready')->assertForbidden();
+        $this->post('/inventory/legacy-audit/backfill-ready', [
+            'token' => 'eshterelyDeploy2026SecureToken123',
+            'operator' => 'Inventory tester',
+            'batch_size' => 10,
+            'backup_confirmed' => 1,
+            'confirmation' => 'BACKFILL',
+        ])->assertRedirect();
+
+        $this->assertSame(3, (int) $product->fresh()->stock);
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'remaining_quantity' => 3,
+            'unit_cost' => 2,
+            'source_type' => 'opening_stock_backfill',
+        ]);
+
+        $reviewedProduct = $this->product(2);
+        $identityKey = app(InventoryCostingService::class)->identityKey($reviewedProduct->id);
+        $this->post('/inventory/legacy-audit/reviewed-cost', [
+            'identity_key' => $identityKey,
+            'unit_cost' => 7,
+            'currency' => 'شيكل',
+            'operator' => 'Inventory tester',
+            'reason' => 'مراجعة فاتورة قديمة',
+            'backup_confirmed' => 1,
+            'confirmation' => 'REVIEW',
+        ])->assertForbidden();
+        $this->post('/inventory/legacy-audit/reviewed-cost', [
+            'token' => 'eshterelyDeploy2026SecureToken123',
+            'identity_key' => $identityKey,
+            'unit_cost' => 7,
+            'currency' => 'شيكل',
+            'operator' => 'Inventory tester',
+            'reason' => 'مراجعة فاتورة قديمة',
+            'backup_confirmed' => 1,
+            'confirmation' => 'REVIEW',
+        ])->assertRedirect();
+        $this->assertSame(2, (int) $reviewedProduct->fresh()->stock);
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $reviewedProduct->id,
+            'remaining_quantity' => 2,
+            'unit_cost' => 7,
+            'source_type' => 'opening_stock_backfill',
+        ]);
+
+        $this->get('/inventory/legacy-audit/export?token=eshterelyDeploy2026SecureToken123')
+            ->assertOk()
+            ->assertHeader('content-type', 'text/csv; charset=UTF-8');
     }
 
     private function setMethod(string $method): void

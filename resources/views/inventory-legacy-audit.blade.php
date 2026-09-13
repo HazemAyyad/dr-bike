@@ -13,6 +13,7 @@
         .lead { color:var(--muted); margin:0 0 18px; line-height:1.8; }
         .notice { padding:13px 15px; border:1px solid #bcd0ff; background:#eef4ff; border-radius:12px; margin-bottom:16px; line-height:1.7; }
         .notice.danger { border-color:#f2b8b5; background:#fff1f0; color:#7a271a; }
+        .notice.success { border-color:#a9dfbf; background:#edf9f2; color:#145c35; }
         .schema { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; }
         .chip { padding:5px 9px; border-radius:999px; font-size:12px; background:#e8f7ee; color:var(--green); }
         .chip.off { background:#ffebe9; color:var(--red); }
@@ -21,6 +22,14 @@
         .card small { display:block; color:var(--muted); margin-bottom:8px; }
         .card strong { font-size:22px; }
         form.filters { display:flex; flex-wrap:wrap; gap:8px; background:var(--card); border:1px solid var(--line); padding:12px; border-radius:13px; margin-bottom:12px; }
+        form.operation { background:var(--card); border:1px solid var(--line); padding:14px; border-radius:13px; margin:12px 0; }
+        form.operation .fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:9px; margin:10px 0; }
+        form.operation label { display:flex; flex-direction:column; gap:6px; color:var(--muted); font-size:13px; }
+        form.operation label.check { flex-direction:row; align-items:center; color:var(--ink); }
+        form.operation label.check input { width:auto; }
+        form.operation input,form.operation select { width:100%; min-width:0; }
+        .breakdown { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin:12px 0; }
+        .breakdown ul { margin:8px 0 0; padding-right:20px; line-height:1.9; }
         input,select,button,a.button { min-height:40px; border:1px solid var(--line); border-radius:9px; padding:8px 11px; background:#fff; color:var(--ink); font:inherit; }
         input { min-width:260px; flex:1; }
         button,a.button { background:var(--blue); border-color:var(--blue); color:#fff; cursor:pointer; text-decoration:none; }
@@ -57,20 +66,38 @@
         'reliable_opening_unit_cost_not_found' => 'لم يتم العثور على تكلفة شراء موثوقة',
     ];
     $sourceLabels = [
-        'purchase_price_histories.latest' => 'آخر سعر شراء موثق',
+        'purchase_price_histories.latest' => 'آخر تكلفة استلام شراء مقبول',
         'purchase_products.latest_legacy_purchase_cost' => 'آخر سعر شراء قديم',
         'admin_review_required' => 'لا يوجد مصدر موثوق',
+        'administrative_manual_cost' => 'تكلفة اعتمدها المسؤول يدوياً',
     ];
 @endphp
 <main class="wrap">
     <h1>مراجعة تغطية تكلفة المخزون القديم</h1>
-    <p class="lead">صفحة تشخيصية للقراءة فقط. فتح الصفحة أو استخدام الفلاتر لا يغيّر المخزون ولا ينشئ طبقات تكلفة.</p>
+    <p class="lead">فتح الصفحة واستخدام الفلاتر والتصدير عمليات قراءة فقط. إجراءات المعالجة المنفصلة في الأسفل تتطلب نسخة احتياطية حديثة وتأكيداً صريحاً، ولا تغيّر كمية المخزون.</p>
+
+    @if($errors->any())
+        <section class="notice danger"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></section>
+    @endif
+
+    @if(session('review_result'))
+        <section class="notice success">{{ session('review_result') }}</section>
+    @endif
+    @if(session('backfill_result'))
+        @php($batch = session('backfill_result'))
+        <section class="notice {{ $batch['failed'] ? 'danger' : 'success' }}">
+            نتيجة الدفعة: تم اختيار {{ $batch['selected'] }}، إنشاء {{ $batch['created'] }}، تجاوز {{ $batch['skipped'] }}، فشل {{ $batch['failed'] }}.
+            @if($batch['errors'])
+                <ul>@foreach($batch['errors'] as $error)<li>{{ $error }}</li>@endforeach</ul>
+            @endif
+        </section>
+    @endif
 
     <section class="notice {{ in_array(false, $schema, true) ? 'danger' : '' }}">
         @if(in_array(false, $schema, true))
             بعض جداول البنية الجديدة غير موجودة بعد. المعاينة ستعرض ما يمكن حسابه من الجداول الحالية، لكن التنفيذ الفعلي غير متاح قبل تجهيز البنية.
         @else
-            بنية محاسبة المخزون جاهزة للمعاينة. لا يوجد في هذه الصفحة أي زر تنفيذ أو كتابة.
+            بنية محاسبة المخزون جاهزة. التنفيذ متاح فقط من النماذج المؤكدة أدناه وعلى دفعات محدودة.
         @endif
         <div class="schema">
             @foreach($schema as $table => $exists)
@@ -78,6 +105,69 @@
             @endforeach
         </div>
     </section>
+
+    <section class="breakdown">
+        <div class="card">
+            <strong>مصادر التكلفة</strong>
+            <ul>
+                @foreach($sourceBreakdown as $source => $values)
+                    <li>{{ $sourceLabels[$source] ?? $source }}: {{ number_format($values['identities']) }} هوية، {{ number_format($values['missing_quantity'], 2) }} قطعة</li>
+                @endforeach
+            </ul>
+        </div>
+        <div class="card">
+            <strong>تفصيل المراجعة</strong>
+            <ul>
+                <li>منتجات عادية بلا تكلفة معتمدة: {{ number_format($reviewBreakdown['main']) }}</li>
+                <li>هويات أحجام/ألوان تحتاج تكلفة مستقلة: {{ number_format($reviewBreakdown['variants']) }}</li>
+                <li>منها لديها تكلفة منتج عامة كمرجع فقط: {{ number_format($reviewBreakdown['variants_with_reference']) }}</li>
+            </ul>
+        </div>
+    </section>
+
+    <form class="operation" method="post" action="{{ route('inventory.legacy-audit.backfill-ready') }}">
+        @csrf
+        <input type="hidden" name="token" value="{{ $token }}">
+        <strong>تنفيذ دفعة آمنة للهويات الجاهزة</strong>
+        <p class="lead">ينشئ تغطية تكلفة فقط ولا يغيّر كمية المنتج. يعيد فحص الكمية والتكلفة داخل معاملة وقفل قاعدة بيانات، ويمكن إعادة تشغيله دون تكرار.</p>
+        <div class="fields">
+            <label>اسم منفذ المراجعة<input name="operator" required maxlength="120" value="{{ old('operator') }}"></label>
+            <label>حجم الدفعة<select name="batch_size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option></select></label>
+            <label>اكتب BACKFILL للتأكيد<input name="confirmation" required autocomplete="off"></label>
+        </div>
+        <label class="check"><input type="checkbox" name="backup_confirmed" value="1" required> أؤكد وجود نسخة قاعدة بيانات حديثة قبل التنفيذ.</label>
+        <button type="submit" @disabled($summary['ready'] === 0 || in_array(false, $schema, true))>تنفيذ الدفعة</button>
+    </form>
+
+    @if($resolveRow)
+        <form class="operation" method="post" action="{{ route('inventory.legacy-audit.reviewed-cost') }}">
+            @csrf
+            <input type="hidden" name="token" value="{{ $token }}">
+            <input type="hidden" name="identity_key" value="{{ $resolveRow['identity_key'] }}">
+            <strong>اعتماد تكلفة بعد المراجعة: {{ $resolveRow['product_name'] }} {{ $resolveRow['variant_label'] ? '— '.$resolveRow['variant_label'] : '' }}</strong>
+            <p class="lead">الكمية الفعلية {{ number_format($resolveRow['physical_quantity'], 2) }}، الناقصة {{ number_format($resolveRow['missing_quantity'], 2) }}.
+                @if($resolveRow['reference_unit_cost'] !== null)
+                    تكلفة المنتج العامة القديمة: {{ number_format($resolveRow['reference_unit_cost'], 4) }} {{ $resolveRow['reference_currency'] }}، وهي مرجع فقط وليست تكلفة متغير مؤكدة.
+                @endif
+            </p>
+            @if(in_array(false, $schema, true))
+                <section class="notice danger">التنفيذ غير متاح قبل اكتمال جداول محاسبة المخزون.</section>
+            @elseif($resolveRow['status'] === 'over_covered')
+                <section class="notice danger">لا يمكن إضافة تكلفة لهذه الهوية لأن طبقات التكلفة أكبر من المخزون الفعلي؛ يلزم تصحيح منفصل.</section>
+            @else
+                <div class="fields">
+                    <label>تكلفة الوحدة<input type="number" name="unit_cost" min="0.000001" step="0.000001" required value="{{ old('unit_cost', $resolveRow['reference_unit_cost']) }}"></label>
+                    <label>العملة<select name="currency"><option value="شيكل" selected>شيكل</option><option value="دولار">دولار</option><option value="دينار">دينار</option></select></label>
+                    <label>اسم منفذ المراجعة<input name="operator" required maxlength="120" value="{{ old('operator') }}"></label>
+                    <label>السبب<input name="reason" required maxlength="120" value="{{ old('reason', 'مراجعة تكلفة افتتاحية للمخزون القديم') }}"></label>
+                    <label>ملاحظات<input name="notes" maxlength="1000" value="{{ old('notes') }}"></label>
+                    <label>اكتب REVIEW للتأكيد<input name="confirmation" required autocomplete="off"></label>
+                </div>
+                <label class="check"><input type="checkbox" name="backup_confirmed" value="1" required> راجعت التكلفة وأؤكد وجود نسخة احتياطية حديثة.</label>
+                <button type="submit">اعتماد التكلفة وإنشاء التغطية</button>
+            @endif
+        </form>
+    @endif
 
     <section class="cards">
         <div class="card"><small>هويات المخزون</small><strong>{{ number_format($summary['identities']) }}</strong></div>
@@ -107,6 +197,7 @@
         </select>
         <button type="submit">تطبيق الفلتر</button>
         <a class="button secondary" href="{{ route('inventory.legacy-audit', ['token' => $token]) }}">إلغاء الفلتر</a>
+        <a class="button secondary" href="{{ route('inventory.legacy-audit.export', ['token' => $token]) }}">تصدير CSV كامل</a>
         <button type="button" id="copySummary">نسخ ملخص التشخيص</button>
     </form>
 
@@ -118,7 +209,7 @@
                 <table>
                     <thead><tr>
                         <th>المنتج</th><th>المتغير</th><th>الفعلي</th><th>المغطى</th><th>الناقص</th>
-                        <th>التكلفة المقترحة</th><th>القيمة المقترحة</th><th>مصدر التكلفة</th><th>الحالة</th><th>سبب المراجعة</th>
+                        <th>التكلفة المقترحة</th><th>القيمة المقترحة</th><th>مصدر التكلفة</th><th>الحالة</th><th>سبب المراجعة</th><th>إجراء</th>
                     </tr></thead>
                     <tbody>
                     @foreach($rows as $row)
@@ -133,6 +224,13 @@
                             <td>{{ $sourceLabels[$row['cost_source']] ?? $row['cost_source'] }}</td>
                             <td><span class="status {{ $row['status'] }}">{{ $statusLabels[$row['status']] ?? $row['status'] }}</span></td>
                             <td class="product">{{ $reasonLabels[$row['reason']] ?? ($row['reason'] ?: '—') }}</td>
+                            <td>
+                                @if(in_array($row['status'], ['review', 'over_covered'], true))
+                                    <a class="button secondary" href="{{ route('inventory.legacy-audit', ['token' => $token, 'status' => $row['status'], 'resolve' => $row['identity_key']]) }}">مراجعة</a>
+                                @else
+                                    —
+                                @endif
+                            </td>
                         </tr>
                     @endforeach
                     </tbody>

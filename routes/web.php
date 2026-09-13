@@ -40,6 +40,15 @@ Route::view('/data-deletion', 'legal.data-deletion')->name('data-deletion');
 
 Route::get('/inventory/legacy-audit', [InventoryLegacyAuditWebController::class, 'index'])
     ->name('inventory.legacy-audit');
+Route::get('/inventory/legacy-audit/export', [InventoryLegacyAuditWebController::class, 'export'])
+    ->middleware('throttle:10,1')
+    ->name('inventory.legacy-audit.export');
+Route::post('/inventory/legacy-audit/backfill-ready', [InventoryLegacyAuditWebController::class, 'applyReadyBatch'])
+    ->middleware('throttle:10,1')
+    ->name('inventory.legacy-audit.backfill-ready');
+Route::post('/inventory/legacy-audit/reviewed-cost', [InventoryLegacyAuditWebController::class, 'applyReviewedCost'])
+    ->middleware('throttle:10,1')
+    ->name('inventory.legacy-audit.reviewed-cost');
 
 /** مركز أمان الويب: مراقبة دخول التطبيق وإدارة حظر Laravel لعناوين IP */
 Route::get('/security-center/login', [SecurityCenterWebController::class, 'loginForm'])->name('security-center.login');
