@@ -6,12 +6,14 @@ use App\Http\Middleware\RefreshSanctumTokenExpiry;
 use App\Models\AppSetting;
 use App\Models\Category;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeePermission;
 use App\Models\InstantSale;
 use App\Models\InventoryCostAllocation;
 use App\Models\InventoryAdjustment;
 use App\Models\InventoryCostLayer;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
+use App\Models\Permission;
 use App\Models\PurchasePriceHistory;
 use App\Models\PurchaseProduct;
 use App\Models\Seller;
@@ -318,6 +320,35 @@ class InventoryArchitectureTest extends TestCase
             ->where('product_id', $product->id)
             ->where('source_type', 'inventory_cost_initialization')
             ->exists());
+    }
+
+    public function test_quick_edit_does_not_expose_inventory_cost_without_cost_permission(): void
+    {
+        $employeeUser = User::factory()->create(['type' => 'employee']);
+        $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $quickEditPermission = Permission::query()->firstOrCreate(
+            ['name_en' => 'Product Quick Edit'],
+            ['name' => 'التعديل السريع للمنتجات'],
+        );
+        EmployeePermission::query()->create([
+            'employee_id' => $employee->id,
+            'permission_id' => $quickEditPermission->id,
+        ]);
+        $product = $this->product(5);
+
+        Sanctum::actingAs($employeeUser);
+        $this->withoutMiddleware(RefreshSanctumTokenExpiry::class);
+        $response = $this->getJson('/api/products/quick-edit?per_page=100')
+            ->assertOk()
+            ->assertJsonPath('status', 'success');
+        $row = collect($response->json('products'))
+            ->first(fn (array $item) => (int) $item['product_id'] === (int) $product->id);
+
+        $this->assertIsArray($row);
+        $this->assertArrayNotHasKey('cost_price', $row);
+        $this->assertArrayNotHasKey('inventory_value', $row);
+        $this->assertArrayNotHasKey('inventory_costing_method', $row);
+        $this->assertArrayNotHasKey('cost_price_basis', $row);
     }
 
     public function test_variant_costing_never_consumes_another_variant_layer(): void

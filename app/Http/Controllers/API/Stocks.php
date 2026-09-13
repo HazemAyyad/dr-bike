@@ -529,11 +529,12 @@ class Stocks extends Controller
         $products = $query
             ->orderBy($sortColumn, $sortDirection)
             ->paginate($perPage);
+        $canViewInventoryCost = $request->user()?->canViewInventoryCost() ?? false;
 
         return response()->json([
             'status' => 'success',
             'products' => $products->getCollection()
-                ->map(fn (Product $product) => $this->formatQuickEditProduct($product))
+                ->map(fn (Product $product) => $this->formatQuickEditProduct($product, $canViewInventoryCost))
                 ->values(),
             'pagination' => [
                 'current_page' => $products->currentPage(),
@@ -635,7 +636,10 @@ class Stocks extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'تم تحديث المنتج',
-            'product' => $this->formatQuickEditProduct($product),
+            'product' => $this->formatQuickEditProduct(
+                $product,
+                $request->user()?->canViewInventoryCost() ?? false,
+            ),
         ], 200);
     }
 
@@ -698,7 +702,10 @@ class Stocks extends Controller
         return response()->json([
             'status' => 'success',
             'message' => __('messages.product_updated'),
-            'product' => $this->formatProductListItem($product, true),
+            'product' => $this->formatProductListItem(
+                $product,
+                $request->user()?->canViewInventoryCost() ?? false,
+            ),
         ], 200);
     }
 
@@ -731,7 +738,10 @@ class Stocks extends Controller
 
         return response()->json([
             'status' => 'success',
-            'product' => $this->formatQuickEditProduct($product),
+            'product' => $this->formatQuickEditProduct(
+                $product,
+                $request->user()?->canViewInventoryCost() ?? false,
+            ),
         ], 200);
     }
 
@@ -2136,13 +2146,15 @@ class Stocks extends Controller
         return $row;
     }
 
-    private function formatQuickEditProduct(Product $product): array
+    private function formatQuickEditProduct(Product $product, bool $includeCostPrice = false): array
     {
         $markedAt = $product->last_edit_marked_at;
         $images = ProductImageResolver::formatForList($product);
-        $inventory = app(InventoryCostingService::class)->productSummary($product, true, 0);
+        $inventory = $includeCostPrice
+            ? app(InventoryCostingService::class)->productSummary($product, true, 0)
+            : null;
 
-        return [
+        $row = [
             'product_id' => (int) $product->id,
             'product_code' => $product->product_code,
             'product_image' => $images['product_image'],
@@ -2157,10 +2169,6 @@ class Stocks extends Controller
             'store_section_name' => $product->storeSection?->name,
             'normailPrice' => $product->normailPrice,
             'wholesalePrice' => $product->wholesalePrice,
-            'cost_price' => $inventory['average_inventory_unit_cost'] ?? null,
-            'inventory_value' => $inventory['inventory_value'] ?? null,
-            'inventory_costing_method' => $inventory['costing_method'] ?? null,
-            'cost_price_basis' => 'inventory_engine_average_remaining',
             'price' => $product->price,
             'min_sale_price' => $product->min_sale_price,
             'stock' => $product->stock,
@@ -2181,6 +2189,15 @@ class Stocks extends Controller
                 : null,
             'marked_today' => $markedAt !== null && $markedAt->isToday(),
         ];
+
+        if ($includeCostPrice) {
+            $row['cost_price'] = $inventory['average_inventory_unit_cost'] ?? null;
+            $row['inventory_value'] = $inventory['inventory_value'] ?? null;
+            $row['inventory_costing_method'] = $inventory['costing_method'] ?? null;
+            $row['cost_price_basis'] = 'inventory_engine_average_remaining';
+        }
+
+        return $row;
     }
 
     public function updateProductCostPrice(Request $request)
