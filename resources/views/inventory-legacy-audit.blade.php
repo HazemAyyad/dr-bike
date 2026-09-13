@@ -97,6 +97,7 @@
     </section>
 
     <form class="filters" method="get">
+        <input type="hidden" name="token" value="{{ $token }}">
         <input type="search" name="search" value="{{ $search }}" placeholder="ابحث بالاسم أو الكود أو رقم المنتج">
         <select name="status">
             <option value="">كل الحالات</option>
@@ -105,7 +106,7 @@
             @endforeach
         </select>
         <button type="submit">تطبيق الفلتر</button>
-        <a class="button secondary" href="{{ route('inventory.legacy-audit') }}">إلغاء الفلتر</a>
+        <a class="button secondary" href="{{ route('inventory.legacy-audit', ['token' => $token]) }}">إلغاء الفلتر</a>
         <button type="button" id="copySummary">نسخ ملخص التشخيص</button>
     </form>
 

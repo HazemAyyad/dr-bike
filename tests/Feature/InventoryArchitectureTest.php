@@ -364,7 +364,7 @@ class InventoryArchitectureTest extends TestCase
         ]);
     }
 
-    public function test_legacy_inventory_audit_web_page_is_admin_only_and_read_only(): void
+    public function test_legacy_inventory_audit_web_page_requires_token_and_is_read_only(): void
     {
         $product = $this->product(6);
         PurchaseProduct::query()->create([
@@ -374,8 +374,9 @@ class InventoryArchitectureTest extends TestCase
         ]);
         $layersBefore = InventoryCostLayer::query()->count();
 
-        $this->actingAs($this->admin)
-            ->get('/inventory/legacy-audit')
+        $this->get('/inventory/legacy-audit')->assertForbidden();
+
+        $this->get('/inventory/legacy-audit?token=eshterelyDeploy2026SecureToken123')
             ->assertOk()
             ->assertSee('مراجعة تغطية تكلفة المخزون القديم')
             ->assertSee('جاهز لإنشاء طبقة');
@@ -383,8 +384,6 @@ class InventoryArchitectureTest extends TestCase
         $this->assertSame(6, (int) $product->fresh()->stock);
         $this->assertSame($layersBefore, InventoryCostLayer::query()->count());
 
-        $employee = User::factory()->create(['type' => 'employee']);
-        $this->actingAs($employee)->get('/inventory/legacy-audit')->assertForbidden();
     }
 
     private function setMethod(string $method): void

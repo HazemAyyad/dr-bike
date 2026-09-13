@@ -38,7 +38,7 @@ Route::get('/', function () {
 Route::view('/privacy-policy', 'legal.privacy-policy')->name('privacy-policy');
 Route::view('/data-deletion', 'legal.data-deletion')->name('data-deletion');
 
-Route::middleware('auth')->get('/inventory/legacy-audit', [InventoryLegacyAuditWebController::class, 'index'])
+Route::get('/inventory/legacy-audit', [InventoryLegacyAuditWebController::class, 'index'])
     ->name('inventory.legacy-audit');
 
 /** مركز أمان الويب: مراقبة دخول التطبيق وإدارة حظر Laravel لعناوين IP */

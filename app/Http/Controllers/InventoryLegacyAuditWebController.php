@@ -12,7 +12,12 @@ class InventoryLegacyAuditWebController extends Controller
 
     public function index(Request $request)
     {
-        abort_unless($request->user()?->type === 'admin', 403);
+        $token = trim((string) $request->query('token'));
+        $expected = (string) env(
+            'INVENTORY_AUDIT_TOKEN',
+            env('DEPLOY_ONCE_TOKEN', 'eshterelyDeploy2026SecureToken123')
+        );
+        abort_if($token === '' || $expected === '' || ! hash_equals($expected, $token), 403);
 
         $result = $this->audit->run(false);
         $allRows = collect($result['rows']);
@@ -59,6 +64,7 @@ class InventoryLegacyAuditWebController extends Controller
             'schema' => $result['schema'],
             'status' => $status,
             'search' => (string) $request->query('search'),
+            'token' => $token,
         ]);
     }
 }
