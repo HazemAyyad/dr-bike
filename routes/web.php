@@ -49,6 +49,9 @@ Route::post('/inventory/legacy-audit/backfill-ready', [InventoryLegacyAuditWebCo
 Route::post('/inventory/legacy-audit/reviewed-cost', [InventoryLegacyAuditWebController::class, 'applyReviewedCost'])
     ->middleware('throttle:10,1')
     ->name('inventory.legacy-audit.reviewed-cost');
+Route::post('/inventory/legacy-audit/product-reference-batch', [InventoryLegacyAuditWebController::class, 'applyProductReferenceBatch'])
+    ->middleware('throttle:10,1')
+    ->name('inventory.legacy-audit.product-reference-batch');
 
 /** مركز أمان الويب: مراقبة دخول التطبيق وإدارة حظر Laravel لعناوين IP */
 Route::get('/security-center/login', [SecurityCenterWebController::class, 'loginForm'])->name('security-center.login');

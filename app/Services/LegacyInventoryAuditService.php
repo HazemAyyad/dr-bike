@@ -135,6 +135,48 @@ class LegacyInventoryAuditService
     }
 
     /**
+     * Apply the latest documented product-level legacy purchase cost to
+     * variant identities which have no variant-specific cost evidence.
+     * The approval is explicit, restart-safe, and never changes stock.
+     *
+     * @return array{selected: int, created: int, skipped: int, failed: int, errors: array<int, string>}
+     */
+    public function applyProductReferenceBatch(int $limit, string $operator): array
+    {
+        $limit = max(1, min(50, $limit));
+        $rows = collect($this->run(false)['rows'])
+            ->filter(fn (array $row) => $row['status'] === 'review'
+                && $row['reason'] === 'reliable_opening_unit_cost_not_found'
+                && $row['size_color_id'] !== null
+                && $row['reference_unit_cost'] !== null
+                && $row['reference_source'] === 'purchase_products.product_level_reference')
+            ->take($limit)
+            ->values();
+        $result = ['selected' => $rows->count(), 'created' => 0, 'skipped' => 0, 'failed' => 0, 'errors' => []];
+
+        foreach ($rows as $row) {
+            try {
+                $outcome = $this->createCoverageLayer(
+                    productId: (int) $row['product_id'],
+                    sizeColorId: (int) $row['size_color_id'],
+                    explicitCost: null,
+                    explicitCurrency: null,
+                    operator: $operator,
+                    reason: 'اعتماد سعر الشراء الأساسي القديم لمتغيرات المنتج',
+                    notes: 'تمت الموافقة الجماعية على استخدام سعر شراء المنتج الأساسي للون/الحجم الذي لا يملك تكلفة مستقلة.',
+                    useProductReference: true,
+                );
+                $result[$outcome === 'created' ? 'created' : 'skipped']++;
+            } catch (\Throwable $exception) {
+                $result['failed']++;
+                $result['errors'][] = '#'.$row['product_id'].' '.($row['variant_label'] ?: '').': '.$exception->getMessage();
+            }
+        }
+
+        return $result;
+    }
+
+    /**
      * Resolve one reviewed identity with an explicitly approved opening cost.
      */
     public function applyReviewedCost(
@@ -292,6 +334,7 @@ class LegacyInventoryAuditService
         string $operator,
         string $reason,
         ?string $notes,
+        bool $useProductReference = false,
     ): string {
         $schema = $this->schemaReadiness();
         if (in_array(false, $schema, true)) {
@@ -303,7 +346,7 @@ class LegacyInventoryAuditService
             throw ValidationException::withMessages(['operator' => ['اسم منفذ المراجعة مطلوب.']]);
         }
 
-        return DB::transaction(function () use ($productId, $sizeColorId, $explicitCost, $explicitCurrency, $operator, $reason, $notes) {
+        return DB::transaction(function () use ($productId, $sizeColorId, $explicitCost, $explicitCurrency, $operator, $reason, $notes, $useProductReference) {
             $product = Product::query()->lockForUpdate()->findOrFail($productId);
             $sizeId = null;
             if ($sizeColorId !== null) {
@@ -353,16 +396,21 @@ class LegacyInventoryAuditService
                 return 'covered';
             }
 
-            $cost = $explicitCost !== null
-                ? ['unit_cost' => $explicitCost, 'currency' => $explicitCurrency ?: 'شيكل', 'source' => 'administrative_manual_cost', 'source_id' => null]
-                : $this->resolveOpeningCost($product, $sizeColorId, true);
+            if ($explicitCost !== null) {
+                $cost = ['unit_cost' => $explicitCost, 'currency' => $explicitCurrency ?: 'شيكل', 'source' => 'administrative_manual_cost', 'source_id' => null];
+            } elseif ($useProductReference) {
+                $cost = $this->resolveProductLevelReferenceCost($product, true)
+                    ?? ['unit_cost' => null, 'currency' => 'شيكل', 'source' => 'admin_review_required', 'source_id' => null];
+            } else {
+                $cost = $this->resolveOpeningCost($product, $sizeColorId, true);
+            }
 
             if ($cost['unit_cost'] === null || (float) $cost['unit_cost'] <= 0) {
                 $this->storePendingReview($productId, $sizeId, $sizeColorId, $physical, $covered, $missing, 'reliable_opening_unit_cost_not_found');
 
                 return 'review_required';
             }
-            if ($openingExists && $explicitCost === null) {
+            if ($openingExists && $explicitCost === null && ! $useProductReference) {
                 $this->storePendingReview($productId, $sizeId, $sizeColorId, $physical, $covered, $missing, 'existing_opening_layer_has_insufficient_coverage');
 
                 return 'review_required';
@@ -589,9 +637,9 @@ class LegacyInventoryAuditService
     }
 
     /** @return array{unit_cost: float, source: string, source_id: int, currency: string}|null */
-    private function resolveProductLevelReferenceCost(Product $product): ?array
+    private function resolveProductLevelReferenceCost(Product $product, bool $forceDatabase = false): ?array
     {
-        if ($this->previewMode) {
+        if ($this->previewMode && ! $forceDatabase) {
             $legacy = $this->previewLegacyPurchases[$this->identityMapKey((int) $product->id, null)] ?? null;
         } elseif (Schema::hasTable('purchase_products')) {
             $legacy = DB::table('purchase_products')

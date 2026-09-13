@@ -67,6 +67,17 @@ class InventoryLegacyAuditWebController extends Controller
                 ->filter(fn (array $row) => $row['reference_unit_cost'] !== null)
                 ->count(),
         ];
+        $productReferenceRows = $allRows->filter(fn (array $row) => $row['status'] === 'review'
+            && $row['reason'] === 'reliable_opening_unit_cost_not_found'
+            && $row['size_color_id'] !== null
+            && $row['reference_unit_cost'] !== null
+            && $row['reference_source'] === 'purchase_products.product_level_reference');
+        $productReferenceBatch = [
+            'identities' => $productReferenceRows->count(),
+            'products' => $productReferenceRows->pluck('product_id')->unique()->count(),
+            'quantity' => $productReferenceRows->sum('missing_quantity'),
+            'value' => $productReferenceRows->sum(fn (array $row) => (float) $row['missing_quantity'] * (float) $row['reference_unit_cost']),
+        ];
         $resolveIdentity = trim((string) $request->query('resolve'));
         $resolveRow = $resolveIdentity === ''
             ? null
@@ -77,6 +88,7 @@ class InventoryLegacyAuditWebController extends Controller
             'summary' => $summary,
             'sourceBreakdown' => $sourceBreakdown,
             'reviewBreakdown' => $reviewBreakdown,
+            'productReferenceBatch' => $productReferenceBatch,
             'resolveRow' => $resolveRow,
             'schema' => $result['schema'],
             'status' => $status,
@@ -160,6 +172,21 @@ class InventoryLegacyAuditWebController extends Controller
 
         return redirect()->route('inventory.legacy-audit', ['token' => $token, 'status' => 'review'])
             ->with('review_result', $message);
+    }
+
+    public function applyProductReferenceBatch(Request $request): RedirectResponse
+    {
+        $token = $this->authorizedToken($request);
+        $validated = $request->validate([
+            'operator' => ['required', 'string', 'max:120'],
+            'batch_size' => ['required', 'integer', 'in:10,25,50'],
+            'backup_confirmed' => ['accepted'],
+            'confirmation' => ['required', 'in:VARIANTS'],
+        ]);
+        $result = $this->audit->applyProductReferenceBatch((int) $validated['batch_size'], $validated['operator']);
+
+        return redirect()->route('inventory.legacy-audit', ['token' => $token, 'status' => 'review'])
+            ->with('variant_reference_result', $result);
     }
 
     private function authorizedToken(Request $request): string

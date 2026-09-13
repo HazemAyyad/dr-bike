@@ -92,6 +92,15 @@
             @endif
         </section>
     @endif
+    @if(session('variant_reference_result'))
+        @php($batch = session('variant_reference_result'))
+        <section class="notice {{ $batch['failed'] ? 'danger' : 'success' }}">
+            نتيجة متغيرات المنتجات: تم اختيار {{ $batch['selected'] }}، إنشاء {{ $batch['created'] }}، تجاوز {{ $batch['skipped'] }}، فشل {{ $batch['failed'] }}.
+            @if($batch['errors'])
+                <ul>@foreach($batch['errors'] as $error)<li>{{ $error }}</li>@endforeach</ul>
+            @endif
+        </section>
+    @endif
 
     <section class="notice {{ in_array(false, $schema, true) ? 'danger' : '' }}">
         @if(in_array(false, $schema, true))
@@ -137,6 +146,23 @@
         </div>
         <label class="check"><input type="checkbox" name="backup_confirmed" value="1" required> أؤكد وجود نسخة قاعدة بيانات حديثة قبل التنفيذ.</label>
         <button type="submit" @disabled($summary['ready'] === 0 || in_array(false, $schema, true))>تنفيذ الدفعة</button>
+    </form>
+
+    <form class="operation" method="post" action="{{ route('inventory.legacy-audit.product-reference-batch') }}">
+        @csrf
+        <input type="hidden" name="token" value="{{ $token }}">
+        <strong>اعتماد سعر الشراء الأساسي لمتغيرات المنتج</strong>
+        <p class="lead">
+            يوجد {{ number_format($productReferenceBatch['identities']) }} لوناً/حجماً تابعاً لـ{{ number_format($productReferenceBatch['products']) }} منتجاً، بكمية ناقصة {{ number_format($productReferenceBatch['quantity'], 2) }} وقيمة تغطية {{ number_format($productReferenceBatch['value'], 2) }} شيكل.
+            ستعتمد العملية آخر <b>سعر شراء قديم</b> مسجل للمنتج الأساسي على متغيراته التي لا تملك تكلفة مستقلة؛ لا تستخدم سعر البيع ولا تغيّر المخزون، وتسجل طبقة وحركة ومصدر المراجعة لكل متغير.
+        </p>
+        <div class="fields">
+            <label>اسم منفذ المراجعة<input name="operator" required maxlength="120" value="{{ old('operator') }}"></label>
+            <label>حجم الدفعة<select name="batch_size"><option value="10">10</option><option value="25">25</option><option value="50" selected>50</option></select></label>
+            <label>اكتب VARIANTS للتأكيد<input name="confirmation" required autocomplete="off"></label>
+        </div>
+        <label class="check"><input type="checkbox" name="backup_confirmed" value="1" required> راجعت قاعدة الاعتماد وأؤكد وجود نسخة احتياطية حديثة.</label>
+        <button type="submit" @disabled($productReferenceBatch['identities'] === 0 || in_array(false, $schema, true))>تنفيذ دفعة المتغيرات</button>
     </form>
 
     @if($resolveRow)

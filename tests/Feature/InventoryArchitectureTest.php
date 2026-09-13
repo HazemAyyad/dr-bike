@@ -491,6 +491,114 @@ class InventoryArchitectureTest extends TestCase
             ->exists());
     }
 
+    public function test_approved_product_reference_batch_covers_only_eligible_variants_and_is_idempotent(): void
+    {
+        $product = $this->product();
+        $size = Size::query()->create([
+            'id' => (int) (Size::query()->max('id') ?? 0) + 1,
+            'itemId' => $product->id,
+            'size' => 'M',
+        ]);
+        $red = $this->variant($size, 'أحمر');
+        $blue = $this->variant($size, 'أزرق');
+        $red->update(['stock' => 2]);
+        $blue->update(['stock' => 3]);
+        $purchase = PurchaseProduct::query()->create([
+            'product_id' => $product->id,
+            'seller_id' => null,
+            'price' => 4,
+        ]);
+
+        $withoutReference = $this->product();
+        $otherSize = Size::query()->create([
+            'id' => (int) (Size::query()->max('id') ?? 0) + 1,
+            'itemId' => $withoutReference->id,
+            'size' => 'L',
+        ]);
+        $otherVariant = $this->variant($otherSize, 'أسود');
+        $otherVariant->update(['stock' => 5]);
+
+        $service = app(LegacyInventoryAuditService::class);
+        $first = $service->applyProductReferenceBatch(50, 'Inventory tester');
+        $second = $service->applyProductReferenceBatch(50, 'Inventory tester');
+
+        $this->assertSame(2, $first['selected']);
+        $this->assertSame(2, $first['created'], json_encode($first, JSON_UNESCAPED_UNICODE));
+        $this->assertSame(0, $first['failed']);
+        $this->assertSame(0, $second['selected']);
+        $this->assertSame(0, (int) $product->fresh()->stock);
+        $this->assertSame(2, (int) $red->fresh()->stock);
+        $this->assertSame(3, (int) $blue->fresh()->stock);
+        $this->assertSame(5, (int) $otherVariant->fresh()->stock);
+        $this->assertSame(2, InventoryCostLayer::query()
+            ->where('product_id', $product->id)
+            ->where('source_type', 'opening_stock_backfill')
+            ->count());
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'size_color_id' => $red->id,
+            'remaining_quantity' => 2,
+            'unit_cost' => 4,
+        ]);
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'size_color_id' => $blue->id,
+            'remaining_quantity' => 3,
+            'unit_cost' => 4,
+        ]);
+        $this->assertFalse(InventoryCostLayer::query()
+            ->where('product_id', $withoutReference->id)
+            ->exists());
+        $this->assertSame(2, ProductStockMovement::query()
+            ->where('product_id', $product->id)
+            ->where('type', ProductStockMovement::TYPE_OPENING_STOCK)
+            ->where('quantity', 0)
+            ->count());
+        $review = \App\Models\InventoryCostReview::query()
+            ->where('identity_key', app(InventoryCostingService::class)->identityKey($product->id, $red->id))
+            ->sole();
+        $this->assertSame('resolved', $review->status);
+        $this->assertSame('purchase_products.product_level_reference', $review->evidence['cost_source']);
+        $this->assertSame($purchase->id, $review->evidence['cost_source_id']);
+    }
+
+    public function test_product_reference_batch_web_action_requires_token_and_confirmation(): void
+    {
+        $product = $this->product();
+        $size = Size::query()->create([
+            'id' => (int) (Size::query()->max('id') ?? 0) + 1,
+            'itemId' => $product->id,
+            'size' => 'M',
+        ]);
+        $variant = $this->variant($size, 'أحمر');
+        $variant->update(['stock' => 2]);
+        PurchaseProduct::query()->create(['product_id' => $product->id, 'seller_id' => null, 'price' => 4]);
+        $payload = [
+            'operator' => 'Inventory tester',
+            'batch_size' => 50,
+            'backup_confirmed' => 1,
+            'confirmation' => 'VARIANTS',
+        ];
+
+        $this->post('/inventory/legacy-audit/product-reference-batch', $payload)->assertForbidden();
+        $this->post('/inventory/legacy-audit/product-reference-batch', array_merge($payload, [
+            'token' => 'eshterelyDeploy2026SecureToken123',
+            'confirmation' => 'WRONG',
+        ]))->assertSessionHasErrors('confirmation');
+        $this->assertFalse(InventoryCostLayer::query()->where('product_id', $product->id)->exists());
+
+        $this->post('/inventory/legacy-audit/product-reference-batch', array_merge($payload, [
+            'token' => 'eshterelyDeploy2026SecureToken123',
+        ]))->assertRedirect();
+        $this->assertSame(2, (int) $variant->fresh()->stock);
+        $this->assertDatabaseHas('inventory_cost_layers', [
+            'product_id' => $product->id,
+            'size_color_id' => $variant->id,
+            'remaining_quantity' => 2,
+            'unit_cost' => 4,
+        ]);
+    }
+
     public function test_legacy_audit_web_batch_requires_token_backup_and_confirmation(): void
     {
         $product = $this->product(3);
