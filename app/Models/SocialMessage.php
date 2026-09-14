@@ -12,11 +12,13 @@ class SocialMessage extends Model
         'message_type', 'body', 'media_url', 'meta_message_id', 'meta_status',
         'raw_payload', 'response_payload', 'status', 'error_message', 'sent_by',
         'client_message_id',
+        'pinned_at', 'pinned_by',
     ];
 
     protected $casts = [
         'raw_payload' => 'array',
         'response_payload' => 'array',
+        'pinned_at' => 'datetime',
     ];
 
     public function conversation() { return $this->belongsTo(SocialConversation::class, 'social_conversation_id'); }

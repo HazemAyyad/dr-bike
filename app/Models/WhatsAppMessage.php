@@ -14,12 +14,14 @@ class WhatsAppMessage extends Model
         'response_payload', 'status', 'error_message', 'sent_by', 'is_automatic',
         'customer_deleted_at',
         'reply_to_message_id', 'reply_to_meta_message_id', 'client_message_id',
+        'pinned_at', 'pinned_by',
     ];
     protected $casts = [
         'raw_payload' => 'array',
         'response_payload' => 'array',
         'is_automatic' => 'boolean',
         'customer_deleted_at' => 'datetime',
+        'pinned_at' => 'datetime',
     ];
 
     public function conversation() { return $this->belongsTo(WhatsAppConversation::class, 'whatsapp_conversation_id'); }

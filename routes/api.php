@@ -1295,6 +1295,13 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Messages Section',
         ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
         ->whereNumber(['id', 'messageId'])
         ->middleware('throttle:20,1');
+    Route::post('/social/conversations/{channel}/{id}/messages/{messageId}/action', [SocialCenterController::class, 'messageAction'])
+        ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
+        ->whereNumber(['id', 'messageId']);
+    Route::post('/social/conversations/{channel}/{id}/messages/{messageId}/forward', [SocialCenterController::class, 'forwardMessage'])
+        ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
+        ->whereNumber(['id', 'messageId'])
+        ->middleware('throttle:20,1');
     Route::post('/social/conversations/{channel}/{id}/assign', [SocialCenterController::class, 'assignConversation'])
         ->whereIn('channel', ['whatsapp', 'facebook', 'instagram'])
         ->whereNumber('id');

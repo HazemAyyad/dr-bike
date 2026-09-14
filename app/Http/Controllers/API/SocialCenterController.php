@@ -130,17 +130,20 @@ class SocialCenterController extends Controller
                 ->with(['replyTo:id,message_type,body,direction,media_url', 'sender:id,name'])
                 ->orderByDesc('created_at')
                 ->orderByDesc('id')
-                ->paginate($this->perPage($request, 30))
-                ->through(fn ($message) => $this->serializeWhatsAppMessage($message));
+                ->paginate($this->perPage($request, 30));
         } else {
             $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
             $messages = $conversation->messages()
                 ->with(['sender:id,name'])
                 ->orderByDesc('created_at')
                 ->orderByDesc('id')
-                ->paginate($this->perPage($request, 30))
-                ->through(fn ($message) => $this->serializeSocialMessage($message));
+                ->paginate($this->perPage($request, 30));
         }
+        $messages = $this->decorateMessagesPaginator(
+            $messages,
+            $channel,
+            (int) $request->user()->id
+        );
 
         $lastInboundAt = $conversation->messages()
             ->where('direction', 'inbound')
@@ -206,6 +209,80 @@ class SocialCenterController extends Controller
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage()], 422);
         }
+    }
+
+    public function messageAction(Request $request, string $channel, int $id, int $messageId)
+    {
+        $this->authorizeChannel($request, $channel);
+        $message = $this->conversationMessage($channel, $id, $messageId);
+        $data = $request->validate([
+            'action' => 'required|in:pin,unpin,star,unstar,react,report',
+            'reaction' => 'nullable|string|max:16',
+            'reason' => 'nullable|string|max:500',
+        ]);
+        $userId = (int) $request->user()->id;
+
+        if ($data['action'] === 'pin' || $data['action'] === 'unpin') {
+            $message->update($data['action'] === 'pin'
+                ? ['pinned_at' => now(), 'pinned_by' => $userId]
+                : ['pinned_at' => null, 'pinned_by' => null]);
+        } elseif (in_array($data['action'], ['star', 'unstar', 'react'], true)) {
+            $values = ['updated_at' => now()];
+            if ($data['action'] === 'star') {
+                $values['starred'] = true;
+            }
+            if ($data['action'] === 'unstar') {
+                $values['starred'] = false;
+            }
+            if ($data['action'] === 'react') {
+                $values['reaction'] = filled($data['reaction'] ?? null) ? $data['reaction'] : null;
+            }
+            DB::table('social_message_user_states')->updateOrInsert(
+                ['user_id' => $userId, 'channel' => $channel, 'message_id' => $messageId],
+                ['created_at' => now()] + $values
+            );
+        } else {
+            DB::table('social_message_reports')->updateOrInsert(
+                ['reported_by' => $userId, 'channel' => $channel, 'message_id' => $messageId],
+                ['reason' => $data['reason'] ?? null, 'updated_at' => now(), 'created_at' => now()]
+            );
+        }
+
+        return $this->ok($this->decorateMessage($channel, $message->fresh(), $userId), 'message');
+    }
+
+    public function forwardMessage(
+        Request $request,
+        string $channel,
+        int $id,
+        int $messageId,
+        WhatsAppCloudApiService $whatsApp,
+        MetaMessagingService $meta
+    ) {
+        $this->authorizeChannel($request, $channel);
+        $message = $this->conversationMessage($channel, $id, $messageId);
+        $data = $request->validate([
+            'target_channel' => 'required|in:whatsapp,facebook,instagram',
+            'target_conversation_id' => 'required|integer|min:1',
+        ]);
+        $targetChannel = $data['target_channel'];
+        $this->authorizeChannel($request, $targetChannel);
+        $text = trim((string) ($message->body ?: $message->media_url));
+        abort_if($text === '', 422, 'لا يمكن تحويل هذه الرسالة لأنها لا تحتوي نصًا أو رابط وسائط.');
+
+        if ($targetChannel === 'whatsapp') {
+            $target = $this->activeWhatsAppConversations()->with('whatsappAccount')->findOrFail($data['target_conversation_id']);
+            $this->ensureCustomerServiceWindow($target);
+            $result = $this->whatsAppForConversation($whatsApp, $target)
+                ->sendText($target->phone, $text, $request->user()->id);
+        } else {
+            $target = SocialConversation::query()->with('contact')
+                ->where('channel', $targetChannel)->findOrFail($data['target_conversation_id']);
+            $this->ensureCustomerServiceWindow($target);
+            $result = $meta->sendText($target, $text, $request->user()->id);
+        }
+        $this->claimAfterReply($target, (int) $request->user()->id);
+        return $this->sendResult($targetChannel, $result);
     }
 
     public function assignConversation(Request $request, string $channel, int $id)
@@ -595,6 +672,63 @@ class SocialCenterController extends Controller
             'response_payload' => $message->response_payload,
             'created_at' => $message->created_at,
         ];
+    }
+
+    private function conversationMessage(string $channel, int $conversationId, int $messageId)
+    {
+        abort_unless(in_array($channel, ['whatsapp', 'facebook', 'instagram'], true), 404);
+        if ($channel === 'whatsapp') {
+            $conversation = $this->activeWhatsAppConversations()->findOrFail($conversationId);
+        } else {
+            $conversation = SocialConversation::query()->where('channel', $channel)->findOrFail($conversationId);
+        }
+        return $conversation->messages()->findOrFail($messageId);
+    }
+
+    private function decorateMessage(string $channel, $message, int $userId): array
+    {
+        $payload = $channel === 'whatsapp'
+            ? $this->serializeWhatsAppMessage($message)
+            : $this->serializeSocialMessage($message);
+        $state = DB::table('social_message_user_states')
+            ->where(['user_id' => $userId, 'channel' => $channel, 'message_id' => $message->id])
+            ->first();
+        $payload['pinned'] = $message->pinned_at !== null;
+        $payload['starred'] = (bool) ($state->starred ?? false);
+        $payload['reaction'] = $state->reaction ?? null;
+        $payload['reported'] = DB::table('social_message_reports')
+            ->where(['reported_by' => $userId, 'channel' => $channel, 'message_id' => $message->id])
+            ->exists();
+        return $payload;
+    }
+
+    private function decorateMessagesPaginator($messages, string $channel, int $userId)
+    {
+        $ids = $messages->getCollection()->pluck('id')->all();
+        $states = DB::table('social_message_user_states')
+            ->where('user_id', $userId)
+            ->where('channel', $channel)
+            ->whereIn('message_id', $ids)
+            ->get()
+            ->keyBy('message_id');
+        $reportedIds = DB::table('social_message_reports')
+            ->where('reported_by', $userId)
+            ->where('channel', $channel)
+            ->whereIn('message_id', $ids)
+            ->pluck('message_id')
+            ->flip();
+
+        return $messages->through(function ($message) use ($channel, $states, $reportedIds) {
+            $payload = $channel === 'whatsapp'
+                ? $this->serializeWhatsAppMessage($message)
+                : $this->serializeSocialMessage($message);
+            $state = $states->get($message->id);
+            $payload['pinned'] = $message->pinned_at !== null;
+            $payload['starred'] = (bool) ($state->starred ?? false);
+            $payload['reaction'] = $state->reaction ?? null;
+            $payload['reported'] = $reportedIds->has($message->id);
+            return $payload;
+        });
     }
 
     public function linkPreview(Request $request, LinkPreviewService $previews)
