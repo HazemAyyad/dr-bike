@@ -22,6 +22,7 @@ use App\Support\ProductImageResolver;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class SalesOrderService
@@ -623,6 +624,37 @@ class SalesOrderService
 
             return $order->fresh($this->detailRelations());
         });
+    }
+
+    public function deleteUnconfirmed(User $user, int $orderId): SalesOrder
+    {
+        $order = SalesOrder::query()->with('media')->findOrFail($orderId);
+        if ($order->statusEnum() !== SalesOrderStatus::Unconfirmed) {
+            throw ValidationException::withMessages([
+                'order' => [__('messages.sales_order_delete_unconfirmed_only')],
+            ]);
+        }
+
+        $mediaPaths = $order->media
+            ->pluck('path')
+            ->filter(fn ($path) => is_string($path) && $path !== '')
+            ->values()
+            ->all();
+
+        $deleted = DB::transaction(function () use ($user, $order) {
+            $this->stockService->releaseOrder($order);
+            $order->updated_by = $user->id;
+            $order->save();
+            $order->delete();
+
+            return $order;
+        });
+
+        if ($mediaPaths !== []) {
+            Storage::disk('public')->delete($mediaPaths);
+        }
+
+        return $deleted;
     }
 
     public function postpone(User $user, int $orderId, string $until, ?string $reason = null): SalesOrder

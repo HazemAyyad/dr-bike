@@ -720,4 +720,6 @@ return [
     'sales_order_status_alternative_return' => 'Alternative return',
     'sales_order_status_canceled' => 'Canceled',
     'employee_password_updated_successfully' => 'Employee password updated successfully',
+    'sales_order_deleted' => 'The unconfirmed order was deleted successfully.',
+    'sales_order_delete_unconfirmed_only' => 'Only an unconfirmed order can be deleted.',
 ];

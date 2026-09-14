@@ -3,8 +3,8 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Services\SalesOrderFulfillmentService;
 use App\Services\EmployeeActivityLogger;
+use App\Services\SalesOrderFulfillmentService;
 use App\Services\SalesOrderPartialService;
 use App\Services\SalesOrderService;
 use App\Services\SalesOrderStatementService;
@@ -210,6 +210,41 @@ class SalesOrdersController extends Controller
     public function confirm(Request $request)
     {
         return $this->transition($request, 'confirm', __('messages.sales_order_confirmed'));
+    }
+
+    public function destroy(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_order_id' => 'required|integer|exists:sales_orders,id',
+            ]);
+            $order = $this->service->deleteUnconfirmed(
+                $request->user(),
+                (int) $data['sales_order_id']
+            );
+            $this->logSalesOrderActivity(
+                $request,
+                $order,
+                'deleted_unconfirmed_sales_order',
+                'حذف طلبية مبيعات غير مؤكدة'
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => __('messages.sales_order_deleted'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 
     public function markReady(Request $request)
