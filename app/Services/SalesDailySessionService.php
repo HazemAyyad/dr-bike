@@ -14,6 +14,7 @@ use App\Models\SalesDailyClosingRequest;
 use App\Models\SalesDailyReopenRequest;
 use App\Models\SalesDailySession;
 use App\Models\SalesOrder;
+use App\Models\SalesOrderSettlement;
 use App\Models\User;
 use App\Support\SalesDailySettings;
 use Carbon\Carbon;
@@ -2396,17 +2397,19 @@ class SalesDailySessionService
      */
     private function buildSessionSalesOrdersLog(SalesDailySession $session): array
     {
-        $businessDate = $session->business_date->toDateString();
+        $sessionCollectionsByOrder = SalesOrderSettlement::query()
+            ->where('sales_daily_session_id', $session->id)
+            ->selectRaw('sales_order_id, COALESCE(SUM(COALESCE(cash_amount, amount)), 0) as collected, MAX(created_at) as collected_at')
+            ->groupBy('sales_order_id')
+            ->get()
+            ->keyBy('sales_order_id');
 
         return SalesOrder::query()
-            ->where('created_by', $session->user_id)
-            ->whereDate('created_at', $businessDate)
+            ->whereIn('id', $sessionCollectionsByOrder->keys())
             ->where('is_debt_collection', false)
             ->with(['items.product:id,nameAr', 'createdByUser:id,name'])
-            ->orderByDesc('created_at')
-            ->orderByDesc('id')
             ->get()
-            ->map(function (SalesOrder $order) use ($session) {
+            ->map(function (SalesOrder $order) use ($session, $sessionCollectionsByOrder) {
                 $products = $order->items->map(fn ($item) => [
                     'name' => $item->product?->nameAr ?? $item->product_name ?? 'منتج محذوف',
                     'quantity' => (float) $item->quantity,
@@ -2415,6 +2418,8 @@ class SalesDailySessionService
                 ])->values()->all();
                 $total = round((float) $order->total, 2);
                 $paid = min($total, round((float) $order->payment_amount, 2));
+                $sessionCollection = $sessionCollectionsByOrder->get($order->id);
+                $sessionCollected = round((float) ($sessionCollection?->collected ?? 0), 2);
 
                 return [
                     'id' => $order->id,
@@ -2424,6 +2429,7 @@ class SalesDailySessionService
                     'total' => $total,
                     'payment_type' => $order->payment_type,
                     'payment_amount' => $paid,
+                    'session_collected_amount' => $sessionCollected,
                     'remaining_amount' => max(0, round($total - $paid, 2)),
                     'products_count' => count($products),
                     'products' => $products,
@@ -2431,10 +2437,11 @@ class SalesDailySessionService
                     'instant_sale_id' => $order->instant_sale_id,
                     'delivered_today' => $order->sales_daily_session_id === $session->id
                         && $order->financial_posted_at !== null,
-                    'created_at' => $order->created_at?->toDateTimeString(),
+                    'created_at' => $sessionCollection?->collected_at,
                     'financial_posted_at' => $order->financial_posted_at?->toDateTimeString(),
                 ];
             })
+            ->sortByDesc('created_at')
             ->values()
             ->all();
     }
