@@ -227,6 +227,7 @@ class ProductStockController extends Controller
                     ProductStockMovement::TYPE_DISASSEMBLY_OUTPUT,
                     ProductStockMovement::TYPE_PRICE_UPDATE,
                     ProductStockMovement::TYPE_PRODUCT_UPDATE,
+                    ProductStockMovement::TYPE_PRODUCT_CREATE,
                     ProductStockMovement::TYPE_STOCK_ADJUSTMENT_IN,
                     ProductStockMovement::TYPE_STOCK_ADJUSTMENT_OUT,
                     ProductStockMovement::TYPE_OPENING_STOCK,
@@ -263,6 +264,9 @@ class ProductStockController extends Controller
             }
 
             $paginated = $query->paginate($perPage);
+            $product = Product::query()
+                ->with(['createdByUser:id,name', 'updatedByUser:id,name'])
+                ->findOrFail((int) $data['product_id']);
             $canViewCostPrice = $request->user()?->canViewInventoryCost() ?? false;
             $canViewPurchases = $this->canAccessSection($request, 'Purchasing Section');
             $canViewSales = $this->canAccessSection($request, 'Sales');
@@ -306,6 +310,12 @@ class ProductStockController extends Controller
             return response()->json([
                 'status' => 'success',
                 'summary' => $summary,
+                'product_audit' => [
+                    'created_by_name' => $product->createdByUser?->name,
+                    'created_at' => $product->dateAdd ?: $product->created_at?->format('Y-m-d H:i'),
+                    'updated_by_name' => $product->updatedByUser?->name,
+                    'updated_at' => $product->dateUpdate ?: $product->updated_at?->format('Y-m-d H:i'),
+                ],
                 'movements' => $rows->values(),
                 'pagination' => [
                     'current_page' => $paginated->currentPage(),

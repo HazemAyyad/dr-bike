@@ -267,6 +267,12 @@ class StoreSectionController extends Controller
                     'has_cost_price' => $cost !== null,
                     'inventory_value' => $inventory['inventory_value'] ?? null,
                     'inventory_costing_method' => $inventory['costing_method'] ?? null,
+                    'inventory_cost_coverage_complete' => $canViewCost
+                        ? (bool) ($inventory['cost_coverage_complete'] ?? false)
+                        : null,
+                    'missing_cost_quantity' => $canViewCost
+                        ? (float) ($inventory['missing_cost_quantity'] ?? 0)
+                        : null,
                     'cost_price_basis' => $canViewCost ? 'inventory_engine_average_remaining' : null,
                     'product_price' => $product->price,
                     'discount' => $product->discount,

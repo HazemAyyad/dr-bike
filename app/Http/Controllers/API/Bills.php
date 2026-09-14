@@ -9,6 +9,7 @@ use App\Models\BillQuantity;
 use App\Models\Category;
 use App\Models\Debt;
 use App\Models\Product;
+use App\Models\ProductStockMovement;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\SubCategory;
@@ -112,6 +113,18 @@ class Bills extends Controller
                     'stock' => 0,
                 ]);
             }
+
+            ProductStockMovement::query()->create([
+                'product_id' => $product->id,
+                'type' => ProductStockMovement::TYPE_PRODUCT_CREATE,
+                'quantity' => 0,
+                'stock_before' => 0,
+                'stock_after' => 0,
+                'reference_type' => 'purchase_quick_create',
+                'reference_id' => $product->id,
+                'note' => 'تم إنشاء المنتج من شاشة المشتريات',
+                'created_by' => $request->user()?->id,
+            ]);
 
             return $product->fresh(['sizes.colorSizes']);
         }, 3);

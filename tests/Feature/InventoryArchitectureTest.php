@@ -66,7 +66,19 @@ class InventoryArchitectureTest extends TestCase
         $this->assertSame('success', $plain->json('status'), $plain->getContent());
         $plainProduct = Product::query()->findOrFail($plain->json('product_id'));
         $this->assertSame(0, (int) $plainProduct->stock);
+        $this->assertSame((int) $this->admin->id, (int) $plainProduct->userIdAdd);
         $this->assertFalse(InventoryCostLayer::query()->where('product_id', $plainProduct->id)->exists());
+        $this->assertDatabaseHas('product_stock_movements', [
+            'product_id' => $plainProduct->id,
+            'type' => ProductStockMovement::TYPE_PRODUCT_CREATE,
+            'created_by' => $this->admin->id,
+        ]);
+
+        $this->postJson('/api/product/stock/movements', [
+            'product_id' => $plainProduct->id,
+        ])->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('product_audit.created_by_name', $this->admin->name);
 
         $opening = $this->postJson('/api/create/product', array_merge($base, [
             'nameAr' => 'منتج برصيد افتتاحي',
@@ -109,6 +121,12 @@ class InventoryArchitectureTest extends TestCase
         ])->assertOk()->assertJsonPath('status', 'success');
         $product = Product::query()->findOrFail($response->json('product.id'));
         $this->assertSame(0, (int) $product->stock);
+        $this->assertDatabaseHas('product_stock_movements', [
+            'product_id' => $product->id,
+            'type' => ProductStockMovement::TYPE_PRODUCT_CREATE,
+            'reference_type' => 'purchase_quick_create',
+            'created_by' => $this->admin->id,
+        ]);
 
         $seller = Seller::query()->create(['name' => 'مورد الاختبار', 'phone' => '05912345']);
         $bill = app(PurchasingService::class)->createPurchase([
@@ -349,6 +367,33 @@ class InventoryArchitectureTest extends TestCase
         $this->assertArrayNotHasKey('inventory_value', $row);
         $this->assertArrayNotHasKey('inventory_costing_method', $row);
         $this->assertArrayNotHasKey('cost_price_basis', $row);
+    }
+
+    public function test_stock_cards_receive_cost_coverage_only_with_inventory_cost_permission(): void
+    {
+        $employeeUser = User::factory()->create(['type' => 'employee']);
+        $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $costPermission = Permission::query()->firstOrCreate(
+            ['name_en' => 'View Inventory Cost'],
+            ['name' => 'عرض تكلفة المخزون'],
+        );
+        EmployeePermission::query()->create([
+            'employee_id' => $employee->id,
+            'permission_id' => $costPermission->id,
+        ]);
+        $product = $this->product(5);
+
+        Sanctum::actingAs($employeeUser);
+        $this->withoutMiddleware(RefreshSanctumTokenExpiry::class);
+        $response = $this->getJson('/api/get/products/list?per_page=100')
+            ->assertOk()
+            ->assertJsonPath('status', 'success');
+        $row = collect($response->json('products'))
+            ->first(fn (array $item) => (int) $item['product_id'] === (int) $product->id);
+
+        $this->assertIsArray($row);
+        $this->assertFalse($row['inventory_cost_coverage_complete']);
+        $this->assertEqualsWithDelta(5, (float) $row['missing_cost_quantity'], 0.0001);
     }
 
     public function test_variant_costing_never_consumes_another_variant_layer(): void

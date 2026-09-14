@@ -59,6 +59,8 @@ class ProductStockMovement extends Model
 
     public const TYPE_PRODUCT_UPDATE = 'product_update';
 
+    public const TYPE_PRODUCT_CREATE = 'product_create';
+
     protected $fillable = [
         'product_id',
         'size_id',

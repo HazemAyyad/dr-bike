@@ -145,6 +145,8 @@ class ProductFormService
             'isMoreSales' => $request->boolean('isMoreSales'),
             'model' => $validated['model'] ?? '',
             'stock' => 0,
+            'userIdAdd' => $request->user()?->id,
+            'dateAdd' => now(),
         ];
 
         if ($request->filled('min_sale_price')) {
@@ -188,6 +190,13 @@ class ProductFormService
             }
 
             Product::query()->create(array_merge($insert, ['id' => $newId]));
+            $this->recordProductLifecycleMovement(
+                Product::query()->findOrFail($newId),
+                ProductStockMovement::TYPE_PRODUCT_CREATE,
+                'تم إنشاء المنتج',
+                $request->user()?->id,
+                'product_create',
+            );
             $trace('تم إنشاء المنتج محلياً (بدون متجر)', ['product_id' => $newId]);
 
             foreach ($subIds as $sid) {
@@ -271,6 +280,13 @@ class ProductFormService
         }
 
         Product::query()->create(array_merge($insert, ['id' => $newId]));
+        $this->recordProductLifecycleMovement(
+            Product::query()->findOrFail($newId),
+            ProductStockMovement::TYPE_PRODUCT_CREATE,
+            'تم إنشاء المنتج',
+            $request->user()?->id,
+            'product_create',
+        );
         $trace('تم إنشاء المنتج محلياً', ['product_id' => $newId]);
 
         foreach ($subIds as $sid) {
@@ -349,6 +365,8 @@ class ProductFormService
             'isNewItem' => $request->boolean('isNewItem'),
             'isMoreSales' => $request->boolean('isMoreSales'),
             'model' => $validated['model'] ?? '',
+            'userIdUpdate' => $request->user()?->id,
+            'dateUpdate' => now(),
         ];
 
         if ($request->filled('min_sale_price')) {
@@ -361,6 +379,7 @@ class ProductFormService
             $update['price'] = $validated['price'];
         }
         $this->applyStoreLocationToPayload($update, $request);
+        $masterChanges = $this->describeProductChanges($product, $update);
 
         $product->update($update);
         $trace('تم تحديث المنتج محلياً', ['product_id' => $product->id]);
@@ -417,6 +436,16 @@ class ProductFormService
                 $result['media_error'] = $mediaRes['error'] ?? 'فشل حفظ الملفات';
             }
         }
+
+        $this->recordProductLifecycleMovement(
+            $product->fresh(),
+            ProductStockMovement::TYPE_PRODUCT_UPDATE,
+            $masterChanges === []
+                ? 'تم تعديل خيارات أو متغيرات أو وسائط المنتج'
+                : 'تم تعديل المنتج: '.implode(' | ', $masterChanges),
+            $request->user()?->id,
+            'product_full_edit',
+        );
 
         return [
             'success' => true,
@@ -578,6 +607,77 @@ class ProductFormService
                 $step($message, $context);
             }
         };
+    }
+
+    /**
+     * @param  array<string, mixed>  $updates
+     * @return array<int, string>
+     */
+    private function describeProductChanges(Product $product, array $updates): array
+    {
+        $labels = [
+            'category_id' => 'الفئة',
+            'nameAr' => 'الاسم العربي',
+            'nameEng' => 'الاسم الإنجليزي',
+            'nameAbree' => 'الاسم العبري',
+            'descriptionAr' => 'الوصف العربي',
+            'descriptionEng' => 'الوصف الإنجليزي',
+            'descriptionAbree' => 'الوصف العبري',
+            'min_stock' => 'حد التنبيه',
+            'normailPrice' => 'سعر المفرق',
+            'wholesalePrice' => 'سعر الجملة',
+            'price' => 'السعر',
+            'min_sale_price' => 'أقل سعر بيع',
+            'discount' => 'الخصم',
+            'is_sold_with_paper' => 'البيع مع ورقة',
+            'manufactureYear' => 'سنة الصنع',
+            'rate' => 'التقييم',
+            'isShow' => 'الظهور',
+            'isNewItem' => 'منتج جديد',
+            'isMoreSales' => 'الأكثر مبيعاً',
+            'model' => 'الموديل',
+            'rotation_date' => 'رقم الدوران',
+            'store_section_id' => 'موقع التخزين',
+        ];
+
+        $changes = [];
+        foreach ($labels as $field => $label) {
+            if (! array_key_exists($field, $updates)) {
+                continue;
+            }
+            $old = $product->getAttribute($field);
+            $new = $updates[$field];
+            if ((string) ($old ?? '') === (string) ($new ?? '')) {
+                continue;
+            }
+            $changes[] = sprintf('%s: %s ← %s', $label, $old ?? '—', $new ?? '—');
+        }
+
+        return $changes;
+    }
+
+    private function recordProductLifecycleMovement(
+        Product $product,
+        string $type,
+        string $note,
+        ?int $userId,
+        string $referenceType,
+    ): void {
+        if (! Schema::hasTable('product_stock_movements')) {
+            return;
+        }
+
+        ProductStockMovement::query()->create([
+            'product_id' => $product->id,
+            'type' => $type,
+            'quantity' => 0,
+            'stock_before' => (int) ($product->stock ?? 0),
+            'stock_after' => (int) ($product->stock ?? 0),
+            'reference_type' => $referenceType,
+            'reference_id' => $product->id,
+            'note' => mb_substr($note, 0, 500),
+            'created_by' => $userId,
+        ]);
     }
 
     private function attachUnsavedSizesFromRequest(Product $product, Request $request): void

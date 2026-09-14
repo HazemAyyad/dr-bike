@@ -149,7 +149,7 @@ class Stocks extends Controller
                 }
             }
 
-            if ($this->isAdminRequest($request) && $request->filled('cost_price_status')) {
+            if (($request->user()?->canViewInventoryCost() ?? false) && $request->filled('cost_price_status')) {
                 $this->applyInventoryCostStatusFilter($query, (string) $request->input('cost_price_status'));
             }
 
@@ -165,8 +165,9 @@ class Stocks extends Controller
                 ->orderBy($sortColumn, $sortDirection)
                 ->paginate($perPage);
 
+            $canViewInventoryCost = $request->user()?->canViewInventoryCost() ?? false;
             $formatted = $products->getCollection()
-                ->map(fn ($product) => $this->formatProductListItem($product, $this->isAdminRequest($request)));
+                ->map(fn ($product) => $this->formatProductListItem($product, $canViewInventoryCost));
 
             return response()->json([
                 'status' => 'success',
@@ -212,8 +213,9 @@ class Stocks extends Controller
                 ->orderByDesc('deleted_at')
                 ->paginate($perPage);
 
+            $canViewInventoryCost = $request->user()?->canViewInventoryCost() ?? false;
             $formatted = $products->getCollection()
-                ->map(fn ($product) => $this->formatProductListItem($product, $this->isAdminRequest($request)));
+                ->map(fn ($product) => $this->formatProductListItem($product, $canViewInventoryCost));
 
             return response()->json([
                 'status' => 'success',
@@ -2140,6 +2142,8 @@ class Stocks extends Controller
             $row['inventory_value'] = $inventory['inventory_value'] ?? null;
             $row['next_fifo_unit_cost'] = $inventory['next_fifo_unit_cost'] ?? null;
             $row['inventory_costing_method'] = $inventory['costing_method'] ?? null;
+            $row['inventory_cost_coverage_complete'] = (bool) ($inventory['cost_coverage_complete'] ?? false);
+            $row['missing_cost_quantity'] = (float) ($inventory['missing_cost_quantity'] ?? 0);
             $row['cost_price_basis'] = 'inventory_engine_average_remaining';
         }
 
@@ -3330,31 +3334,19 @@ class Stocks extends Controller
                     'viewImages:id,itemId,imageUrl',
                     'normalImages:id,itemId,imageUrl',
                     'image3d:id,itemId,imageUrl',
+                    'storeSection:id,name',
                     'tags' => function ($q) {
                         $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                     },
                 ])
-                ->get(['id', 'nameAr', 'stock', 'product_code', 'normailPrice']);
+                ->get(['id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'normailPrice']);
 
-            $formatted = $products->map(function ($product) {
-                $images = \App\Support\ProductImageResolver::formatForList($product);
+            $canViewInventoryCost = $request->user()?->canViewInventoryCost() ?? false;
+            $formatted = $products->map(function ($product) use ($canViewInventoryCost) {
+                $row = $this->formatProductListItem($product, $canViewInventoryCost);
+                $row['product_normail_price'] = (float) ($product->normailPrice ?? 0);
 
-                return [
-                    'product_id' => $product->id,
-                    'product_name' => $product->nameAr,
-                    'product_stock' => $product->stock,
-                    'product_normail_price' => (float) ($product->normailPrice ?? 0),
-                    'product_code' => $product->product_code,
-                    'product_image' => $images['product_image'],
-                    'product_viewImages' => $images['product_viewImages'],
-                    'product_normalImages' => $images['product_normalImages'],
-                    'product_image3d' => $images['product_image3d'],
-                    'tags' => $product->tags->map(fn ($t) => [
-                        'id' => $t->id,
-                        'name' => $t->name,
-                        'color' => $t->color,
-                    ])->values(),
-                ];
+                return $row;
             });
 
             return response()->json([
