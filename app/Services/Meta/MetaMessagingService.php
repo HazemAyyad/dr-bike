@@ -27,7 +27,12 @@ class MetaMessagingService
         }
     }
 
-    public function sendText(SocialConversation $conversation, string $message, ?int $adminId = null): array
+    public function sendText(
+        SocialConversation $conversation,
+        string $message,
+        ?int $adminId = null,
+        ?string $clientMessageId = null
+    ): array
     {
         $this->validateConfig();
 
@@ -48,6 +53,7 @@ class MetaMessagingService
             'body' => $message,
             'status' => 'pending',
             'sent_by' => $adminId,
+            'client_message_id' => $clientMessageId,
         ]);
 
         try {

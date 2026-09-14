@@ -284,6 +284,7 @@ class SocialCenterController extends Controller
         $data = $request->validate([
             'message' => 'required|string|max:4096',
             'reply_to_message_id' => 'nullable|integer',
+            'client_message_id' => 'nullable|string|max:100',
         ]);
 
         try {
@@ -294,12 +295,24 @@ class SocialCenterController extends Controller
                 $replyTo = isset($data['reply_to_message_id'])
                     ? $conversation->messages()->findOrFail($data['reply_to_message_id'])
                     : null;
-                $result = $whatsApp->sendText($conversation->phone, $data['message'], $request->user()->id, $replyTo);
+                $result = $whatsApp->sendText(
+                    $conversation->phone,
+                    $data['message'],
+                    $request->user()->id,
+                    $replyTo,
+                    false,
+                    $data['client_message_id'] ?? null
+                );
             } else {
                 abort_unless(in_array($channel, ['facebook', 'instagram'], true), 404);
                 $conversation = SocialConversation::query()->with('contact')->where('channel', $channel)->findOrFail($id);
                 $this->ensureCustomerServiceWindow($conversation);
-                $result = $meta->sendText($conversation, $data['message'], $request->user()->id);
+                $result = $meta->sendText(
+                    $conversation,
+                    $data['message'],
+                    $request->user()->id,
+                    $data['client_message_id'] ?? null
+                );
             }
 
             $this->claimAfterReply($conversation, (int) $request->user()->id);
@@ -574,6 +587,7 @@ class SocialCenterController extends Controller
             'meta_status' => $message->meta_status,
             'status' => $message->status,
             'error_message' => $message->error_message,
+            'client_message_id' => $message->client_message_id,
             'link_url' => LinkPreviewService::firstUrl($message->body),
             'media' => $this->messageMedia($message->message_type, $message->media_url, $message->body, $message->raw_payload),
             'sender' => $message->sender,
@@ -683,12 +697,19 @@ class SocialCenterController extends Controller
 
     private function sendResult(string $channel, array $result)
     {
+        $message = data_get($result, 'message');
+        if ($message instanceof WhatsAppMessage) {
+            $result['message'] = $this->serializeWhatsAppMessage($message->loadMissing(['sender', 'replyTo.sender']));
+        } elseif ($message instanceof SocialMessage) {
+            $result['message'] = $this->serializeSocialMessage($message->loadMissing('sender'));
+        }
         $failed = data_get($result, 'message.status') === 'failed';
         if ($failed) {
             return response()->json([
                 'status' => 'error',
                 'message' => $this->outboundFailureMessage($channel, (string) data_get($result, 'message.error_message')),
                 'failed_message_id' => data_get($result, 'message.id'),
+                'failed_message' => data_get($result, 'message'),
                 'api_response' => data_get($result, 'api_response'),
             ], 422);
         }

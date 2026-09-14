@@ -58,7 +58,8 @@ class WhatsAppCloudApiService
         string $message,
         ?int $adminId = null,
         ?WhatsAppMessage $replyTo = null,
-        bool $automatic = false
+        bool $automatic = false,
+        ?string $clientMessageId = null
     ): array
     {
         return $this->send($phone, [
@@ -74,6 +75,7 @@ class WhatsAppCloudApiService
             'reply_to_message_id' => $replyTo?->id,
             'reply_to_meta_message_id' => $replyTo?->meta_message_id,
             'is_automatic' => $automatic,
+            'client_message_id' => $clientMessageId,
         ], $adminId);
     }
 

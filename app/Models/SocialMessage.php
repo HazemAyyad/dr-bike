@@ -11,6 +11,7 @@ class SocialMessage extends Model
         'external_sender_id', 'external_recipient_id', 'direction',
         'message_type', 'body', 'media_url', 'meta_message_id', 'meta_status',
         'raw_payload', 'response_payload', 'status', 'error_message', 'sent_by',
+        'client_message_id',
     ];
 
     protected $casts = [

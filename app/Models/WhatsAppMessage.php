@@ -13,7 +13,7 @@ class WhatsAppMessage extends Model
         'body', 'template_name', 'media_url', 'meta_message_id', 'meta_status', 'raw_payload',
         'response_payload', 'status', 'error_message', 'sent_by', 'is_automatic',
         'customer_deleted_at',
-        'reply_to_message_id', 'reply_to_meta_message_id',
+        'reply_to_message_id', 'reply_to_meta_message_id', 'client_message_id',
     ];
     protected $casts = [
         'raw_payload' => 'array',
