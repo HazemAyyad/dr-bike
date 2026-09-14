@@ -95,6 +95,29 @@ class WhatsAppCloudApiService
         ], $adminId);
     }
 
+    public function sendReaction(string $phone, string $messageId, string $emoji): array
+    {
+        $this->validateConfig();
+        $response = $this->client()->post($this->endpoint(), [
+            'messaging_product' => 'whatsapp',
+            'recipient_type' => 'individual',
+            'to' => $this->normalizePhone($phone),
+            'type' => 'reaction',
+            'reaction' => [
+                'message_id' => $messageId,
+                'emoji' => $emoji,
+            ],
+        ]);
+        $data = $this->responseArray($response);
+        if (! $response->successful()) {
+            throw new RuntimeException(
+                (string) (data_get($data, 'body.error.message') ?: 'WhatsApp reaction request failed')
+            );
+        }
+
+        return $data;
+    }
+
     public function sendMedia(
         string $phone,
         UploadedFile $file,

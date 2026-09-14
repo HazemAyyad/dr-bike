@@ -15,6 +15,7 @@ class WhatsAppMessage extends Model
         'customer_deleted_at',
         'reply_to_message_id', 'reply_to_meta_message_id', 'client_message_id',
         'pinned_at', 'pinned_by',
+        'reaction',
     ];
     protected $casts = [
         'raw_payload' => 'array',

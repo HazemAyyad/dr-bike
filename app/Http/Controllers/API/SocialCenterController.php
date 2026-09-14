@@ -211,7 +211,13 @@ class SocialCenterController extends Controller
         }
     }
 
-    public function messageAction(Request $request, string $channel, int $id, int $messageId)
+    public function messageAction(
+        Request $request,
+        string $channel,
+        int $id,
+        int $messageId,
+        WhatsAppCloudApiService $whatsApp
+    )
     {
         $this->authorizeChannel($request, $channel);
         $message = $this->conversationMessage($channel, $id, $messageId);
@@ -226,6 +232,19 @@ class SocialCenterController extends Controller
             $message->update($data['action'] === 'pin'
                 ? ['pinned_at' => now(), 'pinned_by' => $userId]
                 : ['pinned_at' => null, 'pinned_by' => null]);
+        } elseif ($data['action'] === 'react' && $channel === 'whatsapp') {
+            abort_if(blank($message->meta_message_id), 422, 'لا يمكن إرسال تفاعل لهذه الرسالة لأنها غير مرتبطة برسالة واتساب.');
+            $conversation = $this->activeWhatsAppConversations()
+                ->with('whatsappAccount')
+                ->findOrFail($id);
+            $emoji = filled($data['reaction'] ?? null) ? $data['reaction'] : '';
+            try {
+                $this->whatsAppForConversation($whatsApp, $conversation)
+                    ->sendReaction($conversation->phone, $message->meta_message_id, $emoji);
+            } catch (\Throwable $e) {
+                throw ValidationException::withMessages(['reaction' => [$e->getMessage()]]);
+            }
+            $message->update(['reaction' => $emoji !== '' ? $emoji : null]);
         } elseif (in_array($data['action'], ['star', 'unstar', 'react'], true)) {
             $values = ['updated_at' => now()];
             if ($data['action'] === 'star') {
@@ -695,7 +714,9 @@ class SocialCenterController extends Controller
             ->first();
         $payload['pinned'] = $message->pinned_at !== null;
         $payload['starred'] = (bool) ($state->starred ?? false);
-        $payload['reaction'] = $state->reaction ?? null;
+        $payload['reaction'] = $channel === 'whatsapp'
+            ? $message->reaction
+            : ($state->reaction ?? null);
         $payload['reported'] = DB::table('social_message_reports')
             ->where(['reported_by' => $userId, 'channel' => $channel, 'message_id' => $message->id])
             ->exists();
@@ -725,7 +746,9 @@ class SocialCenterController extends Controller
             $state = $states->get($message->id);
             $payload['pinned'] = $message->pinned_at !== null;
             $payload['starred'] = (bool) ($state->starred ?? false);
-            $payload['reaction'] = $state->reaction ?? null;
+            $payload['reaction'] = $channel === 'whatsapp'
+                ? $message->reaction
+                : ($state->reaction ?? null);
             $payload['reported'] = $reportedIds->has($message->id);
             return $payload;
         });
