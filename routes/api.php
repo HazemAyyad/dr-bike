@@ -1166,6 +1166,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::post('/delete/products' , [Stocks::class,'deleteProducts']);
     Route::post('/product/stock/movements' , [ProductStockController::class,'movements']);
     Route::post('/product/inventory/summary' , [ProductStockController::class,'summary']);
+    Route::get('/product/stock/negative' , [ProductStockController::class,'negativeStock']);
     Route::get('/product/assembly/recipes' , [ProductAssemblyController::class,'recipes']);
     Route::get('/product/assembly/operations' , [ProductAssemblyController::class,'operations']);
     Route::get('/product/assembly/products' , [ProductAssemblyController::class,'products']);

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\BillItem;
 use App\Models\InventoryAdjustment;
+use App\Models\InventoryCostAllocation;
 use App\Models\InstantSale;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
@@ -14,6 +15,8 @@ use App\Models\ReturnModel;
 use App\Models\SalesOrder;
 use App\Models\SalesReturn;
 use App\Models\SizeColor;
+use App\Support\ApiImageUrl;
+use App\Support\ProductImageResolver;
 use App\Services\ProductStockService;
 use App\Services\InventoryAdjustmentService;
 use App\Services\InventoryCostingService;
@@ -28,6 +31,80 @@ class ProductStockController extends Controller
         private readonly InventoryAdjustmentService $adjustments,
         private readonly InventoryCostingService $costing,
     ) {}
+
+    public function negativeStock(Request $request)
+    {
+        if ($request->user()?->type !== 'admin') {
+            return response()->json(['status' => 'error', 'message' => 'غير مصرح'], 403);
+        }
+
+        $search = trim((string) $request->input('search', ''));
+        $products = Product::query()
+            ->with(['normalImages', 'viewImages', 'image3d'])
+            ->where('stock', '<', 0)
+            ->whereDoesntHave('sizes.colorSizes')
+            ->when($search !== '', fn ($query) => $query->where(function ($nested) use ($search) {
+                $nested->where('nameAr', 'like', '%'.$search.'%')
+                    ->orWhere('product_code', 'like', '%'.$search.'%');
+            }))
+            ->get()
+            ->map(function (Product $product) {
+                $images = ProductImageResolver::formatForList($product);
+
+                return $this->negativeIdentityPayload(
+                    $product,
+                    null,
+                    null,
+                    null,
+                    (int) $product->stock,
+                    $images['product_image'],
+                );
+            });
+
+        $variants = SizeColor::query()
+            ->with(['size:id,size,itemId', 'size.product.normalImages', 'size.product.viewImages', 'size.product.image3d'])
+            ->where('stock', '<', 0)
+            ->whereHas('size.product', function ($query) use ($search) {
+                if ($search !== '') {
+                    $query->where(function ($nested) use ($search) {
+                        $nested->where('nameAr', 'like', '%'.$search.'%')
+                            ->orWhere('product_code', 'like', '%'.$search.'%');
+                    });
+                }
+            })
+            ->get()
+            ->map(function (SizeColor $variant) {
+                $product = $variant->size?->product;
+                if (! $product instanceof Product) {
+                    return null;
+                }
+                $images = ProductImageResolver::formatForList($product);
+
+                return $this->negativeIdentityPayload(
+                    $product,
+                    (int) $variant->id,
+                    (int) $variant->sizeId,
+                    trim((string) ($variant->size?->size ?? '').' / '.(string) ($variant->colorAr ?? '')),
+                    (int) $variant->stock,
+                    ApiImageUrl::normalize($variant->image_url) ?: $images['product_image'],
+                );
+            })
+            ->filter();
+
+        $rows = $products->concat($variants)
+            ->sortByDesc(fn (array $row) => $row['last_negative_at'] ?? '')
+            ->values();
+
+        return response()->json([
+            'status' => 'success',
+            'negative_stock' => $rows,
+            'summary' => [
+                'identities_count' => $rows->count(),
+                'missing_quantity' => abs((int) $rows->sum('stock')),
+                'pending_cost_quantity' => round((float) $rows->sum('pending_cost_quantity'), 4),
+            ],
+        ]);
+    }
 
     public function adjust(Request $request)
     {
@@ -562,6 +639,77 @@ class ProductStockController extends Controller
         return $user->employee->permissions()
             ->whereHas('permission', fn ($query) => $query->where('name_en', $permission))
             ->exists();
+    }
+
+    /** @return array<string, mixed> */
+    private function negativeIdentityPayload(
+        Product $product,
+        ?int $sizeColorId,
+        ?int $sizeId,
+        ?string $variantLabel,
+        int $stock,
+        ?string $image,
+    ): array {
+        $movements = ProductStockMovement::query()
+            ->with('creator:id,name')
+            ->where('product_id', $product->id)
+            ->where('quantity', '<', 0)
+            ->where('stock_after', '<', 0)
+            ->when($sizeColorId !== null,
+                fn ($query) => $query->where('size_color_id', $sizeColorId),
+                fn ($query) => $query->whereNull('size_color_id'))
+            ->latest('id')
+            ->limit(10)
+            ->get();
+        $saleIds = $movements
+            ->where('reference_type', 'instant_sale')
+            ->pluck('reference_id')
+            ->filter()
+            ->unique();
+        $sales = InstantSale::query()
+            ->whereIn('id', $saleIds)
+            ->get(['id', 'serial_number'])
+            ->keyBy('id');
+        $pendingCostQuantity = InventoryCostAllocation::query()
+            ->where('product_id', $product->id)
+            ->whereNull('inventory_cost_layer_id')
+            ->when($sizeColorId !== null,
+                fn ($query) => $query->where('size_color_id', $sizeColorId),
+                fn ($query) => $query->whereNull('size_color_id'))
+            ->sum('quantity');
+        $last = $movements->first();
+
+        return [
+            'product_id' => (int) $product->id,
+            'product_name' => (string) $product->nameAr,
+            'product_code' => (string) ($product->product_code ?? ''),
+            'product_image' => ApiImageUrl::normalize($image),
+            'size_id' => $sizeId,
+            'size_color_id' => $sizeColorId,
+            'variant_label' => $variantLabel,
+            'stock' => $stock,
+            'missing_quantity' => abs($stock),
+            'pending_cost_quantity' => (float) $pendingCostQuantity,
+            'last_negative_at' => optional($last?->created_at)->toIso8601String(),
+            'last_created_by_name' => $last?->creator?->name,
+            'last_invoice_id' => $last?->reference_type === 'instant_sale' ? $last->reference_id : null,
+            'last_invoice_number' => $last?->reference_type === 'instant_sale'
+                ? ($sales->get($last->reference_id)?->serial_number ?: '#'.$last->reference_id)
+                : null,
+            'caused_by' => $movements->map(fn (ProductStockMovement $movement) => [
+                'movement_id' => (int) $movement->id,
+                'user_name' => $movement->creator?->name,
+                'quantity' => abs((int) $movement->quantity),
+                'stock_before' => (int) $movement->stock_before,
+                'stock_after' => (int) $movement->stock_after,
+                'reference_type' => $movement->reference_type,
+                'reference_id' => $movement->reference_id ? (int) $movement->reference_id : null,
+                'invoice_number' => $movement->reference_type === 'instant_sale'
+                    ? ($sales->get($movement->reference_id)?->serial_number ?: '#'.$movement->reference_id)
+                    : null,
+                'created_at' => optional($movement->created_at)->toIso8601String(),
+            ])->values(),
+        ];
     }
 
     private function movementPayload(ProductStockMovement $movement, bool $includeCost): array

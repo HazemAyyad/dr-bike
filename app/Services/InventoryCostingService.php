@@ -118,19 +118,19 @@ class InventoryCostingService
             $this->assertCurrencyCompatible($lockedProduct, $currency);
 
             $balance = $this->lockedBalance($lockedProduct, $sizeColorId, $sizeId, $currency);
-            $oldQuantity = (float) $balance->quantity;
-            $oldValue = (float) $balance->inventory_value;
+            $physicalBefore = $this->physicalQuantity($lockedProduct, $sizeColorId);
+            $negativeQuantityToSettle = min($quantity, max(0, -$physicalBefore));
             $addedValue = round($quantity * $unitCost, 6);
-            $newQuantity = round($oldQuantity + $quantity, 4);
-            $newValue = round($oldValue + $addedValue, 6);
-            $newAverage = $newQuantity > self::EPSILON ? $newValue / $newQuantity : 0.0;
+            $newQuantity = round($physicalBefore + $quantity, 4);
 
             $layer = InventoryCostLayer::create([
                 'product_id' => $lockedProduct->id,
                 'size_id' => $sizeId,
                 'size_color_id' => $sizeColorId,
                 'quantity' => $quantity,
-                'remaining_quantity' => $quantity,
+                // Units that settle an earlier negative sale were already handed
+                // to the customer and therefore are not remaining inventory.
+                'remaining_quantity' => max(0, round($quantity - $negativeQuantityToSettle, 4)),
                 'unit_cost' => $unitCost,
                 'original_unit_cost' => $unitCost,
                 'currency' => $currency,
@@ -140,11 +140,45 @@ class InventoryCostingService
                 'effective_at' => now(),
             ]);
 
+            $resolvedReferences = $this->settlePendingNegativeAllocations(
+                $lockedProduct,
+                $layer,
+                $negativeQuantityToSettle,
+                $sizeColorId,
+                $sizeId,
+                $unitCost,
+            );
+
+            $remainingLayerValue = (float) $this->layerIdentityQuery((int) $lockedProduct->id, $sizeColorId)
+                ->where('remaining_quantity', '>', 0)
+                ->selectRaw('COALESCE(SUM(remaining_quantity * unit_cost), 0) as value')
+                ->value('value');
+            $pendingNegativeValue = (float) InventoryCostAllocation::query()
+                ->where('product_id', $lockedProduct->id)
+                ->whereNull('inventory_cost_layer_id')
+                ->when($sizeColorId !== null && $sizeColorId > 0,
+                    fn ($query) => $query->where('size_color_id', $sizeColorId),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->sum('total_cost');
+            $newValue = round($remainingLayerValue - $pendingNegativeValue, 6);
+            $newAverage = abs($newQuantity) > self::EPSILON
+                ? abs($newValue / $newQuantity)
+                : 0.0;
+            $hasPendingNegativeCost = InventoryCostAllocation::query()
+                ->where('product_id', $lockedProduct->id)
+                ->whereNull('inventory_cost_layer_id')
+                ->when($sizeColorId !== null && $sizeColorId > 0,
+                    fn ($query) => $query->where('size_color_id', $sizeColorId),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->exists();
+
             $balance->update([
                 'quantity' => $newQuantity,
                 'inventory_value' => $newValue,
                 'moving_average_unit_cost' => $newAverage,
                 'currency' => $currency,
+                'needs_review' => $hasPendingNegativeCost,
+                'review_reason' => $hasPendingNegativeCost ? 'negative_stock_cost_pending' : null,
             ]);
 
             $this->stockService->adjustStock(
@@ -162,6 +196,8 @@ class InventoryCostingService
                 reason: $reason,
             );
 
+            $this->refreshResolvedOutboundSnapshots($resolvedReferences);
+
             return $layer;
         });
     }
@@ -176,6 +212,7 @@ class InventoryCostingService
         ?int $referenceId,
         ?int $sizeColorId = null,
         ?int $sizeId = null,
+        bool $allowNegative = false,
     ): array {
         if ($quantity <= 0) {
             return ['method' => $this->currentMethod(), 'total_cost' => 0.0, 'unit_cost' => 0.0, 'allocations' => []];
@@ -183,7 +220,7 @@ class InventoryCostingService
 
         $this->wholeStockQuantity($quantity);
 
-        return DB::transaction(function () use ($product, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId) {
+        return DB::transaction(function () use ($product, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId, $allowNegative) {
             $lockedProduct = Product::withTrashed()->lockForUpdate()->findOrFail($product->id);
             $sizeId = $this->validateAndResolveSizeId($lockedProduct, $sizeColorId, $sizeId);
             $method = $this->currentMethod();
@@ -197,17 +234,20 @@ class InventoryCostingService
                 ->get();
 
             $available = (float) $layers->sum('remaining_quantity');
-            if ($available + self::EPSILON < $quantity || (float) $balance->quantity + self::EPSILON < $quantity) {
+            if (! $allowNegative && ($available + self::EPSILON < $quantity || (float) $balance->quantity + self::EPSILON < $quantity)) {
                 $this->markCoverageReview($lockedProduct, $sizeColorId, $sizeId, $this->physicalQuantity($lockedProduct, $sizeColorId), $available);
                 throw ValidationException::withMessages([
                     'inventory' => ['كمية المخزون غير مغطاة بالكامل بتكلفة محاسبية. يجب معالجة مراجعة تكلفة المخزون أولاً.'],
                 ]);
             }
 
+            $coveredQuantity = $allowNegative
+                ? min($quantity, max(0, $available), max(0, (float) $balance->quantity))
+                : $quantity;
             $movingAverage = $method === self::METHOD_MOVING_AVERAGE
                 ? (float) $balance->moving_average_unit_cost
                 : null;
-            $remaining = $quantity;
+            $remaining = $coveredQuantity;
             $totalCost = 0.0;
             $allocations = [];
 
@@ -241,15 +281,44 @@ class InventoryCostingService
                 $totalCost += $lineTotal;
             }
 
-            $newQuantity = max(0, round((float) $balance->quantity - $quantity, 4));
-            $newValue = max(0, round((float) $balance->inventory_value - $totalCost, 6));
+            $uncoveredQuantity = max(0, round($quantity - $coveredQuantity, 4));
+            $pendingCostKnown = true;
+            if ($uncoveredQuantity > self::EPSILON) {
+                $fallbackUnitCost = $this->negativeStockFallbackUnitCost(
+                    $lockedProduct,
+                    $sizeColorId,
+                    $method,
+                    $balance,
+                );
+                $pendingCostKnown = $fallbackUnitCost !== null;
+                $fallbackUnitCost ??= 0.0;
+                $pendingTotal = round($uncoveredQuantity * $fallbackUnitCost, 6);
+                $allocations[] = InventoryCostAllocation::create([
+                    'inventory_cost_layer_id' => null,
+                    'product_id' => $lockedProduct->id,
+                    'size_id' => $sizeId,
+                    'size_color_id' => $sizeColorId,
+                    'quantity' => $uncoveredQuantity,
+                    'unit_cost' => $fallbackUnitCost,
+                    'total_cost' => $pendingTotal,
+                    'method' => $method,
+                    'reference_type' => $referenceType,
+                    'reference_id' => $referenceId,
+                ]);
+                $totalCost += $pendingTotal;
+            }
+
+            $newQuantity = round((float) $balance->quantity - $quantity, 4);
+            $newValue = round((float) $balance->inventory_value - $totalCost, 6);
             $balance->update([
                 'quantity' => $newQuantity,
-                'inventory_value' => $newQuantity > self::EPSILON ? $newValue : 0,
+                'inventory_value' => abs($newQuantity) > self::EPSILON ? $newValue : 0,
                 // A sale never changes the perpetual moving-average unit cost.
                 'moving_average_unit_cost' => $method === self::METHOD_MOVING_AVERAGE
-                    ? ($newQuantity > self::EPSILON ? (float) $balance->moving_average_unit_cost : 0)
-                    : ($newQuantity > self::EPSILON ? $newValue / $newQuantity : 0),
+                    ? (abs($newQuantity) > self::EPSILON ? ((float) $balance->moving_average_unit_cost ?: ($pendingCostKnown ? ($quantity > 0 ? $totalCost / $quantity : 0) : 0)) : 0)
+                    : (abs($newQuantity) > self::EPSILON ? abs($newValue / $newQuantity) : 0),
+                'needs_review' => $uncoveredQuantity > self::EPSILON,
+                'review_reason' => $uncoveredQuantity > self::EPSILON ? 'negative_stock_cost_pending' : null,
             ]);
 
             return [
@@ -257,6 +326,9 @@ class InventoryCostingService
                 'total_cost' => round($totalCost, 6),
                 'unit_cost' => $quantity > 0 ? round($totalCost / $quantity, 6) : 0.0,
                 'allocations' => $allocations,
+                'cost_complete' => $uncoveredQuantity <= self::EPSILON,
+                'pending_quantity' => $uncoveredQuantity,
+                'provisional_cost_known' => $pendingCostKnown,
             ];
         });
     }
@@ -297,6 +369,91 @@ class InventoryCostingService
             );
 
             return $cost;
+        });
+    }
+
+    /**
+     * Remove unresolved negative-cost allocations when their outbound event is
+     * reversed before a later receipt supplied their cost.
+     *
+     * @return array{quantity:float,total_cost:float,method:string}
+     */
+    public function reversePendingNegativeCost(
+        Product $product,
+        float $quantity,
+        string $referenceType,
+        ?int $referenceId,
+        ?int $sizeColorId = null,
+        ?int $sizeId = null,
+    ): array {
+        if ($quantity <= self::EPSILON || ! $referenceId) {
+            return ['quantity' => 0.0, 'total_cost' => 0.0, 'method' => $this->currentMethod()];
+        }
+
+        return DB::transaction(function () use ($product, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId) {
+            $product = Product::withTrashed()->lockForUpdate()->findOrFail($product->id);
+            $sizeId = $this->validateAndResolveSizeId($product, $sizeColorId, $sizeId);
+            $balance = $this->lockedBalance($product, $sizeColorId, $sizeId);
+            $rows = InventoryCostAllocation::query()
+                ->where('product_id', $product->id)
+                ->where('reference_type', $referenceType)
+                ->where('reference_id', $referenceId)
+                ->whereNull('inventory_cost_layer_id')
+                ->when($sizeColorId !== null && $sizeColorId > 0,
+                    fn ($query) => $query->where('size_color_id', $sizeColorId),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $remaining = $quantity;
+            $removedQuantity = 0.0;
+            $removedCost = 0.0;
+            $method = (string) ($rows->first()?->method ?: $this->currentMethod());
+            foreach ($rows as $row) {
+                if ($remaining <= self::EPSILON) {
+                    break;
+                }
+                $take = min((float) $row->quantity, $remaining);
+                $takeCost = round($take * (float) $row->unit_cost, 6);
+                if ($take + self::EPSILON >= (float) $row->quantity) {
+                    $row->delete();
+                } else {
+                    $left = round((float) $row->quantity - $take, 4);
+                    $row->update([
+                        'quantity' => $left,
+                        'total_cost' => round($left * (float) $row->unit_cost, 6),
+                    ]);
+                }
+                $remaining -= $take;
+                $removedQuantity += $take;
+                $removedCost += $takeCost;
+            }
+
+            if ($removedQuantity > self::EPSILON) {
+                $newQuantity = round((float) $balance->quantity + $removedQuantity, 4);
+                $newValue = round((float) $balance->inventory_value + $removedCost, 6);
+                $hasPending = InventoryCostAllocation::query()
+                    ->where('product_id', $product->id)
+                    ->whereNull('inventory_cost_layer_id')
+                    ->when($sizeColorId !== null && $sizeColorId > 0,
+                        fn ($query) => $query->where('size_color_id', $sizeColorId),
+                        fn ($query) => $query->whereNull('size_color_id'))
+                    ->exists();
+                $balance->update([
+                    'quantity' => $newQuantity,
+                    'inventory_value' => abs($newQuantity) > self::EPSILON ? $newValue : 0,
+                    'moving_average_unit_cost' => abs($newQuantity) > self::EPSILON ? abs($newValue / $newQuantity) : 0,
+                    'needs_review' => $hasPending,
+                    'review_reason' => $hasPending ? 'negative_stock_cost_pending' : null,
+                ]);
+            }
+
+            return [
+                'quantity' => round($removedQuantity, 4),
+                'total_cost' => round($removedCost, 6),
+                'method' => $method,
+            ];
         });
     }
 
@@ -403,6 +560,8 @@ class InventoryCostingService
             $quantity = array_sum(array_column($variants, 'quantity_on_hand'));
             $costedQuantity = array_sum(array_column($variants, 'costed_quantity'));
             $missingCostQuantity = array_sum(array_column($variants, 'missing_cost_quantity'));
+            $negativeQuantity = array_sum(array_column($variants, 'negative_quantity'));
+            $pendingNegativeCostQuantity = array_sum(array_column($variants, 'pending_negative_cost_quantity'));
             $value = $includeCost ? array_sum(array_column($variants, 'inventory_value')) : null;
             $nextLayer = collect($variants)
                 ->filter(fn (array $row) => isset($row['next_fifo_effective_at']) && $row['next_fifo_effective_at'])
@@ -418,6 +577,8 @@ class InventoryCostingService
                 'quantity_on_hand' => $quantity,
                 'costed_quantity' => $costedQuantity,
                 'missing_cost_quantity' => round($missingCostQuantity, 4),
+                'negative_quantity' => round($negativeQuantity, 4),
+                'pending_negative_cost_quantity' => round($pendingNegativeCostQuantity, 4),
                 'costing_method' => $method,
                 'currency' => $currency,
                 'inventory_value' => $includeCost ? round((float) $value, 6) : null,
@@ -449,11 +610,20 @@ class InventoryCostingService
         $balance = Schema::hasTable('inventory_cost_balances')
             ? InventoryCostBalance::query()->where('identity_key', $this->identityKey((int) $product->id, $sizeColorId))->first()
             : null;
+        $pendingNegativeCostQuantity = Schema::hasTable('inventory_cost_allocations')
+            ? (float) InventoryCostAllocation::query()
+                ->where('product_id', $product->id)
+                ->whereNull('inventory_cost_layer_id')
+                ->when($sizeColorId !== null && $sizeColorId > 0,
+                    fn ($query) => $query->where('size_color_id', $sizeColorId),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->sum('quantity')
+            : 0.0;
 
-        $value = $method === self::METHOD_MOVING_AVERAGE && $balance
+        $value = (($method === self::METHOD_MOVING_AVERAGE || $physical < -self::EPSILON) && $balance)
             ? (float) $balance->inventory_value
             : $fifoValue;
-        $average = $physical > self::EPSILON ? $value / $physical : 0.0;
+        $average = abs($physical) > self::EPSILON ? abs($value / $physical) : 0.0;
         if ($method === self::METHOD_MOVING_AVERAGE && $balance) {
             $average = (float) $balance->moving_average_unit_cost;
             $costedQuantity = (float) $balance->quantity;
@@ -486,13 +656,16 @@ class InventoryCostingService
             'quantity_on_hand' => $physical,
             'costed_quantity' => $costedQuantity,
             'missing_cost_quantity' => max(0, round($physical - $costedQuantity, 4)),
+            'negative_quantity' => max(0, round(-$physical, 4)),
+            'pending_negative_cost_quantity' => round($pendingNegativeCostQuantity, 4),
             'costing_method' => $method,
             'currency' => $currency,
             'inventory_value' => $includeCost ? round($value, 6) : null,
             'average_inventory_unit_cost' => $includeCost ? round($average, 6) : null,
             'next_fifo_unit_cost' => $includeCost && $method === self::METHOD_FIFO && $next ? (float) $next->unit_cost : null,
             'next_fifo_effective_at' => $includeCost && $method === self::METHOD_FIFO && $next ? optional($next->effective_at)->toIso8601String() : null,
-            'cost_coverage_complete' => abs($physical - $costedQuantity) <= self::EPSILON,
+            'cost_coverage_complete' => abs($physical - $costedQuantity) <= self::EPSILON
+                && $pendingNegativeCostQuantity <= self::EPSILON,
             'cost_layers' => $layers,
         ];
     }
@@ -596,6 +769,163 @@ class InventoryCostingService
 
             return $layer;
         });
+    }
+
+    private function negativeStockFallbackUnitCost(
+        Product $product,
+        ?int $sizeColorId,
+        string $method,
+        InventoryCostBalance $balance,
+    ): ?float {
+        if ($method === self::METHOD_MOVING_AVERAGE && (float) $balance->moving_average_unit_cost > self::EPSILON) {
+            return (float) $balance->moving_average_unit_cost;
+        }
+
+        $lastLayer = $this->layerIdentityQuery((int) $product->id, $sizeColorId)
+            ->orderByDesc('effective_at')
+            ->orderByDesc('id')
+            ->first();
+        if ($lastLayer instanceof InventoryCostLayer) {
+            $cost = (float) ($lastLayer->original_unit_cost ?? $lastLayer->unit_cost);
+            if ($cost > self::EPSILON) {
+                return $cost;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Attach an incoming layer to unresolved negative-sale allocations. The
+     * allocation keeps the original sale reference, while the receipt layer
+     * supplies the final accounting cost.
+     *
+     * @return array<int, array{type:string,id:int,product_id:int,size_color_id:?int}>
+     */
+    private function settlePendingNegativeAllocations(
+        Product $product,
+        InventoryCostLayer $layer,
+        float $quantity,
+        ?int $sizeColorId,
+        ?int $sizeId,
+        float $unitCost,
+    ): array {
+        if ($quantity <= self::EPSILON) {
+            return [];
+        }
+
+        $pending = InventoryCostAllocation::query()
+            ->where('product_id', $product->id)
+            ->whereNull('inventory_cost_layer_id')
+            ->when($sizeColorId !== null && $sizeColorId > 0,
+                fn ($query) => $query->where('size_color_id', $sizeColorId),
+                fn ($query) => $query->whereNull('size_color_id'))
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $remaining = $quantity;
+        $references = [];
+        foreach ($pending as $allocation) {
+            if ($remaining <= self::EPSILON) {
+                break;
+            }
+
+            $take = min((float) $allocation->quantity, $remaining);
+            $resolvedTotal = round($take * $unitCost, 6);
+            $references[] = [
+                'type' => (string) $allocation->reference_type,
+                'id' => (int) $allocation->reference_id,
+                'product_id' => (int) $allocation->product_id,
+                'size_color_id' => $allocation->size_color_id !== null ? (int) $allocation->size_color_id : null,
+            ];
+
+            if ($take + self::EPSILON >= (float) $allocation->quantity) {
+                $allocation->update([
+                    'inventory_cost_layer_id' => $layer->id,
+                    'unit_cost' => $unitCost,
+                    'total_cost' => $resolvedTotal,
+                ]);
+            } else {
+                $unresolvedQuantity = round((float) $allocation->quantity - $take, 4);
+                $allocation->update([
+                    'quantity' => $unresolvedQuantity,
+                    'total_cost' => round($unresolvedQuantity * (float) $allocation->unit_cost, 6),
+                ]);
+                InventoryCostAllocation::query()->create([
+                    'inventory_cost_layer_id' => $layer->id,
+                    'product_id' => $product->id,
+                    'size_id' => $sizeId,
+                    'size_color_id' => $sizeColorId,
+                    'quantity' => $take,
+                    'unit_cost' => $unitCost,
+                    'total_cost' => $resolvedTotal,
+                    'method' => $allocation->method,
+                    'reference_type' => $allocation->reference_type,
+                    'reference_id' => $allocation->reference_id,
+                ]);
+            }
+
+            $remaining -= $take;
+        }
+
+        return collect($references)
+            ->filter(fn (array $row) => $row['id'] > 0)
+            ->unique(fn (array $row) => implode(':', [
+                $row['type'],
+                $row['id'],
+                $row['product_id'],
+                $row['size_color_id'] ?? 'base',
+            ]))
+            ->values()
+            ->all();
+    }
+
+    /** @param array<int, array{type:string,id:int,product_id:int,size_color_id:?int}> $references */
+    private function refreshResolvedOutboundSnapshots(array $references): void
+    {
+        foreach ($references as $reference) {
+            $type = $reference['type'];
+            $id = $reference['id'];
+            $query = InventoryCostAllocation::query()
+                ->where('reference_type', $type)
+                ->where('reference_id', $id)
+                ->where('product_id', $reference['product_id'])
+                ->when($reference['size_color_id'] !== null,
+                    fn ($query) => $query->where('size_color_id', $reference['size_color_id']),
+                    fn ($query) => $query->whereNull('size_color_id'));
+            if ((clone $query)->whereNull('inventory_cost_layer_id')->exists()) {
+                continue;
+            }
+
+            $quantity = (float) (clone $query)->sum('quantity');
+            $total = (float) (clone $query)->sum('total_cost');
+            $method = (string) ((clone $query)->value('method') ?: $this->currentMethod());
+            $unit = $quantity > self::EPSILON ? round($total / $quantity, 6) : 0.0;
+
+            ProductStockMovement::query()
+                ->where('reference_type', $type)
+                ->where('reference_id', $id)
+                ->where('product_id', $reference['product_id'])
+                ->when($reference['size_color_id'] !== null,
+                    fn ($query) => $query->where('size_color_id', $reference['size_color_id']),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->where('quantity', '<', 0)
+                ->update([
+                    'unit_cost' => $unit,
+                    'total_cost' => round($total, 6),
+                    'costing_method' => $method,
+                ]);
+
+            if ($type === 'instant_sale' && Schema::hasTable('instant_sales') && Schema::hasColumn('instant_sales', 'inventory_total_cost')) {
+                DB::table('instant_sales')->where('id', $id)->update([
+                    'inventory_cost_method' => $method,
+                    'inventory_unit_cost' => $unit,
+                    'inventory_total_cost' => round($total, 6),
+                    'updated_at' => now(),
+                ]);
+            }
+        }
     }
 
     public function lockedBalance(Product $product, ?int $sizeColorId = null, ?int $sizeId = null, string $currency = 'شيكل'): InventoryCostBalance

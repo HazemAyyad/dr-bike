@@ -454,6 +454,153 @@ class InventoryArchitectureTest extends TestCase
             ->exists());
     }
 
+    public function test_confirmed_negative_sale_is_audited_and_next_receipt_settles_its_cost(): void
+    {
+        $product = $this->product();
+        $sale = InstantSale::query()->create([
+            'product_id' => $product->id,
+            'quantity' => 3,
+            'cost' => 10,
+            'total_cost' => 30,
+            'type' => 'normal',
+            'buyer_type' => 'unknown',
+            'buyer_name' => '-',
+            'status' => 'active',
+        ]);
+
+        $impact = app(ProductStockService::class)->deductForSale(
+            $product,
+            3,
+            referenceType: 'instant_sale',
+            referenceId: $sale->id,
+            userId: $this->admin->id,
+            allowNegative: true,
+        );
+
+        $this->assertSame(-3, $impact['stock_after']);
+        $this->assertSame(-3, (int) $product->fresh()->stock);
+        $this->assertNull($sale->fresh()->inventory_total_cost);
+        $this->assertDatabaseHas('product_stock_movements', [
+            'product_id' => $product->id,
+            'reference_type' => 'instant_sale',
+            'reference_id' => $sale->id,
+            'stock_before' => 0,
+            'stock_after' => -3,
+            'created_by' => $this->admin->id,
+            'total_cost' => null,
+        ]);
+        $this->assertEqualsWithDelta(3, InventoryCostAllocation::query()
+            ->where('product_id', $product->id)
+            ->where('reference_type', 'instant_sale')
+            ->where('reference_id', $sale->id)
+            ->whereNull('inventory_cost_layer_id')
+            ->sum('quantity'), 0.0001);
+
+        Sanctum::actingAs($this->admin);
+        $this->withoutMiddleware(RefreshSanctumTokenExpiry::class);
+        $this->getJson('/api/product/stock/negative')
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonFragment([
+                'product_id' => $product->id,
+                'stock' => -3,
+                'last_created_by_name' => $this->admin->name,
+            ]);
+
+        $layer = app(InventoryCostingService::class)->addOwnedStock(
+            $product->fresh(),
+            5,
+            4,
+            'NIS',
+            'purchase_receipt_item',
+            9001,
+            userId: $this->admin->id,
+        );
+
+        $this->assertSame(2, (int) $product->fresh()->stock);
+        $this->assertEqualsWithDelta(2, $layer->fresh()->remaining_quantity, 0.0001);
+        $this->assertFalse(InventoryCostAllocation::query()
+            ->where('product_id', $product->id)
+            ->whereNull('inventory_cost_layer_id')
+            ->exists());
+        $this->assertEqualsWithDelta(12, (float) $sale->fresh()->inventory_total_cost, 0.0001);
+        $summary = app(InventoryCostingService::class)->productSummary($product->fresh(), true);
+        $this->assertEqualsWithDelta(2, $summary['quantity_on_hand'], 0.0001);
+        $this->assertEqualsWithDelta(8, $summary['inventory_value'], 0.0001);
+        $this->assertTrue($summary['cost_coverage_complete']);
+
+        $employeeUser = User::factory()->create(['type' => 'employee']);
+        EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        Sanctum::actingAs($employeeUser);
+        $this->getJson('/api/product/stock/negative')->assertForbidden();
+    }
+
+    public function test_negative_sale_and_later_cost_settlement_are_variant_specific(): void
+    {
+        $product = $this->product();
+        $size = Size::query()->create([
+            'id' => (int) (Size::query()->max('id') ?? 0) + 1,
+            'itemId' => $product->id,
+            'size' => 'M',
+        ]);
+        $red = $this->variant($size, 'أحمر');
+        $blue = $this->variant($size, 'أزرق');
+        $sale = InstantSale::query()->create([
+            'product_id' => $product->id,
+            'size_id' => $size->id,
+            'size_color_id' => $red->id,
+            'quantity' => 2,
+            'cost' => 10,
+            'total_cost' => 20,
+            'type' => 'normal',
+            'buyer_type' => 'unknown',
+            'buyer_name' => '-',
+            'status' => 'active',
+        ]);
+
+        app(ProductStockService::class)->deductForSale(
+            $product,
+            2,
+            sizeColorId: $red->id,
+            sizeId: $size->id,
+            referenceType: 'instant_sale',
+            referenceId: $sale->id,
+            userId: $this->admin->id,
+            allowNegative: true,
+        );
+
+        $this->assertSame(-2, (int) $red->fresh()->stock);
+        $this->assertSame(0, (int) $blue->fresh()->stock);
+        $this->assertSame(-2, (int) $product->fresh()->stock);
+
+        $layer = app(InventoryCostingService::class)->addOwnedStock(
+            $product->fresh(),
+            3,
+            7,
+            'NIS',
+            'purchase_receipt_item',
+            9002,
+            sizeColorId: $red->id,
+            sizeId: $size->id,
+            userId: $this->admin->id,
+        );
+
+        $this->assertSame(1, (int) $red->fresh()->stock);
+        $this->assertSame(0, (int) $blue->fresh()->stock);
+        $this->assertSame(1, (int) $product->fresh()->stock);
+        $this->assertEqualsWithDelta(1, (float) $layer->fresh()->remaining_quantity, 0.0001);
+        $this->assertEqualsWithDelta(14, (float) $sale->fresh()->inventory_total_cost, 0.0001);
+        $this->assertFalse(InventoryCostAllocation::query()
+            ->where('product_id', $product->id)
+            ->where('size_color_id', $red->id)
+            ->whereNull('inventory_cost_layer_id')
+            ->exists());
+        $this->assertFalse(InventoryCostAllocation::query()
+            ->where('product_id', $product->id)
+            ->where('size_color_id', $blue->id)
+            ->exists());
+    }
+
     public function test_sale_return_restores_original_cogs_without_rewriting_history(): void
     {
         $product = $this->product();

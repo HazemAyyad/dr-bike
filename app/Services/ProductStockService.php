@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Closeout;
+use App\Models\InventoryCostAllocation;
 use App\Models\InventoryCostLayer;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
@@ -228,13 +229,13 @@ class ProductStockService
                     ->lockForUpdate()
                     ->firstOrFail();
                 $before = (int) $variant->stock;
-                if ($before < $quantity) {
+                if (! $allowNegative && $before < $quantity) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'quantity' => [__('messages.cant_sale')],
                     ]);
                 }
                 $after = $before - $quantity;
-                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId ?? (int) $variant->sizeId);
+                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId ?? (int) $variant->sizeId, $allowNegative);
                 $variant->update(['stock' => $after]);
                 $result = [
                     'product_id' => (int) $lockedProduct->id,
@@ -256,8 +257,8 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
-                    unitCost: $cost['unit_cost'] ?? null,
-                    totalCost: $cost['total_cost'] ?? null,
+                    unitCost: ($cost['cost_complete'] ?? true) ? ($cost['unit_cost'] ?? null) : null,
+                    totalCost: ($cost['cost_complete'] ?? true) ? ($cost['total_cost'] ?? null) : null,
                     costingMethod: $cost['method'] ?? null,
                 );
                 $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
@@ -265,13 +266,13 @@ class ProductStockService
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
             } else {
                 $before = (int) $lockedProduct->stock;
-                if ($before < $quantity) {
+                if (! $allowNegative && $before < $quantity) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'quantity' => [__('messages.cant_sale')],
                     ]);
                 }
                 $after = $before - $quantity;
-                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, null, null);
+                $cost = $this->tryConsumeCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, null, null, $allowNegative);
                 $lockedProduct->update(['stock' => $after]);
                 $result = [
                     'product_id' => (int) $lockedProduct->id,
@@ -293,8 +294,8 @@ class ProductStockService
                     referenceId: $referenceId,
                     note: $note,
                     userId: $userId,
-                    unitCost: $cost['unit_cost'] ?? null,
-                    totalCost: $cost['total_cost'] ?? null,
+                    unitCost: ($cost['cost_complete'] ?? true) ? ($cost['unit_cost'] ?? null) : null,
+                    totalCost: ($cost['cost_complete'] ?? true) ? ($cost['total_cost'] ?? null) : null,
                     costingMethod: $cost['method'] ?? null,
                 );
                 $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
@@ -328,6 +329,41 @@ class ProductStockService
             $lockedProduct = Product::withTrashed()->lockForUpdate()->find($product->id);
             if (! $lockedProduct instanceof Product) {
                 return;
+            }
+
+            $pendingReversal = app(InventoryCostingService::class)->reversePendingNegativeCost(
+                $lockedProduct,
+                $quantity,
+                $referenceType ?? 'instant_sale',
+                $referenceId,
+                $sizeColorId,
+                $sizeId,
+            );
+            $pendingQuantity = (int) round((float) ($pendingReversal['quantity'] ?? 0));
+            if ($pendingQuantity > 0) {
+                $this->adjustStock(
+                    product: $lockedProduct,
+                    quantityDelta: $pendingQuantity,
+                    type: $referenceType === 'sales_return'
+                        ? ProductStockMovement::TYPE_SALES_RETURN
+                        : ProductStockMovement::TYPE_SALE_CANCEL,
+                    sizeColorId: $sizeColorId,
+                    referenceType: $referenceType,
+                    referenceId: $referenceId,
+                    note: $note,
+                    userId: $userId,
+                    unitCost: null,
+                    totalCost: null,
+                    costingMethod: $pendingReversal['method'] ?? null,
+                    reason: 'عكس بيع سالب قبل اكتمال تكلفة المخزون',
+                );
+                $quantity -= $pendingQuantity;
+                if ($quantity <= 0) {
+                    $this->refreshCloseoutStatus((int) $lockedProduct->id, reopen: true);
+
+                    return;
+                }
+                $lockedProduct = $lockedProduct->fresh(['sizes.colorSizes']);
             }
 
             $unitCost ??= $this->resolveRestorationUnitCost(
@@ -638,6 +674,7 @@ class ProductStockService
         ?int $referenceId,
         ?int $sizeColorId,
         ?int $sizeId,
+        bool $allowNegative = false,
     ): ?array {
         if ($quantity <= 0 || ! in_array($referenceType, ['instant_sale', 'sales_order', 'maintenance', 'offer_package'], true)) {
             return null;
@@ -663,12 +700,15 @@ class ProductStockService
                 $referenceId,
                 $sizeColorId,
                 $sizeId,
+                $allowNegative,
             );
 
             return [
                 'method' => $cost['method'],
                 'unit_cost' => (float) $cost['unit_cost'],
                 'total_cost' => (float) $cost['total_cost'],
+                'cost_complete' => (bool) ($cost['cost_complete'] ?? true),
+                'pending_quantity' => (float) ($cost['pending_quantity'] ?? 0),
             ];
         } catch (\Throwable $e) {
             Log::error('Inventory costing failed while creating outbound stock snapshot.', [
@@ -707,7 +747,27 @@ class ProductStockService
             ->latest('id')
             ->first();
 
-        return $movement?->unit_cost !== null ? (float) $movement->unit_cost : null;
+        if ($movement?->unit_cost !== null) {
+            return (float) $movement->unit_cost;
+        }
+
+        if (! $referenceId || ! Schema::hasTable('inventory_cost_allocations')) {
+            return null;
+        }
+
+        $allocations = InventoryCostAllocation::query()
+            ->where('product_id', $productId)
+            ->whereNotNull('inventory_cost_layer_id')
+            ->when($sizeColorId !== null && $sizeColorId > 0,
+                fn ($query) => $query->where('size_color_id', $sizeColorId),
+                fn ($query) => $query->whereNull('size_color_id'))
+            ->when($referenceType, fn ($query) => $query->where('reference_type', $referenceType))
+            ->where('reference_id', $referenceId);
+        $quantity = (float) (clone $allocations)->sum('quantity');
+
+        return $quantity > 0
+            ? (float) (clone $allocations)->sum('total_cost') / $quantity
+            : null;
     }
 
     private function persistOutboundCostSnapshot(
@@ -721,13 +781,15 @@ class ProductStockService
             return;
         }
 
+        $costComplete = (bool) ($cost['cost_complete'] ?? true);
+
         if ($referenceType === 'instant_sale' && Schema::hasTable('instant_sales') && Schema::hasColumn('instant_sales', 'inventory_total_cost')) {
             DB::table('instant_sales')
                 ->where('id', $referenceId)
                 ->update([
                     'inventory_cost_method' => $cost['method'],
-                    'inventory_unit_cost' => $cost['unit_cost'],
-                    'inventory_total_cost' => $cost['total_cost'],
+                    'inventory_unit_cost' => $costComplete ? $cost['unit_cost'] : null,
+                    'inventory_total_cost' => $costComplete ? $cost['total_cost'] : null,
                     'updated_at' => now(),
                 ]);
         }
