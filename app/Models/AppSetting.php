@@ -52,6 +52,9 @@ class AppSetting extends Model
     /** JSON map currency => max float allowed at day close. */
     public const KEY_SALES_DAILY_MAX_FLOAT_JSON = 'sales_daily_max_float_json';
 
+    /** Show the pending drawer-closing reminder when an admin opens the dashboard. */
+    public const KEY_ADMIN_PENDING_CLOSING_PROMPT_ENABLED = 'admin_pending_closing_prompt_enabled';
+
     /** JSON map of order workflow action => required media categories. */
     public const KEY_SALES_ORDER_MEDIA_REQUIREMENTS_JSON = 'sales_order_media_requirements_json';
 

@@ -55,6 +55,7 @@ class AppSettingsController extends Controller
                 'password_reset_otp_delivery_method' => 'sometimes|string|in:email,admin,sms',
                 'sales_daily_variance_alert_threshold' => 'sometimes|numeric|min:0|max:999999',
                 'sales_daily_max_float' => 'sometimes|array',
+                'admin_pending_closing_prompt_enabled' => 'sometimes|boolean',
                 'attendance' => 'sometimes|array',
                 'shiply' => 'sometimes|array',
                 'app_update' => 'sometimes|array',
@@ -104,6 +105,12 @@ class AppSettingsController extends Controller
                 AppSetting::set(
                     AppSetting::KEY_SALES_DAILY_MAX_FLOAT_JSON,
                     json_encode($merged, JSON_UNESCAPED_UNICODE)
+                );
+            }
+            if ($request->has('admin_pending_closing_prompt_enabled')) {
+                AppSetting::set(
+                    AppSetting::KEY_ADMIN_PENDING_CLOSING_PROMPT_ENABLED,
+                    $data['admin_pending_closing_prompt_enabled'] ? '1' : '0'
                 );
             }
             if ($request->has('attendance') && is_array($request->input('attendance'))) {
@@ -164,6 +171,10 @@ class AppSettingsController extends Controller
             ),
             'sales_daily_variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
             'sales_daily_max_float' => SalesDailySettings::maxFloatMap(),
+            'admin_pending_closing_prompt_enabled' => AppSetting::getBool(
+                AppSetting::KEY_ADMIN_PENDING_CLOSING_PROMPT_ENABLED,
+                true
+            ),
             'attendance' => AttendanceSettings::toArray(),
             'shiply' => ShiplySettings::toArray(),
             'app_update' => AppUpdateSettings::all(),
