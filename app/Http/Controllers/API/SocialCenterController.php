@@ -904,9 +904,15 @@ class SocialCenterController extends Controller
             }
 
             $nested->orWhere('last_message', 'like', $like)
-                ->orWhereHas('contact', fn ($contact) => $contact
-                    ->where('name', 'like', $like)
-                    ->orWhere('external_id', 'like', $like))
+                ->orWhereHas('contact', function ($contact) use ($like, $phoneLike, $whatsApp) {
+                    $contact->where('name', 'like', $like);
+                    if ($whatsApp) {
+                        $contact->orWhere('phone', 'like', $like)
+                            ->when($phoneLike, fn ($phone) => $phone->orWhere('phone', 'like', $phoneLike));
+                    } else {
+                        $contact->orWhere('external_id', 'like', $like);
+                    }
+                })
                 ->orWhereHas('messages', fn ($messages) => $messages->where('body', 'like', $like));
         });
     }
