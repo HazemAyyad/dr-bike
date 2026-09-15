@@ -11,6 +11,15 @@ class SmartDeviceResource extends JsonResource
     {
         $lastStatus = $this->last_status ?? [];
         $primaryPowerDp = $this->primaryPowerDp($lastStatus);
+        $isAdmin = $request->user()?->type === 'admin';
+        $permission = null;
+        if (! $isAdmin && $request->user()?->employee?->id) {
+            $permission = $this->relationLoaded('employeePermissions')
+                ? $this->employeePermissions->first()
+                : $this->employeePermissions()
+                    ->where('employee_id', $request->user()->employee->id)
+                    ->first();
+        }
 
         return [
             'id' => (int) $this->id,
@@ -37,6 +46,12 @@ class SmartDeviceResource extends JsonResource
             'last_status' => $lastStatus,
             'primary_power_dp' => $primaryPowerDp,
             'power_on' => $primaryPowerDp !== null ? (bool) ($lastStatus[$primaryPowerDp] ?? false) : null,
+            'access' => [
+                'can_view' => $isAdmin || (bool) ($permission?->can_view ?? false),
+                'can_control' => $isAdmin || (bool) ($permission?->can_control ?? false),
+                'can_schedule' => $isAdmin || (bool) ($permission?->can_schedule ?? false),
+                'can_manage' => $isAdmin,
+            ],
             'raw_metadata' => $this->when($request->boolean('include_debug'), $this->raw_metadata ?? []),
             'paired_at' => $this->paired_at?->toISOString(),
             'last_seen_at' => $this->last_seen_at?->toISOString(),

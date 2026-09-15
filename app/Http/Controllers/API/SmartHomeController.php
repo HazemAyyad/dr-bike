@@ -11,10 +11,11 @@ use App\Http\Resources\SmartHomeEventLogResource;
 use App\Http\Resources\SmartHomeResource;
 use App\Http\Resources\SmartRoomResource;
 use App\Http\Resources\SmartSceneResource;
+use App\Models\EmployeeDetail;
 use App\Models\SmartDevice;
 use App\Models\SmartDeviceActivityLog;
+use App\Models\SmartDeviceEmployeePermission;
 use App\Models\SmartDeviceFunction;
-use App\Models\SmartDeviceSchedule;
 use App\Models\SmartHome;
 use App\Models\SmartHomeEventLog;
 use App\Models\SmartHomeTuyaUser;
@@ -31,6 +32,7 @@ class SmartHomeController extends Controller
     public function bootstrap(Request $request)
     {
         $isAdmin = $request->user()?->type === 'admin';
+        $employeeId = $request->user()?->employee?->id;
         $owners = collect();
 
         if ($isAdmin) {
@@ -55,11 +57,19 @@ class SmartHomeController extends Controller
                 ]);
         }
 
+        $employeeOwnerId = ! $isAdmin && $employeeId
+            ? SmartDevice::query()
+                ->whereHas('employeePermissions', fn (Builder $query) => $query
+                    ->where('employee_id', $employeeId)
+                    ->where('can_view', true))
+                ->orderBy('id')
+                ->value('user_id')
+            : null;
         $ownerId = $isAdmin
             ? ($request->filled('user_id')
                 ? (int) $request->input('user_id')
                 : (int) ($owners->first()['id'] ?? $request->user()->id))
-            : (int) $request->user()->id;
+            : (int) ($employeeOwnerId ?: $request->user()->id);
         $request->merge(['user_id' => $ownerId, 'include_debug' => true]);
 
         $mapping = SmartHomeTuyaUser::firstOrCreate(['user_id' => $ownerId], [
@@ -67,6 +77,9 @@ class SmartHomeController extends Controller
         ]);
         $homes = SmartHome::query()
             ->where('user_id', $ownerId)
+            ->when(! $isAdmin, fn (Builder $query) => $query->whereHas('devices.employeePermissions', fn (Builder $query) => $query
+                ->where('employee_id', $employeeId)
+                ->where('can_view', true)))
             ->withCount(['rooms', 'devices'])
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)])
             ->orderByDesc('is_default')
@@ -96,6 +109,9 @@ class SmartHomeController extends Controller
         } elseif ($home) {
             $rooms = SmartRoom::query()
                 ->where('smart_home_id', $home->id)
+                ->when(! $isAdmin, fn (Builder $query) => $query->whereHas('devices.employeePermissions', fn (Builder $query) => $query
+                    ->where('employee_id', $employeeId)
+                    ->where('can_view', true)))
                 ->withCount('devices')
                 ->orderBy('sort_order')
                 ->orderBy('name')
@@ -104,12 +120,16 @@ class SmartHomeController extends Controller
             $scenes = SmartScene::query()
                 ->where('user_id', $ownerId)
                 ->where('smart_home_id', $home->id)
+                ->when(! $isAdmin, fn (Builder $query) => $query->whereRaw('1 = 0'))
                 ->orderByDesc('enabled')
                 ->orderBy('name')
                 ->get();
         } else {
             $devicesQuery->whereRaw('1 = 0');
         }
+
+        $this->applyEmployeeDeviceScope($devicesQuery, $request, 'view');
+        $this->loadDeviceAccess($devicesQuery, $request);
 
         $devices = $devicesQuery->orderBy('display_order')->orderBy('name')->get();
         $devices->each(fn (SmartDevice $device) => $this->syncDeviceFunctions($device));
@@ -141,6 +161,12 @@ class SmartHomeController extends Controller
         $userId = $this->requestedOwnerId($request);
         $homes = SmartHome::query()
             ->where('user_id', $userId)
+            ->when($request->user()?->type !== 'admin', function (Builder $query) use ($request) {
+                $employeeId = $request->user()?->employee?->id;
+                $query->whereHas('devices.employeePermissions', fn (Builder $query) => $query
+                    ->where('employee_id', $employeeId)
+                    ->where('can_view', true));
+            })
             ->withCount(['rooms', 'devices'])
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)])
             ->orderByDesc('is_default')
@@ -345,6 +371,8 @@ class SmartHomeController extends Controller
             ->where(fn (Builder $query) => $query
                 ->where('user_id', $this->requestedOwnerId($request))
                 ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))));
+        $this->applyEmployeeDeviceScope($query, $request, 'view');
+        $this->loadDeviceAccess($query, $request);
 
         if ($request->filled('home_id')) {
             if ((string) $request->input('home_id') === 'unassigned') {
@@ -407,6 +435,7 @@ class SmartHomeController extends Controller
             if ($device) {
                 $device->restore();
                 $device->update($payload);
+
                 return $device;
             }
 
@@ -641,11 +670,11 @@ class SmartHomeController extends Controller
 
     public function storeDeviceSchedule(Request $request, int $id)
     {
-        $device = $this->ownedDevice($request, $id);
+        $device = $this->accessibleDevice($request, $id, 'schedule');
         $data = $this->validateSchedulePayload($request);
         $schedule = $device->schedules()->create([
             ...$data,
-            'user_id' => $this->requestedOwnerId($request),
+            'user_id' => (int) $request->user()->id,
             'next_run_at' => $data['enabled'] ? $data['scheduled_at'] : null,
         ]);
 
@@ -658,7 +687,7 @@ class SmartHomeController extends Controller
 
     public function updateDeviceSchedule(Request $request, int $deviceId, int $scheduleId)
     {
-        $device = $this->ownedDevice($request, $deviceId);
+        $device = $this->accessibleDevice($request, $deviceId, 'schedule');
         $schedule = $device->schedules()->whereKey($scheduleId)->firstOrFail();
         $data = $this->validateSchedulePayload($request);
         $schedule->update([
@@ -675,7 +704,7 @@ class SmartHomeController extends Controller
 
     public function destroyDeviceSchedule(Request $request, int $deviceId, int $scheduleId)
     {
-        $device = $this->ownedDevice($request, $deviceId);
+        $device = $this->accessibleDevice($request, $deviceId, 'schedule');
         $device->schedules()->whereKey($scheduleId)->firstOrFail()->delete();
 
         return response()->json(['status' => 'success', 'message' => 'تم حذف الجدولة']);
@@ -717,7 +746,7 @@ class SmartHomeController extends Controller
 
     public function storeActivityLog(Request $request, int $id)
     {
-        $device = $this->ownedDevice($request, $id);
+        $device = $this->accessibleDevice($request, $id, 'control');
         $data = $request->validate([
             'action' => ['required', 'string', 'max:80'],
             'command_code' => ['nullable', 'string', 'max:120'],
@@ -741,7 +770,7 @@ class SmartHomeController extends Controller
 
     public function storeControlLog(Request $request, int $id)
     {
-        $device = $this->readableDevice($request, $id);
+        $device = $this->accessibleDevice($request, $id, 'control');
         $data = $request->validate([
             'command_code' => ['required', 'string', 'max:120'],
             'command_value' => ['nullable', 'array'],
@@ -791,8 +820,108 @@ class SmartHomeController extends Controller
         ]);
     }
 
+    public function devicePermissions(Request $request, int $id)
+    {
+        $this->ensureAdmin($request);
+        $device = $this->ownedDevice($request, $id);
+
+        return response()->json([
+            'status' => 'success',
+            'device_id' => (int) $device->id,
+            'employees' => $this->smartHomeEmployeesQuery()
+                ->with(['user:id,name,phone', 'smartDevicePermissions' => fn ($query) => $query->where('smart_device_id', $device->id)])
+                ->orderBy('id')
+                ->get()
+                ->map(fn (EmployeeDetail $employee) => $this->employeePermissionPayload($employee, $employee->smartDevicePermissions->first())),
+        ]);
+    }
+
+    public function syncDevicePermissions(Request $request, int $id)
+    {
+        $this->ensureAdmin($request);
+        $device = $this->ownedDevice($request, $id);
+        $data = $this->validatePermissionAssignments($request, 'employees');
+        $allowedEmployeeIds = $this->smartHomeEmployeesQuery()
+            ->whereIn('id', collect($data['employees'])->pluck('employee_id'))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        abort_unless(count($allowedEmployeeIds) === count($data['employees']), 422, 'يجب منح الموظف صلاحية المنزل الذكي العامة أولاً');
+
+        DB::transaction(function () use ($device, $data): void {
+            $device->employeePermissions()->delete();
+            foreach ($data['employees'] as $assignment) {
+                $device->employeePermissions()->create($this->normalizedAssignment($assignment));
+            }
+        });
+
+        return $this->devicePermissions($request, $device->id);
+    }
+
+    public function employeeDevices(Request $request, int $employeeId)
+    {
+        $this->ensureAdmin($request);
+        $employee = $this->smartHomeEmployeesQuery()->whereKey($employeeId)->firstOrFail();
+        $devices = SmartDevice::query()
+            ->with(['room:id,name', 'employeePermissions' => fn ($query) => $query->where('employee_id', $employee->id)])
+            ->where(fn (Builder $query) => $query
+                ->where('user_id', $this->requestedOwnerId($request))
+                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))))
+            ->orderBy('display_order')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'employee' => ['id' => (int) $employee->id, 'name' => $employee->user?->name],
+            'devices' => $devices->map(function (SmartDevice $device) {
+                $permission = $device->employeePermissions->first();
+
+                return [
+                    'id' => (int) $device->id,
+                    'name' => $device->name,
+                    'room_name' => $device->room?->name,
+                    'can_view' => (bool) ($permission?->can_view ?? false),
+                    'can_control' => (bool) ($permission?->can_control ?? false),
+                    'can_schedule' => (bool) ($permission?->can_schedule ?? false),
+                ];
+            }),
+        ]);
+    }
+
+    public function syncEmployeeDevices(Request $request, int $employeeId)
+    {
+        $this->ensureAdmin($request);
+        $employee = $this->smartHomeEmployeesQuery()->whereKey($employeeId)->firstOrFail();
+        $data = $this->validatePermissionAssignments($request, 'devices', 'smart_device_id');
+        $deviceIds = collect($data['devices'])->pluck('smart_device_id')->map(fn ($id) => (int) $id);
+        $ownedCount = SmartDevice::query()
+            ->whereIn('id', $deviceIds)
+            ->where(fn (Builder $query) => $query
+                ->where('user_id', $this->requestedOwnerId($request))
+                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))))
+            ->count();
+        abort_unless($ownedCount === $deviceIds->count(), 422, 'أحد الأجهزة لا يتبع الحساب المحدد');
+
+        $ownerId = $this->requestedOwnerId($request);
+        DB::transaction(function () use ($employee, $data, $ownerId): void {
+            $employee->smartDevicePermissions()
+                ->whereHas('device', fn (Builder $query) => $query
+                    ->where('user_id', $ownerId)
+                    ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $ownerId)))
+                ->delete();
+            foreach ($data['devices'] as $assignment) {
+                $employee->smartDevicePermissions()->create($this->normalizedAssignment($assignment));
+            }
+        });
+
+        return $this->employeeDevices($request, $employee->id);
+    }
+
     public function eventLogs(Request $request)
     {
+        $this->ensureAdmin($request);
         $query = SmartHomeEventLog::query()
             ->where('user_id', $this->requestedOwnerId($request))
             ->latest();
@@ -922,6 +1051,15 @@ class SmartHomeController extends Controller
             return (int) $request->input('user_id');
         }
 
+        if ($request->user()?->type === 'employee') {
+            return (int) (SmartDevice::query()
+                ->whereHas('employeePermissions', fn (Builder $query) => $query
+                    ->where('employee_id', $request->user()?->employee?->id)
+                    ->where('can_view', true))
+                ->orderBy('id')
+                ->value('user_id') ?: $request->user()->id);
+        }
+
         return (int) $request->user()->id;
     }
 
@@ -969,12 +1107,96 @@ class SmartHomeController extends Controller
 
     private function readableDevice(Request $request, int $id): SmartDevice
     {
-        return SmartDevice::query()
+        $query = SmartDevice::query()
             ->whereKey($id)
             ->where(fn (Builder $query) => $query
                 ->where('user_id', $this->requestedOwnerId($request))
-                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))))
+                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))));
+        $this->applyEmployeeDeviceScope($query, $request, 'view');
+
+        return $query->firstOrFail();
+    }
+
+    private function accessibleDevice(Request $request, int $id, string $ability): SmartDevice
+    {
+        if ($request->user()?->type === 'admin') {
+            return $this->ownedDevice($request, $id);
+        }
+
+        $column = $ability === 'schedule' ? 'can_schedule' : ($ability === 'control' ? 'can_control' : 'can_view');
+
+        return SmartDevice::query()
+            ->whereKey($id)
+            ->whereHas('employeePermissions', fn (Builder $query) => $query
+                ->where('employee_id', $request->user()?->employee?->id)
+                ->where($column, true))
             ->firstOrFail();
+    }
+
+    private function applyEmployeeDeviceScope(Builder $query, Request $request, string $ability): void
+    {
+        if ($request->user()?->type === 'admin') {
+            return;
+        }
+
+        $column = $ability === 'schedule' ? 'can_schedule' : ($ability === 'control' ? 'can_control' : 'can_view');
+        $query->whereHas('employeePermissions', fn (Builder $query) => $query
+            ->where('employee_id', $request->user()?->employee?->id)
+            ->where($column, true));
+    }
+
+    private function loadDeviceAccess(Builder $query, Request $request): void
+    {
+        if ($request->user()?->type === 'employee') {
+            $query->with(['employeePermissions' => fn ($query) => $query->where('employee_id', $request->user()?->employee?->id)]);
+        }
+    }
+
+    private function ensureAdmin(Request $request): void
+    {
+        abort_unless($request->user()?->type === 'admin', 403, 'إدارة صلاحيات الأجهزة متاحة للمدير فقط');
+    }
+
+    private function smartHomeEmployeesQuery(): Builder
+    {
+        return EmployeeDetail::query()
+            ->where('is_suspended', false)
+            ->whereHas('permissions.permission', fn (Builder $query) => $query->where('name_en', 'Smart Home'));
+    }
+
+    private function validatePermissionAssignments(Request $request, string $key, string $idKey = 'employee_id'): array
+    {
+        return $request->validate([
+            $key => ['present', 'array'],
+            "$key.*.$idKey" => ['required', 'integer', 'distinct'],
+            "$key.*.can_view" => ['required', 'boolean'],
+            "$key.*.can_control" => ['required', 'boolean'],
+            "$key.*.can_schedule" => ['required', 'boolean'],
+        ]);
+    }
+
+    private function normalizedAssignment(array $assignment): array
+    {
+        abort_unless((bool) $assignment['can_view'], 422, 'المشاهدة مطلوبة عند منح التحكم أو الجدولة');
+
+        return [
+            ...$assignment,
+            'can_view' => true,
+            'can_control' => (bool) $assignment['can_control'],
+            'can_schedule' => (bool) $assignment['can_schedule'],
+        ];
+    }
+
+    private function employeePermissionPayload(EmployeeDetail $employee, ?SmartDeviceEmployeePermission $permission): array
+    {
+        return [
+            'employee_id' => (int) $employee->id,
+            'name' => $employee->user?->name,
+            'phone' => $employee->user?->phone,
+            'can_view' => (bool) ($permission?->can_view ?? false),
+            'can_control' => (bool) ($permission?->can_control ?? false),
+            'can_schedule' => (bool) ($permission?->can_schedule ?? false),
+        ];
     }
 
     private function validRoomId(Request $request, mixed $roomId, ?int $homeId): ?int
@@ -1177,6 +1399,7 @@ class SmartHomeController extends Controller
         }
 
         $decoded = json_decode($raw, true);
+
         return is_array($decoded) ? $decoded : [];
     }
 

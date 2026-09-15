@@ -72,4 +72,9 @@ class SmartDevice extends Model
     {
         return $this->hasMany(SmartDeviceSchedule::class);
     }
+
+    public function employeePermissions(): HasMany
+    {
+        return $this->hasMany(SmartDeviceEmployeePermission::class);
+    }
 }

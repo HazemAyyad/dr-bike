@@ -199,30 +199,30 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
     Route::prefix('smart-home')->middleware('check.permission:Smart Home')->group(function () {
         Route::get('/bootstrap', [SmartHomeController::class, 'bootstrap']);
         Route::get('/tuya-user', [SmartHomeController::class, 'tuyaUser']);
-        Route::put('/tuya-user', [SmartHomeController::class, 'updateTuyaUser']);
+        Route::put('/tuya-user', [SmartHomeController::class, 'updateTuyaUser'])->middleware('admin');
 
         Route::get('/owners', [SmartHomeController::class, 'owners']);
         Route::get('/homes', [SmartHomeController::class, 'homes']);
-        Route::post('/homes', [SmartHomeController::class, 'storeHome']);
+        Route::post('/homes', [SmartHomeController::class, 'storeHome'])->middleware('admin');
         Route::get('/homes/{id}', [SmartHomeController::class, 'showHome'])->whereNumber('id');
-        Route::put('/homes/{id}', [SmartHomeController::class, 'updateHome'])->whereNumber('id');
-        Route::delete('/homes/{id}', [SmartHomeController::class, 'destroyHome'])->whereNumber('id');
+        Route::put('/homes/{id}', [SmartHomeController::class, 'updateHome'])->whereNumber('id')->middleware('admin');
+        Route::delete('/homes/{id}', [SmartHomeController::class, 'destroyHome'])->whereNumber('id')->middleware('admin');
 
         Route::get('/homes/{id}/rooms', [SmartHomeController::class, 'rooms'])->whereNumber('id');
-        Route::post('/homes/{id}/rooms', [SmartHomeController::class, 'storeRoom'])->whereNumber('id');
-        Route::put('/rooms/{id}', [SmartHomeController::class, 'updateRoom'])->whereNumber('id');
-        Route::delete('/rooms/{id}', [SmartHomeController::class, 'destroyRoom'])->whereNumber('id');
+        Route::post('/homes/{id}/rooms', [SmartHomeController::class, 'storeRoom'])->whereNumber('id')->middleware('admin');
+        Route::put('/rooms/{id}', [SmartHomeController::class, 'updateRoom'])->whereNumber('id')->middleware('admin');
+        Route::delete('/rooms/{id}', [SmartHomeController::class, 'destroyRoom'])->whereNumber('id')->middleware('admin');
 
         Route::get('/devices', [SmartHomeController::class, 'devices']);
         Route::get('/devices/{id}', [SmartHomeController::class, 'showDevice'])->whereNumber('id');
-        Route::post('/devices/sync', [SmartHomeController::class, 'syncDevices']);
-        Route::post('/devices/register', [SmartHomeController::class, 'registerDevice']);
-        Route::put('/devices/reorder', [SmartHomeController::class, 'reorderDevices']);
-        Route::patch('/devices/{id}', [SmartHomeController::class, 'updateDevice'])->whereNumber('id');
-        Route::patch('/devices/{id}/location', [SmartHomeController::class, 'moveDevice'])->whereNumber('id');
-        Route::delete('/devices/{id}', [SmartHomeController::class, 'destroyDevice'])->whereNumber('id');
+        Route::post('/devices/sync', [SmartHomeController::class, 'syncDevices'])->middleware('admin');
+        Route::post('/devices/register', [SmartHomeController::class, 'registerDevice'])->middleware('admin');
+        Route::put('/devices/reorder', [SmartHomeController::class, 'reorderDevices'])->middleware('admin');
+        Route::patch('/devices/{id}', [SmartHomeController::class, 'updateDevice'])->whereNumber('id')->middleware('admin');
+        Route::patch('/devices/{id}/location', [SmartHomeController::class, 'moveDevice'])->whereNumber('id')->middleware('admin');
+        Route::delete('/devices/{id}', [SmartHomeController::class, 'destroyDevice'])->whereNumber('id')->middleware('admin');
         Route::get('/devices/{id}/functions', [SmartHomeController::class, 'deviceFunctions'])->whereNumber('id');
-        Route::patch('/devices/{deviceId}/functions/{functionId}', [SmartHomeController::class, 'updateDeviceFunction'])->whereNumber('deviceId')->whereNumber('functionId');
+        Route::patch('/devices/{deviceId}/functions/{functionId}', [SmartHomeController::class, 'updateDeviceFunction'])->whereNumber('deviceId')->whereNumber('functionId')->middleware('admin');
         Route::get('/devices/{id}/schedules', [SmartHomeController::class, 'deviceSchedules'])->whereNumber('id');
         Route::post('/devices/{id}/schedules', [SmartHomeController::class, 'storeDeviceSchedule'])->whereNumber('id');
         Route::put('/devices/{deviceId}/schedules/{scheduleId}', [SmartHomeController::class, 'updateDeviceSchedule'])->whereNumber('deviceId')->whereNumber('scheduleId');
@@ -231,15 +231,19 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         Route::post('/devices/{id}/activity-log', [SmartHomeController::class, 'storeActivityLog'])->whereNumber('id');
         Route::post('/devices/{id}/control-log', [SmartHomeController::class, 'storeControlLog'])->whereNumber('id');
         Route::get('/devices/{id}/activity', [SmartHomeController::class, 'deviceActivity'])->whereNumber('id');
+        Route::get('/devices/{id}/permissions', [SmartHomeController::class, 'devicePermissions'])->whereNumber('id')->middleware('admin');
+        Route::put('/devices/{id}/permissions', [SmartHomeController::class, 'syncDevicePermissions'])->whereNumber('id')->middleware('admin');
+        Route::get('/employees/{employeeId}/devices', [SmartHomeController::class, 'employeeDevices'])->whereNumber('employeeId')->middleware('admin');
+        Route::put('/employees/{employeeId}/devices', [SmartHomeController::class, 'syncEmployeeDevices'])->whereNumber('employeeId')->middleware('admin');
         Route::get('/event-logs', [SmartHomeController::class, 'eventLogs']);
         Route::post('/event-logs', [SmartHomeController::class, 'storeEventLog']);
 
-        Route::get('/scenes', [SmartSceneController::class, 'index']);
-        Route::post('/scenes', [SmartSceneController::class, 'store']);
-        Route::get('/scenes/{id}', [SmartSceneController::class, 'show'])->whereNumber('id');
-        Route::put('/scenes/{id}', [SmartSceneController::class, 'update'])->whereNumber('id');
-        Route::delete('/scenes/{id}', [SmartSceneController::class, 'destroy'])->whereNumber('id');
-        Route::post('/scenes/{id}/executions', [SmartSceneController::class, 'recordExecution'])->whereNumber('id');
+        Route::get('/scenes', [SmartSceneController::class, 'index'])->middleware('admin');
+        Route::post('/scenes', [SmartSceneController::class, 'store'])->middleware('admin');
+        Route::get('/scenes/{id}', [SmartSceneController::class, 'show'])->whereNumber('id')->middleware('admin');
+        Route::put('/scenes/{id}', [SmartSceneController::class, 'update'])->whereNumber('id')->middleware('admin');
+        Route::delete('/scenes/{id}', [SmartSceneController::class, 'destroy'])->whereNumber('id')->middleware('admin');
+        Route::post('/scenes/{id}/executions', [SmartSceneController::class, 'recordExecution'])->whereNumber('id')->middleware('admin');
     });
 
     // only for customers
