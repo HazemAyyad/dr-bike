@@ -3,10 +3,10 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
 use App\Models\EmployeeDetail;
 use App\Models\Permission;
 use App\Models\Product;
-use App\Models\Customer;
 use App\Models\SocialConversation;
 use App\Models\SocialMessage;
 use App\Models\WhatsAppConversation;
@@ -54,7 +54,7 @@ class SocialCenterController extends Controller
         $allowedChannels = $this->allowedChannels($request);
         abort_if($channel !== 'all' && ! in_array($channel, $allowedChannels, true), 403);
         $quickFilter = $request->input('quick_filter', 'all');
-        $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked,needs_reply,assigned_me']);
+        $request->validate(['quick_filter' => 'nullable|in:all,unread,failed,linked,needs_reply,reply_overdue,assigned_me']);
         $search = trim((string) $request->input('search'));
 
         $items = collect();
@@ -62,15 +62,11 @@ class SocialCenterController extends Controller
             $query = $this->activeWhatsAppConversations()
                 ->with(['contact', 'whatsappAccount', 'latestMessage', 'assignedAdmin'])
                 ->withCount(['messages as failed_count' => fn ($messages) => $messages->where('status', 'failed')]);
-            if (filled($status)) $query->where('status', $status);
-            $this->applyQuickFilter($query, $quickFilter, $request->user()->id);
-            if ($search !== '') {
-                $query->where(function ($q) use ($search) {
-                    $q->where('phone', 'like', "%{$search}%")
-                        ->orWhere('last_message', 'like', "%{$search}%")
-                        ->orWhereHas('contact', fn ($contact) => $contact->where('name', 'like', "%{$search}%"));
-                });
+            if (filled($status)) {
+                $query->where('status', $status);
             }
+            $this->applyQuickFilter($query, $quickFilter, $request->user()->id);
+            $this->applyConversationSearch($query, $search, true);
             if ($channel === 'whatsapp') {
                 $paginator = $query
                     ->orderByDesc('last_message_at')
@@ -87,18 +83,16 @@ class SocialCenterController extends Controller
             $query = SocialConversation::query()
                 ->with(['contact', 'latestMessage', 'assignedAdmin'])
                 ->withCount(['messages as failed_count' => fn ($messages) => $messages->where('status', 'failed')]);
-            if ($channel !== 'all') $query->where('channel', $channel);
-            else $query->whereIn('channel', $allowedChannels);
-            if (filled($status)) $query->where('status', $status);
-            $this->applyQuickFilter($query, $quickFilter, $request->user()->id);
-            if ($search !== '') {
-                $query->where(function ($q) use ($search) {
-                    $q->where('last_message', 'like', "%{$search}%")
-                        ->orWhereHas('contact', fn ($contact) => $contact
-                            ->where('name', 'like', "%{$search}%")
-                            ->orWhere('external_id', 'like', "%{$search}%"));
-                });
+            if ($channel !== 'all') {
+                $query->where('channel', $channel);
+            } else {
+                $query->whereIn('channel', $allowedChannels);
             }
+            if (filled($status)) {
+                $query->where('status', $status);
+            }
+            $this->applyQuickFilter($query, $quickFilter, $request->user()->id);
+            $this->applyConversationSearch($query, $search, false);
             $items = $items->merge($query->latest('last_message_at')->limit(80)->get()->map(fn ($item) => $this->serializeSocialConversation($item)));
         }
 
@@ -203,6 +197,7 @@ class SocialCenterController extends Controller
             }
 
             $this->claimAfterReply($conversation, (int) $request->user()->id);
+
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -217,8 +212,7 @@ class SocialCenterController extends Controller
         int $id,
         int $messageId,
         WhatsAppCloudApiService $whatsApp
-    )
-    {
+    ) {
         $this->authorizeChannel($request, $channel);
         $message = $this->conversationMessage($channel, $id, $messageId);
         $data = $request->validate([
@@ -301,6 +295,7 @@ class SocialCenterController extends Controller
             $result = $meta->sendText($target, $text, $request->user()->id);
         }
         $this->claimAfterReply($target, (int) $request->user()->id);
+
         return $this->sendResult($targetChannel, $result);
     }
 
@@ -412,6 +407,7 @@ class SocialCenterController extends Controller
             }
 
             $this->claimAfterReply($conversation, (int) $request->user()->id);
+
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -464,6 +460,7 @@ class SocialCenterController extends Controller
             }
 
             $this->claimAfterReply($conversation, (int) $request->user()->id);
+
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -501,6 +498,7 @@ class SocialCenterController extends Controller
             $this->ensureCustomerServiceWindow($conversation);
             $result = $this->sendSocialProducts($meta, $conversation, $data['product_ids'], $request->user()->id);
             $this->claimAfterReply($conversation, (int) $request->user()->id);
+
             return $this->sendResult($channel, $result);
         } catch (ValidationException $e) {
             throw $e;
@@ -597,6 +595,8 @@ class SocialCenterController extends Controller
     private function serializeWhatsAppConversation(WhatsAppConversation $conversation): array
     {
         $latestMessage = $conversation->latestMessage;
+        $replyState = $this->replyState($conversation, 'whatsapp');
+
         return [
             'id' => $conversation->id,
             'channel' => 'whatsapp',
@@ -613,7 +613,8 @@ class SocialCenterController extends Controller
             'last_message_media' => $latestMessage
                 ? $this->messageMedia($latestMessage->message_type, $latestMessage->media_url, $latestMessage->body, $latestMessage->raw_payload)
                 : null,
-            'needs_reply' => $this->needsReply($conversation, 'whatsapp'),
+            'needs_reply' => $replyState['needs_reply'],
+            'reply_overdue' => $replyState['reply_overdue'],
             'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
             'tags' => $this->conversationTags('whatsapp', $conversation->id),
             'whatsapp_account' => $conversation->whatsappAccount ? [
@@ -628,6 +629,8 @@ class SocialCenterController extends Controller
     private function serializeSocialConversation(SocialConversation $conversation): array
     {
         $latestMessage = $conversation->latestMessage;
+        $replyState = $this->replyState($conversation, $conversation->channel);
+
         return [
             'id' => $conversation->id,
             'channel' => $conversation->channel,
@@ -644,7 +647,8 @@ class SocialCenterController extends Controller
             'last_message_media' => $latestMessage
                 ? $this->messageMedia($latestMessage->message_type, $latestMessage->media_url, $latestMessage->body, $latestMessage->raw_payload)
                 : null,
-            'needs_reply' => $this->needsReply($conversation, $conversation->channel),
+            'needs_reply' => $replyState['needs_reply'],
+            'reply_overdue' => $replyState['reply_overdue'],
             'assigned_employee' => $this->assignedEmployee($conversation->assignedAdmin),
             'tags' => $this->conversationTags($conversation->channel, $conversation->id),
             'contact' => [
@@ -701,6 +705,7 @@ class SocialCenterController extends Controller
         } else {
             $conversation = SocialConversation::query()->where('channel', $channel)->findOrFail($conversationId);
         }
+
         return $conversation->messages()->findOrFail($messageId);
     }
 
@@ -720,6 +725,7 @@ class SocialCenterController extends Controller
         $payload['reported'] = DB::table('social_message_reports')
             ->where(['reported_by' => $userId, 'channel' => $channel, 'message_id' => $message->id])
             ->exists();
+
         return $payload;
     }
 
@@ -750,6 +756,7 @@ class SocialCenterController extends Controller
                 ? $message->reaction
                 : ($state->reaction ?? null);
             $payload['reported'] = $reportedIds->has($message->id);
+
             return $payload;
         });
     }
@@ -780,7 +787,10 @@ class SocialCenterController extends Controller
         ], fn ($value) => $value !== null && $value !== '');
     }
 
-    private function ok($value, string $key) { return response()->json(['status' => 'success', $key => $value]); }
+    private function ok($value, string $key)
+    {
+        return response()->json(['status' => 'success', $key => $value]);
+    }
 
     private function claimAfterReply($conversation, int $userId): void
     {
@@ -793,7 +803,10 @@ class SocialCenterController extends Controller
             ]);
     }
 
-    private function perPage(Request $request, int $default = 20): int { return min(max((int) $request->input('per_page', $default), 1), 100); }
+    private function perPage(Request $request, int $default = 20): int
+    {
+        return min(max((int) $request->input('per_page', $default), 1), 100);
+    }
 
     private function erpWhatsAppPhone(string $digits): string
     {
@@ -834,6 +847,7 @@ class SocialCenterController extends Controller
                 ->whereNotNull('customer_id')
                 ->orWhereNotNull('supplier_id')),
             'needs_reply' => $this->applyNeedsReplyFilter($query),
+            'reply_overdue' => $this->applyReplyOverdueFilter($query),
             'assigned_me' => $query->where('assigned_admin_id', $userId),
             default => null,
         };
@@ -850,6 +864,51 @@ class SocialCenterController extends Controller
             "(SELECT MAX(created_at) FROM {$messageTable} WHERE {$messageTable}.{$conversationKey} = {$conversationTable}.id AND direction = ?) > COALESCE((SELECT MAX(created_at) FROM {$messageTable} WHERE {$messageTable}.{$conversationKey} = {$conversationTable}.id AND direction = ?), '1000-01-01')",
             ['inbound', 'outbound']
         );
+    }
+
+    private function applyReplyOverdueFilter($query): void
+    {
+        $model = $query->getModel();
+        $conversationTable = $model->getTable();
+        $messageTable = $model instanceof WhatsAppConversation ? 'whatsapp_messages' : 'social_messages';
+        $conversationKey = $model instanceof WhatsAppConversation ? 'whatsapp_conversation_id' : 'social_conversation_id';
+        $humanCondition = $model instanceof WhatsAppConversation ? ' AND is_automatic = 0' : '';
+        $humanCondition .= " AND status IN ('sent', 'delivered', 'read')";
+
+        $lastInbound = "(SELECT MAX(created_at) FROM {$messageTable} WHERE {$messageTable}.{$conversationKey} = {$conversationTable}.id AND direction = ?)";
+        $lastHumanOutbound = "(SELECT MAX(created_at) FROM {$messageTable} WHERE {$messageTable}.{$conversationKey} = {$conversationTable}.id AND direction = ?{$humanCondition})";
+
+        $query
+            ->whereRaw("{$lastInbound} <= ?", ['inbound', now()->subHours(24)])
+            ->whereRaw("{$lastInbound} > COALESCE({$lastHumanOutbound}, '1000-01-01')", ['inbound', 'outbound']);
+    }
+
+    private function applyConversationSearch($query, string $search, bool $whatsApp): void
+    {
+        if ($search === '') {
+            return;
+        }
+
+        $like = '%'.addcslashes($search, '%_\\').'%';
+        $digits = preg_replace('/\D+/', '', $search) ?? '';
+        $localDigits = preg_replace('/^(?:00)?(?:970|972)/', '', $digits) ?? $digits;
+        $localDigits = ltrim($localDigits, '0');
+        $phoneLike = strlen($localDigits) >= 6 ? '%'.$localDigits.'%' : null;
+
+        $query->where(function ($nested) use ($like, $phoneLike, $whatsApp) {
+            if ($whatsApp) {
+                $nested->where('phone', 'like', $like)
+                    ->when($phoneLike, fn ($phone) => $phone->orWhere('phone', 'like', $phoneLike));
+            } else {
+                $nested->whereHas('contact', fn ($contact) => $contact->where('external_id', 'like', $like));
+            }
+
+            $nested->orWhere('last_message', 'like', $like)
+                ->orWhereHas('contact', fn ($contact) => $contact
+                    ->where('name', 'like', $like)
+                    ->orWhere('external_id', 'like', $like))
+                ->orWhereHas('messages', fn ($messages) => $messages->where('body', 'like', $like));
+        });
     }
 
     private function sendResult(string $channel, array $result)
@@ -952,7 +1011,9 @@ class SocialCenterController extends Controller
     private function publicProductImageUrl(Product $product): ?string
     {
         $image = trim((string) $product->normalImages->first()?->imageUrl);
-        if ($image === '') return null;
+        if ($image === '') {
+            return null;
+        }
         if (str_starts_with($image, 'http://') || str_starts_with($image, 'https://')) {
             return $image;
         }
@@ -1016,10 +1077,12 @@ class SocialCenterController extends Controller
             : $this->serializeSocialConversation($conversation);
     }
 
-    private function needsReply($conversation, string $channel): bool
+    private function replyState($conversation, string $channel): array
     {
         $lastInbound = $conversation->messages()->where('direction', 'inbound')->max('created_at');
-        if (! $lastInbound) return false;
+        if (! $lastInbound) {
+            return ['needs_reply' => false, 'reply_overdue' => false];
+        }
         $lastOutboundQuery = $conversation->messages()
             ->where('direction', 'outbound')
             ->whereIn('status', ['sent', 'delivered', 'read']);
@@ -1027,7 +1090,12 @@ class SocialCenterController extends Controller
             $lastOutboundQuery->where('is_automatic', false);
         }
         $lastOutbound = $lastOutboundQuery->max('created_at');
-        return ! $lastOutbound || \Carbon\Carbon::parse($lastInbound)->gt(\Carbon\Carbon::parse($lastOutbound));
+        $needsReply = ! $lastOutbound || \Carbon\Carbon::parse($lastInbound)->gt(\Carbon\Carbon::parse($lastOutbound));
+
+        return [
+            'needs_reply' => $needsReply,
+            'reply_overdue' => $needsReply && \Carbon\Carbon::parse($lastInbound)->lte(now()->subHours(24)),
+        ];
     }
 
     private function conversationTags(string $channel, int $conversationId): array
@@ -1062,13 +1130,16 @@ class SocialCenterController extends Controller
     private function tagColor(string $name): string
     {
         $palette = ['#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#14b8a6', '#64748b'];
+
         return $palette[abs(crc32($name)) % count($palette)];
     }
 
     private function findOrCreateTagId(string $name): int
     {
         $existing = DB::table('conversation_tags')->where('name', $name)->value('id');
-        if ($existing) return (int) $existing;
+        if ($existing) {
+            return (int) $existing;
+        }
 
         return (int) DB::table('conversation_tags')->insertGetId([
             'name' => $name,
@@ -1080,8 +1151,11 @@ class SocialCenterController extends Controller
 
     private function assignedEmployee($user): ?array
     {
-        if (! $user) return null;
+        if (! $user) {
+            return null;
+        }
         $employee = EmployeeDetail::query()->where('user_id', $user->id)->first(['id', 'user_id', 'job_title']);
+
         return [
             'id' => $employee?->id,
             'user_id' => $user->id,
@@ -1095,6 +1169,7 @@ class SocialCenterController extends Controller
         WhatsAppConversation $conversation
     ): WhatsAppCloudApiService {
         $conversation->loadMissing('whatsappAccount');
+
         return $conversation->whatsappAccount
             ? $service->forAccount($conversation->whatsappAccount)
             : $service;
