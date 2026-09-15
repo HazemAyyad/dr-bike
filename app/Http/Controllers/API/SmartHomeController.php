@@ -79,7 +79,13 @@ class SmartHomeController extends Controller
             ->orderBy('name')
             ->get();
 
-        $unassigned = (string) $request->input('home_id') === 'unassigned';
+        $hasUnassignedDevices = SmartDevice::query()
+            ->where('user_id', $ownerId)
+            ->whereNull('smart_home_id');
+        $this->applyEmployeeDeviceScope($hasUnassignedDevices, $request, 'view');
+        $hasUnassignedDevices = $hasUnassignedDevices->exists();
+        $unassigned = (string) $request->input('home_id') === 'unassigned'
+            || (! $isAdmin && $homes->isEmpty() && $hasUnassignedDevices);
         $home = null;
         if (! $unassigned) {
             $requestedHomeId = $request->integer('home_id');
@@ -131,6 +137,7 @@ class SmartHomeController extends Controller
             'selected_owner_id' => $ownerId,
             'selected_home_id' => $home?->id,
             'unassigned' => $unassigned,
+            'has_unassigned_devices' => $hasUnassignedDevices,
             'owners' => $owners,
             'tuya_user' => [
                 'user_id' => (int) $mapping->user_id,
