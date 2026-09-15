@@ -12,13 +12,20 @@ class SmartDeviceResource extends JsonResource
         $lastStatus = $this->last_status ?? [];
         $primaryPowerDp = $this->primaryPowerDp($lastStatus);
         $isAdmin = $request->user()?->type === 'admin';
-        $permission = null;
+        $permissions = collect();
         if (! $isAdmin && $request->user()?->employee?->id) {
-            $permission = $this->relationLoaded('employeePermissions')
+            $devicePermission = $this->relationLoaded('employeePermissions')
                 ? $this->employeePermissions->first()
                 : $this->employeePermissions()
                     ->where('employee_id', $request->user()->employee->id)
                     ->first();
+            $roomPermission = $this->room?->relationLoaded('employeePermissions')
+                ? $this->room->employeePermissions->first()
+                : $this->room?->employeePermissions()->where('employee_id', $request->user()->employee->id)->first();
+            $homePermission = $this->home?->relationLoaded('employeePermissions')
+                ? $this->home->employeePermissions->first()
+                : $this->home?->employeePermissions()->where('employee_id', $request->user()->employee->id)->first();
+            $permissions = collect([$devicePermission, $roomPermission, $homePermission])->filter();
         }
 
         return [
@@ -47,9 +54,9 @@ class SmartDeviceResource extends JsonResource
             'primary_power_dp' => $primaryPowerDp,
             'power_on' => $primaryPowerDp !== null ? (bool) ($lastStatus[$primaryPowerDp] ?? false) : null,
             'access' => [
-                'can_view' => $isAdmin || (bool) ($permission?->can_view ?? false),
-                'can_control' => $isAdmin || (bool) ($permission?->can_control ?? false),
-                'can_schedule' => $isAdmin || (bool) ($permission?->can_schedule ?? false),
+                'can_view' => $isAdmin || $permissions->contains(fn ($permission) => $permission->can_view),
+                'can_control' => $isAdmin || $permissions->contains(fn ($permission) => $permission->can_control),
+                'can_schedule' => $isAdmin || $permissions->contains(fn ($permission) => $permission->can_schedule),
                 'can_manage' => $isAdmin,
             ],
             'raw_metadata' => $this->when($request->boolean('include_debug'), $this->raw_metadata ?? []),

@@ -37,4 +37,9 @@ class SmartRoom extends Model
     {
         return $this->hasMany(SmartScene::class);
     }
+
+    public function employeePermissions(): HasMany
+    {
+        return $this->hasMany(SmartRoomEmployeePermission::class);
+    }
 }

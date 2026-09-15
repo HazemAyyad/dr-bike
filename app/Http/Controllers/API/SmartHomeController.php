@@ -17,9 +17,11 @@ use App\Models\SmartDeviceActivityLog;
 use App\Models\SmartDeviceEmployeePermission;
 use App\Models\SmartDeviceFunction;
 use App\Models\SmartHome;
+use App\Models\SmartHomeEmployeePermission;
 use App\Models\SmartHomeEventLog;
 use App\Models\SmartHomeTuyaUser;
 use App\Models\SmartRoom;
+use App\Models\SmartRoomEmployeePermission;
 use App\Models\SmartScene;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -57,14 +59,7 @@ class SmartHomeController extends Controller
                 ]);
         }
 
-        $employeeOwnerId = ! $isAdmin && $employeeId
-            ? SmartDevice::query()
-                ->whereHas('employeePermissions', fn (Builder $query) => $query
-                    ->where('employee_id', $employeeId)
-                    ->where('can_view', true))
-                ->orderBy('id')
-                ->value('user_id')
-            : null;
+        $employeeOwnerId = ! $isAdmin && $employeeId ? $this->employeeOwnerId($employeeId) : null;
         $ownerId = $isAdmin
             ? ($request->filled('user_id')
                 ? (int) $request->input('user_id')
@@ -77,9 +72,7 @@ class SmartHomeController extends Controller
         ]);
         $homes = SmartHome::query()
             ->where('user_id', $ownerId)
-            ->when(! $isAdmin, fn (Builder $query) => $query->whereHas('devices.employeePermissions', fn (Builder $query) => $query
-                ->where('employee_id', $employeeId)
-                ->where('can_view', true)))
+            ->when(! $isAdmin, fn (Builder $query) => $this->applyEmployeeHomeScope($query, $employeeId, 'can_view'))
             ->withCount(['rooms', 'devices'])
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)])
             ->orderByDesc('is_default')
@@ -109,9 +102,7 @@ class SmartHomeController extends Controller
         } elseif ($home) {
             $rooms = SmartRoom::query()
                 ->where('smart_home_id', $home->id)
-                ->when(! $isAdmin, fn (Builder $query) => $query->whereHas('devices.employeePermissions', fn (Builder $query) => $query
-                    ->where('employee_id', $employeeId)
-                    ->where('can_view', true)))
+                ->when(! $isAdmin, fn (Builder $query) => $this->applyEmployeeRoomScope($query, $employeeId, 'can_view'))
                 ->withCount('devices')
                 ->orderBy('sort_order')
                 ->orderBy('name')
@@ -163,9 +154,7 @@ class SmartHomeController extends Controller
             ->where('user_id', $userId)
             ->when($request->user()?->type !== 'admin', function (Builder $query) use ($request) {
                 $employeeId = $request->user()?->employee?->id;
-                $query->whereHas('devices.employeePermissions', fn (Builder $query) => $query
-                    ->where('employee_id', $employeeId)
-                    ->where('can_view', true));
+                $this->applyEmployeeHomeScope($query, $employeeId, 'can_view');
             })
             ->withCount(['rooms', 'devices'])
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)])
@@ -877,10 +866,33 @@ class SmartHomeController extends Controller
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
+        $homes = SmartHome::query()
+            ->with(['owner:id,name', 'employeePermissions' => fn ($query) => $query->where('employee_id', $employee->id)])
+            ->orderBy('name')
+            ->get();
+        $rooms = SmartRoom::query()
+            ->with(['home:id,name,user_id', 'home.owner:id,name', 'employeePermissions' => fn ($query) => $query->where('employee_id', $employee->id)])
+            ->orderBy('name')
+            ->get();
 
         return response()->json([
             'status' => 'success',
             'employee' => ['id' => (int) $employee->id, 'name' => $employee->user?->name],
+            'homes' => $homes->map(fn (SmartHome $home) => $this->scopePermissionPayload(
+                $home->id,
+                $home->name,
+                $home->type,
+                $home->owner?->name,
+                $home->employeePermissions->first(),
+            )),
+            'rooms' => $rooms->map(fn (SmartRoom $room) => $this->scopePermissionPayload(
+                $room->id,
+                $room->name,
+                'room',
+                collect([$room->home?->name, $room->home?->owner?->name])->filter()->join(' • '),
+                $room->employeePermissions->first(),
+                $room->smart_home_id,
+            )),
             'devices' => $devices->map(function (SmartDevice $device) {
                 $permission = $device->employeePermissions->first();
 
@@ -902,15 +914,35 @@ class SmartHomeController extends Controller
     {
         $this->ensureAdmin($request);
         $employee = $this->smartHomeEmployeesQuery()->whereKey($employeeId)->firstOrFail();
-        $data = $this->validatePermissionAssignments($request, 'devices', 'smart_device_id');
+        $request->merge([
+            'homes' => $request->input('homes', []),
+            'rooms' => $request->input('rooms', []),
+        ]);
+        $data = [
+            ...$this->validatePermissionAssignments($request, 'devices', 'smart_device_id'),
+            ...$this->validatePermissionAssignments($request, 'homes', 'smart_home_id'),
+            ...$this->validatePermissionAssignments($request, 'rooms', 'smart_room_id'),
+        ];
         $deviceIds = collect($data['devices'])->pluck('smart_device_id')->map(fn ($id) => (int) $id);
         $existingCount = SmartDevice::query()->whereIn('id', $deviceIds)->count();
         abort_unless($existingCount === $deviceIds->count(), 422, 'أحد الأجهزة المحددة غير موجود');
+        $homeIds = collect($data['homes'])->pluck('smart_home_id')->map(fn ($id) => (int) $id);
+        abort_unless(SmartHome::query()->whereIn('id', $homeIds)->count() === $homeIds->count(), 422, 'أحد الأماكن المحددة غير موجود');
+        $roomIds = collect($data['rooms'])->pluck('smart_room_id')->map(fn ($id) => (int) $id);
+        abort_unless(SmartRoom::query()->whereIn('id', $roomIds)->count() === $roomIds->count(), 422, 'إحدى الغرف المحددة غير موجودة');
 
         DB::transaction(function () use ($employee, $data): void {
             $employee->smartDevicePermissions()->delete();
+            $employee->smartHomePermissions()->delete();
+            $employee->smartRoomPermissions()->delete();
             foreach ($data['devices'] as $assignment) {
                 $employee->smartDevicePermissions()->create($this->normalizedAssignment($assignment));
+            }
+            foreach ($data['homes'] as $assignment) {
+                $employee->smartHomePermissions()->create($this->normalizedAssignment($assignment));
+            }
+            foreach ($data['rooms'] as $assignment) {
+                $employee->smartRoomPermissions()->create($this->normalizedAssignment($assignment));
             }
         });
 
@@ -1036,9 +1068,14 @@ class SmartHomeController extends Controller
 
     private function readableHomeQuery(Request $request, int $id): Builder
     {
-        return SmartHome::query()
+        $query = SmartHome::query()
             ->where('user_id', $this->requestedOwnerId($request))
-            ->whereKey($id)
+            ->whereKey($id);
+        if ($request->user()?->type === 'employee') {
+            $this->applyEmployeeHomeScope($query, $request->user()?->employee?->id, 'can_view');
+        }
+
+        return $query
             ->withCount(['rooms', 'devices'])
             ->withCount(['devices as online_devices_count' => fn (Builder $query) => $query->where('online', true)]);
     }
@@ -1050,12 +1087,7 @@ class SmartHomeController extends Controller
         }
 
         if ($request->user()?->type === 'employee') {
-            return (int) (SmartDevice::query()
-                ->whereHas('employeePermissions', fn (Builder $query) => $query
-                    ->where('employee_id', $request->user()?->employee?->id)
-                    ->where('can_view', true))
-                ->orderBy('id')
-                ->value('user_id') ?: $request->user()->id);
+            return (int) ($this->employeeOwnerId((int) $request->user()?->employee?->id) ?: $request->user()->id);
         }
 
         return (int) $request->user()->id;
@@ -1063,10 +1095,14 @@ class SmartHomeController extends Controller
 
     private function readableHome(Request $request, int $id): SmartHome
     {
-        return SmartHome::query()
+        $query = SmartHome::query()
             ->where('user_id', $this->requestedOwnerId($request))
-            ->whereKey($id)
-            ->firstOrFail();
+            ->whereKey($id);
+        if ($request->user()?->type === 'employee') {
+            $this->applyEmployeeHomeScope($query, $request->user()?->employee?->id, 'can_view');
+        }
+
+        return $query->firstOrFail();
     }
 
     private function ownedHome(Request $request, int $id): SmartHome
@@ -1087,10 +1123,14 @@ class SmartHomeController extends Controller
 
     private function readableRoom(Request $request, int $id): SmartRoom
     {
-        return SmartRoom::query()
+        $query = SmartRoom::query()
             ->whereKey($id)
-            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request)))
-            ->firstOrFail();
+            ->whereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request)));
+        if ($request->user()?->type === 'employee') {
+            $this->applyEmployeeRoomScope($query, $request->user()?->employee?->id, 'can_view');
+        }
+
+        return $query->firstOrFail();
     }
 
     private function ownedDevice(Request $request, int $id): SmartDevice
@@ -1123,12 +1163,16 @@ class SmartHomeController extends Controller
 
         $column = $ability === 'schedule' ? 'can_schedule' : ($ability === 'control' ? 'can_control' : 'can_view');
 
-        return SmartDevice::query()
+        $query = SmartDevice::query()
             ->whereKey($id)
-            ->whereHas('employeePermissions', fn (Builder $query) => $query
-                ->where('employee_id', $request->user()?->employee?->id)
-                ->where($column, true))
-            ->firstOrFail();
+            ->where(function (Builder $query) use ($request, $column) {
+                $employeeId = $request->user()?->employee?->id;
+                $query->whereHas('employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                    ->orWhereHas('room.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                    ->orWhereHas('home.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true));
+            });
+
+        return $query->firstOrFail();
     }
 
     private function applyEmployeeDeviceScope(Builder $query, Request $request, string $ability): void
@@ -1138,16 +1182,49 @@ class SmartHomeController extends Controller
         }
 
         $column = $ability === 'schedule' ? 'can_schedule' : ($ability === 'control' ? 'can_control' : 'can_view');
-        $query->whereHas('employeePermissions', fn (Builder $query) => $query
-            ->where('employee_id', $request->user()?->employee?->id)
-            ->where($column, true));
+        $employeeId = $request->user()?->employee?->id;
+        $query->where(function (Builder $query) use ($employeeId, $column) {
+            $query->whereHas('employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                ->orWhereHas('room.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                ->orWhereHas('home.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true));
+        });
     }
 
     private function loadDeviceAccess(Builder $query, Request $request): void
     {
         if ($request->user()?->type === 'employee') {
-            $query->with(['employeePermissions' => fn ($query) => $query->where('employee_id', $request->user()?->employee?->id)]);
+            $employeeId = $request->user()?->employee?->id;
+            $query->with([
+                'employeePermissions' => fn ($query) => $query->where('employee_id', $employeeId),
+                'home.employeePermissions' => fn ($query) => $query->where('employee_id', $employeeId),
+                'room.employeePermissions' => fn ($query) => $query->where('employee_id', $employeeId),
+            ]);
         }
+    }
+
+    private function employeeOwnerId(int $employeeId): ?int
+    {
+        return SmartHomeEmployeePermission::query()->where('employee_id', $employeeId)->where('can_view', true)->join('smart_homes', 'smart_homes.id', '=', 'smart_home_employee_permissions.smart_home_id')->value('smart_homes.user_id')
+            ?? SmartRoomEmployeePermission::query()->where('employee_id', $employeeId)->where('can_view', true)->join('smart_rooms', 'smart_rooms.id', '=', 'smart_room_employee_permissions.smart_room_id')->join('smart_homes', 'smart_homes.id', '=', 'smart_rooms.smart_home_id')->value('smart_homes.user_id')
+            ?? SmartDevice::query()->whereHas('employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where('can_view', true))->value('user_id');
+    }
+
+    private function applyEmployeeHomeScope(Builder $query, ?int $employeeId, string $column): void
+    {
+        $query->where(function (Builder $query) use ($employeeId, $column) {
+            $query->whereHas('employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                ->orWhereHas('rooms.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                ->orWhereHas('devices.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true));
+        });
+    }
+
+    private function applyEmployeeRoomScope(Builder $query, ?int $employeeId, string $column): void
+    {
+        $query->where(function (Builder $query) use ($employeeId, $column) {
+            $query->whereHas('employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                ->orWhereHas('home.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true))
+                ->orWhereHas('devices.employeePermissions', fn (Builder $query) => $query->where('employee_id', $employeeId)->where($column, true));
+        });
     }
 
     private function ensureAdmin(Request $request): void
@@ -1191,6 +1268,20 @@ class SmartHomeController extends Controller
             'employee_id' => (int) $employee->id,
             'name' => $employee->user?->name,
             'phone' => $employee->user?->phone,
+            'can_view' => (bool) ($permission?->can_view ?? false),
+            'can_control' => (bool) ($permission?->can_control ?? false),
+            'can_schedule' => (bool) ($permission?->can_schedule ?? false),
+        ];
+    }
+
+    private function scopePermissionPayload(int $id, string $name, string $type, ?string $subtitle, mixed $permission, ?int $homeId = null): array
+    {
+        return [
+            'id' => $id,
+            'name' => $name,
+            'type' => $type,
+            'subtitle' => $subtitle,
+            'smart_home_id' => $homeId,
             'can_view' => (bool) ($permission?->can_view ?? false),
             'can_control' => (bool) ($permission?->can_control ?? false),
             'can_schedule' => (bool) ($permission?->can_schedule ?? false),

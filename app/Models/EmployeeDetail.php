@@ -116,6 +116,16 @@ class EmployeeDetail extends Model
         return $this->hasMany(SmartDeviceEmployeePermission::class, 'employee_id');
     }
 
+    public function smartHomePermissions()
+    {
+        return $this->hasMany(SmartHomeEmployeePermission::class, 'employee_id');
+    }
+
+    public function smartRoomPermissions()
+    {
+        return $this->hasMany(SmartRoomEmployeePermission::class, 'employee_id');
+    }
+
     public function orders(){
         return $this->hasMany(EmployeeOrder::class,'employee_id');
     }

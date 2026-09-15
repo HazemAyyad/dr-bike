@@ -13,8 +13,11 @@ class SmartHome extends Model
     use HasFactory, SoftDeletes;
 
     public const STATUS_ACTIVE = 'active';
+
     public const STATUS_ARCHIVED = 'archived';
+
     public const TYPE_HOME = 'home';
+
     public const TYPE_COMPANY = 'company';
 
     protected $fillable = [
@@ -55,5 +58,10 @@ class SmartHome extends Model
     public function scenes(): HasMany
     {
         return $this->hasMany(SmartScene::class);
+    }
+
+    public function employeePermissions(): HasMany
+    {
+        return $this->hasMany(SmartHomeEmployeePermission::class);
     }
 }
