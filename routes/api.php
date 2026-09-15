@@ -594,10 +594,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
           ->middleware('check.permission:Sales Settings');
       Route::put('/sales/settings', [SalesSettingsController::class, 'update'])
           ->middleware('check.permission:Sales Settings');
-      Route::get('/sales/delivery-companies', [DeliveryCompaniesController::class, 'index'])
-          ->middleware('check.permission:Sales Settings');
-      Route::post('/sales/delivery-companies', [DeliveryCompaniesController::class, 'store'])
-          ->middleware('check.permission:Sales Settings');
+      Route::get('/sales/delivery-companies', [DeliveryCompaniesController::class, 'index']);
+      Route::post('/sales/delivery-companies', [DeliveryCompaniesController::class, 'store']);
       Route::put('/sales/delivery-companies/{deliveryCompany}', [DeliveryCompaniesController::class, 'update'])
           ->middleware('check.permission:Sales Settings');
       Route::get('/sales/delivery-company-accounts', [DeliveryCompanyAccountsController::class, 'index'])
