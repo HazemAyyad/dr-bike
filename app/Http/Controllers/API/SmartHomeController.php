@@ -862,12 +862,18 @@ class SmartHomeController extends Controller
     public function employeeDevices(Request $request, int $employeeId)
     {
         $this->ensureAdmin($request);
-        $employee = $this->smartHomeEmployeesQuery()->whereKey($employeeId)->firstOrFail();
+        $employee = EmployeeDetail::query()
+            ->where('is_suspended', false)
+            ->with('user:id,name')
+            ->whereKey($employeeId)
+            ->firstOrFail();
         $devices = SmartDevice::query()
-            ->with(['room:id,name', 'employeePermissions' => fn ($query) => $query->where('employee_id', $employee->id)])
-            ->where(fn (Builder $query) => $query
-                ->where('user_id', $this->requestedOwnerId($request))
-                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))))
+            ->with([
+                'home:id,name,user_id',
+                'owner:id,name',
+                'room:id,name',
+                'employeePermissions' => fn ($query) => $query->where('employee_id', $employee->id),
+            ])
             ->orderBy('display_order')
             ->orderBy('name')
             ->get();
@@ -881,6 +887,8 @@ class SmartHomeController extends Controller
                 return [
                     'id' => (int) $device->id,
                     'name' => $device->name,
+                    'home_name' => $device->home?->name,
+                    'owner_name' => $device->owner?->name,
                     'room_name' => $device->room?->name,
                     'can_view' => (bool) ($permission?->can_view ?? false),
                     'can_control' => (bool) ($permission?->can_control ?? false),
@@ -896,21 +904,11 @@ class SmartHomeController extends Controller
         $employee = $this->smartHomeEmployeesQuery()->whereKey($employeeId)->firstOrFail();
         $data = $this->validatePermissionAssignments($request, 'devices', 'smart_device_id');
         $deviceIds = collect($data['devices'])->pluck('smart_device_id')->map(fn ($id) => (int) $id);
-        $ownedCount = SmartDevice::query()
-            ->whereIn('id', $deviceIds)
-            ->where(fn (Builder $query) => $query
-                ->where('user_id', $this->requestedOwnerId($request))
-                ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $this->requestedOwnerId($request))))
-            ->count();
-        abort_unless($ownedCount === $deviceIds->count(), 422, 'أحد الأجهزة لا يتبع الحساب المحدد');
+        $existingCount = SmartDevice::query()->whereIn('id', $deviceIds)->count();
+        abort_unless($existingCount === $deviceIds->count(), 422, 'أحد الأجهزة المحددة غير موجود');
 
-        $ownerId = $this->requestedOwnerId($request);
-        DB::transaction(function () use ($employee, $data, $ownerId): void {
-            $employee->smartDevicePermissions()
-                ->whereHas('device', fn (Builder $query) => $query
-                    ->where('user_id', $ownerId)
-                    ->orWhereHas('home', fn (Builder $query) => $query->where('user_id', $ownerId)))
-                ->delete();
+        DB::transaction(function () use ($employee, $data): void {
+            $employee->smartDevicePermissions()->delete();
             foreach ($data['devices'] as $assignment) {
                 $employee->smartDevicePermissions()->create($this->normalizedAssignment($assignment));
             }
