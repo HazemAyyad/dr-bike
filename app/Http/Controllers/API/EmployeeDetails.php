@@ -171,7 +171,8 @@ class EmployeeDetails extends Controller
         return match ($nameEn) {
             'Sales', 'Sales Daily Close Review', 'Sales Cancel Closed Review',
             'Sales Settings', 'Delivery Company Accounts' => 'sales',
-            'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings', 'Product Quick Edit' => 'stock',
+            'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings', 'Product Quick Edit',
+            'View Inventory Cost', 'Adjust Stock', 'Adjust Inventory Cost', 'Manage Purchases' => 'stock',
             'Employees Section', 'Employee Impersonation',
             'Employees View', 'Employees Create', 'Employees Edit Basic', 'Employees Delete',
             'Employees Password Manage',
@@ -188,7 +189,7 @@ class EmployeeDetails extends Controller
             'Checks Incoming Create', 'Checks Outgoing Create' => 'checks',
             'Maintenance', 'Maintenance Services Settings' => 'maintenance',
             'Messages Section', 'Social Center WhatsApp', 'Social Center Facebook',
-            'Social Center Instagram', 'Technical Support' => 'communication',
+            'Social Center Instagram', 'Technical Support', 'Notification Center Manage' => 'communication',
             'Smart Home' => 'smart_home',
             default => 'general',
         };
