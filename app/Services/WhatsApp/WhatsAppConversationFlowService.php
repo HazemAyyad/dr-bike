@@ -30,6 +30,22 @@ class WhatsAppConversationFlowService
         $text = trim((string) data_get($incoming, 'text.body', ''));
         $command = mb_strtolower($text);
 
+        if ($replyId === 'flow:no_reply:yes') {
+            $conversation->update(['status' => 'open']);
+            $this->addTag($conversation, 'عاد للتواصل', '#ef4444');
+            $api->sendText($conversation->phone, 'شكرًا لتأكيدك. تم تنبيه الموظف المسؤول وسيتابع معك قريبًا.', null, null, true);
+
+            return true;
+        }
+
+        if ($replyId === 'flow:no_reply:no') {
+            $this->reset($conversation);
+            $conversation->update(['status' => 'closed']);
+            $api->sendText($conversation->phone, 'شكرًا لتواصلك مع د. بايك. يمكنك مراسلتنا في أي وقت تحتاج فيه إلى المساعدة.', null, null, true);
+
+            return true;
+        }
+
         if ($replyId === 'flow:home' || in_array($command, ['القائمة', 'القائمة الرئيسية', 'الرئيسية'], true)) {
             $this->reset($conversation);
             $api->sendWelcomeMenu($conversation->phone);

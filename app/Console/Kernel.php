@@ -28,6 +28,12 @@ class Kernel extends ConsoleKernel
             ->everyFiveMinutes()
             ->timezone('Asia/Hebron');
 
+        $schedule->command('whatsapp:send-no-reply-reminders')
+            ->everyFiveMinutes()
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping()
+            ->onOneServer();
+
         $schedule->command('notes:send-due-reminders')
             ->everyMinute()
             ->timezone('Asia/Hebron')
