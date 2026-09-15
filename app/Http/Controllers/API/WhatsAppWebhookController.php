@@ -51,8 +51,9 @@ class WhatsAppWebhookController extends Controller
                         }
                         $message = $this->saveIncoming($accountService, $incoming, $names->get((string) data_get($incoming, 'from')), $account);
                         if ($message) {
-                            $notificationService->notify($message);
                             $handledByFlow = $flowService->handle($accountService, $message, $incoming);
+                            $message->load('conversation');
+                            $notificationService->notify($message);
                             if (! $handledByFlow) {
                                 $this->sendWelcomeIfNeeded($accountService, $message);
                             }

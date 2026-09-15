@@ -28,6 +28,32 @@ class WhatsAppConversationFlowServiceTest extends TestCase
         DB::setDefaultConnection('sqlite');
         DB::reconnect('sqlite');
 
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->softDeletes();
+            $table->timestamps();
+        });
+        Schema::create('employee_details', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->boolean('is_suspended')->default(false);
+            $table->softDeletes();
+            $table->timestamps();
+        });
+        Schema::create('permissions', function (Blueprint $table) {
+            $table->id();
+            $table->string('name')->nullable();
+            $table->string('name_en');
+            $table->timestamps();
+        });
+        Schema::create('employee_permissions', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('employee_id');
+            $table->unsignedBigInteger('permission_id');
+            $table->timestamps();
+        });
+
         Schema::create('whatsapp_contacts', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
@@ -267,7 +293,16 @@ class WhatsAppConversationFlowServiceTest extends TestCase
             'automation_data' => ['item_type' => 'بطارية'],
         ]);
         $api = Mockery::mock(WhatsAppCloudApiService::class);
-        $api->shouldReceive('sendText')->once()->andReturn([]);
+        $api->shouldReceive('sendText')
+            ->once()
+            ->with(
+                '970599000000',
+                'تم تحويل محادثتك إلى فريق خدمة الزبائن، وسيقوم أحد الموظفين بالرد عليك قريبًا.',
+                null,
+                null,
+                true
+            )
+            ->andReturn([]);
 
         $handled = app(WhatsAppConversationFlowService::class)->handle(
             $api,
@@ -301,6 +336,40 @@ class WhatsAppConversationFlowServiceTest extends TestCase
         $this->assertSame($conversation->id, $resolved->id);
         $this->assertSame('pending', $resolved->status);
         $this->assertSame(1, WhatsAppConversation::query()->count());
+    }
+
+    public function test_handoff_assigns_the_least_loaded_whatsapp_employee(): void
+    {
+        $permissionId = DB::table('permissions')->insertGetId([
+            'name' => 'واتساب',
+            'name_en' => 'Social Center WhatsApp',
+        ]);
+        foreach ([10 => 'الموظف الأول', 20 => 'الموظف الثاني'] as $userId => $name) {
+            DB::table('users')->insert(['id' => $userId, 'name' => $name]);
+            $employeeId = DB::table('employee_details')->insertGetId([
+                'user_id' => $userId,
+                'is_suspended' => false,
+            ]);
+            DB::table('employee_permissions')->insert([
+                'employee_id' => $employeeId,
+                'permission_id' => $permissionId,
+            ]);
+        }
+        $this->conversation(['assigned_admin_id' => 10]);
+        $conversation = $this->conversation();
+        $api = Mockery::mock(WhatsAppCloudApiService::class);
+        $api->shouldReceive('sendText')->once()->andReturn([]);
+
+        app(WhatsAppConversationFlowService::class)->handle(
+            $api,
+            $this->message($conversation, 'التواصل مع موظف'),
+            [
+                'type' => 'interactive',
+                'interactive' => ['list_reply' => ['id' => 'employee']],
+            ]
+        );
+
+        $this->assertSame(20, $conversation->fresh()->assigned_admin_id);
     }
 
     private function conversation(array $values = []): WhatsAppConversation

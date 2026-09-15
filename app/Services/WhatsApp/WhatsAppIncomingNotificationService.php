@@ -49,11 +49,14 @@ class WhatsAppIncomingNotificationService
             Log::warning('WhatsApp admin notification failed', ['error' => $e->getMessage()]);
         }
 
-        EmployeeDetail::query()
+        $employees = EmployeeDetail::query()
             ->with('user')
             ->whereHas('permissions.permission', fn ($query) => $query->where('name_en', self::PERMISSION))
-            ->whereHas('user')
-            ->each(function (EmployeeDetail $employee) use ($title, $body, $data, $message) {
+            ->whereHas('user');
+        if ($message->conversation?->assigned_admin_id) {
+            $employees->where('user_id', $message->conversation->assigned_admin_id);
+        }
+        $employees->each(function (EmployeeDetail $employee) use ($title, $body, $data, $message) {
                 try {
                     $this->employeeNotifications->create(
                         $employee,

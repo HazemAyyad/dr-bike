@@ -3,6 +3,7 @@
 namespace App\Services\WhatsApp;
 
 use App\Models\Category;
+use App\Models\EmployeeDetail;
 use App\Models\MetaCatalogProductSync;
 use App\Models\Product;
 use App\Models\WhatsAppConversation;
@@ -450,10 +451,54 @@ class WhatsAppConversationFlowService
     private function handoff(WhatsAppCloudApiService $api, WhatsAppConversation $conversation, string $tag): bool
     {
         $this->addTag($conversation, $tag, '#ef4444');
-        $this->finish($conversation, ['handoff' => true]);
-        $api->sendText($conversation->phone, 'تم تحويل المحادثة إلى أحد الموظفين، وسيتم الرد عليك قريبًا.', null, null, true);
+        $employee = $this->leastLoadedWhatsAppEmployee();
+        $this->finish($conversation, [
+            'handoff' => true,
+            'assigned_employee_id' => $employee?->id,
+            'assigned_user_id' => $employee?->user_id,
+        ]);
+        if ($employee) {
+            $conversation->update(['assigned_admin_id' => $employee->user_id]);
+            $conversation->refresh();
+        }
+        $api->sendText(
+            $conversation->phone,
+            'تم تحويل محادثتك إلى فريق خدمة الزبائن، وسيقوم أحد الموظفين بالرد عليك قريبًا.',
+            null,
+            null,
+            true
+        );
 
         return true;
+    }
+
+    private function leastLoadedWhatsAppEmployee(): ?EmployeeDetail
+    {
+        if (! Schema::hasTable('employee_details')
+            || ! Schema::hasTable('employee_permissions')
+            || ! Schema::hasTable('permissions')) {
+            return null;
+        }
+
+        return EmployeeDetail::query()
+            ->whereNotNull('user_id')
+            ->where(function ($query) {
+                $query->whereNull('is_suspended')->orWhere('is_suspended', false);
+            })
+            ->whereHas('user')
+            ->whereHas('permissions.permission', fn ($query) => $query
+                ->where('name_en', WhatsAppIncomingNotificationService::PERMISSION))
+            ->select('employee_details.*')
+            ->selectSub(
+                WhatsAppConversation::query()
+                    ->selectRaw('count(*)')
+                    ->whereColumn('assigned_admin_id', 'employee_details.user_id')
+                    ->whereIn('status', ['open', 'pending']),
+                'open_whatsapp_conversations_count'
+            )
+            ->orderBy('open_whatsapp_conversations_count')
+            ->orderBy('id')
+            ->first();
     }
 
     private function sendProductCategories(
