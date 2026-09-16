@@ -190,7 +190,10 @@ class SalesOrderService
 
         if ($includeStatus && ! empty($filters['status'])) {
             if ($filters['status'] === 'all') {
-                $query->where('status', '!=', SalesOrderStatus::Archived->value);
+                $query->whereNotIn('status', [
+                    SalesOrderStatus::Archived->value,
+                    SalesOrderStatus::Canceled->value,
+                ]);
             } elseif ($filters['status'] === 'settlement') {
                 $query->where('status', SalesOrderStatus::Delivered->value)
                     ->where(function ($balanceQuery) {
