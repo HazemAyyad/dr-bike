@@ -1166,9 +1166,14 @@ class SalesOrderService
             $subtotal = (float) $order->subtotal;
         }
 
-        $deliveryFee = isset($data['customer_delivery_fee'])
+        // Partial updates such as choosing a delivery address must never
+        // reprice an existing order from the selected city's default fee.
+        // The customer delivery fee changes only when explicitly submitted.
+        $deliveryFee = array_key_exists('customer_delivery_fee', $data)
             ? (float) $data['customer_delivery_fee']
-            : $this->resolveDeliveryFee($data, $order);
+            : ($order
+                ? (float) $order->customer_delivery_fee
+                : $this->resolveDeliveryFee($data));
 
         $calculatedTotal = max(0, round($subtotal + $deliveryFee - $discount, 2));
         // The payable total has one authoritative formula. Any negotiated
