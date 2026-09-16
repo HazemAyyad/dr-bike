@@ -26,7 +26,11 @@ class EmployeeData extends Controller
             $employee = EmployeeDetail::where('id', $user->employee->id)
             ->with('user:id,name')
             ->with(['permissions.permission:id,name'])
-            ->first(['id', 'user_id', 'number_of_work_hours', 'hour_work_price', 'debts', 'salary', 'weekly_days_off']);
+            ->first(['id', 'user_id', 'number_of_work_hours', 'hour_work_price', 'debts', 'salary', 'weekly_days_off', 'employee_img']);
+
+            $employee['employee_image'] = ! empty($employee->employee_img)
+                ? 'public/EmployeeImages/'.$employee->employee_img[0]
+                : null;
 
             $employee->permissions = $employee->permissions->map(function ($perm) {
                     return [

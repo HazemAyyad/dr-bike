@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\File;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -80,13 +81,35 @@ class Profile extends Controller
                 'sub_phone' => ['nullable', 'string', 'regex:/^\+?[0-9]{12}$/'],
                 'city' => $cityRule,
                 'address' => 'nullable|string|max:500',
+                'employee_img' => ['nullable', 'image', 'max:5120'],
             ]);
 
+            unset($data['employee_img']);
             $user->update($data);
+
+            $employeeImage = null;
+            if ($user->type === 'employee' && $user->employee && $request->hasFile('employee_img')) {
+                $directory = public_path('EmployeeImages');
+                File::ensureDirectoryExists($directory);
+                $file = $request->file('employee_img');
+                $fileName = uniqid('employee_'.$user->employee->id.'_', true).'.'.$file->getClientOriginalExtension();
+                $file->move($directory, $fileName);
+
+                foreach ($user->employee->employee_img ?? [] as $oldImage) {
+                    $oldPath = $directory.DIRECTORY_SEPARATOR.basename((string) $oldImage);
+                    if (File::isFile($oldPath)) {
+                        File::delete($oldPath);
+                    }
+                }
+
+                $user->employee->update(['employee_img' => [$fileName]]);
+                $employeeImage = 'public/EmployeeImages/'.$fileName;
+            }
 
             return response()->json([
                 'status' => 'success',
                 'message' => __('messages.profile_updated'),
+                'employee_image' => $employeeImage,
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
