@@ -17,8 +17,12 @@ class SmartSceneController extends Controller
 {
     public function index(Request $request)
     {
-        $query = SmartScene::query()
+        $query = SmartScene::withTrashed()
             ->where('user_id', $this->ownerId($request))
+            ->where(fn (Builder $query) => $query
+                ->whereNull('deleted_at')
+                ->orWhereNotNull('tuya_scene_id'))
+            ->orderByRaw('deleted_at IS NOT NULL DESC')
             ->orderByDesc('enabled')
             ->orderBy('name');
 
@@ -83,7 +87,13 @@ class SmartSceneController extends Controller
 
     public function destroy(Request $request, int $id)
     {
-        $this->scene($request, $id)->delete();
+        $scene = SmartScene::withTrashed()
+            ->where('user_id', $this->ownerId($request))
+            ->findOrFail($id);
+
+        // The client deletes the Tuya scene first. Keeping a soft-deleted row
+        // would make a successfully deleted cloud scene look orphaned again.
+        $scene->forceDelete();
 
         return response()->json(['status' => 'success', 'message' => 'تم حذف المشهد']);
     }

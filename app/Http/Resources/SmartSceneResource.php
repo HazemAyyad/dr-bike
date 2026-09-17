@@ -26,6 +26,8 @@ class SmartSceneResource extends JsonResource
             'show_in_room' => (bool) $this->show_in_room,
             'last_executed_at' => $this->last_executed_at?->toISOString(),
             'last_execution_status' => $this->last_execution_status,
+            'pending_cloud_cleanup' => $this->trashed() && filled($this->tuya_scene_id),
+            'deleted_at' => $this->deleted_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
         ];

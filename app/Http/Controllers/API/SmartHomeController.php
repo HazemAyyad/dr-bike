@@ -114,10 +114,14 @@ class SmartHomeController extends Controller
                 ->orderBy('name')
                 ->get();
             $devicesQuery->where('smart_home_id', $home->id);
-            $scenes = SmartScene::query()
+            $scenes = SmartScene::withTrashed()
                 ->where('user_id', $ownerId)
                 ->where('smart_home_id', $home->id)
+                ->where(fn (Builder $query) => $query
+                    ->whereNull('deleted_at')
+                    ->orWhereNotNull('tuya_scene_id'))
                 ->when(! $isAdmin, fn (Builder $query) => $query->whereRaw('1 = 0'))
+                ->orderByRaw('deleted_at IS NOT NULL DESC')
                 ->orderByDesc('enabled')
                 ->orderBy('name')
                 ->get();
