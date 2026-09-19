@@ -6,10 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Services\EmployeeActivityLogger;
 use App\Services\SalesOrderFulfillmentService;
 use App\Services\SalesOrderPartialService;
+use App\Services\SalesOrderPurgeService;
 use App\Services\SalesOrderService;
 use App\Services\SalesOrderStatementService;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class SalesOrdersController extends Controller
@@ -19,6 +22,7 @@ class SalesOrdersController extends Controller
         protected SalesOrderFulfillmentService $fulfillmentService,
         protected SalesOrderPartialService $partialService,
         protected SalesOrderStatementService $statementService,
+        protected SalesOrderPurgeService $purgeService,
     ) {}
 
     public function index(Request $request)
@@ -688,6 +692,194 @@ class SalesOrdersController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function purgePreview(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'before' => 'required|date_format:Y-m-d',
+                'max_order_id' => 'nullable|integer|min:1',
+                'mode' => 'nullable|string|in:with_effects,orders_only_reset',
+            ]);
+            $cutoff = Carbon::createFromFormat('Y-m-d', $data['before'])
+                ->endOfDay();
+
+            return response()->json([
+                'status' => 'success',
+                'data' => $this->purgeService->preview(
+                    $cutoff,
+                    isset($data['max_order_id']) ? (int) $data['max_order_id'] : null,
+                    $data['mode'] ?? SalesOrderPurgeService::MODE_WITH_EFFECTS,
+                ),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
+            \Log::error('sales_orders.purge_preview_failed', [
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => config('app.debug') ? $e->getMessage() : __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function purge(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'before' => 'required|date_format:Y-m-d',
+                'max_order_id' => 'required|integer|min:1',
+                'password' => 'required|string',
+                'confirmation' => 'required|string|in:DELETE',
+                'mode' => 'required|string|in:with_effects,orders_only_reset',
+            ]);
+            $user = $request->user();
+            if (! $user || $user->type !== 'admin') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+            if (! Hash::check($data['password'], $user->password)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'كلمة مرور الأدمن غير صحيحة',
+                ], 200);
+            }
+
+            $cutoff = Carbon::createFromFormat('Y-m-d', $data['before'])
+                ->endOfDay();
+            $result = $this->purgeService->purge(
+                $user,
+                $cutoff,
+                (int) $data['max_order_id'],
+                $data['mode'],
+            );
+
+            try {
+                Logs::createLog(
+                    'تنظيف الطلبيات التجريبية',
+                    'قام الأدمن '.$user->name.' بحذف '.((int) $result['orders_count']).' طلبية حتى '.$data['before'],
+                    'sales'
+                );
+            } catch (\Throwable $logException) {
+                \Log::warning('sales_orders.purge_audit_log_failed', [
+                    'admin_id' => $user->id,
+                    'orders_count' => (int) $result['orders_count'],
+                    'message' => $logException->getMessage(),
+                ]);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم تنظيف '.((int) $result['orders_count']).' طلبية تجريبية بنجاح',
+                'data' => $result,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?? __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
+            \Log::error('sales_orders.purge_failed', [
+                'message' => $e->getMessage(),
+                'before' => $request->input('before'),
+                'max_order_id' => $request->input('max_order_id'),
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => config('app.debug') ? $e->getMessage() : __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function purgeBackups()
+    {
+        try {
+            return response()->json([
+                'status' => 'success',
+                'data' => $this->purgeService->backups(),
+            ], 200);
+        } catch (\Throwable $e) {
+            \Log::error('sales_orders.purge_backups_failed', [
+                'message' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => config('app.debug') ? $e->getMessage() : __('messages.something_wrong'),
+            ], 200);
+        }
+    }
+
+    public function restorePurgeBackup(Request $request, int $backupId)
+    {
+        try {
+            $data = $request->validate([
+                'password' => 'required|string',
+                'confirmation' => 'required|string|in:RESTORE',
+            ]);
+            $user = $request->user();
+            if (! $user || $user->type !== 'admin') {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.unauthorized'),
+                ], 200);
+            }
+            if (! Hash::check($data['password'], $user->password)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'كلمة مرور الأدمن غير صحيحة',
+                ], 200);
+            }
+
+            $backup = $this->purgeService->restoreBackup($user, $backupId);
+            try {
+                Logs::createLog(
+                    'استرجاع نسخة طلبيات محذوفة',
+                    'قام الأدمن '.$user->name.' باسترجاع '.((int) $backup['orders_count']).' طلبية من النسخة '.$backup['reference'],
+                    'sales'
+                );
+            } catch (\Throwable $logException) {
+                \Log::warning('sales_orders.purge_restore_audit_log_failed', [
+                    'admin_id' => $user->id,
+                    'backup_id' => $backupId,
+                    'message' => $logException->getMessage(),
+                ]);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم استرجاع '.((int) $backup['orders_count']).' طلبية بنجاح',
+                'data' => $backup,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => collect($e->errors())->flatten()->first() ?? __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
+            \Log::error('sales_orders.purge_restore_failed', [
+                'message' => $e->getMessage(),
+                'backup_id' => $backupId,
+            ]);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => config('app.debug') ? $e->getMessage() : __('messages.something_wrong'),
             ], 200);
         }
     }

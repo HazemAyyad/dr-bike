@@ -669,6 +669,15 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/sales/order/mark-stuck', [SalesOrdersController::class, 'markStuck']);
       Route::post('/sales/order/resolve-stuck', [SalesOrdersController::class, 'resolveStuck']);
       Route::post('/sales/orders/bulk-status', [SalesOrdersController::class, 'bulkStatus']);
+      Route::get('/sales/orders/purge/preview', [SalesOrdersController::class, 'purgePreview'])
+          ->middleware('admin');
+      Route::post('/sales/orders/purge', [SalesOrdersController::class, 'purge'])
+          ->middleware('admin');
+      Route::get('/sales/orders/purge/backups', [SalesOrdersController::class, 'purgeBackups'])
+          ->middleware('admin');
+      Route::post('/sales/orders/purge/backups/{backupId}/restore', [SalesOrdersController::class, 'restorePurgeBackup'])
+          ->whereNumber('backupId')
+          ->middleware('admin');
       Route::get('/sales/order/statement', [SalesOrdersController::class, 'statement']);
       Route::get('/partner/addresses', [PartnerAddressesController::class, 'index']);
       Route::post('/partner/address', [PartnerAddressesController::class, 'store']);
