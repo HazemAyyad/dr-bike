@@ -1410,8 +1410,13 @@ class SmartHomeController extends Controller
             return;
         }
 
+        $functions = $device->relationLoaded('functions')
+            ? $device->functions
+            : $device->functions()->get();
+        $functionsByCode = $functions->keyBy('code');
+
         foreach ($this->primaryFunctionDefinitions($metadata) as $definition) {
-            $function = SmartDeviceFunction::firstOrNew([
+            $function = $functionsByCode->get($definition['code']) ?? new SmartDeviceFunction([
                 'smart_device_id' => $device->id,
                 'code' => $definition['code'],
             ]);
@@ -1425,7 +1430,17 @@ class SmartHomeController extends Controller
             if (! $function->exists || $function->isDirty()) {
                 $function->save();
             }
+
+            if (! $functionsByCode->has($definition['code'])) {
+                $functions->push($function);
+                $functionsByCode->put($definition['code'], $function);
+            }
         }
+
+        $device->setRelation('functions', $functions->sortBy([
+            ['sort_order', 'asc'],
+            ['id', 'asc'],
+        ])->values());
     }
 
     private function primaryFunctionDefinitions(array $metadata): array

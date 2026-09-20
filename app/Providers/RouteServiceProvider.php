@@ -45,12 +45,29 @@ class RouteServiceProvider extends ServiceProvider
     protected function configureRateLimiting(): void
     {
         RateLimiter::for('api', function (Request $request) {
+            if ($this->isEmployeePeriodicApi($request)) {
+                $identity = $request->user()?->getAuthIdentifier();
+                if ($identity === null && filled($request->bearerToken())) {
+                    $identity = hash('sha256', (string) $request->bearerToken());
+                }
+
+                return Limit::perMinute(12)->by('employee-periodic:'.($identity ?: $request->ip()));
+            }
+
             if ($this->isHighTrafficAdminApi($request)) {
                 return Limit::perMinute(240)->by($request->user()?->id ?: $request->ip());
             }
 
             return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
         });
+    }
+
+    private function isEmployeePeriodicApi(Request $request): bool
+    {
+        return $request->is(
+            'api/employee/wifi-presence',
+            'api/employee/my/attendance/history'
+        );
     }
 
     private function isHighTrafficAdminApi(Request $request): bool
