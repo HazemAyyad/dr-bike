@@ -6,19 +6,24 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\AssetResource;
 use App\Models\Asset;
 use App\Models\AssetLog;
+use App\Models\Box;
+use App\Services\ExpenseBoxAccessService;
 use App\Services\MonthlyAssetDepreciationService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
-use Illuminate\Validation\ValidationException;
-use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class Assets extends Controller
 {
     private $assetMediaPath = 'AssetsMedia';
-    private function fileStorage(Request $request){
+
+    private function fileStorage(Request $request)
+    {
         $files = [];
         if ($request->hasFile('media')) {
             foreach ($request->file('media') as $file) {
@@ -35,64 +40,79 @@ class Assets extends Controller
         return $files;
     }
 
-    public function store(Request $request){
-        try{
+    public function store(Request $request, ExpenseBoxAccessService $access)
+    {
+        try {
             $data = $request->validate([
-                'name'=>'required|string|max:255',
-                'price'=>'required|numeric|min:1',
+                'name' => 'required|string|max:255',
+                'price' => 'required|numeric|min:1',
                 'notes' => 'nullable|string',
                 'depreciation_rate' => 'required|numeric|min:0',
                 'months_number' => 'required|numeric|min:1',
+                'box_id' => 'required|integer|exists:boxes,id',
+                'acquired_at' => 'nullable|date',
                 'media' => 'nullable|array|max:15',
                 'media.*' => 'file|max:30720|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
 
             ]);
 
+            if (! $access->canUse($request->user(), (int) $data['box_id'])) {
+                throw ValidationException::withMessages(['box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.']]);
+            }
+
             $files = $this->fileStorage($request);
             $data['media'] = $files;
             $data['depreciation_price'] = $request->price;
-            $data['depreciation_rate'] = $request->depreciation_rate/100;
+            $data['depreciation_rate'] = $request->depreciation_rate / 100;
+            $data['acquired_at'] = $data['acquired_at'] ?? now()->toDateString();
 
-           $asset = Asset::create($data);
-            Logs::createLog('اضافة أصل جديد','تم اضافة الأصل'.' '.$request->name.' '.'بسعر'.
-
-            ' '.$request->price.' '.'ونسبة هلاك بقيمة'.' '. $request->depreciation_rate
-            
-            ,'assets');
-            AssetLog::create([
-                'asset_id'=> $asset->id,
-                'total' => $asset->depreciation_price??0,
-                'type' =>'create',
-            ]);
+            DB::transaction(function () use ($data, $request) {
+                $box = Box::query()->lockForUpdate()->findOrFail($data['box_id']);
+                if ((float) $box->total + 0.0001 < (float) $data['price']) {
+                    throw ValidationException::withMessages(['price' => [__('messages.box_out_of_money')]]);
+                }
+                $data['currency'] = $box->currency ?: 'شيكل';
+                $box->update(['total' => (float) $box->total - (float) $data['price']]);
+                $asset = Asset::create($data);
+                BoxLogs::createBoxLog($box, 'شراء أصل: '.$asset->name, 'minus', (float) $asset->price, $asset->notes);
+                Logs::createLog(
+                    'اضافة أصل جديد',
+                    'تم اضافة الأصل '.$request->name.' بسعر '.$request->price.' ونسبة هلاك بقيمة '.$request->depreciation_rate,
+                    'assets'
+                );
+                AssetLog::create([
+                    'asset_id' => $asset->id,
+                    'total' => $asset->depreciation_price ?? 0,
+                    'type' => 'create',
+                ]);
+            });
 
             return response()->json([
-                'status'=>'success',
+                'status' => 'success',
                 'message' => __('messages.asset_created'),
-            ],200);
-        }
-
-        catch (ValidationException $e) {
+            ], 200);
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
-                'errors' => $e->errors()
+                'errors' => $e->errors(),
             ], 200);
         } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.create_data_error')
+                'message' => __('messages.create_data_error'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
 
-
-    public function getAssets(Request $request){
-        try{
+    public function getAssets(Request $request)
+    {
+        try {
             $filters = $request->validate([
                 'search' => 'nullable|string|max:255',
                 'from' => 'nullable|date',
@@ -104,8 +124,7 @@ class Assets extends Controller
             $period = now()->format('Y-m');
             $query = Asset::query()
                 ->withExists([
-                    'logs as depreciated_this_month' => fn (Builder $log) =>
-                        $log->where('depreciation_period', $period),
+                    'logs as depreciated_this_month' => fn (Builder $log) => $log->where('depreciation_period', $period),
                 ])
                 ->when($filters['search'] ?? null, fn (Builder $q, string $search) => $q->where('name', 'like', "%{$search}%"))
                 ->when($filters['from'] ?? null, fn (Builder $q, string $from) => $q->whereDate('created_at', '>=', $from))
@@ -120,7 +139,7 @@ class Assets extends Controller
             $formatted = AssetResource::collection($assets);
 
             return response()->json([
-                'status'=>'success',
+                'status' => 'success',
                 'assets' => $formatted,
                 'total_assets_original_prices' => round((float) (clone $query)->sum('price'), 2),
                 'total_assets_depreciate_prices' => round((float) (clone $query)->sum('depreciation_price'), 2),
@@ -128,28 +147,27 @@ class Assets extends Controller
                 'average_depreciation_rate' => round((float) (clone $query)->avg('depreciation_rate'), 4),
                 'assets_count' => $assets->count(),
                 'depreciation_period' => $period,
-            ],200);
-        }
-
-        catch (QueryException $e) {
+            ], 200);
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
 
-
-    public function depreciateOneAsset(Request $request, MonthlyAssetDepreciationService $service){
-        try{
-            $request->validate(['asset_id'=>'required|integer|exists:assets,id']);
+    public function depreciateOneAsset(Request $request, MonthlyAssetDepreciationService $service)
+    {
+        try {
+            $request->validate(['asset_id' => 'required|integer|exists:assets,id']);
 
             $result = $service->run(now()->format('Y-m'), $request->user()?->id, (int) $request->asset_id);
+
             return response()->json([
                 'status' => $result['processed'] > 0 ? 'success' : 'error',
                 'message' => $result['processed'] > 0
@@ -159,54 +177,50 @@ class Assets extends Controller
                 'result' => $result,
             ]);
 
-
-        }
-   
-        catch (ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
             ], 200);
-         }
-
-        catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
-    public function depreciatAllAssets(Request $request, MonthlyAssetDepreciationService $service){
-        try{
+
+    public function depreciatAllAssets(Request $request, MonthlyAssetDepreciationService $service)
+    {
+        try {
             $result = $service->run(now()->format('Y-m'), $request->user()?->id);
 
             return response()->json([
-                'status'=>'success',
+                'status' => 'success',
                 'message' => __('messages.asset_depreciated'),
                 'depreciation_period' => now()->format('Y-m'),
                 'result' => $result,
-            ],200);
+            ], 200);
 
-     } catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
@@ -217,8 +231,7 @@ class Assets extends Controller
             $period = now()->format('Y-m');
             $assets = Asset::query()
                 ->withExists([
-                    'logs as depreciated_this_month' => fn ($query) =>
-                        $query->where('depreciation_period', $period),
+                    'logs as depreciated_this_month' => fn ($query) => $query->where('depreciation_period', $period),
                 ])
                 ->orderBy('name')
                 ->get();
@@ -266,6 +279,7 @@ class Assets extends Controller
             ]);
         } catch (\Throwable $e) {
             report($e);
+
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
@@ -273,74 +287,73 @@ class Assets extends Controller
         }
     }
 
-    public function showAsset(Request $request){
-        try{
+    public function showAsset(Request $request)
+    {
+        try {
 
-
-            $request->validate(['asset_id'=>'required|integer|exists:assets,id']);
+            $request->validate(['asset_id' => 'required|integer|exists:assets,id']);
 
             $asset = Asset::findOrFail($request->asset_id);
 
-            $formattedMedia  = [];
-            if($asset->media && count($asset->media) > 0){
-                foreach($asset->media as $file){
-                        $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
-                        if (in_array($extension, ['jpg', 'jpeg', 'png','gif','tiff','webp','avif','svg+xml'])) {
-                            $formattedMedia[] = 'public/'.$this->assetMediaPath.'/images/'.$file;
-                        }
-                        else{
-                            $formattedMedia[] = 'public/'.$this->assetMediaPath.'/videos/'.$file;
+            $formattedMedia = [];
+            if ($asset->media && count($asset->media) > 0) {
+                foreach ($asset->media as $file) {
+                    $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+                    if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'tiff', 'webp', 'avif', 'svg+xml'])) {
+                        $formattedMedia[] = 'public/'.$this->assetMediaPath.'/images/'.$file;
+                    } else {
+                        $formattedMedia[] = 'public/'.$this->assetMediaPath.'/videos/'.$file;
 
-                        }
+                    }
+                }
+
             }
+            $asset['media'] = $formattedMedia;
+            $asset->makeHidden(['depreciation_price']);
+            $period = now()->format('Y-m');
+            $asset['depreciated_this_month'] = $asset->logs()
+                ->where('depreciation_period', $period)
+                ->exists();
+            $asset['depreciation_period'] = $period;
+            $asset['logs'] = $asset->logs()
+                ->get(['total', 'created_at', 'type', 'depreciation_period']);
 
-        }
-        $asset['media'] = $formattedMedia;
-        $asset->makeHidden(['depreciation_price']);
-        $period = now()->format('Y-m');
-        $asset['depreciated_this_month'] = $asset->logs()
-            ->where('depreciation_period', $period)
-            ->exists();
-        $asset['depreciation_period'] = $period;
-        $asset['logs'] = $asset->logs()
-            ->get(['total','created_at','type','depreciation_period']);
-        return response()->json([
-            'status' =>'success',
-            'asset' => $asset,
-        ],200);
+            return response()->json([
+                'status' => 'success',
+                'asset' => $asset,
+            ], 200);
 
-      }  catch (ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
             ], 200);
-         } catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
 
-
-    public function editAsset(Request $request){
-        try{
+    public function editAsset(Request $request, ExpenseBoxAccessService $access)
+    {
+        try {
 
             $data = $request->validate([
                 'asset_id' => 'required|integer|exists:assets,id',
-                'name'=>'required|string|max:255',
-                'price'=>'required|numeric|min:1',
+                'name' => 'required|string|max:255',
+                'price' => 'required|numeric|min:1',
                 'notes' => 'nullable|string',
                 'depreciation_rate' => 'required|numeric|min:0',
                 'media' => 'nullable|array|max:15',
@@ -355,9 +368,10 @@ class Assets extends Controller
                         if ($value instanceof \Illuminate\Http\UploadedFile) {
                             if ($value->getSize() > 30 * 1024 * 1024) {
                                 $fail("The {$attribute} may not be greater than 30 MB.");
+
                                 return;
                             }
-                             $allowed = ['image/jpeg','image/png','image/jpg','image/gif','image/tiff','image/webp','image/avif','image/svg+xml','video/mp4','video/quicktime','video/x-msvideo','video/x-ms-wmv','video/x-matroska','video/webm'];
+                            $allowed = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif', 'image/tiff', 'image/webp', 'image/avif', 'image/svg+xml', 'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/x-ms-wmv', 'video/x-matroska', 'video/webm'];
                             if (! in_array($value->getMimeType(), $allowed)) {
                                 $fail("The {$attribute} must be a valid image or video file.");
                             }
@@ -368,149 +382,207 @@ class Assets extends Controller
                 ],
             ]);
 
-            $asset = Asset::findOrFail($data['asset_id']);
+            $data['depreciation_rate'] = $request->depreciation_rate / 100;
             $updatedData = Arr::except($data, ['asset_id', 'media']);
-            $data['depreciation_rate'] = $request->depreciation_rate/100;
-            $asset->update($updatedData);
+            $asset = DB::transaction(function () use ($data, $updatedData, $request, $access) {
+                $asset = Asset::query()->lockForUpdate()->findOrFail($data['asset_id']);
+                $newPrice = round((float) $updatedData['price'], 4);
+                $oldPrice = round((float) $asset->price, 4);
+                $difference = round($newPrice - $oldPrice, 4);
+
+                if (abs($difference) > 0.0001) {
+                    if ($asset->logs()->where('type', '!=', 'create')->exists()) {
+                        throw ValidationException::withMessages([
+                            'price' => ['لا يمكن تغيير تكلفة أصل بدأ إهلاكه. استخدم قيد محاسبي مستقل.'],
+                        ]);
+                    }
+                    if (! $asset->box_id) {
+                        throw ValidationException::withMessages([
+                            'price' => ['لا يمكن تغيير تكلفة أصل افتتاحي بلا صندوق ممول. استخدم قيد محاسبي مستقل.'],
+                        ]);
+                    }
+                    if (! $access->canUse($request->user(), (int) $asset->box_id)) {
+                        throw ValidationException::withMessages([
+                            'price' => ['الصندوق الممول للأصل غير مسموح للموظف أو أن جلسته اليومية مغلقة.'],
+                        ]);
+                    }
+
+                    $box = Box::query()->lockForUpdate()->findOrFail($asset->box_id);
+                    if ($difference > 0 && (float) $box->total + 0.0001 < $difference) {
+                        throw ValidationException::withMessages(['price' => [__('messages.box_out_of_money')]]);
+                    }
+                    $box->update(['total' => (float) $box->total - $difference]);
+                    BoxLogs::createBoxLog(
+                        $box,
+                        'تعديل تكلفة أصل: '.$asset->name,
+                        $difference > 0 ? 'minus' : 'plus',
+                        abs($difference),
+                        'فرق تعديل تكلفة الأصل'
+                    );
+                    $updatedData['depreciation_price'] = $newPrice;
+                    $asset->logs()->where('type', 'create')->update(['total' => $newPrice]);
+                }
+
+                $asset->update($updatedData);
+
+                return $asset->fresh();
+            }, 3);
             $finalMedia = $this->handleMediaUpdate($request, 'media', $this->assetMediaPath, $asset->media);
-            $asset->update(['media' => $finalMedia]);   
+            $asset->update(['media' => $finalMedia]);
 
             return response()->json([
-                'status'=>'success',
-                'message'=> __('messages.asset_updated'),
-            ],200);
-}
-
-       catch (ModelNotFoundException $e) {
+                'status' => 'success',
+                'message' => __('messages.asset_updated'),
+            ], 200);
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
             ], 200);
-         } catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
-
-
 
     // for assets edit media
     public static function handleMediaUpdate(Request $request, string $field, string $basePath, array $currentFiles = []): array
-{
-      $keepFiles = [];
-      $newFiles = [];
+    {
+        $keepFiles = [];
+        $newFiles = [];
 
-    // 1. Keep existing files if user sends full path string
-    $requestItems = $request->input($field, []);
-    foreach ($requestItems as $item) {
-        if (is_string($item)) {
-            $filename = basename($item); // extract filename if it's a URL
-            if (in_array($filename, $currentFiles)) {
-                $keepFiles[] = $filename;
-            }      
-          }
-    }
-
-    // 2. Handle new uploads
-    if ($request->hasFile($field)) {
-        foreach ($request->file($field) as $file) {
-            if ($file instanceof \Illuminate\Http\UploadedFile) {
-                $mimeType = $file->getMimeType();
-                $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
-
-                $extension = strtolower($file->getClientOriginalExtension());
-                $fileName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                $file->move(public_path($basePath.'/'.$folder), $fileName);
-
-                // Store full relative path (same style as you send in request)
-                $newFiles[] = $fileName;
+        // 1. Keep existing files if user sends full path string
+        $requestItems = $request->input($field, []);
+        foreach ($requestItems as $item) {
+            if (is_string($item)) {
+                $filename = basename($item); // extract filename if it's a URL
+                if (in_array($filename, $currentFiles)) {
+                    $keepFiles[] = $filename;
+                }
             }
         }
-    }
 
-    // 3. Delete removed files
-    $removedFiles = array_diff($currentFiles, $keepFiles);
-    foreach ($removedFiles as $oldFile) {
-        $filePath = public_path(str_replace('public/', '', $oldFile));
-        if (file_exists($filePath)) {
-            unlink($filePath);
+        // 2. Handle new uploads
+        if ($request->hasFile($field)) {
+            foreach ($request->file($field) as $file) {
+                if ($file instanceof \Illuminate\Http\UploadedFile) {
+                    $mimeType = $file->getMimeType();
+                    $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
+
+                    $extension = strtolower($file->getClientOriginalExtension());
+                    $fileName = (string) Str::uuid().($extension ? '.'.$extension : '');
+                    $file->move(public_path($basePath.'/'.$folder), $fileName);
+
+                    // Store full relative path (same style as you send in request)
+                    $newFiles[] = $fileName;
+                }
+            }
         }
+
+        // 3. Delete removed files
+        $removedFiles = array_diff($currentFiles, $keepFiles);
+        foreach ($removedFiles as $oldFile) {
+            $filePath = public_path(str_replace('public/', '', $oldFile));
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+        }
+
+        // 4. Return merged array
+        return array_merge($keepFiles, $newFiles);
+
     }
 
-    // 4. Return merged array
-    return array_merge($keepFiles, $newFiles);
-
-}
-
-    public function deleteAsset(Request $request){
-        try{
+    public function deleteAsset(Request $request, ExpenseBoxAccessService $access)
+    {
+        try {
             $request->validate(['asset_id' => 'required|integer|exists:assets,id',
-        ]);
+            ]);
 
-            $asset = Asset::findOrFail($request->asset_id);
-            if($asset->media && is_array($asset->media) && count($asset->media)>0){
-                foreach($asset->media as $file){
-                        $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
-                        $type = '';
-                        if (in_array($extension, ['jpg', 'jpeg', 'png','gif','tiff','webp','avif','svg+xml'])) {
-                            $type= 'images';
-                        }
-                        else{
-                            $type = 'videos';
-                        }
+            $files = DB::transaction(function () use ($request, $access) {
+                $asset = Asset::query()->lockForUpdate()->findOrFail($request->asset_id);
+                if ($asset->logs()->where('type', '!=', 'create')->exists()) {
+                    throw ValidationException::withMessages([
+                        'asset_id' => ['لا يمكن حذف أصل بدأ إهلاكه. استخدم قيد استبعاد أصل حتى يبقى الأثر المحاسبي محفوظًا.'],
+                    ]);
+                }
+                if (! $asset->box_id) {
+                    throw ValidationException::withMessages([
+                        'asset_id' => ['لا يمكن حذف أصل افتتاحي بلا مصدر دفع. استخدم قيد استبعاد أصل حتى لا يتغير رصيد الصندوق خطأً.'],
+                    ]);
+                }
+                if (! $access->canUse($request->user(), (int) $asset->box_id)) {
+                    throw ValidationException::withMessages([
+                        'asset_id' => ['الصندوق الممول للأصل غير مسموح للموظف أو أن جلسته اليومية مغلقة.'],
+                    ]);
+                }
 
-                        $filePath = public_path($this->assetMediaPath . '/' . $type.'/'.$file);
-                        if (file_exists($filePath)) {
-                            unlink($filePath);
-        
-                        }
+                $box = Box::query()->lockForUpdate()->findOrFail($asset->box_id);
+                $box->update(['total' => (float) $box->total + (float) $asset->price]);
+                BoxLogs::createBoxLog($box, 'عكس شراء أصل: '.$asset->name, 'plus', (float) $asset->price, 'حذف أصل قبل بدء إهلاكه');
+                $files = is_array($asset->media) ? $asset->media : [];
+                $asset->delete();
+
+                return $files;
+            });
+
+            if (count($files) > 0) {
+                foreach ($files as $file) {
+                    $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+                    $type = '';
+                    if (in_array($extension, ['jpg', 'jpeg', 'png', 'gif', 'tiff', 'webp', 'avif', 'svg+xml'])) {
+                        $type = 'images';
+                    } else {
+                        $type = 'videos';
+                    }
+
+                    $filePath = public_path($this->assetMediaPath.'/'.$type.'/'.$file);
+                    if (file_exists($filePath)) {
+                        unlink($filePath);
+
+                    }
                 }
             }
 
-            $asset->delete();
             return response()->json([
-                'status'=>'success',
-                'message'=>__('messages.asset_deleted'),
-            ],200);
+                'status' => 'success',
+                'message' => __('messages.asset_deleted'),
+            ], 200);
 
-        }
-
-        catch (ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
-        }
-        catch (ValidationException $e) {
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
             ], 200);
-         } catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
-
-
 }

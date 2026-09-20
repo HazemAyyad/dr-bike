@@ -38,13 +38,13 @@ class ReportsAnalyticsTest extends TestCase
         $this->assertSame(350.0, $method->invoke(new Reports, 1000.0, 500.0, 150.0));
     }
 
-    public function test_line_cost_prefers_fifo_snapshot_and_falls_back_to_purchase_price(): void
+    public function test_line_cost_uses_only_authoritative_fifo_snapshot(): void
     {
         $method = new ReflectionMethod(Reports::class, 'analyticsLineCost');
         $method->setAccessible(true);
 
-        $this->assertSame(75.0, $method->invoke(new Reports, 75.0, 3.0, 20.0));
-        $this->assertSame(60.0, $method->invoke(new Reports, null, 3.0, 20.0));
+        $this->assertSame(75.0, $method->invoke(new Reports, 75.0));
+        $this->assertSame(0.0, $method->invoke(new Reports, null));
     }
 
     public function test_net_sales_does_not_subtract_discount_already_in_stored_total(): void

@@ -59,4 +59,9 @@ class ReturnModel extends Model
             ->latest('id');
     }
 
+    public function refundBox()
+    {
+        return $this->belongsTo(Box::class, 'refund_box_id');
+    }
+
 }

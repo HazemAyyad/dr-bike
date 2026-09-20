@@ -20,6 +20,7 @@ class SalesOrderPartialService
         protected SalesOrderStockService $stockService,
         protected SalesOrderFulfillmentService $fulfillmentService,
         protected SalesOrderNotificationService $notifications,
+        protected DebtLedgerService $debtLedger,
     ) {}
 
     /**
@@ -208,7 +209,7 @@ class SalesOrderPartialService
             /** @var SalesOrderItem $item */
             $item = $order->items->firstWhere('id', $itemId);
 
-            $this->stockService->restorePartialDispatched($item, $qty, (int) $user->id);
+            $cost = $this->stockService->restorePartialDispatched($item, $qty, (int) $user->id);
             $lineTotal = round($qty * (float) $item->unit_price, 2);
             $returnTotal += $lineTotal;
 
@@ -225,14 +226,25 @@ class SalesOrderPartialService
                 'product_name' => $item->product_name,
                 'quantity' => $qty,
                 'unit_price' => (float) $item->unit_price,
+                'inventory_unit_cost' => $cost['unit_cost'] ?? null,
+                'inventory_total_cost' => $cost['total_cost'] ?? null,
                 'line_total' => $lineTotal,
             ];
         }
 
+        $carrierCredit = min($returnTotal, max(0, (float) $order->carrier_receivable_balance));
+        $customerCredit = round(max(0, $returnTotal - $carrierCredit), 2);
+
         $salesReturn = SalesReturn::create([
             'sales_order_id' => $order->id,
             'return_type' => 'partial',
+            'customer_id' => $order->customer_id,
+            'status' => 'building',
             'total_amount' => $returnTotal,
+            'currency' => 'شيكل',
+            'cash_refund_amount' => 0,
+            'credit_amount' => $customerCredit,
+            'carrier_credit_amount' => $carrierCredit,
             'note' => $note,
             'created_by' => $user->id,
         ]);
@@ -241,12 +253,34 @@ class SalesOrderPartialService
             SalesReturnItem::create(array_merge($row, ['sales_return_id' => $salesReturn->id]));
         }
 
+        $salesReturn->update(['status' => 'completed', 'completed_at' => now()]);
+
+        if ($customerCredit > 0 && $order->customer_id) {
+            $transaction = $this->debtLedger->createTransaction([
+                'customer_id' => $order->customer_id,
+                'seller_id' => null,
+                'type' => 'taken',
+                'amount' => $customerCredit,
+                'currency' => 'شيكل',
+                'transaction_date' => now()->toDateString(),
+                'source' => 'sales_return',
+                'source_id' => $salesReturn->id,
+                'note' => 'رصيد مرتجع جزئي للطلبية '.($order->serial_number ?? '#'.$order->id),
+            ], (int) $user->id, false);
+            $salesReturn->update(['debt_transaction_id' => $transaction->id]);
+        }
+
         $from = $order->status;
         $newStatus = $this->isFullyReturnedFromCarrier($order->fresh(['items']))
             ? SalesOrderStatus::Returned->value
             : SalesOrderStatus::PartialReturn->value;
 
-        $order->update(['status' => $newStatus, 'updated_by' => $user->id]);
+        $order->update([
+            'status' => $newStatus,
+            'customer_debt_balance' => round(max(0, (float) $order->customer_debt_balance - $customerCredit), 2),
+            'carrier_receivable_balance' => round(max(0, (float) $order->carrier_receivable_balance - $carrierCredit), 2),
+            'updated_by' => $user->id,
+        ]);
         $this->logStatus($order, $from, $newStatus, $note ?? 'راجع جزئي', $user->id);
 
         if ($notify) {

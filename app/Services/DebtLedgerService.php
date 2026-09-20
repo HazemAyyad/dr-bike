@@ -4,8 +4,8 @@ namespace App\Services;
 
 use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
-use App\Models\Customer;
 use App\Models\ContactCategoryAssignment;
+use App\Models\Customer;
 use App\Models\DebtTransaction;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
@@ -36,9 +36,7 @@ class DebtLedgerService
 
     public const CURRENCIES = ['شيكل', 'دولار', 'دينار'];
 
-    public function __construct(private ?DebtLedgerActivityLogger $activityLogger = null)
-    {
-    }
+    public function __construct(private ?DebtLedgerActivityLogger $activityLogger = null) {}
 
     private function activity(): DebtLedgerActivityLogger
     {
@@ -193,7 +191,7 @@ class DebtLedgerService
 
     public function validatePerson(?int $customerId, ?int $sellerId): ?string
     {
-        if (!$customerId && !$sellerId) {
+        if (! $customerId && ! $sellerId) {
             return __('messages.must_select_customer_or_seller');
         }
 
@@ -491,7 +489,7 @@ class DebtLedgerService
         $sellerTotals = $this->summarizeLedgerBalancesForPeople(false);
 
         return [
-            // مجاميع أرصدة العملاء/الموردين (موجب = لنا، سالب = علينا) — شيكل للعرض الرئيسي
+            // في دفتر الديون: أعطيت تخفض الرصيد (لنا)، وأخذت ترفعه (علينا).
             'total_taken_customers' => $customerTotals['receivable'],
             'total_given_customers' => $customerTotals['payable'],
             'balance_customers' => $customerTotals['receivable'] - $customerTotals['payable'],
@@ -551,11 +549,9 @@ class DebtLedgerService
                 }
 
                 $hasBalance = true;
-                if ($balance > 0) {
-                    $byCurrency[$currency]['receivable'] += $balance;
-                } else {
-                    $byCurrency[$currency]['payable'] += abs($balance);
-                }
+                $classified = self::classifySignedBalance($balance);
+                $byCurrency[$currency]['receivable'] += $classified['receivable'];
+                $byCurrency[$currency]['payable'] += $classified['payable'];
             }
 
             if ($hasBalance) {
@@ -571,6 +567,42 @@ class DebtLedgerService
             'count' => $count,
             'by_currency' => $byCurrency,
         ];
+    }
+
+    /** @return array{receivable:float,payable:float} */
+    public static function classifySignedBalance(float $balance): array
+    {
+        return [
+            'receivable' => $balance < -0.0001 ? abs($balance) : 0.0,
+            'payable' => $balance > 0.0001 ? $balance : 0.0,
+        ];
+    }
+
+    /** @return array{receivable_debit:float,receivable_credit:float,payable_debit:float,payable_credit:float} */
+    public static function allocateSignedMovement(float $balanceBefore, float $amount, string $type): array
+    {
+        $amount = round(max(0, $amount), 4);
+        $allocation = [
+            'receivable_debit' => 0.0,
+            'receivable_credit' => 0.0,
+            'payable_debit' => 0.0,
+            'payable_credit' => 0.0,
+        ];
+
+        if ($type === 'taken') {
+            $allocation['receivable_credit'] = round(min($amount, max(-$balanceBefore, 0)), 4);
+            $allocation['payable_credit'] = round($amount - $allocation['receivable_credit'], 4);
+
+            return $allocation;
+        }
+        if ($type === 'given') {
+            $allocation['payable_debit'] = round(min($amount, max($balanceBefore, 0)), 4);
+            $allocation['receivable_debit'] = round($amount - $allocation['payable_debit'], 4);
+
+            return $allocation;
+        }
+
+        throw new \InvalidArgumentException('Unsupported debt movement type: '.$type);
     }
 
     public function balanceBefore(DebtTransaction $transaction): float
@@ -611,7 +643,7 @@ class DebtLedgerService
             'balance_after' => (float) $transaction->balance_after,
             'note' => $transaction->note,
             'receipt_images' => $transaction->receipt_images
-                ? collect($transaction->receipt_images)->map(fn ($img) => 'public/DebtsReceipts/' . $img)->values()->all()
+                ? collect($transaction->receipt_images)->map(fn ($img) => 'public/DebtsReceipts/'.$img)->values()->all()
                 : [],
             'transaction_date' => $transaction->transaction_date?->format('Y-m-d'),
             'created_at' => $transaction->created_at?->format('Y-m-d H:i:s'),
@@ -1238,7 +1270,7 @@ class DebtLedgerService
             $box->update(['total' => $box->total + $transaction->amount]);
             BoxLogs::createBoxLog(
                 $box,
-                'دفتر الديون - أخذت من ' . $personName,
+                'دفتر الديون - أخذت من '.$personName,
                 'add',
                 $transaction->amount,
                 $transaction->note
@@ -1247,7 +1279,7 @@ class DebtLedgerService
             $box->update(['total' => $box->total - $transaction->amount]);
             BoxLogs::createBoxLog(
                 $box,
-                'دفتر الديون - أعطيت لـ ' . $personName,
+                'دفتر الديون - أعطيت لـ '.$personName,
                 'minus',
                 $transaction->amount,
                 $transaction->note
@@ -1405,8 +1437,8 @@ class DebtLedgerService
 
         if ($search) {
             $peopleQuery->where(function ($q) use ($search) {
-                $q->where('name', 'like', '%' . $search . '%')
-                    ->orWhere('phone', 'like', '%' . $search . '%');
+                $q->where('name', 'like', '%'.$search.'%')
+                    ->orWhere('phone', 'like', '%'.$search.'%');
             });
         }
 
@@ -1692,7 +1724,7 @@ class DebtLedgerService
             $box->update(['total' => $box->total - $amount]);
             BoxLogs::createBoxLog(
                 $box,
-                'دفتر الديون - تعديل (إلغاء أخذت) ' . $personName,
+                'دفتر الديون - تعديل (إلغاء أخذت) '.$personName,
                 'minus',
                 $amount,
                 $transaction->note
@@ -1701,7 +1733,7 @@ class DebtLedgerService
             $box->update(['total' => $box->total + $amount]);
             BoxLogs::createBoxLog(
                 $box,
-                'دفتر الديون - تعديل (إلغاء أعطيت) ' . $personName,
+                'دفتر الديون - تعديل (إلغاء أعطيت) '.$personName,
                 'add',
                 $amount,
                 $transaction->note

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\AccountingAccount;
+use App\Models\AccountingJournalEntry;
+use App\Models\AssetLog;
 use App\Models\Bill;
 use App\Models\Box;
 use App\Models\BoxLog;
@@ -14,17 +17,21 @@ use App\Models\EmployeeTask;
 use App\Models\Expense;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
-use App\Models\InventoryCostLayer;
+use App\Models\InventoryCostAllocation;
 use App\Models\Log;
 use App\Models\OutgoingCheck;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\ProfitSale;
 use App\Models\Project;
+use App\Models\ProjectExpense;
 use App\Models\ReturnModel;
+use App\Models\SalesOrder;
 use App\Models\SalesReturn;
 use App\Models\SalesReturnItem;
 use App\Models\Seller;
+use App\Services\AccountingReportService;
+use App\Services\BoxReportService;
 use App\Services\DebtLedgerService;
 use App\Services\ProductStockService;
 use App\Support\ApiImageUrl;
@@ -40,6 +47,8 @@ use Illuminate\Validation\ValidationException;
 
 class Reports extends Controller
 {
+    public function __construct(private ?AccountingReportService $accountingReports = null) {}
+
     public function mainData()
     {
         try {
@@ -425,8 +434,8 @@ class Reports extends Controller
 
         $debtBalances = collect($this->ledgerBalanceIndex())->values();
         $debts = collect(DebtLedgerService::CURRENCIES)->flatMap(function (string $currency) use ($debtBalances) {
-            $forUs = $debtBalances->sum(fn (array $balances) => max((float) ($balances[$currency]['balance'] ?? 0), 0));
-            $onUs = $debtBalances->sum(fn (array $balances) => abs(min((float) ($balances[$currency]['balance'] ?? 0), 0)));
+            $forUs = $debtBalances->sum(fn (array $balances) => abs(min((float) ($balances[$currency]['balance'] ?? 0), 0)));
+            $onUs = $debtBalances->sum(fn (array $balances) => max((float) ($balances[$currency]['balance'] ?? 0), 0));
             if (abs($forUs) < 0.0001 && abs($onUs) < 0.0001) {
                 return [];
             }
@@ -570,6 +579,15 @@ class Reports extends Controller
                     ['key' => 'completed', 'label' => 'منجزة', 'value' => $current['tasks_completed']],
                     ['key' => 'pending', 'label' => 'غير منجزة', 'value' => $current['tasks_pending']],
                 ],
+                'quality' => [
+                    'cost_coverage_percent' => $current['cost_coverage_percent'],
+                    'costed_sales_count' => $current['costed_sales_count'],
+                    'uncosted_sales_count' => $current['uncosted_sales_count'],
+                    'profit_complete' => $current['uncosted_sales_count'] === 0,
+                    'message' => $current['uncosted_sales_count'] === 0
+                        ? 'تكلفة المبيعات مكتملة للفترة.'
+                        : 'صافي الربح غير نهائي لوجود فواتير بلا تكلفة مخزون مكتملة.',
+                ],
             ],
         ]);
     }
@@ -582,13 +600,13 @@ class Reports extends Controller
         // informational and never subtract them from the stored net total again.
         $grossSales = (float) $sales->sum('total');
         $discounts = (float) $sales->sum('discount');
-        $directReturns = SalesReturn::query()->where('return_type', 'direct')->where('status', 'completed')->whereBetween('completed_at', [$from, $to]);
+        $directReturns = SalesReturn::query()->whereIn('return_type', ['direct', 'partial'])->where('status', 'completed')->whereBetween('completed_at', [$from, $to]);
         $directReturnTotal = (float) (clone $directReturns)->sum('total_amount');
         $directReturnCost = (float) SalesReturnItem::query()->whereHas('salesReturn', fn ($query) => $query
-            ->where('return_type', 'direct')->where('status', 'completed')->whereBetween('completed_at', [$from, $to]))->sum('inventory_total_cost');
+            ->whereIn('return_type', ['direct', 'partial'])->where('status', 'completed')->whereBetween('completed_at', [$from, $to]))->sum('inventory_total_cost');
         $netSales = $this->financialNetSales($grossSales, $directReturnTotal);
         $cost = (float) $sales->sum('cost') - $directReturnCost;
-        $expenses = (float) Expense::whereBetween('created_at', [$from, $to])->sum('price');
+        $expenses = $this->periodExpenseTotal($from, $to);
         $purchases = (float) Bill::where('status', 'finished')->whereBetween('created_at', [$from, $to])->sum('total');
         $purchaseReturns = (float) ReturnModel::whereIn('status', ['confirmed', 'delivered', 'settled'])
             ->whereBetween('created_at', [$from, $to])->sum('total');
@@ -606,12 +624,17 @@ class Reports extends Controller
 
         return [
             'net_sales' => $netSales,
-            'cash_collected' => (float) $sales->sum('paid') - $cashRefunds,
+            'cash_collected' => $this->periodCashCollected($from, $to, (float) $sales->sum('paid') - $cashRefunds),
             'expenses' => $expenses,
             'purchases' => $purchases,
             'purchase_returns' => $purchaseReturns,
             'cost_of_sales' => $cost,
             'net_profit' => $this->analyticsNetProfit($netSales, $cost, $expenses),
+            'costed_sales_count' => $sales->where('cost_complete', true)->count(),
+            'uncosted_sales_count' => $sales->where('cost_complete', false)->count(),
+            'cost_coverage_percent' => $sales->isEmpty()
+                ? 100.0
+                : round(($sales->where('cost_complete', true)->count() / $sales->count()) * 100, 1),
             'payment_cash' => $paymentMix['cash'],
             'payment_debt' => $paymentMix['debt'],
             'payment_mixed' => $paymentMix['mixed'],
@@ -649,7 +672,7 @@ class Reports extends Controller
 
         $returns = SalesReturn::query()
             ->with('items:id,sales_return_id,inventory_total_cost')
-            ->where('return_type', 'direct')
+            ->whereIn('return_type', ['direct', 'partial'])
             ->where('status', 'completed')
             ->whereBetween('completed_at', [$from, $to])
             ->get(['id', 'completed_at', 'total_amount']);
@@ -666,12 +689,12 @@ class Reports extends Controller
             $points->put($key, $row);
         }
 
-        foreach (Expense::whereBetween('created_at', [$from, $to])->get(['created_at', 'price']) as $expense) {
-            $key = $expense->created_at->format($format);
+        foreach ($this->periodExpenses($from, $to) as $expense) {
+            $key = $expense['date']->format($format);
             if ($points->has($key)) {
                 $row = $points[$key];
-                $row['expenses'] += (float) $expense->price;
-                $row['profit'] -= (float) $expense->price;
+                $row['expenses'] += (float) $expense['amount'];
+                $row['profit'] -= (float) $expense['amount'];
                 $points->put($key, $row);
             }
         }
@@ -727,10 +750,16 @@ class Reports extends Controller
                 })
                 ->get($lineColumns)
                 ->groupBy(fn (InstantSale $line) => (int) ($line->parent_id ?: $line->id))
-                ->map(fn ($lines) => (float) $lines->sum(fn (InstantSale $line) => $this->analyticsLineCost(
-                    $instantHasCost ? $line->inventory_total_cost : null
-                )
-                ));
+                ->map(function ($lines) use ($instantHasCost) {
+                    $costed = $lines->filter(fn (InstantSale $line) => ! $instantHasCost || $line->inventory_total_cost !== null)->count();
+
+                    return [
+                        'cost' => (float) $lines->sum(fn (InstantSale $line) => $this->analyticsLineCost(
+                            $instantHasCost ? $line->inventory_total_cost : null
+                        )),
+                        'complete' => $instantHasCost && $costed === $lines->count(),
+                    ];
+                });
         }
 
         $instant = $instantRows->map(fn (InstantSale $sale) => [
@@ -741,7 +770,8 @@ class Reports extends Controller
             'paid' => $instantHasPaid
                 ? (float) ($sale->payment_box_value ?? 0)
                 : (float) ($sale->total_cost ?? 0),
-            'cost' => (float) ($costByInvoice[(int) $sale->id] ?? 0),
+            'cost' => (float) ($costByInvoice[(int) $sale->id]['cost'] ?? 0),
+            'cost_complete' => (bool) ($costByInvoice[(int) $sale->id]['complete'] ?? false),
         ]);
 
         if (! Schema::hasTable('profit_sales')) {
@@ -770,6 +800,7 @@ class Reports extends Controller
                 ? (float) ($sale->payment_box_value ?? 0)
                 : (float) ($sale->total_cost ?? 0),
             'cost' => 0.0,
+            'cost_complete' => true,
         ]);
 
         return $instant->concat($profit)->values();
@@ -826,6 +857,13 @@ class Reports extends Controller
                         'income',
                         'sales_returns',
                         'product_profit',
+                        'trial_balance',
+                        'general_ledger',
+                        'balance_sheet',
+                        'cash_flow',
+                        'aging_receivable',
+                        'aging_payable',
+                        'journal',
                     ]),
                 ],
                 'period' => [
@@ -839,6 +877,8 @@ class Reports extends Controller
                 'person_id' => ['nullable', 'integer'],
                 'box_id' => ['nullable', 'integer', 'exists:boxes,id'],
                 'check_direction' => ['nullable', 'string', Rule::in(['all', 'incoming', 'outgoing'])],
+                'currency' => ['nullable', 'string', Rule::in(['شيكل', 'دولار', 'دينار', 'NIS', 'ILS', 'USD', 'JOD'])],
+                'account_id' => ['nullable', 'integer', 'exists:accounting_accounts,id'],
             ]);
 
             [$from, $to, $period] = $this->resolveReportPeriod($request);
@@ -848,9 +888,11 @@ class Reports extends Controller
                 'checks' => $this->checksReportPayload($request, $from, $to),
                 'boxes' => $this->boxesReportPayload($request, $from, $to),
                 'inventory' => $this->inventoryReportPayload($from, $to),
-                'income' => $this->incomeReportPayload($from, $to),
+                'income' => $this->incomeReportPayload($from, $to, $request),
                 'sales_returns' => $this->salesReturnsReportPayload($from, $to),
                 'product_profit' => $this->productProfitReportPayload($from, $to),
+                'trial_balance', 'general_ledger', 'balance_sheet', 'cash_flow',
+                'aging_receivable', 'aging_payable', 'journal' => $this->accountingReportPayload($request, $from, $to),
             };
 
             return response()->json([
@@ -925,6 +967,13 @@ class Reports extends Controller
                 'status' => 'success',
                 'data' => [
                     'people' => $customers->merge($sellers)->values(),
+                    'boxes' => Box::query()
+                        ->where('is_shown', 1)
+                        ->orderBy('name')
+                        ->get(['id', 'name', 'currency']),
+                    'accounts' => Schema::hasTable('accounting_accounts')
+                        ? AccountingAccount::query()->where('is_active', true)->orderBy('code')->get(['id', 'code', 'name_ar', 'type'])
+                        : collect(),
                 ],
             ], 200);
         } catch (\Exception $e) {
@@ -933,6 +982,231 @@ class Reports extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    private function accountingReportPayload(Request $request, Carbon $from, Carbon $to): array
+    {
+        if (! Schema::hasTable('accounting_accounts')
+            || ! Schema::hasTable('accounting_journal_entries')
+            || ! Schema::hasTable('accounting_journal_lines')) {
+            return $this->accountingUnavailablePayload();
+        }
+
+        $service = $this->accountingReports ?? app(AccountingReportService::class);
+        $currency = $this->reportCurrency($request->input('currency', 'شيكل'));
+        $type = (string) $request->type;
+
+        if ($type === 'general_ledger' && ! $request->filled('account_id')) {
+            return [
+                'title' => 'دفتر الأستاذ العام',
+                'summary' => [
+                    ['title' => 'الحساب', 'value' => 'اختر حسابًا من الفلاتر'],
+                    ['title' => 'العملة', 'value' => $currency],
+                ],
+                'columns' => ['التاريخ', 'رقم القيد', 'البيان', 'مدين', 'دائن', 'الرصيد'],
+                'rows' => collect(),
+                'quality' => $service->quality(),
+            ];
+        }
+
+        $report = match ($type) {
+            'trial_balance' => $service->trialBalance($from, $to, $currency),
+            'general_ledger' => $service->generalLedger((int) $request->account_id, $from, $to, $currency),
+            'balance_sheet' => $service->balanceSheet($to, $currency),
+            'cash_flow' => $service->cashFlow($from, $to, $currency),
+            'aging_receivable' => $service->aging($to, 'receivable', $currency),
+            'aging_payable' => $service->aging($to, 'payable', $currency),
+            'journal' => [
+                'title' => 'دفتر اليومية',
+                'currency' => $currency,
+                'entries' => $service->journalExport($from, $to, $currency),
+                'quality' => $service->quality(),
+            ],
+        };
+
+        return match ($type) {
+            'trial_balance' => $this->trialBalanceUiPayload($report),
+            'general_ledger' => $this->generalLedgerUiPayload($report),
+            'balance_sheet' => $this->balanceSheetUiPayload($report),
+            'cash_flow' => $this->cashFlowUiPayload($report),
+            'aging_receivable', 'aging_payable' => $this->agingUiPayload($report),
+            'journal' => $this->journalUiPayload($report),
+        };
+    }
+
+    private function trialBalanceUiPayload(array $report): array
+    {
+        $summary = $report['summary'];
+
+        return [
+            'title' => $report['title'],
+            'summary' => [
+                ['title' => 'العملة', 'value' => $report['currency']],
+                ['title' => 'افتتاحي مدين', 'value' => $summary['opening_debit']],
+                ['title' => 'افتتاحي دائن', 'value' => $summary['opening_credit']],
+                ['title' => 'حركة مدين', 'value' => $summary['movement_debit']],
+                ['title' => 'حركة دائن', 'value' => $summary['movement_credit']],
+                ['title' => 'ختامي مدين', 'value' => $summary['debit']],
+                ['title' => 'ختامي دائن', 'value' => $summary['credit']],
+                ['title' => 'الفرق', 'value' => $summary['difference']],
+            ],
+            'columns' => ['الكود', 'الحساب', 'افتتاحي مدين', 'افتتاحي دائن', 'حركة مدين', 'حركة دائن', 'ختامي مدين', 'ختامي دائن'],
+            'rows' => $report['rows'],
+            'quality' => $report['quality'],
+        ];
+    }
+
+    private function incomeStatementUiPayload(array $report): array
+    {
+        $summary = $report['summary'];
+
+        return [
+            'title' => $report['title'],
+            'summary' => [
+                ['title' => 'العملة', 'value' => $report['currency']],
+                ['title' => 'إجمالي الإيرادات', 'value' => $summary['gross_revenue']],
+                ['title' => 'مردودات المبيعات', 'value' => $summary['sales_returns']],
+                ['title' => 'صافي الإيرادات', 'value' => $summary['net_revenue']],
+                ['title' => 'المصاريف', 'value' => $summary['expenses']],
+                ['title' => 'صافي الربح', 'value' => $summary['net_profit']],
+            ],
+            'columns' => ['الكود', 'الحساب', 'مدين', 'دائن', 'الرصيد'],
+            'rows' => $report['rows'],
+            'quality' => $report['quality'],
+        ];
+    }
+
+    private function generalLedgerUiPayload(array $report): array
+    {
+        $summary = $report['summary'];
+
+        return [
+            'title' => $report['title'],
+            'summary' => [
+                ['title' => 'العملة', 'value' => $report['currency']],
+                ['title' => 'الرصيد الافتتاحي', 'value' => $summary['opening_balance']],
+                ['title' => 'مدين', 'value' => $summary['debit']],
+                ['title' => 'دائن', 'value' => $summary['credit']],
+                ['title' => 'الرصيد الختامي', 'value' => $summary['closing_balance']],
+            ],
+            'columns' => ['التاريخ', 'رقم القيد', 'البيان', 'مدين', 'دائن', 'الرصيد'],
+            'rows' => $report['rows'],
+            'quality' => $report['quality'],
+        ];
+    }
+
+    private function balanceSheetUiPayload(array $report): array
+    {
+        $rows = collect();
+        foreach (['assets' => 'الأصول', 'liabilities' => 'الالتزامات', 'equity' => 'حقوق الملكية'] as $key => $label) {
+            $rows = $rows->concat(collect($report['sections'][$key] ?? [])->map(fn ($row) => array_merge($row, ['section' => $label])));
+        }
+        $rows->push([
+            'section' => 'حقوق الملكية', 'code' => '-', 'account' => 'الأرباح المحتجزة',
+            'balance' => $report['sections']['retained_earnings'] ?? 0,
+        ]);
+        $summary = $report['summary'];
+
+        return [
+            'title' => $report['title'],
+            'summary' => [
+                ['title' => 'العملة', 'value' => $report['currency']],
+                ['title' => 'الأصول', 'value' => $summary['assets']],
+                ['title' => 'الالتزامات', 'value' => $summary['liabilities']],
+                ['title' => 'حقوق الملكية', 'value' => $summary['equity']],
+                ['title' => 'فرق الميزانية', 'value' => $summary['difference']],
+            ],
+            'columns' => ['القسم', 'الكود', 'الحساب', 'الرصيد'],
+            'rows' => $rows,
+            'quality' => $report['quality'],
+        ];
+    }
+
+    private function cashFlowUiPayload(array $report): array
+    {
+        $labels = ['operating' => 'تشغيلي', 'investing' => 'استثماري', 'financing' => 'تمويلي'];
+        $rows = collect($report['sections'])->flatMap(function ($section, $key) use ($labels) {
+            return collect($section['rows'] ?? [])->map(fn ($row) => array_merge($row, ['section_label' => $labels[$key] ?? $key]));
+        })->values();
+        $summary = $report['summary'];
+
+        return [
+            'title' => $report['title'],
+            'summary' => [
+                ['title' => 'العملة', 'value' => $report['currency']],
+                ['title' => 'رصيد أول المدة', 'value' => $summary['opening_cash']],
+                ['title' => 'التدفقات الداخلة', 'value' => $summary['cash_in']],
+                ['title' => 'التدفقات الخارجة', 'value' => $summary['cash_out']],
+                ['title' => 'صافي التدفق', 'value' => $summary['net_cash_flow']],
+                ['title' => 'رصيد آخر المدة', 'value' => $summary['closing_cash']],
+            ],
+            'columns' => ['القسم', 'المصدر', 'داخل', 'خارج', 'الصافي'],
+            'rows' => $rows,
+            'quality' => $report['quality'],
+        ];
+    }
+
+    private function agingUiPayload(array $report): array
+    {
+        $summary = $report['summary'];
+
+        return [
+            'title' => $report['title'],
+            'summary' => [
+                ['title' => 'العملة', 'value' => $report['currency']],
+                ['title' => 'غير مستحق', 'value' => $summary['current']],
+                ['title' => '1 - 30 يوم', 'value' => $summary['days_1_30']],
+                ['title' => '31 - 60 يوم', 'value' => $summary['days_31_60']],
+                ['title' => '61 - 90 يوم', 'value' => $summary['days_61_90']],
+                ['title' => 'أكثر من 90 يوم', 'value' => $summary['over_90']],
+                ['title' => 'الإجمالي', 'value' => $summary['balance']],
+            ],
+            'columns' => ['الشخص', 'غير مستحق', '1-30', '31-60', '61-90', '+90', 'الإجمالي'],
+            'rows' => $report['rows'],
+            'quality' => $report['quality'],
+        ];
+    }
+
+    private function journalUiPayload(array $report): array
+    {
+        $entries = collect($report['entries']);
+        $rows = $entries->flatMap(function ($entry) {
+            return $entry->lines->map(fn ($line) => [
+                'date' => $entry->entry_date?->toDateString(),
+                'entry_number' => $entry->entry_number,
+                'account' => $line->account?->code.' - '.$line->account?->name_ar,
+                'description' => $line->description ?: $entry->description,
+                'debit' => (float) $line->debit,
+                'credit' => (float) $line->credit,
+                'source' => $entry->source_type.($entry->source_id ? ' #'.$entry->source_id : ''),
+            ]);
+        })->values();
+
+        return [
+            'title' => $report['title'],
+            'summary' => [
+                ['title' => 'العملة', 'value' => $report['currency']],
+                ['title' => 'عدد القيود', 'value' => $entries->count()],
+                ['title' => 'مدين', 'value' => round((float) $rows->sum('debit'), 4)],
+                ['title' => 'دائن', 'value' => round((float) $rows->sum('credit'), 4)],
+            ],
+            'columns' => ['التاريخ', 'رقم القيد', 'الحساب', 'البيان', 'مدين', 'دائن', 'المصدر'],
+            'rows' => $rows,
+            'quality' => $report['quality'],
+        ];
+    }
+
+    private function accountingUnavailablePayload(): array
+    {
+        return [
+            'title' => 'التقرير المحاسبي',
+            'summary' => [
+                ['title' => 'الحالة', 'value' => 'يلزم تشغيل ترحيلات دفتر الأستاذ ثم التهيئة المحاسبية'],
+            ],
+            'columns' => [],
+            'rows' => collect(),
+            'quality' => ['complete' => false, 'ledger_not_initialized' => true],
+        ];
     }
 
     /**
@@ -1035,8 +1309,11 @@ class Reports extends Controller
                     'currency' => $currency,
                     'balance' => round($balance, 3),
                     'balance_abs' => round(abs($balance), 3),
-                    'direction' => $balance >= 0 ? 'receivable' : 'payable',
-                    'status' => $balance >= 0 ? 'إلنا' : 'علينا',
+                    // Debt ledger semantics are: "given" decreases the signed
+                    // balance (the person owes us), while "taken" increases it
+                    // (we owe the person). Therefore negative is receivable.
+                    'direction' => $balance <= 0 ? 'receivable' : 'payable',
+                    'status' => $balance <= 0 ? 'إلنا' : 'علينا',
                 ];
             });
         })->filter(fn (array $row) => abs((float) $row['balance']) > 0.0001)
@@ -1251,30 +1528,37 @@ class Reports extends Controller
         $summary = collect([
             ['title' => 'عدد الحركات', 'value' => $rows->count()],
         ]);
+        $boxReportService = app(BoxReportService::class);
+        $boxSummaries = $reportBoxes->mapWithKeys(function (Box $box) use ($boxReportService, $from, $to) {
+            $report = $boxReportService->report($box, [
+                'from_date' => $from->toDateString(),
+                'to_date' => $to->toDateString(),
+                'sort' => 'newest',
+            ]);
+
+            return [$box->id => $report['summary']];
+        });
         foreach (DebtLedgerService::CURRENCIES as $currency) {
             $currencyRows = $rows->where('currency', $currency);
             $currentBalance = (float) $reportBoxes
                 ->filter(fn (Box $box) => $this->reportCurrency($box->currency) === $currency)
                 ->sum('total');
+            $currencyBoxes = $reportBoxes->filter(fn (Box $box) => $this->reportCurrency($box->currency) === $currency);
+            $opening = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['opening_balance'] ?? 0));
+            $incoming = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['incoming'] ?? 0));
+            $outgoing = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['outgoing'] ?? 0));
+            $closing = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['closing_balance'] ?? 0));
             if ($currencyRows->isEmpty() && abs($currentBalance) < 0.0001) {
                 continue;
             }
-            if ($selectedBoxId) {
-                $summary->push(
-                    ['title' => 'الوارد - '.$currency, 'value' => round($currencyRows->where('signed_amount', '>', 0)->sum('signed_amount'), 3)],
-                    ['title' => 'الصادر - '.$currency, 'value' => round(abs($currencyRows->where('signed_amount', '<', 0)->sum('signed_amount')), 3)],
-                );
-            } else {
-                $summary->push([
-                    'title' => 'إجمالي الحركة - '.$currency,
-                    'value' => round($currencyRows->sum('amount'), 3),
-                ]);
-            }
-
-            $summary->push([
-                'title' => 'الرصيد الحالي - '.$currency,
-                'value' => round($currentBalance, 3),
-            ]);
+            $summary->push(
+                ['title' => 'رصيد أول المدة - '.$currency, 'value' => round($opening, 3)],
+                ['title' => 'الوارد - '.$currency, 'value' => round($incoming, 3)],
+                ['title' => 'الصادر - '.$currency, 'value' => round($outgoing, 3)],
+                ['title' => 'صافي الحركة - '.$currency, 'value' => round($incoming - $outgoing, 3)],
+                ['title' => 'رصيد آخر المدة - '.$currency, 'value' => round($closing, 3)],
+                ['title' => 'الرصيد الحالي - '.$currency, 'value' => round($currentBalance, 3)],
+            );
         }
 
         return [
@@ -1382,27 +1666,39 @@ class Reports extends Controller
         ];
     }
 
-    private function incomeReportPayload(Carbon $from, Carbon $to): array
+    private function incomeReportPayload(Carbon $from, Carbon $to, Request $request): array
     {
         $from = $from->copy()->startOfDay();
         $to = $to->copy()->endOfDay();
+        $hasLedger = Schema::hasTable('accounting_journal_entries')
+            && Schema::hasTable('accounting_journal_lines')
+            && Schema::hasTable('accounting_accounts');
+        $ledgerCoversPeriod = $hasLedger && $this->ledgerCoversPeriod($from);
+        if ($ledgerCoversPeriod
+            && AccountingJournalEntry::query()->whereBetween('entry_date', [$from->toDateString(), $to->toDateString()])->exists()) {
+            $service = $this->accountingReports ?? app(AccountingReportService::class);
+            $currency = $this->reportCurrency($request->input('currency', 'شيكل'));
+
+            return $this->incomeStatementUiPayload($service->incomeStatement($from, $to, $currency));
+        }
+
         $sales = $this->analyticsSales($from, $to);
         $salesAfterDiscount = (float) $sales->sum('total');
         $salesDiscount = (float) $sales->sum('discount');
         $salesReturns = (float) SalesReturn::query()
-            ->where('return_type', 'direct')
+            ->whereIn('return_type', ['direct', 'partial'])
             ->where('status', 'completed')
             ->whereBetween('completed_at', [$from, $to])
             ->sum('total_amount');
         $netSales = $this->financialNetSales($salesAfterDiscount, $salesReturns);
         $returnCost = (float) SalesReturnItem::query()
             ->whereHas('salesReturn', fn ($query) => $query
-                ->where('return_type', 'direct')
+                ->whereIn('return_type', ['direct', 'partial'])
                 ->where('status', 'completed')
                 ->whereBetween('completed_at', [$from, $to]))
             ->sum('inventory_total_cost');
         $costOfSales = (float) $sales->sum('cost') - $returnCost;
-        $expenses = (float) Expense::whereBetween('created_at', [$from, $to])->sum('price');
+        $expenses = $this->periodExpenseTotal($from, $to);
         $grossProfit = $netSales - $costOfSales;
         $netProfit = $grossProfit - $expenses;
 
@@ -1424,9 +1720,18 @@ class Reports extends Controller
                 ['title' => 'تكلفة المبيعات', 'value' => round($costOfSales, 3)],
                 ['title' => 'إجمالي الربح', 'value' => round($grossProfit, 3)],
                 ['title' => 'صافي الأرباح', 'value' => round($netProfit, 3)],
+                ['title' => 'تغطية تكلفة المبيعات', 'value' => $sales->isEmpty()
+                    ? '100%'
+                    : round(($sales->where('cost_complete', true)->count() / $sales->count()) * 100, 1).'%'],
             ],
             'columns' => ['الحساب', 'مدين', 'دائن'],
             'rows' => $rows,
+            'quality' => [
+                'complete' => false,
+                'ledger_not_initialized' => ! $hasLedger,
+                'coverage_incomplete' => $hasLedger && ! $ledgerCoversPeriod,
+                'cost_coverage_incomplete' => $sales->where('cost_complete', false)->isNotEmpty(),
+            ],
         ];
     }
 
@@ -1453,7 +1758,7 @@ class Reports extends Controller
             ]);
         $directRows = SalesReturn::query()
             ->with(['customer:id,name', 'seller:id,name', 'items'])
-            ->where('return_type', 'direct')
+            ->whereIn('return_type', ['direct', 'partial'])
             ->where('status', 'completed')
             ->whereBetween('completed_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
             ->orderByDesc('completed_at')
@@ -1533,10 +1838,76 @@ class Reports extends Controller
             }
         }
 
+        $orders = SalesOrder::query()
+            ->with(['items.product'])
+            ->whereNotNull('financial_posted_at')
+            ->whereBetween('financial_posted_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
+            ->where('is_debt_collection', false)
+            ->where('status', '!=', 'canceled')
+            ->when(
+                Schema::hasTable('instant_sales') && Schema::hasColumn('instant_sales', 'sales_order_id'),
+                fn ($query) => $query->whereNotExists(fn ($linkedSale) => $linkedSale
+                    ->selectRaw('1')
+                    ->from('instant_sales')
+                    ->whereColumn('instant_sales.sales_order_id', 'sales_orders.id')
+                    ->whereNull('instant_sales.parent_id')),
+            )
+            ->get();
+        $orderIds = $orders->pluck('id');
+        $orderCosts = $orderIds->isEmpty() || ! Schema::hasTable('inventory_cost_allocations')
+            ? collect()
+            : InventoryCostAllocation::query()
+                ->where('reference_type', 'sales_order')
+                ->whereIn('reference_id', $orderIds)
+                ->get(['reference_id', 'product_id', 'total_cost'])
+                ->groupBy(fn (InventoryCostAllocation $row) => $row->reference_id.':'.$row->product_id)
+                ->map(fn ($rows) => (float) $rows->sum('total_cost'));
+        $uncostedOrderProducts = $orderIds->isEmpty() || ! Schema::hasTable('product_stock_movements')
+            ? collect()
+            : ProductStockMovement::query()
+                ->where('reference_type', 'sales_order')
+                ->whereIn('reference_id', $orderIds)
+                ->where('quantity', '<', 0)
+                ->whereNull('total_cost')
+                ->get(['reference_id', 'product_id'])
+                ->mapWithKeys(fn (ProductStockMovement $row) => [$row->reference_id.':'.$row->product_id => true]);
+
+        foreach ($orders as $order) {
+            $items = $order->items->where('is_hidden', false);
+            $gross = (float) $items->sum(fn ($item) => (float) ($item->line_total ?: ((float) $item->unit_price * (float) $item->quantity)));
+            foreach ($items->groupBy('product_id') as $productId => $productItems) {
+                $product = $productItems->first()?->product;
+                if (! $productId || ! $product) {
+                    continue;
+                }
+                $productGross = (float) $productItems->sum(fn ($item) => (float) ($item->line_total ?: ((float) $item->unit_price * (float) $item->quantity)));
+                $salesTotal = $gross > 0 ? (float) $order->total * ($productGross / $gross) : 0.0;
+                $costKey = $order->id.':'.$productId;
+                $costTotal = (float) ($orderCosts[$costKey] ?? 0);
+                $totalLines++;
+                if ($orderCosts->has($costKey) && ! $uncostedOrderProducts->has($costKey)) {
+                    $costedLines++;
+                }
+
+                $key = (int) $productId;
+                $current = $productRows->get($key, [
+                    'code' => $product->product_code ?: $productId,
+                    'product' => $product->nameAr ?: $product->nameEng,
+                    'quantity' => 0.0,
+                    'sales_total' => 0.0,
+                    'cost_total' => 0.0,
+                ]);
+                $current['quantity'] += (float) $productItems->sum('quantity');
+                $current['sales_total'] += $salesTotal;
+                $current['cost_total'] += $costTotal;
+                $productRows->put($key, $current);
+            }
+        }
+
         $returnedItems = SalesReturnItem::query()
             ->with('product:id,product_code,nameAr,nameEng')
             ->whereHas('salesReturn', fn ($query) => $query
-                ->where('return_type', 'direct')
+                ->whereIn('return_type', ['direct', 'partial'])
                 ->where('status', 'completed')
                 ->whereBetween('completed_at', [
                     $from->copy()->startOfDay(),
@@ -1641,6 +2012,97 @@ class Reports extends Controller
             'شيكل', 'shekel', 'ils', 'nis', '₪', '' => 'شيكل',
             default => 'شيكل',
         };
+    }
+
+    private function periodExpenseTotal(Carbon $from, Carbon $to): float
+    {
+        return (float) $this->periodExpenses($from, $to)->sum('amount');
+    }
+
+    private function periodExpenses(Carbon $from, Carbon $to)
+    {
+        $expenses = Expense::query()
+            ->whereDate(DB::raw('COALESCE(expense_date, created_at)'), '>=', $from->toDateString())
+            ->whereDate(DB::raw('COALESCE(expense_date, created_at)'), '<=', $to->toDateString())
+            ->get(['price', 'expense_date', 'created_at'])
+            ->map(fn (Expense $expense) => [
+                'date' => Carbon::parse($expense->expense_date ?: $expense->created_at),
+                'amount' => (float) $expense->price,
+                'source' => 'expense',
+            ]);
+
+        $depreciation = Schema::hasTable('asset_logs') && Schema::hasColumn('asset_logs', 'depreciation_period')
+            ? AssetLog::query()
+                ->where('type', 'depreciate')
+                ->whereBetween('depreciation_period', [$from->format('Y-m'), $to->format('Y-m')])
+                ->get(['depreciation_period', 'depreciation_amount'])
+                ->map(fn (AssetLog $log) => [
+                    'date' => Carbon::parse($log->depreciation_period.'-01'),
+                    'amount' => (float) $log->depreciation_amount,
+                    'source' => 'depreciation',
+                ])
+            : collect();
+
+        $projectExpenses = Schema::hasTable('project_expenses')
+            ? ProjectExpense::query()
+                ->whereDate(DB::raw('COALESCE(expense_date, created_at)'), '>=', $from->toDateString())
+                ->whereDate(DB::raw('COALESCE(expense_date, created_at)'), '<=', $to->toDateString())
+                ->get(['expenses', 'expense_date', 'created_at'])
+                ->map(fn (ProjectExpense $expense) => [
+                    'date' => Carbon::parse($expense->expense_date ?: $expense->created_at),
+                    'amount' => (float) $expense->expenses,
+                    'source' => 'project_expense',
+                ])
+            : collect();
+
+        return $expenses->concat($depreciation)->concat($projectExpenses)->values();
+    }
+
+    private function periodCashCollected(Carbon $from, Carbon $to, float $fallback): float
+    {
+        if (! Schema::hasTable('accounting_journal_entries')
+            || ! Schema::hasTable('accounting_journal_lines')
+            || ! Schema::hasTable('accounting_accounts')
+            || ! $this->ledgerCoversPeriod($from)) {
+            return $fallback;
+        }
+
+        $cashAccountId = DB::table('accounting_accounts')->where('system_key', 'cash')->value('id');
+        if (! $cashAccountId) {
+            return $fallback;
+        }
+
+        $hasEntries = DB::table('accounting_journal_entries')
+            ->whereBetween('entry_date', [$from->toDateString(), $to->toDateString()])
+            ->exists();
+        if (! $hasEntries) {
+            return $fallback;
+        }
+
+        $row = DB::table('accounting_journal_lines as lines')
+            ->join('accounting_journal_entries as entries', 'entries.id', '=', 'lines.journal_entry_id')
+            ->where('lines.account_id', $cashAccountId)
+            ->whereBetween('entries.entry_date', [$from->toDateString(), $to->toDateString()])
+            ->whereIn('entries.source_type', [
+                'instant_sale', 'profit_sale', 'sales_order_settlement', 'incoming_check',
+                'debt_transaction', 'sales_return',
+            ])
+            ->selectRaw("SUM(CASE WHEN entries.source_type = 'debt_transaction' THEN lines.debit ELSE lines.debit - lines.credit END) as collected")
+            ->first();
+
+        return round((float) ($row->collected ?? 0), 4);
+    }
+
+    private function ledgerCoversPeriod(Carbon $from): bool
+    {
+        if (! Schema::hasTable('accounting_cutovers')) {
+            return false;
+        }
+
+        return DB::table('accounting_cutovers')
+            ->where('status', 'applied')
+            ->whereDate('cutover_date', '<=', $from->toDateString())
+            ->exists();
     }
 
     private function resolveReportPeriod(Request $request): array

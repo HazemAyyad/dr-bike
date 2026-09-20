@@ -320,15 +320,15 @@ class ProductStockService
         ?float $totalCost = null,
         ?string $costSourceType = null,
         ?int $costSourceId = null,
-    ): void {
+    ): ?array {
         if ($quantity <= 0) {
-            return;
+            return null;
         }
 
-        DB::transaction(function () use ($product, $quantity, $sizeColorId, $sizeId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost, $costSourceType, $costSourceId) {
+        return DB::transaction(function () use ($product, $quantity, $sizeColorId, $sizeId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost, $costSourceType, $costSourceId) {
             $lockedProduct = Product::withTrashed()->lockForUpdate()->find($product->id);
             if (! $lockedProduct instanceof Product) {
-                return;
+                return null;
             }
 
             $pendingReversal = app(InventoryCostingService::class)->reversePendingNegativeCost(
@@ -361,7 +361,11 @@ class ProductStockService
                 if ($quantity <= 0) {
                     $this->refreshCloseoutStatus((int) $lockedProduct->id, reopen: true);
 
-                    return;
+                    return [
+                        'unit_cost' => null,
+                        'total_cost' => null,
+                        'cost_complete' => false,
+                    ];
                 }
                 $lockedProduct = $lockedProduct->fresh(['sizes.colorSizes']);
             }
@@ -396,7 +400,11 @@ class ProductStockService
 
                 $this->refreshCloseoutStatus((int) $lockedProduct->id, reopen: true);
 
-                return;
+                return [
+                    'unit_cost' => round((float) $unitCost, 6),
+                    'total_cost' => round((float) ($totalCost ?? ($unitCost * $quantity)), 4),
+                    'cost_complete' => true,
+                ];
             }
 
             throw \Illuminate\Validation\ValidationException::withMessages([

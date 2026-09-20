@@ -3,12 +3,13 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Services\CheckSmsNotificationService;
-use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\OutgoingCheck;
 use App\Models\Seller;
+use App\Services\CheckSmsNotificationService;
+use App\Services\DebtLedgerService;
+use App\Services\ExpenseBoxAccessService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -18,128 +19,128 @@ use Illuminate\Validation\ValidationException;
 class OutgoingChecks extends Controller
 {
     public function store(Request $request)
-{
-    try {
-        $data = $request->validate([
-            'customer_id' => 'nullable|exists:customers,id',
-            'seller_id'   => 'nullable|exists:sellers,id',
-            'total'       => 'required|numeric|min:1',
-            'due_date'    => 'required|date',
-            'currency'    => 'required|string',
-            'check_id'    => 'required|string',
-            'bank_name'   => 'required|string',
-            'img'         => 'nullable|image',
-            'notes' => 'nullable|string',
+    {
+        try {
+            $data = $request->validate([
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
+                'total' => 'required|numeric|min:1',
+                'due_date' => 'required|date',
+                'currency' => 'required|string',
+                'check_id' => 'required|string',
+                'bank_name' => 'required|string',
+                'img' => 'nullable|image',
+                'notes' => 'nullable|string',
 
-        ]);
+            ]);
 
-        if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+            if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.must_select_customer_or_seller'),
+                ], 200);
+            }
+
+            if ($request->filled('customer_id') && $request->filled('seller_id')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.must_select_either_customer_or_seller'),
+                ], 200);
+            }
+
+            $data = IncomingChecks::handleImages($request, $data, [
+                'img' => 'OutgoingChecksImages',
+            ]);
+
+            // Create the outgoing check
+            $check = OutgoingCheck::create($data);
+
+            app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
+
+            Logs::createLog(
+                'اضافة شيك جديد',
+                'تمت إضافة شيك جديد برقم '.$request->check_id,
+                'outgoing_checks'
+            );
+
             return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.must_select_customer_or_seller'),
+                'status' => 'success',
+                'message' => __('messages.check_created_successfully'),
+            ], 200);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+            ], 200);
+
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.create_data_error'),
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
-
-        if ($request->filled('customer_id') && $request->filled('seller_id')) {
-            return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.must_select_either_customer_or_seller'),
-            ], 200);
-        }
-
-        $data = IncomingChecks::handleImages($request, $data, [
-            'img' => 'OutgoingChecksImages',
-        ]);
-
-        // Create the outgoing check
-        $check = OutgoingCheck::create($data);
-
-        app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
-
-
-        Logs::createLog(
-            'اضافة شيك جديد',
-            'تمت إضافة شيك جديد برقم ' . $request->check_id,
-            'outgoing_checks'
-        );
-
-        return response()->json([
-            'status'  => 'success',
-            'message' => __('messages.check_created_successfully')
-        ], 200);
-
-    } catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-            'errors'  => $e->errors()
-        ], 200);
-
-    } catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.create_data_error')
-        ], 200);
-
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
     }
-}
 
-    private function commonData($status){
-        try{
-            $checks = OutgoingCheck::where('status',$status)
-            ->with('customer:id,name')
-            ->with('seller:id,name')
-            ->get();
+    private function commonData($status)
+    {
+        try {
+            $checks = OutgoingCheck::where('status', $status)
+                ->with('customer:id,name')
+                ->with('seller:id,name')
+                ->get();
+
             return response()->json([
-                'status'=>'success',
-                'checks_status' =>$status,
+                'status' => 'success',
+                'checks_status' => $status,
                 'checks_images_path' => 'public/OutgoingChecksImages',
                 'front_checks_images_path' => 'public/OutgoingChecksImages',
                 'back_checks_images_path' => 'public/OutgoingChecksImages/back',
                 $status.'_'.'checks' => $checks,
 
+                'checks_count' => OutgoingCheck::where('status', $status)->count(),
+                'checks_total_dollar' => OutgoingCheck::where('status', $status)
+                    ->where('currency', 'دولار')->sum('total'),
+                'checks_total_shekel' => OutgoingCheck::where('status', $status)
+                    ->where('currency', 'شيكل')->sum('total'),
+                'checks_total_dinar' => OutgoingCheck::where('status', $status)
+                    ->where('currency', 'دينار')->sum('total'),
 
-                'checks_count' => OutgoingCheck::where('status',$status)->count(),
-                'checks_total_dollar' => OutgoingCheck::where('status',$status)
-                ->where('currency','دولار')->sum('total'),
-                 'checks_total_shekel' => OutgoingCheck::where('status',$status)
-                ->where('currency','شيكل')->sum('total'),  
-                'checks_total_dinar' => OutgoingCheck::where('status',$status)
-                ->where('currency','دينار')->sum('total'),       
-                
                 'boxes_total_dollar' => Box::totalDollar(),
                 'boxes_total_shekel' => Box::totalShekel(),
                 'boxes_total_dinar' => Box::totalDinar(),
 
                 'cover_percentage' => $this->coverPercentage($status),
 
-            ],200);
-        }
-
-        catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.retrieve_data_error')
-        ], 200);
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
 
         } catch (\Exception $e) {
             return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.something_wrong')
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
 
-    public function notCashedChecks(){
+    public function notCashedChecks()
+    {
         return $this->commonData('not_cashed');
     }
 
-    public function cashedToPersonChecks(){
+    public function cashedToPersonChecks()
+    {
         return $this->commonData('cashed_to_person');
     }
 
@@ -155,95 +156,92 @@ class OutgoingChecks extends Controller
     //     return $this->commonData('cashed');
     // }
 
-    public function archive(){
-                try{
+    public function archive()
+    {
+        try {
             $checks = OutgoingCheck::whereIn('status', [
-                        'cancelled',
-                        'returned',
-                        'cashed_from_box',
-                    ])
-            ->with('customer:id,name')
-            ->with('seller:id,name')
-            ->get();
+                'cancelled',
+                'returned',
+                'cashed_from_box',
+            ])
+                ->with('customer:id,name')
+                ->with('seller:id,name')
+                ->get();
 
-
-            //for coverage percentage
+            // for coverage percentage
             $totalArchivedDollar = OutgoingCheck::where('currency', 'دولار')
-            ->whereIn('status', ['cancelled', 'returned','cashed_from_box'])
-            ->sum('total');
+                ->whereIn('status', ['cancelled', 'returned', 'cashed_from_box'])
+                ->sum('total');
 
             $totalArchivedDinar = OutgoingCheck::where('currency', 'دينار')
-            ->whereIn('status', ['cancelled', 'returned','cashed_from_box'])
-            ->sum('total');
+                ->whereIn('status', ['cancelled', 'returned', 'cashed_from_box'])
+                ->sum('total');
 
             $totalArchivedShekel = OutgoingCheck::where('currency', 'شيكل')
-            ->whereIn('status', ['cancelled', 'returned','cashed_from_box'])
-            ->sum('total');
+                ->whereIn('status', ['cancelled', 'returned', 'cashed_from_box'])
+                ->sum('total');
 
             $coverPercentage = [
-                'dollar' => $totalArchivedDollar>0? (Box::totalDollar() / $totalArchivedDollar)*100 :0,
-                'dinar' => $totalArchivedDinar>0? (Box::totalDinar() / $totalArchivedDinar)*100 :0,
-                'shekel' => $totalArchivedShekel>0? (Box::totalShekel() / $totalArchivedShekel)*100 :0,
+                'dollar' => $totalArchivedDollar > 0 ? (Box::totalDollar() / $totalArchivedDollar) * 100 : 0,
+                'dinar' => $totalArchivedDinar > 0 ? (Box::totalDinar() / $totalArchivedDinar) * 100 : 0,
+                'shekel' => $totalArchivedShekel > 0 ? (Box::totalShekel() / $totalArchivedShekel) * 100 : 0,
 
             ];
 
             return response()->json([
-                'status'=>'success',
-                'archived_checks' =>$checks,
+                'status' => 'success',
+                'archived_checks' => $checks,
                 'checks_images_path' => 'public/OutgoingChecksImages',
                 'front_checks_images_path' => 'public/OutgoingChecksImages',
                 'back_checks_images_path' => 'public/OutgoingChecksImages/back',
                 'checks_count' => OutgoingCheck::whereIn('status', [
-                        'cancelled',
-                        'returned',
-                        'cashed_from_box',
-                    ])->count(),
+                    'cancelled',
+                    'returned',
+                    'cashed_from_box',
+                ])->count(),
                 'checks_total_dollar' => OutgoingCheck::whereIn('status', [
-                        'cancelled',
-                        'returned',
-                        'cashed_from_box',
-                    ])->where('currency','دولار')->sum('total'),
+                    'cancelled',
+                    'returned',
+                    'cashed_from_box',
+                ])->where('currency', 'دولار')->sum('total'),
 
                 'checks_total_shekel' => OutgoingCheck::whereIn('status', [
-                        'cancelled',
-                        'returned',
-                        'cashed_from_box',
-                    ])->where('currency','شيكل')->sum('total'),
+                    'cancelled',
+                    'returned',
+                    'cashed_from_box',
+                ])->where('currency', 'شيكل')->sum('total'),
 
                 'checks_total_dinar' => OutgoingCheck::whereIn('status', [
-                        'cancelled',
-                        'returned',
-                        'cashed_from_box',
-                    ])->where('currency','دينار')->sum('total'),                    
-
+                    'cancelled',
+                    'returned',
+                    'cashed_from_box',
+                ])->where('currency', 'دينار')->sum('total'),
 
                 'boxes_total_dollar' => Box::totalDollar(),
                 'boxes_total_shekel' => Box::totalShekel(),
                 'boxes_total_dinar' => Box::totalDinar(),
 
-
                 'cover_percentage' => $coverPercentage,
 
-            ],200);
-        }
-
-        catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.retrieve_data_error')
-        ], 200);
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.retrieve_data_error'),
+            ], 200);
 
         } catch (\Exception $e) {
             return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.something_wrong')
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
 
-    private function changeCheckStatus(Request $request,$status){
-        try{
-            $request->validate(['outgoing_check_id'=>'required|exists:outgoing_checks,id']);
+    private function changeCheckStatus(Request $request, $status)
+    {
+        try {
+            $request->validate(['outgoing_check_id' => 'required|exists:outgoing_checks,id']);
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
 
             $check->update(['status' => $status]);
@@ -262,84 +260,82 @@ class OutgoingChecks extends Controller
             }
 
             Logs::createLog(
-            'تغيير حالة الشيك ',
-            'تم تغيير حالة الشيك بقيمة ' . $check->total.' '.$check->currency.' '.' الى'.' '.$status,
-            'outgoing_checks'
-        );
+                'تغيير حالة الشيك ',
+                'تم تغيير حالة الشيك بقيمة '.$check->total.' '.$check->currency.' '.' الى'.' '.$status,
+                'outgoing_checks'
+            );
+
             return response()->json([
-                'status'=>'success',
-                'message'=>__('messages.outgoing_check_'.$status),
-            ],200);
+                'status' => 'success',
+                'message' => __('messages.outgoing_check_'.$status),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.outgoing_check_not_found'),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+
+            ], 200);
+
         }
 
-        catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-        ], 200);
-
-    } 
-    catch (ModelNotFoundException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.outgoing_check_not_found')
-        ], 200);
-    }
-    catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong'),
-
-        ], 200);
-
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong'),
-
-        ], 200);
-
     }
 
-
-
-}
-
-    public function cancelCheck(Request $request){
-        return $this->changeCheckStatus($request,'cancelled');
+    public function cancelCheck(Request $request)
+    {
+        return $this->changeCheckStatus($request, 'cancelled');
     }
 
-    public function returnCheck(Request $request){
-        return $this->changeCheckStatus($request,'returned');
+    public function returnCheck(Request $request)
+    {
+        return $this->changeCheckStatus($request, 'returned');
     }
 
     // public function cashCheck(Request $request){
     //     return $this->changeCheckStatus($request,'cashed');
     // }
 
-    public function cashCheckToPerson(Request $request){
-        try{
+    public function cashCheckToPerson(Request $request)
+    {
+        try {
             $request->validate([
-            'outgoing_check_id'=>'required|exists:outgoing_checks,id',
-            'customer_id' => 'nullable|exists:customers,id',
-            'seller_id' => 'nullable|exists:sellers,id',
+                'outgoing_check_id' => 'required|exists:outgoing_checks,id',
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
 
             ]);
 
-                    // Enforce that one and only one of seller_id or customer_id is provided
-        if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.one_person_required'),
-            ], 200);
-        }
+            // Enforce that one and only one of seller_id or customer_id is provided
+            if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.one_person_required'),
+                ], 200);
+            }
 
-        if ($request->filled('customer_id') && $request->filled('seller_id')) {
-            return response()->json([
-                'status' => 'error',
-                'message' => __('messages.only_one_person_allowed'),
-            ], 200);
-        }
+            if ($request->filled('customer_id') && $request->filled('seller_id')) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('messages.only_one_person_allowed'),
+                ], 200);
+            }
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
 
             $personName = 'غير معروف';
@@ -368,50 +364,47 @@ class OutgoingChecks extends Controller
             );
 
             Logs::createLog(
-            'التصرف في شيك',
-            'تم التصرف في الشيك الصادر بقيمة ' .' '. $check->total .' '.$check->currency.' '. ' لصالح ' . $personName,
-            'outgoing_checks'
-        );
+                'التصرف في شيك',
+                'تم التصرف في الشيك الصادر بقيمة '.' '.$check->total.' '.$check->currency.' '.' لصالح '.$personName,
+                'outgoing_checks'
+            );
 
             return response()->json([
-                'status'=>'success',
-                'message'=>__('messages.check_cashed'),
-            ],200);
+                'status' => 'success',
+                'message' => __('messages.check_cashed'),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ], 200);
+
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+
         }
-
-        catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-        ], 200);
-
-    } 
-    catch (ModelNotFoundException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
-    catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-
-    }
     }
 
     // delete check
-    public function deleteCheck(Request $request){
-        try{
+    public function deleteCheck(Request $request)
+    {
+        try {
 
-            $request->validate(['outgoing_check_id'=>'required|exists:outgoing_checks,id',]);
+            $request->validate(['outgoing_check_id' => 'required|exists:outgoing_checks,id']);
 
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
 
@@ -430,38 +423,32 @@ class OutgoingChecks extends Controller
 
             $check->delete();
 
-
-                return response()->json([
-                    'status' => 'success',
-                    'message' => __('messages.check_deleted'),
-                ], 200);
-
-
-        }
-
-        catch (ValidationException $e) {
             return response()->json([
-                'status'  => 'error',
+                'status' => 'success',
+                'message' => __('messages.check_deleted'),
+            ], 200);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
                 'message' => __('messages.validation_failed'),
             ], 200);
 
-        } 
-        catch (ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.something_wrong')
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
-        }
-        catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.something_wrong')
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
 
         } catch (\Exception $e) {
             return response()->json([
-                'status'  => 'error',
-                'message' => __('messages.something_wrong')
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ], 200);
 
         }
@@ -482,8 +469,8 @@ class OutgoingChecks extends Controller
             ->sum('total');
 
         return [
-            'not_cashed' => $totalNotCashed>0 ? ($totalBoxes / $totalNotCashed) * 100 : 0,
-            'cashed_to_person'     => $totalCashed>0 ? ($totalBoxes / $totalCashed) * 100 : 0,
+            'not_cashed' => $totalNotCashed > 0 ? ($totalBoxes / $totalNotCashed) * 100 : 0,
+            'cashed_to_person' => $totalCashed > 0 ? ($totalBoxes / $totalCashed) * 100 : 0,
         ];
     }
 
@@ -492,7 +479,7 @@ class OutgoingChecks extends Controller
         $results = [];
 
         $results['dollar'] = $this->calculateCoverage('دولار', Box::totalDollar())[$status];
-        $results['dinar']  = $this->calculateCoverage('دينار', Box::totalDinar())[$status];
+        $results['dinar'] = $this->calculateCoverage('دينار', Box::totalDinar())[$status];
         $results['shekel'] = $this->calculateCoverage('شيكل', Box::totalShekel())[$status];
 
         return $results;
@@ -532,8 +519,9 @@ class OutgoingChecks extends Controller
     // }
     // }
 
-    public function generalDataFirstPage(){
-        try{
+    public function generalDataFirstPage()
+    {
+        try {
 
             $data = OutgoingCheck::generalChecksData();
             $user = request()->user();
@@ -558,24 +546,22 @@ class OutgoingChecks extends Controller
             }
 
             return response()->json([
-                'status'=>'success',
+                'status' => 'success',
                 'data' => $data,
-            ],200);
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+
         }
-
-    catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-
-    }
     }
 
     private function userHasPermission($user, string $permission): bool
@@ -589,8 +575,9 @@ class OutgoingChecks extends Controller
             ->exists() ?? false;
     }
 
-   public function editCheck(Request $request){
-      try{
+    public function editCheck(Request $request)
+    {
+        try {
 
             $data = $request->validate([
                 'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
@@ -599,7 +586,7 @@ class OutgoingChecks extends Controller
                 'currency' => 'required|string',
                 'check_id' => 'required|string',
                 'bank_name' => 'required|string',
-                'img'   => 'nullable',
+                'img' => 'nullable',
                 'back_image' => 'nullable',
                 'notes' => 'nullable|string',
                 'customer_id' => 'nullable|exists:customers,id',
@@ -618,8 +605,7 @@ class OutgoingChecks extends Controller
                 ]);
             }
 
-            $outgoingCheck = OutgoingCheck::
-            findOrFail($request->outgoing_check_id);
+            $outgoingCheck = OutgoingCheck::findOrFail($request->outgoing_check_id);
 
             $data['customer_id'] = $request->filled('customer_id')
                 ? (int) $request->customer_id
@@ -642,121 +628,118 @@ class OutgoingChecks extends Controller
             });
 
             return response()->json([
-                'status'=>'success',
+                'status' => 'success',
                 'message' => __('messages.check_updated'),
-            ],200);
-            
+            ], 200);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
+
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 
-
-     catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-            'errors'  => $e->errors()
-
-        ], 200);
-     } 
-        catch (ModelNotFoundException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
-    
-     catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
-    }
- 
-
-       public function cashFromBox(Request $request){
-      try{
+    public function cashFromBox(Request $request, ExpenseBoxAccessService $access)
+    {
+        try {
 
             $data = $request->validate([
                 'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
-                'box_id' =>'required|integer|exists:boxes,id',
+                'box_id' => 'required|integer|exists:boxes,id',
 
             ]);
 
-            $outgoingCheck = OutgoingCheck::
-            findOrFail($request->outgoing_check_id);
+            if (! $access->canUse($request->user(), (int) $data['box_id'])) {
+                throw ValidationException::withMessages([
+                    'box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.'],
+                ]);
+            }
 
-        $box = Box::findOrFail($request->box_id);
+            [$outgoingCheck, $box] = DB::transaction(function () use ($data) {
+                $outgoingCheck = OutgoingCheck::query()->lockForUpdate()->findOrFail($data['outgoing_check_id']);
+                $box = Box::query()->lockForUpdate()->findOrFail($data['box_id']);
 
-        if($outgoingCheck->currency !== $box->currency){
+                if ($outgoingCheck->currency !== $box->currency) {
+                    throw ValidationException::withMessages([
+                        'box_id' => [__('messages.must_be_same_currency_check')],
+                    ]);
+                }
+                if ((float) $outgoingCheck->total > (float) $box->total) {
+                    throw ValidationException::withMessages([
+                        'box_id' => [__('messages.box_out_of_money')],
+                    ]);
+                }
+
+                $box->update(['total' => (float) $box->total - (float) $outgoingCheck->total]);
+                $outgoingCheck->update([
+                    'status' => 'cashed_from_box',
+                    'box_id' => $box->id,
+                ]);
+                $outgoingCheck = $outgoingCheck->fresh();
+                app(DebtLedgerService::class)->syncOutgoingCheckToLedger($outgoingCheck);
+
+                BoxLogs::createBoxLog(
+                    $box,
+                    'تم صرف شيك صادر برقم '.($outgoingCheck->check_id ?? 'غير معروف').' من الصندوق',
+                    'minus',
+                    $outgoingCheck->total
+                );
+                Logs::createLog(
+                    'صرف شيك صادر من صندوق',
+                    'تم صرف الشيك الصادر بقيمة '.$outgoingCheck->total.' '.$outgoingCheck->currency.' من الصندوق '.$box->name,
+                    'outgoing_checks'
+                );
+
+                return [$outgoingCheck, $box->fresh()];
+            }, 3);
+
+            app(CheckSmsNotificationService::class)->dispatchForAction($outgoingCheck, 'cashed');
+
             return response()->json([
-                'status'=>'error',
-                'message' => __('messages.must_be_same_currency_check'),
-
-            ]);
-        }
-
-        if($outgoingCheck->total > $box->total){
-            return response()->json([
-                'status'=>'error',
-                'message' => __('messages.box_out_of_money'),
-
-            ]);
-        }
-
-        $box->update(['total'=> $box->total - $outgoingCheck->total]);
-        $outgoingCheck->update(['status'=>'cashed_from_box']);
-
-        $outgoingCheck = $outgoingCheck->fresh();
-        app(DebtLedgerService::class)->syncOutgoingCheckToLedger($outgoingCheck);
-        app(CheckSmsNotificationService::class)->dispatchForAction($outgoingCheck, 'cashed');
-
-        BoxLogs::createBoxLog($box,'تم صرف شيك صادر برقم '.' '.($outgoingCheck->check_id??'غير معروف').' '.'من الصندوق'
-        ,'minus',$outgoingCheck->total);
-
-            Logs::createLog(
-            'صرف شيك صادر من صندوق',
-            'تم صرف الشيك الصادر بقيمة ' . $outgoingCheck->total.' '.$outgoingCheck->currency.' ' . ' من الصندوق' .' '. $box->name,
-            'outgoing_checks'
-        );
-
-            return response()->json([
-                'status'=>'success',
+                'status' => 'success',
                 'message' => __('messages.check_cashed_from_box'),
-            ],200);
-            
-    }
+            ], 200);
 
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'errors' => $e->errors(),
 
-     catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-            'errors'  => $e->errors()
-
-        ], 200);
-     } 
-        catch (ModelNotFoundException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
-    
-     catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
+            ], 200);
+        } catch (ModelNotFoundException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
+            ], 200);
+        }
     }
 }

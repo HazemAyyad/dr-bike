@@ -20,6 +20,7 @@ class SalesReturn extends Model
         'currency',
         'cash_refund_amount',
         'credit_amount',
+        'carrier_credit_amount',
         'refund_box_id',
         'debt_transaction_id',
         'sales_daily_session_id',
@@ -37,6 +38,7 @@ class SalesReturn extends Model
         'total_amount' => 'float',
         'cash_refund_amount' => 'float',
         'credit_amount' => 'float',
+        'carrier_credit_amount' => 'float',
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
     ];

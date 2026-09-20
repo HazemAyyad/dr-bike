@@ -457,8 +457,7 @@ class SalesOrderStockService
         SalesOrder $order,
         ?int $userId = null,
         bool $allowNegative = false
-    ): void
-    {
+    ): void {
         $order->loadMissing('items.product');
 
         foreach ($order->items as $item) {
@@ -524,20 +523,20 @@ class SalesOrderStockService
         }
     }
 
-    public function restorePartialDispatched(SalesOrderItem $item, int $qty, ?int $userId = null): void
+    public function restorePartialDispatched(SalesOrderItem $item, int $qty, ?int $userId = null): ?array
     {
         if ($qty <= 0) {
-            return;
+            return null;
         }
 
         $product = Product::query()->find($item->product_id);
         if (! $product) {
-            return;
+            return null;
         }
 
         $sizeColorId = $item->size_color_id ? (int) $item->size_color_id : null;
 
-        $this->productStockService->restoreForSale(
+        return $this->productStockService->restoreForSale(
             product: $product,
             quantity: $qty,
             sizeColorId: $sizeColorId > 0 ? $sizeColorId : null,

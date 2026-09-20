@@ -22,6 +22,7 @@ class OutgoingCheck extends Model
         'img',
         'back_image',
         'seller_id',
+        'box_id',
         'notes',
     ];
 

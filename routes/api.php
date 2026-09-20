@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\API\AccountingController;
 use App\Http\Controllers\API\AssetLogs;
 use App\Http\Controllers\API\CategoryController;
 use App\Http\Controllers\API\CheckNotificationRulesController;
@@ -1371,6 +1372,26 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/admin/reports/analytics' , [Reports::class,'analyticsDashboard']);
     Route::get('/admin/reports/data' , [Reports::class,'reportData']);
     Route::get('/admin/reports/people' , [Reports::class,'reportPeople']);
+
+    Route::prefix('admin/accounting')->group(function () {
+        Route::get('/accounts', [AccountingController::class, 'accounts']);
+        Route::post('/accounts', [AccountingController::class, 'storeAccount']);
+        Route::put('/accounts/{id}', [AccountingController::class, 'updateAccount'])->whereNumber('id');
+        Route::get('/periods', [AccountingController::class, 'periods']);
+        Route::post('/periods', [AccountingController::class, 'storePeriod']);
+        Route::post('/periods/{id}/close', [AccountingController::class, 'closePeriod'])->whereNumber('id');
+        Route::post('/journal', [AccountingController::class, 'postManualJournal']);
+        Route::get('/journal', [AccountingController::class, 'journal']);
+        Route::post('/journal/{id}/reverse', [AccountingController::class, 'reverseJournal'])->whereNumber('id');
+        Route::get('/trial-balance', [AccountingController::class, 'trialBalance']);
+        Route::get('/general-ledger', [AccountingController::class, 'generalLedger']);
+        Route::get('/income-statement', [AccountingController::class, 'incomeStatement']);
+        Route::get('/balance-sheet', [AccountingController::class, 'balanceSheet']);
+        Route::get('/cash-flow', [AccountingController::class, 'cashFlow']);
+        Route::get('/aging', [AccountingController::class, 'aging']);
+        Route::get('/quality', [AccountingController::class, 'quality']);
+        Route::get('/reconciliation', [AccountingController::class, 'reconciliation']);
+    });
 
 
 
