@@ -912,69 +912,95 @@ class Reports extends Controller
                 'errors' => $e->errors(),
             ], 200);
         } catch (\Exception $e) {
+            $accountingTypes = [
+                'trial_balance', 'general_ledger', 'balance_sheet', 'cash_flow',
+                'aging_receivable', 'aging_payable', 'journal',
+            ];
+            $isAccountingReport = in_array((string) $request->input('type'), $accountingTypes, true);
+            if ($isAccountingReport) {
+                \Illuminate\Support\Facades\Log::error('Accounting report request failed.', [
+                    'type' => $request->input('type'),
+                    'user_id' => $request->user()?->id,
+                    'exception' => $e,
+                ]);
+            }
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => $isAccountingReport
+                    ? 'تعذر تحميل التقرير المحاسبي. حاول مجددًا، وإن استمرت المشكلة راجع سجل الخادم.'
+                    : __('messages.something_wrong'),
             ], 200);
         }
     }
 
-    public function reportPeople()
+    public function reportPeople(Request $request)
     {
         try {
-            $balanceIndex = $this->ledgerBalanceIndex();
-            $customers = Customer::query()
-                ->select(['id', 'name', 'phone'])
-                ->orderBy('name')
-                ->get()
-                ->map(function (Customer $person) use ($balanceIndex) {
-                    $balances = $balanceIndex['customer:'.$person->id] ?? $this->emptyCurrencyBalances();
+            $scope = (string) $request->query('scope', 'all');
+            if (! in_array($scope, ['all', 'people', 'boxes', 'accounts'], true)) {
+                $scope = 'all';
+            }
 
-                    return [
-                        'id' => $person->id,
-                        'type' => 'customer',
-                        'type_label' => 'زبون',
-                        'name' => $person->name,
-                        'phone' => $person->phone,
-                        // Keep the old field for compatibility, but make its
-                        // currency explicit instead of mixing currencies.
-                        'balance' => round((float) $balances['شيكل']['balance'], 3),
-                        'balance_currency' => 'شيكل',
-                        'balances' => $balances,
-                    ];
-                });
+            $data = [];
+            if (in_array($scope, ['all', 'people'], true)) {
+                $balanceIndex = $this->ledgerBalanceIndex();
+                $customers = Customer::query()
+                    ->select(['id', 'name', 'phone'])
+                    ->orderBy('name')
+                    ->get()
+                    ->map(function (Customer $person) use ($balanceIndex) {
+                        $balances = $balanceIndex['customer:'.$person->id] ?? $this->emptyCurrencyBalances();
 
-            $sellers = Seller::query()
-                ->select(['id', 'name', 'phone'])
-                ->orderBy('name')
-                ->get()
-                ->map(function (Seller $person) use ($balanceIndex) {
-                    $balances = $balanceIndex['seller:'.$person->id] ?? $this->emptyCurrencyBalances();
+                        return [
+                            'id' => $person->id,
+                            'type' => 'customer',
+                            'type_label' => 'زبون',
+                            'name' => $person->name,
+                            'phone' => $person->phone,
+                            // Keep the old field for compatibility, but make its
+                            // currency explicit instead of mixing currencies.
+                            'balance' => round((float) $balances['شيكل']['balance'], 3),
+                            'balance_currency' => 'شيكل',
+                            'balances' => $balances,
+                        ];
+                    });
 
-                    return [
-                        'id' => $person->id,
-                        'type' => 'seller',
-                        'type_label' => 'مورد',
-                        'name' => $person->name,
-                        'phone' => $person->phone,
-                        'balance' => round((float) $balances['شيكل']['balance'], 3),
-                        'balance_currency' => 'شيكل',
-                        'balances' => $balances,
-                    ];
-                });
+                $sellers = Seller::query()
+                    ->select(['id', 'name', 'phone'])
+                    ->orderBy('name')
+                    ->get()
+                    ->map(function (Seller $person) use ($balanceIndex) {
+                        $balances = $balanceIndex['seller:'.$person->id] ?? $this->emptyCurrencyBalances();
+
+                        return [
+                            'id' => $person->id,
+                            'type' => 'seller',
+                            'type_label' => 'مورد',
+                            'name' => $person->name,
+                            'phone' => $person->phone,
+                            'balance' => round((float) $balances['شيكل']['balance'], 3),
+                            'balance_currency' => 'شيكل',
+                            'balances' => $balances,
+                        ];
+                    });
+                $data['people'] = $customers->merge($sellers)->values();
+            }
+            if (in_array($scope, ['all', 'boxes'], true)) {
+                $data['boxes'] = Box::query()
+                    ->where('is_shown', 1)
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'currency']);
+            }
+            if (in_array($scope, ['all', 'accounts'], true)) {
+                $data['accounts'] = Schema::hasTable('accounting_accounts')
+                    ? AccountingAccount::query()->where('is_active', true)->orderBy('code')->get(['id', 'code', 'name_ar', 'type'])
+                    : collect();
+            }
 
             return response()->json([
                 'status' => 'success',
-                'data' => [
-                    'people' => $customers->merge($sellers)->values(),
-                    'boxes' => Box::query()
-                        ->where('is_shown', 1)
-                        ->orderBy('name')
-                        ->get(['id', 'name', 'currency']),
-                    'accounts' => Schema::hasTable('accounting_accounts')
-                        ? AccountingAccount::query()->where('is_active', true)->orderBy('code')->get(['id', 'code', 'name_ar', 'type'])
-                        : collect(),
-                ],
+                'data' => $data,
             ], 200);
         } catch (\Exception $e) {
             return response()->json([

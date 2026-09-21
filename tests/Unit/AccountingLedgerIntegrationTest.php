@@ -362,4 +362,23 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertEqualsWithDelta(150, $cashFlow['summary']['closing_cash'], 0.0001);
         $this->assertTrue($trial['quality']['complete']);
     }
+
+    public function test_report_data_survives_an_auxiliary_quality_check_failure(): void
+    {
+        app(AccountingService::class)->post('quality:test', 'test', 1, '2026-09-21', 'شيكل', 'اختبار الجودة', [
+            ['account_key' => 'cash', 'debit' => 25, 'credit' => 0, 'box_id' => 1],
+            ['account_key' => 'owner_equity', 'debit' => 0, 'credit' => 25],
+        ]);
+        Schema::drop('accounting_projection_failures');
+
+        $report = app(AccountingReportService::class)->trialBalance(
+            Carbon::parse('2026-09-01'),
+            Carbon::parse('2026-09-30'),
+            'شيكل',
+        );
+
+        $this->assertNotEmpty($report['rows']);
+        $this->assertFalse($report['quality']['complete']);
+        $this->assertTrue($report['quality']['quality_check_failed']);
+    }
 }

@@ -11,7 +11,9 @@ use Carbon\Carbon;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Throwable;
 
 class AccountingReportService
 {
@@ -379,6 +381,30 @@ class AccountingReportService
     }
 
     public function quality(): array
+    {
+        try {
+            return $this->qualitySnapshot();
+        } catch (Throwable $e) {
+            Log::error('Accounting report quality check failed.', [
+                'exception' => $e,
+            ]);
+
+            return [
+                'complete' => false,
+                'quality_check_failed' => true,
+                'ledger_empty' => false,
+                'cutover_applied' => false,
+                'open_failures' => 0,
+                'has_unallocated_clearing' => false,
+                'cash_lines_without_box' => 0,
+                'receivable_payable_lines_without_party' => 0,
+                'reconciliation_complete' => false,
+                'reconciliation_mismatches' => 0,
+            ];
+        }
+    }
+
+    private function qualitySnapshot(): array
     {
         $openFailures = DB::table('accounting_projection_failures')->whereNull('resolved_at');
         $clearingId = AccountingAccount::query()->where('system_key', 'clearing')->value('id');
