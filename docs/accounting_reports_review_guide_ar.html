@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>دليل مراجعة تقارير Doctor Bike للمحاسب</title>
+  <style>
+    @font-face {
+      font-family: Almarai;
+      src: url('file:///F:/flutter_projects/doctorbike/assets/fonts/Almarai/Almarai-Regular.ttf') format('truetype');
+      font-weight: 400;
+    }
+    @font-face {
+      font-family: Almarai;
+      src: url('file:///F:/flutter_projects/doctorbike/assets/fonts/Almarai/Almarai-Bold.ttf') format('truetype');
+      font-weight: 700;
+    }
+    @page { size: A4; margin: 14mm 13mm 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #172033;
+      background: #fff;
+      font-family: Almarai, Tahoma, Arial, sans-serif;
+      font-size: 10.2pt;
+      line-height: 1.65;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { font-size: 25pt; line-height: 1.35; margin-bottom: 8px; }
+    h2 {
+      color: #514aa6;
+      font-size: 16pt;
+      border-bottom: 2px solid #d9d6ff;
+      padding-bottom: 5px;
+      margin: 0 0 10px;
+    }
+    h3 { color: #3e397f; font-size: 12.2pt; margin: 0 0 5px; }
+    ul, ol { margin: 5px 0 8px; padding-right: 23px; }
+    li { margin: 2px 0; }
+    .cover {
+      min-height: 250mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      page-break-after: always;
+      background: linear-gradient(145deg, #f7f6ff, #ffffff 55%);
+      border: 1px solid #dedcff;
+      padding: 25mm 18mm;
+    }
+    .cover img { width: 45mm; max-height: 38mm; object-fit: contain; margin-bottom: 18px; }
+    .cover .sub { color: #514aa6; font-size: 14pt; font-weight: 700; }
+    .cover .meta { margin-top: 24px; color: #667085; font-size: 9.5pt; }
+    .notice, .warning, .success {
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 9px 0;
+      page-break-inside: avoid;
+    }
+    .notice { background: #f4f3ff; border-right: 5px solid #6b65bd; }
+    .warning { background: #fff8e7; border-right: 5px solid #e4a11b; }
+    .success { background: #edf9f2; border-right: 5px solid #2c9b5f; }
+    .page-break { page-break-before: always; }
+    .report {
+      border: 1px solid #d9dce5;
+      border-radius: 9px;
+      padding: 11px 13px;
+      margin: 0 0 11px;
+      page-break-inside: avoid;
+    }
+    .report-number {
+      display: inline-block;
+      min-width: 27px;
+      margin-left: 7px;
+      padding: 1px 7px;
+      border-radius: 14px;
+      color: #fff;
+      background: #6b65bd;
+      text-align: center;
+      font-weight: 700;
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 13px; }
+    .label { color: #514aa6; font-weight: 700; }
+    .formula {
+      direction: rtl;
+      background: #f7f8fb;
+      border: 1px solid #e3e5ec;
+      padding: 6px 9px;
+      border-radius: 5px;
+      margin: 5px 0;
+      font-weight: 700;
+    }
+    table { width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 8.6pt; }
+    th, td { border: 1px solid #d9dce5; padding: 5px 6px; vertical-align: top; }
+    th { background: #6b65bd; color: #fff; font-weight: 700; }
+    tr:nth-child(even) td { background: #fafaff; }
+    .small { color: #667085; font-size: 8.7pt; }
+    .checklist td:first-child { width: 28%; font-weight: 700; color: #3e397f; }
+    .footer-note { margin-top: 14px; color: #667085; font-size: 8.5pt; text-align: center; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <img src="file:///F:/flutter_projects/doctorbike/assets/images/purchase_invoice_logo.jpg" alt="Doctor Bike">
+    <h1>دليل مراجعة التقارير المالية والمحاسبية</h1>
+    <div class="sub">Doctor Bike — نسخة مخصصة للمحاسب</div>
+    <p style="max-width:150mm;margin-top:18px">
+      يشرح هذا الدليل هدف كل تقرير، طريقة احتسابه، نموذجًا مبسطًا لمخرجاته،
+      وما يجب مطابقته مع المستندات والدفاتر قبل اعتماد الأرقام.
+    </p>
+    <div class="meta">
+      تاريخ الإعداد: 21 سبتمبر 2026<br>
+      عدد التقارير المشمولة: 17 تقريرًا<br>
+      الأمثلة الواردة توضيحية وليست بيانات مالية حقيقية
+    </div>
+  </section>
+
+  <section>
+    <h2>طريقة استخدام الدليل</h2>
+    <div class="warning">
+      هذا الملف يشرح منطق النظام ولا يُعد تصديقًا محاسبيًا. الاعتماد النهائي يكون بعد أن يطابق المحاسب
+      ملفات التقارير الفعلية مع الفواتير، سندات القبض والصرف، كشوف البنوك، الجرد، وإغلاقات الصناديق.
+    </div>
+    <ol>
+      <li>صدّر التقارير من التطبيق للفترة نفسها وبنفس العملة.</li>
+      <li>سلّم هذا الدليل مع ملفات PDF الفعلية والمستندات المؤيدة.</li>
+      <li>اطلب من المحاسب توثيق أي فرق: قيمته، مصدره، التقرير المتأثر وطريقة المعالجة.</li>
+      <li>لا تجمع الشيكل والدولار والدينار في مبلغ واحد؛ تراجع كل عملة بشكل مستقل.</li>
+      <li>أي تنبيه «جودة البيانات المحاسبية» يعني أن التقرير يحتاج معالجة قبل اعتماده.</li>
+    </ol>
+
+    <h2>الحزمة التي تسلّمها للمحاسب</h2>
+    <table class="checklist">
+      <tr><th>الملف أو المستند</th><th>ما الذي يجب تسليمه</th></tr>
+      <tr><td>التقارير الـ17</td><td>PDF لكل تقرير عن شهر مغلق، ثم نسخة من بداية السنة المالية حتى تاريخ المراجعة.</td></tr>
+      <tr><td>تقارير العملات</td><td>نسخة مستقلة لكل عملة مستخدمة: شيكل، دولار، دينار. لا تسلّم مجموعًا مختلطًا.</td></tr>
+      <tr><td>دفتر الأستاذ</td><td>كشف لكل حساب جوهري: النقد، البنوك، الذمم، المخزون، المبيعات، تكلفة المبيعات، المصروفات وحقوق الملكية.</td></tr>
+      <tr><td>كشوف الأشخاص</td><td>كشف حساب لكل زبون أو مورد له رصيد غير صفري، مع عينات من الحسابات المسددة.</td></tr>
+      <tr><td>كشوف الصناديق</td><td>ملف مستقل لكل صندوق دائم ولكل عملة، مع تقرير جلسات الصناديق اليومية للفترة نفسها.</td></tr>
+      <tr><td>المستندات المؤيدة</td><td>عينات فواتير بيع وشراء، مردودات، سندات قبض وصرف، مصروفات، شيكات، تسويات وإغلاقات يومية.</td></tr>
+      <tr><td>المخزون</td><td>محضر الجرد الفعلي في نهاية الفترة، فواتير التوريد، وأي تسويات أو مخزون سالب.</td></tr>
+      <tr><td>البنوك والشيكات</td><td>كشوف البنوك، الشيكات القائمة والمصروفة والمرتجعة، وإثباتات التحويل.</td></tr>
+    </table>
+
+    <div class="notice">
+      تسمية مقترحة للملفات: <b>2026-09_شيكل_01-تقرير-المبيعات.pdf</b>، مع استخدام الفترة والعملة
+      ورقم التقرير في اسم كل ملف لتسهيل المطابقة.
+    </div>
+  </section>
+
+  <section class="page-break">
+    <h2>التقارير الأساسية</h2>
+
+    <article class="report">
+      <h3><span class="report-number">1</span>تقرير المبيعات</h3>
+      <div><span class="label">الهدف:</span> عرض الفواتير الفعالة والملغاة، المقبوض والمتبقي وطريقة الدفع.</div>
+      <div class="formula">إجمالي المبيعات = مجموع إجمالي الفواتير الفعالة بعد الخصم المخزن على الفاتورة</div>
+      <div class="formula">المتبقي = الحد الأعلى بين (إجمالي الفاتورة − المدفوع) و صفر</div>
+      <div><span class="label">الفلاتر:</span> الفترة، الحالة، طريقة الدفع، الصندوق.</div>
+      <table><tr><th>الفاتورة</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقي</th><th>الحالة</th></tr><tr><td>S-120</td><td>1,000</td><td>600</td><td>400</td><td>فعالة</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> مطابقة إجمالي الفواتير الفعالة، عدم احتساب الملغي، وربط المدفوع بحركة الصندوق والدين بكشف الشخص.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">2</span>قائمة الدخل</h3>
+      <div><span class="label">الهدف:</span> قياس نتيجة النشاط خلال فترة، وليس مقدار النقد المحصل.</div>
+      <div class="formula">صافي المبيعات = المبيعات الفعالة بعد الخصم − المردودات المكتملة</div>
+      <div class="formula">إجمالي الربح = صافي المبيعات − تكلفة المبيعات</div>
+      <div class="formula">صافي الربح = إجمالي الربح − المصروفات</div>
+      <table><tr><th>صافي المبيعات</th><th>تكلفة المبيعات</th><th>المصروفات</th><th>صافي الربح</th></tr><tr><td>50,000</td><td>32,000</td><td>8,000</td><td>10,000</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> التحقق من اكتمال تكلفة FIFO ومن عدم خصم الخصم مرتين. المبيعات الآجلة تدخل الربح حتى لو لم تُحصّل نقدًا.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">3</span>قائمة التدفقات النقدية</h3>
+      <div><span class="label">الهدف:</span> تفسير تغير النقد بين أول وآخر الفترة حسب النشاط التشغيلي والاستثماري والتمويلي.</div>
+      <div class="formula">صافي التدفق = المقبوضات النقدية − المدفوعات النقدية</div>
+      <div class="formula">نقد آخر الفترة = نقد أول الفترة + صافي التدفق</div>
+      <table><tr><th>القسم</th><th>داخل</th><th>خارج</th><th>الصافي</th></tr><tr><td>تشغيلي</td><td>20,000</td><td>13,000</td><td>7,000</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> التحويل بين صندوقين لا يُعد تدفقًا على مستوى الشركة، ويجب مطابقة رصيد النهاية مع النقد والبنوك في الميزانية.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">4</span>نسبة ربح المنتجات</h3>
+      <div><span class="label">الهدف:</span> معرفة ربح وهامش كل صنف بعد الخصم والمردودات.</div>
+      <div class="formula">ربح الصنف = صافي مبيعات الصنف − تكلفة FIFO للصنف</div>
+      <div class="formula">نسبة الربح = ربح الصنف ÷ صافي مبيعات الصنف × 100</div>
+      <table><tr><th>الصنف</th><th>المبيعات</th><th>التكلفة</th><th>الربح</th><th>الهامش</th></tr><tr><td>دراجة نموذج A</td><td>2,000</td><td>1,400</td><td>600</td><td>30%</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> التأكد أن نسبة تغطية التكلفة 100% وأن تكلفة الصنف مأخوذة من تخصيص المخزون لا من سعر الجملة الحالي.</div>
+    </article>
+  </section>
+
+  <section class="page-break">
+    <h2>الدفاتر والقيود</h2>
+
+    <article class="report">
+      <h3><span class="report-number">5</span>ميزان المراجعة</h3>
+      <div><span class="label">الهدف:</span> عرض أرصدة الحسابات الافتتاحية، حركة الفترة والأرصدة الختامية.</div>
+      <div class="formula">الرصيد الختامي = الرصيد الافتتاحي + حركة المدين − حركة الدائن</div>
+      <table><tr><th>الحساب</th><th>افتتاحي مدين</th><th>حركة مدين</th><th>حركة دائن</th><th>ختامي مدين</th></tr><tr><td>الصندوق</td><td>5,000</td><td>3,000</td><td>1,200</td><td>6,800</td></tr></table>
+      <div><span class="label">شرط الاعتماد:</span> مجموع الأرصدة المدينة الختامية = مجموع الأرصدة الدائنة الختامية، والفرق يساوي صفرًا.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">6</span>دفتر الأستاذ العام</h3>
+      <div><span class="label">الهدف:</span> تتبع حساب محاسبي واحد من رصيد البداية حتى رصيد النهاية.</div>
+      <div class="formula">الرصيد بعد الحركة = الرصيد السابق + المدين − الدائن</div>
+      <table><tr><th>التاريخ</th><th>القيد</th><th>البيان</th><th>مدين</th><th>دائن</th><th>الرصيد</th></tr><tr><td>2026-09-05</td><td>JV-105</td><td>بيع نقدي</td><td>500</td><td>0</td><td>5,500</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> تصدير الحسابات الجوهرية كل حساب على حدة، ومطابقة كل سطر مع دفتر اليومية والمستند المصدر.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">7</span>دفتر اليومية</h3>
+      <div><span class="label">الهدف:</span> عرض جميع أسطر القيود المرحلة حسب التاريخ والمصدر.</div>
+      <div class="formula">لكل قيد: مجموع المدين = مجموع الدائن</div>
+      <table><tr><th>التاريخ</th><th>القيد</th><th>الحساب</th><th>مدين</th><th>دائن</th><th>المصدر</th></tr><tr><td>2026-09-05</td><td>JV-105</td><td>الصندوق</td><td>500</td><td>0</td><td>فاتورة بيع</td></tr><tr><td>2026-09-05</td><td>JV-105</td><td>المبيعات</td><td>0</td><td>500</td><td>فاتورة بيع</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> فحص القيود اليدوية والعكسية، تسلسل أرقام القيود، وعدم وجود مصادر تشغيلية غير مرحلة.</div>
+    </article>
+  </section>
+
+  <section class="page-break">
+    <h2>الذمم والمركز المالي</h2>
+
+    <article class="report">
+      <h3><span class="report-number">8</span>الميزانية العمومية</h3>
+      <div><span class="label">الهدف:</span> عرض المركز المالي في تاريخ محدد.</div>
+      <div class="formula">الأصول = الالتزامات + حقوق الملكية، وتشمل حقوق الملكية الأرباح المحتجزة</div>
+      <table><tr><th>الأصول</th><th>الالتزامات</th><th>حقوق الملكية</th><th>الفرق</th></tr><tr><td>120,000</td><td>45,000</td><td>75,000</td><td>0</td></tr></table>
+      <div><span class="label">شرط الاعتماد:</span> الفرق صفر، مع مطابقة النقد والمخزون والذمم والأصول مع تقاريرها المساندة.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">9</span>أعمار الذمم المدينة</h3>
+      <div><span class="label">الهدف:</span> تصنيف ما للمحل على الزبائن وشركات التوصيل حسب التأخر.</div>
+      <div class="formula">الدفعات تُخصص على أقدم استحقاق أولًا، ثم يصنف المتبقي: حالي، 1–30، 31–60، 61–90، أكثر من 90 يومًا</div>
+      <table><tr><th>الزبون</th><th>حالي</th><th>1–30</th><th>31–60</th><th>أكثر من 90</th><th>الرصيد</th></tr><tr><td>زبون مثال</td><td>200</td><td>300</td><td>0</td><td>100</td><td>600</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> مطابقة الإجمالي مع حساب العملاء في الميزانية ومع كشوف الأشخاص.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">10</span>أعمار الذمم الدائنة</h3>
+      <div><span class="label">الهدف:</span> تصنيف ما على المحل للموردين حسب تاريخ الاستحقاق.</div>
+      <div class="formula">الرصيد المستحق للمورد بعد تخصيص الدفعات القديمة يصنف في شرائح العمر نفسها</div>
+      <table><tr><th>المورد</th><th>حالي</th><th>1–30</th><th>31–60</th><th>أكثر من 90</th><th>الرصيد</th></tr><tr><td>مورد مثال</td><td>1,000</td><td>500</td><td>250</td><td>0</td><td>1,750</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> مطابقة الإجمالي مع حساب الموردين في الميزانية وكشوف الموردين وفواتير الشراء.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">11</span>أرصدة الزبائن والموردين</h3>
+      <div><span class="label">الهدف:</span> قائمة مختصرة بكل رصيد غير صفري مفصولًا حسب الشخص والعملة.</div>
+      <div class="formula">الحالة «إلنا» = ذمة مدينة، والحالة «علينا» = ذمة دائنة</div>
+      <table><tr><th>النوع</th><th>الاسم</th><th>العملة</th><th>الرصيد</th><th>الحالة</th></tr><tr><td>زبون</td><td>زبون مثال</td><td>شيكل</td><td>600</td><td>إلنا</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> مجموع «إلنا» يطابق الذمم المدينة ومجموع «علينا» يطابق الذمم الدائنة لكل عملة.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">12</span>كشف حساب شخص</h3>
+      <div><span class="label">الهدف:</span> تتبع حركات زبون أو مورد مع الرصيد بعد كل حركة.</div>
+      <div class="formula">الرصيد بعد = الرصيد السابق ± حركة «أخذت/أعطيت» حسب اتجاه الذمة المسجل</div>
+      <table><tr><th>التاريخ</th><th>الحركة</th><th>القيمة</th><th>العملة</th><th>الرصيد بعد</th><th>المصدر</th></tr><tr><td>2026-09-07</td><td>أخذت</td><td>200</td><td>شيكل</td><td>600</td><td>دفعة فاتورة</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> اختيار الشخص قبل التصدير ومطابقة الرصيد الختامي مع تقرير الأرصدة ومع تأكيد الطرف عند الحاجة.</div>
+    </article>
+  </section>
+
+  <section class="page-break">
+    <h2>السيولة والرقابة التشغيلية</h2>
+
+    <article class="report">
+      <h3><span class="report-number">13</span>الشيكات الصادرة والواردة</h3>
+      <div><span class="label">الهدف:</span> متابعة قيمة الشيكات واتجاهها وحالتها وتاريخ الاستحقاق.</div>
+      <div class="formula">إجمالي الوارد والصادر يحسب مستقلًا لكل عملة، ولا تُجمع العملات معًا</div>
+      <table><tr><th>الاتجاه</th><th>رقم الشيك</th><th>البنك</th><th>القيمة</th><th>الاستحقاق</th><th>الحالة</th></tr><tr><td>وارد</td><td>4581</td><td>بنك مثال</td><td>1,200 شيكل</td><td>2026-10-01</td><td>غير مصروف</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> مطابقة الشيكات غير المصروفة مع الحافظة وكشف البنك، والتحقق من المرتجع والملغي.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">14</span>كشف حساب صندوق</h3>
+      <div><span class="label">الهدف:</span> كشف شبيه بكشف البنك لصندوق دائم محدد، ولا يشمل الصناديق اليومية.</div>
+      <div class="formula">الرصيد بعد الحركة = الرصيد السابق + الوارد − الصادر</div>
+      <div class="formula">رصيد آخر المدة = رصيد أول المدة + مجموع الوارد − مجموع الصادر</div>
+      <table><tr><th>التاريخ</th><th>المرجع</th><th>الحركة</th><th>وارد</th><th>صادر</th><th>الرصيد</th><th>المقابل</th></tr><tr><td>2026-09-08</td><td>BOX-912</td><td>تحويل</td><td>500</td><td>0</td><td>6,300</td><td>صندوق المبيعات اليومي</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> تصدير كشف مستقل لكل صندوق دائم، ومطابقة رصيد النهاية مع الجرد أو كشف البنك حسب نوع الصندوق.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">15</span>جلسات الصناديق اليومية</h3>
+      <div><span class="label">الهدف:</span> رقابة إغلاق صناديق المبيعات والطلبيات والصيانة دون خلطها بكشوف الصناديق الدائمة.</div>
+      <div class="formula">الرصيد المتوقع = رصيد البداية + المقبوض المسجل</div>
+      <div class="formula">فرق الجرد = الجرد الفعلي − الرصيد المتوقع</div>
+      <div class="formula">المبلغ المرحّل = الجرد الفعلي − العهدة المتروكة</div>
+      <table><tr><th>النوع</th><th>الموظف</th><th>المتوقع</th><th>الفعلي</th><th>الفرق</th><th>المرحّل</th><th>الحالة</th></tr><tr><td>مبيعات</td><td>موظف مثال</td><td>1,100</td><td>1,090</td><td>-10</td><td>990</td><td>مغلقة</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> فحص كل فرق جرد ومبرره، ومطابقة المبلغ المرحّل كحركة واردة في الصندوق الدائم المستلم.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">16</span>كميات وقيمة المخزون</h3>
+      <div><span class="label">الهدف:</span> عرض كمية وقيمة المخزون في أول وآخر الفترة باستخدام تكلفة الحركات.</div>
+      <div class="formula">قيمة المخزون = مجموع الكميات المتبقية × تكلفتها الفعلية حسب طبقات التكلفة</div>
+      <table><tr><th>الصنف</th><th>كمية أول</th><th>كمية آخر</th><th>متوسط التكلفة</th><th>قيمة آخر</th></tr><tr><td>قطعة مثال</td><td>10</td><td>7</td><td>80</td><td>560</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> مطابقة القيمة مع حساب المخزون والكمية مع الجرد الفعلي. لا يعتمد التقرير إذا كانت تغطية تكلفة الحركات أقل من 100%.</div>
+    </article>
+
+    <article class="report">
+      <h3><span class="report-number">17</span>مردودات المبيعات</h3>
+      <div><span class="label">الهدف:</span> عرض الفواتير الملغاة والمردودات المباشرة والجزئية المكتملة.</div>
+      <div class="formula">قيمة المردودات = مجموع قيمة الملغى + المردود المباشر/الجزئي المكتمل خلال الفترة</div>
+      <table><tr><th>الرقم</th><th>التاريخ</th><th>الزبون</th><th>الصنف</th><th>الكمية</th><th>القيمة</th></tr><tr><td>RET-35</td><td>2026-09-12</td><td>زبون مثال</td><td>قطعة مثال</td><td>1</td><td>250</td></tr></table>
+      <div><span class="label">مراجعة المحاسب:</span> مطابقة كل مردود بإشعار الإرجاع، استرداد النقد أو تعديل الذمة، وإعادة تكلفة البضاعة للمخزون.</div>
+    </article>
+  </section>
+
+  <section class="page-break">
+    <h2>اختبارات المطابقة التي يطلب تنفيذها</h2>
+    <table class="checklist">
+      <tr><th>المطابقة</th><th>الاختبار المطلوب</th></tr>
+      <tr><td>ميزان المراجعة</td><td>إجمالي المدين = إجمالي الدائن، والفرق صفر لكل عملة.</td></tr>
+      <tr><td>الميزانية</td><td>الأصول = الالتزامات + حقوق الملكية، والفرق صفر.</td></tr>
+      <tr><td>النقد</td><td>نقد آخر التدفقات = النقد والبنوك في الميزانية = مجموع أرصدة الصناديق الدائمة بعد استبعاد التحويلات الداخلية.</td></tr>
+      <tr><td>الذمم</td><td>أعمار المدينة/الدائنة = حسابات الذمم في الميزانية = مجموع أرصدة الأشخاص بحسب العملة.</td></tr>
+      <tr><td>المخزون</td><td>قيمة تقرير المخزون = حساب المخزون في الميزانية، والكمية = الجرد الفعلي.</td></tr>
+      <tr><td>المبيعات</td><td>صافي المبيعات في قائمة الدخل = المبيعات الفعالة − المردودات، مع عدم خصم الخصم المخزن مرة ثانية.</td></tr>
+      <tr><td>تكلفة المبيعات</td><td>تكلفة قائمة الدخل = تكلفة FIFO للمبيعات − تكلفة الأصناف المرتجعة.</td></tr>
+      <tr><td>الصناديق اليومية</td><td>المبلغ المرحّل من كل جلسة = الحركة الواردة في الصندوق الدائم المستلم.</td></tr>
+    </table>
+
+    <h2>أسئلة اعتماد يجيب عنها المحاسب</h2>
+    <ol>
+      <li>هل الفترة المختارة مغلقة ولا توجد حركات رجعية غير معالجة؟</li>
+      <li>هل كل تقرير مفصول حسب العملة ولا توجد مجاميع مختلطة؟</li>
+      <li>هل نسبة تغطية تكلفة المخزون والمبيعات 100%؟</li>
+      <li>هل توجد قيود أو حركات فشلت في الترحيل المحاسبي؟</li>
+      <li>هل حساب التسوية أو النقد غير المخصص يحتوي رصيدًا؟ وما سبب كل رصيد؟</li>
+      <li>هل فروق الجرد اليومية موثقة ومعتمدة؟</li>
+      <li>هل الشيكات والذمم والمخزون والنقد تطابقت مع مصادر خارج النظام؟</li>
+      <li>ما قيود التسوية المقترحة؟ ومن يعتمدها؟ وفي أي فترة تسجل؟</li>
+    </ol>
+
+    <div class="success">
+      يعتبر ملف الفترة جاهزًا للاعتماد عندما تكون معادلات التوازن صحيحة، ونسب تغطية التكلفة مكتملة،
+      والفروقات موثقة، وجميع المطابقات مع المستندات الخارجية موقعة من المحاسب والإدارة.
+    </div>
+    <p class="footer-note">Doctor Bike — دليل مراجعة داخلي — الأمثلة توضيحية فقط</p>
+  </section>
+</body>
+</html>
