@@ -8,7 +8,6 @@ use App\Models\AccountingJournalEntry;
 use App\Models\AssetLog;
 use App\Models\Bill;
 use App\Models\Box;
-use App\Models\BoxLog;
 use App\Models\Customer;
 use App\Models\Debt;
 use App\Models\DebtTransaction;
@@ -31,7 +30,7 @@ use App\Models\SalesReturn;
 use App\Models\SalesReturnItem;
 use App\Models\Seller;
 use App\Services\AccountingReportService;
-use App\Services\BoxReportService;
+use App\Services\CashboxReportService;
 use App\Services\DebtLedgerService;
 use App\Services\ProductStockService;
 use App\Support\ApiImageUrl;
@@ -853,6 +852,7 @@ class Reports extends Controller
                         'statement',
                         'checks',
                         'boxes',
+                        'daily_boxes',
                         'inventory',
                         'income',
                         'sales_returns',
@@ -875,7 +875,20 @@ class Reports extends Controller
                 'to_date' => ['nullable', 'date', 'after_or_equal:from_date'],
                 'person_type' => ['nullable', 'string', Rule::in(['customer', 'seller'])],
                 'person_id' => ['nullable', 'integer'],
-                'box_id' => ['nullable', 'integer', 'exists:boxes,id'],
+                'box_id' => [
+                    'nullable',
+                    'integer',
+                    Rule::exists('boxes', 'id')->where(function ($query) {
+                        $query->where('is_shown', 1)
+                            ->where(function ($types) {
+                                $types->whereNull('type')->orWhereNotIn('type', [
+                                    config('sales_daily.box_type', 'daily_sales'),
+                                    config('sales_orders.daily_box.type', 'daily_sales_orders'),
+                                    config('maintenance_daily.box_type', 'daily_maintenance'),
+                                ]);
+                            });
+                    }),
+                ],
                 'check_direction' => ['nullable', 'string', Rule::in(['all', 'incoming', 'outgoing'])],
                 'currency' => ['nullable', 'string', Rule::in(['شيكل', 'دولار', 'دينار', 'NIS', 'ILS', 'USD', 'JOD'])],
                 'account_id' => ['nullable', 'integer', 'exists:accounting_accounts,id'],
@@ -886,7 +899,12 @@ class Reports extends Controller
                 'balances' => $this->balancesReportPayload(),
                 'statement' => $this->statementReportPayload($request, $from, $to),
                 'checks' => $this->checksReportPayload($request, $from, $to),
-                'boxes' => $this->boxesReportPayload($request, $from, $to),
+                'boxes' => app(CashboxReportService::class)->statement(
+                    $request->filled('box_id') ? (int) $request->box_id : null,
+                    $from,
+                    $to,
+                ),
+                'daily_boxes' => app(CashboxReportService::class)->dailySessions($from, $to),
                 'inventory' => $this->inventoryReportPayload($from, $to),
                 'income' => $this->incomeReportPayload($from, $to, $request),
                 'sales_returns' => $this->salesReturnsReportPayload($from, $to),
@@ -987,10 +1005,14 @@ class Reports extends Controller
                 $data['people'] = $customers->merge($sellers)->values();
             }
             if (in_array($scope, ['all', 'boxes'], true)) {
-                $data['boxes'] = Box::query()
-                    ->where('is_shown', 1)
-                    ->orderBy('name')
-                    ->get(['id', 'name', 'currency']);
+                $data['boxes'] = app(CashboxReportService::class)
+                    ->permanentBoxes()
+                    ->map(fn (Box $box) => [
+                        'id' => $box->id,
+                        'name' => $box->name,
+                        'currency' => $box->currency,
+                    ])
+                    ->values();
             }
             if (in_array($scope, ['all', 'accounts'], true)) {
                 $data['accounts'] = Schema::hasTable('accounting_accounts')
@@ -1500,98 +1522,6 @@ class Reports extends Controller
             'summary' => $summary,
             'columns' => ['الاتجاه', 'رقم الشيك', 'البنك', 'الشخص', 'القيمة', 'العملة', 'الاستحقاق', 'الحالة'],
             'rows' => $rows->values(),
-        ];
-    }
-
-    private function boxesReportPayload(Request $request, Carbon $from, Carbon $to): array
-    {
-        $selectedBoxId = $request->filled('box_id') ? (int) $request->box_id : null;
-        $reportBoxes = Box::query()
-            ->when(
-                $selectedBoxId,
-                fn ($query) => $query->where('id', $selectedBoxId),
-                fn ($query) => $query->where('is_shown', 1),
-            )
-            ->get(['id', 'total', 'currency']);
-        $rows = BoxLog::query()
-            ->with(['box:id,name,currency', 'fromBox:id,name,currency', 'toBox:id,name,currency'])
-            ->whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
-            ->when($request->filled('box_id'), function ($query) use ($request) {
-                $query->where(function ($nested) use ($request) {
-                    $nested->where('box_id', $request->box_id)
-                        ->orWhere('from_box_id', $request->box_id)
-                        ->orWhere('to_box_id', $request->box_id);
-                });
-            })
-            ->orderByDesc('created_at')
-            ->get()
-            ->map(function (BoxLog $log) use ($selectedBoxId) {
-                $amount = abs((float) ($log->value ?? $log->transfered_balance ?? 0));
-                $relatedBox = $selectedBoxId
-                    ? collect([$log->box, $log->fromBox, $log->toBox])->first(fn ($box) => (int) ($box?->id ?? 0) === $selectedBoxId)
-                    : ($log->box ?: $log->toBox ?: $log->fromBox);
-                $currency = $this->reportCurrency($relatedBox?->currency);
-                $signedAmount = $amount;
-                if ($selectedBoxId) {
-                    if ($log->type === 'minus' || ($log->type === 'transfer' && (int) $log->from_box_id === $selectedBoxId)) {
-                        $signedAmount = -$amount;
-                    }
-                }
-
-                return [
-                    'date' => optional($log->created_at)->toDateTimeString(),
-                    'box' => optional($relatedBox)->name ?: '-',
-                    'from_box' => optional($log->fromBox)->name,
-                    'to_box' => optional($log->toBox)->name,
-                    'type' => $log->type ?: '-',
-                    'amount' => $amount,
-                    'signed_amount' => $signedAmount,
-                    'currency' => $currency,
-                    'description' => $log->description ?: $log->note,
-                ];
-            });
-
-        $summary = collect([
-            ['title' => 'عدد الحركات', 'value' => $rows->count()],
-        ]);
-        $boxReportService = app(BoxReportService::class);
-        $boxSummaries = $reportBoxes->mapWithKeys(function (Box $box) use ($boxReportService, $from, $to) {
-            $report = $boxReportService->report($box, [
-                'from_date' => $from->toDateString(),
-                'to_date' => $to->toDateString(),
-                'sort' => 'newest',
-            ]);
-
-            return [$box->id => $report['summary']];
-        });
-        foreach (DebtLedgerService::CURRENCIES as $currency) {
-            $currencyRows = $rows->where('currency', $currency);
-            $currentBalance = (float) $reportBoxes
-                ->filter(fn (Box $box) => $this->reportCurrency($box->currency) === $currency)
-                ->sum('total');
-            $currencyBoxes = $reportBoxes->filter(fn (Box $box) => $this->reportCurrency($box->currency) === $currency);
-            $opening = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['opening_balance'] ?? 0));
-            $incoming = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['incoming'] ?? 0));
-            $outgoing = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['outgoing'] ?? 0));
-            $closing = (float) $currencyBoxes->sum(fn (Box $box) => (float) ($boxSummaries[$box->id]['closing_balance'] ?? 0));
-            if ($currencyRows->isEmpty() && abs($currentBalance) < 0.0001) {
-                continue;
-            }
-            $summary->push(
-                ['title' => 'رصيد أول المدة - '.$currency, 'value' => round($opening, 3)],
-                ['title' => 'الوارد - '.$currency, 'value' => round($incoming, 3)],
-                ['title' => 'الصادر - '.$currency, 'value' => round($outgoing, 3)],
-                ['title' => 'صافي الحركة - '.$currency, 'value' => round($incoming - $outgoing, 3)],
-                ['title' => 'رصيد آخر المدة - '.$currency, 'value' => round($closing, 3)],
-                ['title' => 'الرصيد الحالي - '.$currency, 'value' => round($currentBalance, 3)],
-            );
-        }
-
-        return [
-            'title' => 'كشف حساب الصناديق',
-            'summary' => $summary,
-            'columns' => ['التاريخ', 'الصندوق', 'من صندوق', 'إلى صندوق', 'النوع', 'القيمة', 'العملة', 'الوصف'],
-            'rows' => $rows,
         ];
     }
 
