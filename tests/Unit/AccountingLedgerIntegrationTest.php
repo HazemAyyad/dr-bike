@@ -751,6 +751,11 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertNull($failure->resolved_at);
         $this->assertStringContainsString('zero revenue', $failure->error);
 
+        $preview = app(AccountingProjectionRepairService::class)->run(true);
+        $this->assertSame(0, $preview['summary']['repairable']);
+        $this->assertSame(1, $preview['summary']['still_failing']);
+        $this->assertSame('zero_revenue_with_fifo_cost', $preview['items'][0]['issues'][0]['code']);
+
         $repair = app(AccountingProjectionRepairService::class)->run(false);
         $this->assertSame(1, $repair['summary']['still_failing']);
         $this->assertSame(0, $repair['summary']['successfully_repaired']);
@@ -761,14 +766,40 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertStringContainsString('zero revenue', $context['repair_attempt']['message']);
     }
 
+    public function test_failed_repair_rolls_back_fifo_snapshot_changes(): void
+    {
+        $sale = $this->createProductSale(50, 50, 1, 15, snapshot: false);
+        app(AccountingProjectionService::class)->sync($sale);
+        DB::table('accounting_accounts')->where('system_key', 'sales_revenue')->update(['is_active' => false]);
+
+        $result = app(AccountingProjectionRepairService::class)->run(false);
+
+        $this->assertSame(1, $result['summary']['still_failing']);
+        $this->assertNull($sale->fresh()->inventory_total_cost);
+        $this->assertFalse(AccountingJournalEntry::query()
+            ->where('source_type', 'instant_sale')
+            ->where('source_id', $sale->id)
+            ->exists());
+        $this->assertNull(DB::table('accounting_projection_failures')
+            ->where('source_key', 'instant_sale:'.$sale->id)
+            ->value('resolved_at'));
+    }
+
     public function test_projection_repair_rebuilds_only_reliable_snapshot_and_remains_idempotent(): void
     {
         $sale = $this->createProductSale(80, 80, 2, 12, snapshot: false);
         app(AccountingProjectionService::class)->sync($sale);
         $this->assertNull($sale->fresh()->inventory_total_cost);
 
+        $writeQueries = [];
+        DB::listen(function ($query) use (&$writeQueries) {
+            if (preg_match('/^\s*(insert|update|delete|replace|alter|create|drop|truncate)\b/i', $query->sql)) {
+                $writeQueries[] = $query->sql;
+            }
+        });
         $dryRun = app(AccountingProjectionRepairService::class)->run(true);
         $this->assertSame(1, $dryRun['summary']['repairable']);
+        $this->assertSame([], $writeQueries, 'Dry-run must not execute mutating SQL, even inside a rolled-back transaction.');
         $this->assertNull($sale->fresh()->inventory_total_cost);
         $this->assertFalse(AccountingJournalEntry::query()->where('source_type', 'instant_sale')->where('source_id', $sale->id)->exists());
 

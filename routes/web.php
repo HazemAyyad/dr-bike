@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AccountingIntegrityWebController;
 use App\Http\Controllers\AdminNotificationWebController;
 use App\Http\Controllers\API\EmployeeDetails;
 use App\Http\Controllers\API\EmployeeTasks;
@@ -67,6 +68,13 @@ Route::get('/security-center/login', [SecurityCenterWebController::class, 'login
 Route::post('/security-center/login', [SecurityCenterWebController::class, 'login'])->middleware('throttle:5,1')->name('security-center.login.submit');
 Route::middleware('security.center')->prefix('security-center')->name('security-center.')->group(function () {
     Route::get('/', [SecurityCenterWebController::class, 'index'])->name('index');
+    Route::get('/accounting', [AccountingIntegrityWebController::class, 'index'])->name('accounting.index');
+    Route::post('/accounting/inspect', [AccountingIntegrityWebController::class, 'inspect'])
+        ->middleware('throttle:6,1')
+        ->name('accounting.inspect');
+    Route::post('/accounting/repair', [AccountingIntegrityWebController::class, 'repair'])
+        ->middleware('throttle:2,1')
+        ->name('accounting.repair');
     Route::post('/blocks', [SecurityCenterWebController::class, 'block'])->name('blocks.store');
     Route::post('/blocks/{block}/unblock', [SecurityCenterWebController::class, 'unblock'])->whereNumber('block')->name('blocks.unblock');
     Route::post('/geolocation/refresh', [SecurityCenterWebController::class, 'refreshGeolocation'])->middleware('throttle:6,1')->name('geolocation.refresh');

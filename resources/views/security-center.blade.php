@@ -20,7 +20,7 @@
 <main class="wrap">
     <header class="top">
         <div><h1>مركز أمان Doctor Bike</h1><div class="subtitle">نشاط تطبيق الإدارة وحظر Laravel — آخر تحديث {{ now()->format('Y-m-d H:i:s') }}</div></div>
-        <div class="actions"><span class="ip" title="عنوانك الحالي">{{ $currentIp }}</span><form method="POST" action="{{ route('security-center.logout') }}">@csrf<button class="logout">تسجيل خروج</button></form></div>
+        <div class="actions"><a class="chip" href="{{ route('security-center.accounting.index') }}">سلامة المحاسبة</a><span class="ip" title="عنوانك الحالي">{{ $currentIp }}</span><form method="POST" action="{{ route('security-center.logout') }}">@csrf<button class="logout">تسجيل خروج</button></form></div>
     </header>
 
     <div class="notice"><strong>حدود العرض:</strong> تظهر هنا الطلبات التي وصلت إلى Laravel فقط. أي حظر من Hostinger أو WAF قبل وصول الطلب لن يظهر في هذه الصفحة. الحظر هنا يخص API والتطبيق، وتبقى صفحة مركز الأمان متاحة للإصلاح.</div>

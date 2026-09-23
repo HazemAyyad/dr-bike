@@ -132,6 +132,14 @@ class AccountingProjectionRepairService
 
         $preflight = $this->preflight($model);
         if (! $preflight['repairable']) {
+            if (! $dryRun) {
+                $this->recordRepairAttempt(
+                    $failure,
+                    new RuntimeException($preflight['message']),
+                    ['issues' => $preflight['issues']],
+                );
+            }
+
             return array_merge($base, [
                 'status' => 'still_failing',
                 'message' => $preflight['message'],
@@ -141,20 +149,10 @@ class AccountingProjectionRepairService
         }
 
         if ($dryRun) {
-            $probeError = $this->probeProjection($failure, $model, $preflight);
-            if ($probeError) {
-                return array_merge($base, [
-                    'status' => 'still_failing',
-                    'message' => $probeError->getMessage(),
-                    'issues' => $preflight['issues'],
-                    'summary_key' => 'still_failing',
-                ]);
-            }
-
             return array_merge($base, [
                 'status' => 'repairable',
                 'repairable' => true,
-                'message' => $preflight['message'],
+                'message' => $preflight['message'].' Read-only preflight passed; no projection was written.',
                 'issues' => $preflight['issues'],
                 'summary_key' => null,
             ]);
@@ -162,28 +160,32 @@ class AccountingProjectionRepairService
 
         $repairDetails = [];
         try {
-            if ($model instanceof InstantSale && ($preflight['inventory']['repairable'] ?? false)) {
-                $before = $preflight['inventory'];
-                $after = $this->inventoryIntegrity->repairInstantSaleSnapshots($model);
-                if (! $after['ready']) {
-                    throw new RuntimeException('FIFO snapshot repair did not produce a projection-ready sale.');
+            $entry = DB::transaction(function () use (&$model, $preflight, $failure, &$repairDetails) {
+                if ($model instanceof InstantSale && ($preflight['inventory']['repairable'] ?? false)) {
+                    $before = $preflight['inventory'];
+                    $after = $this->inventoryIntegrity->repairInstantSaleSnapshots($model);
+                    if (! $after['ready']) {
+                        throw new RuntimeException('FIFO snapshot repair did not produce a projection-ready sale.');
+                    }
+                    $repairDetails = [
+                        'snapshot_repairs' => $before['repairs'],
+                        'inventory_total_cost' => $after['total_cost'],
+                    ];
+                    $model = $model->fresh();
                 }
-                $repairDetails = [
-                    'snapshot_repairs' => $before['repairs'],
-                    'inventory_total_cost' => $after['total_cost'],
-                ];
-                $model = $model->fresh();
-            }
 
-            $entry = $this->projection->syncOrFail($model);
-            if ($this->expectsActiveJournal($model) && ! $entry && ! $this->hasValidJournal($failure, $model)) {
-                throw new RuntimeException('Projection returned without creating or locating the required journal entry.');
-            }
-            if ($this->expectsActiveJournal($model) && ! $this->hasValidJournal($failure, $model)) {
-                throw new RuntimeException('Projection completed but the resulting journal failed structural verification.');
-            }
+                $entry = $this->projection->syncOrFail($model);
+                if ($this->expectsActiveJournal($model) && ! $entry && ! $this->hasValidJournal($failure, $model)) {
+                    throw new RuntimeException('Projection returned without creating or locating the required journal entry.');
+                }
+                if ($this->expectsActiveJournal($model) && ! $this->hasValidJournal($failure, $model)) {
+                    throw new RuntimeException('Projection completed but the resulting journal failed structural verification.');
+                }
 
-            $this->resolve($failure, 'repaired', $repairDetails);
+                $this->resolve($failure, 'repaired', $repairDetails);
+
+                return $entry;
+            }, 3);
 
             return array_merge($base, [
                 'status' => 'successfully_repaired',
@@ -210,6 +212,20 @@ class AccountingProjectionRepairService
     {
         if ($model instanceof InstantSale) {
             $inventory = $this->inventoryIntegrity->inspectInstantSale($model);
+            if ((float) $model->total_cost <= 0 && $inventory['requires_cost']) {
+                $inventory['issues'][] = [
+                    'code' => 'zero_revenue_with_fifo_cost',
+                    'message' => 'Product sale has zero revenue but a FIFO inventory cost; accounting treatment requires review.',
+                    'context' => ['sale_id' => (int) $model->id],
+                ];
+
+                return [
+                    'repairable' => false,
+                    'message' => 'Product sale has zero revenue and a real FIFO cost; no journal will be guessed.',
+                    'issues' => $inventory['issues'],
+                    'inventory' => $inventory,
+                ];
+            }
 
             return [
                 'repairable' => $inventory['ready'] || $inventory['repairable'],
@@ -411,35 +427,6 @@ class AccountingProjectionRepairService
         }
 
         return true;
-    }
-
-    /** @param array<string, mixed> $preflight */
-    private function probeProjection(object $failure, Model $model, array $preflight): ?Throwable
-    {
-        DB::beginTransaction();
-        try {
-            if ($model instanceof InstantSale && ($preflight['inventory']['repairable'] ?? false)) {
-                $inspection = $this->inventoryIntegrity->repairInstantSaleSnapshots($model);
-                if (! $inspection['ready']) {
-                    throw new RuntimeException('FIFO snapshot repair did not produce a projection-ready sale.');
-                }
-                $model = $model->fresh();
-            }
-
-            $entry = $this->projection->syncOrFail($model);
-            if ($this->expectsActiveJournal($model) && ! $entry && ! $this->hasValidJournal($failure, $model)) {
-                throw new RuntimeException('Projection did not produce the required journal entry.');
-            }
-            if ($this->expectsActiveJournal($model) && ! $this->hasValidJournal($failure, $model)) {
-                throw new RuntimeException('Projected journal failed structural verification.');
-            }
-
-            return null;
-        } catch (Throwable $exception) {
-            return $exception;
-        } finally {
-            DB::rollBack();
-        }
     }
 
     private function expectsActiveJournal(Model $model): bool
