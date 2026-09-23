@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>Doctor Bike — المشاكل المحاسبية المتبقية وخطة حلها</title>
+  <style>
+    @font-face{font-family:Cairo;src:url('file:///F:/laragon/www/doctor-bike/public/fonts/Cairo-Regular.ttf') format('truetype');font-weight:400}
+    @font-face{font-family:Cairo;src:url('file:///F:/laragon/www/doctor-bike/public/fonts/Cairo/static/Cairo-Bold.ttf') format('truetype');font-weight:700}
+    @page{size:A4;margin:13mm 12mm 15mm}
+    *{box-sizing:border-box}body{margin:0;color:#172033;background:#fff;font-family:Cairo,Tahoma,Arial,sans-serif;font-size:9.5pt;line-height:1.65}
+    h1,h2,h3,p{margin-top:0}h1{font-size:24pt;line-height:1.35;margin-bottom:8px}h2{font-size:15pt;color:#4338a0;border-bottom:2px solid #ddd9ff;padding-bottom:5px;margin:18px 0 10px}h3{font-size:11.5pt;color:#363175;margin:0 0 6px}
+    ul,ol{margin:5px 0 8px;padding-right:22px}li{margin:2px 0}.ltr{direction:ltr;display:inline-block;font-family:Consolas,monospace}.muted{color:#667085}.small{font-size:8.3pt}.page-break{page-break-before:always}
+    .cover{min-height:255mm;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;border:1px solid #ddd9ff;background:linear-gradient(145deg,#f6f4ff,#fff 58%);padding:24mm 17mm;page-break-after:always}
+    .cover img{width:45mm;max-height:36mm;object-fit:contain;margin-bottom:18px}.cover .sub{color:#514aa6;font-size:13.5pt;font-weight:700}.cover .meta{margin-top:22px;color:#667085;font-size:9pt;line-height:1.9}
+    .notice,.warning,.danger,.success{border-radius:8px;padding:9px 11px;margin:8px 0;page-break-inside:avoid}.notice{background:#f4f3ff;border-right:5px solid #6b65bd}.warning{background:#fff8e7;border-right:5px solid #dfa21d}.danger{background:#fff0f1;border-right:5px solid #d04f5c}.success{background:#edf9f2;border-right:5px solid #27955a}
+    .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:10px 0}.stat{border:1px solid #dedfe8;border-radius:8px;padding:9px;text-align:center;background:#fafaff}.stat strong{display:block;font-size:19pt;color:#514aa6}.stat span{font-size:8pt;color:#667085}
+    .issue{border:1px solid #d9dce5;border-radius:9px;margin:0 0 10px;padding:10px 12px;page-break-inside:avoid}.issue-head{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #ececf2;padding-bottom:6px;margin-bottom:7px}.badge{display:inline-block;border-radius:14px;padding:2px 8px;font-size:8pt;font-weight:700;color:#fff;background:#6b65bd}.badge.red{background:#c94452}.badge.amber{background:#c78711}.badge.blue{background:#3975aa}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 13px}.label{font-weight:700;color:#514aa6}.steps{background:#f8f8fb;border:1px solid #e2e3ea;border-radius:7px;padding:8px 10px;margin-top:7px}.steps strong{color:#343070}
+    table{width:100%;border-collapse:collapse;margin:7px 0;font-size:8.1pt;page-break-inside:auto}thead{display:table-header-group}tr{page-break-inside:avoid}th,td{border:1px solid #d9dce5;padding:4px 5px;vertical-align:top}th{background:#625bb4;color:#fff;font-weight:700}tr:nth-child(even) td{background:#fafaff}
+    .role{border:1px solid #d9dce5;border-radius:8px;padding:9px;margin-bottom:8px;page-break-inside:avoid}.role h3{display:inline-block;margin-left:8px}.check td:first-child{width:29%;font-weight:700;color:#403a8d}
+    .footer-note{text-align:center;color:#667085;font-size:8pt;margin-top:15px}
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <img src="file:///F:/flutter_projects/doctorbike/assets/images/purchase_invoice_logo.jpg" alt="Doctor Bike">
+    <h1>المشاكل المحاسبية المتبقية<br>وخطة حل كل مشكلة</h1>
+    <div class="sub">Doctor Bike — بعد تنفيذ إصلاح Accounting Projections</div>
+    <p style="max-width:155mm;margin-top:17px">تقرير تنفيذي يوضح المشكلة، الدليل الموجود في قاعدة البيانات، الإجراء المطلوب، وما يجب منعه حتى لا تُنشأ تكاليف أو أرصدة وهمية.</p>
+    <div class="meta">المقارنة: قاعدة (56) قبل الإصلاح مع قاعدة (57) بعد الإصلاح<br>تاريخ المراجعة: 24 سبتمبر 2026<br>التقرير لا ينفذ أي تعديل على قاعدة البيانات</div>
+  </section>
+
+  <section>
+    <h2>الخلاصة التنفيذية</h2>
+    <div class="stats">
+      <div class="stat"><strong>12</strong><span>قيدًا تم إصلاحه</span></div>
+      <div class="stat"><strong>9</strong><span>Failures ما زالت مفتوحة</span></div>
+      <div class="stat"><strong>1</strong><span>Failure مغلق يحتاج إعادة مراجعة</span></div>
+      <div class="stat"><strong>7</strong><span>مبيعات فيها Over-allocation</span></div>
+    </div>
+    <div class="success"><strong>ما تم بصورة صحيحة:</strong> القيود الجديدة متوازنة ولا يوجد تكرار في source_key، ولم تتغير الصناديق أو الذمم أو كميات المخزون أو Cost Layers أثناء Repair.</div>
+    <div class="danger"><strong>ما لم ينتهِ:</strong> ثمانية Failures تحتاج تكلفة شراء موثوقة، والمبيعة 4102 تحتاج قرارًا محاسبيًا، والمبيعة 4070 أُغلقت رغم بقاء تكرار FIFO واختلاف تكلفة القيد.</div>
+    <h2>كيف تستخدم هذا الملف؟</h2>
+    <ol>
+      <li>ابدأ بالمستندات: فاتورة الشراء، استلام الشراء، الجرد الفعلي، وسبب العملية.</li>
+      <li>نفّذ التصحيح من المسار التشغيلي الصحيح؛ لا تعدّل الرصيد النهائي أو Cost Snapshot يدويًا.</li>
+      <li>بعد اكتمال المصدر، شغّل Dry Run ثم Integrity Check، وبعدها فقط أعد Repair.</li>
+      <li>أي حالة لا يتوفر لها مستند كافٍ تبقى مفتوحة ولا تُقدّر تكلفتها من سعر البيع.</li>
+    </ol>
+  </section>
+
+  <section class="page-break">
+    <h2>المشاكل المفتوحة وحل كل مشكلة</h2>
+
+    <article class="issue">
+      <div class="issue-head"><h3>1) المبيعة 4074 — SAL-0001006 — ملمع</h3><span class="badge amber">Failure 5</span></div>
+      <div class="grid"><div><span class="label">الكمية:</span> 1</div><div><span class="label">المخزون الفعلي:</span> -1</div><div><span class="label">Allocation:</span> 209 بلا Layer</div><div><span class="label">Movement:</span> 10686 بلا تكلفة</div></div>
+      <p><span class="label">المشكلة:</span> لا توجد أي Cost Layer لهذا المنتج، والرصيد الفعلي والتكلفة كلاهما سالبان. لذلك لا يوجد دليل يحدد تكلفة القطعة.</p>
+      <div class="steps"><strong>الحل:</strong><ol><li>ابحث عن فاتورة الشراء الفعلية التي دخلت منها قطعة الملمع.</li><li>إذا كانت البضاعة مشتراة ولم تُسجّل: أدخل فاتورة شراء حقيقية ثم Purchase Receipt بالكمية والتكلفة الفعلية؛ الاستلام الصحيح سينشئ Layer ويسوي Pending Allocation تلقائيًا.</li><li>إذا لم يوجد مستند شراء: نفّذ جردًا ووثّق مصدر القطعة، واترك Failure مفتوحًا حتى اعتماد التكلفة.</li><li>بعد التسوية تأكد أن Allocation 209 مرتبط بالـLayer وأن Movement 10686 وSnapshot 4074 يحملان التكلفة نفسها، ثم أعد Repair.</li></ol></div>
+    </article>
+
+    <article class="issue">
+      <div class="issue-head"><h3>2) المبيعات 4075 و4077 و4098 — المنتج 312</h3><span class="badge red">Failures 6، 8، 12</span></div>
+      <div class="grid"><div><span class="label">المنتج:</span> كوشوك سكوتر 70/65/6.5</div><div><span class="label">الكميات Pending:</span> 3 قطع</div><div><span class="label">المخزون الفعلي:</span> +5</div><div><span class="label">Cost Balance:</span> -3 ولا توجد Layers</div></div>
+      <p><span class="label">المشكلة:</span> يوجد فرق مقداره 8 قطع بين المخزون الفعلي (+5) ورصيد التكلفة (-3)، ولا توجد حركة شراء موجبة أو Cost Layer تفسر هذه الزيادة. إدخال شراء جديد مباشرة قد يكرر المخزون الحقيقي.</p>
+      <div class="steps"><strong>الحل:</strong><ol><li>نفّذ جردًا فعليًا للمنتج 312 وثبّت أن الكمية الموجودة فعلًا هي 5.</li><li>تتبع كيف أضيفت القطع الثماني إلى Product Stock: استيراد قديم، تعديل مباشر، فاتورة شراء غير مستلمة، أو افتتاحي ناقص.</li><li>إذا وجدت فاتورة/استلامًا حقيقيًا: اربط الكمية والتكلفة بالمصدر من خلال Repair Service مدروس، أو سجّل الاستلام الناقص فقط؛ لا تنشئ فاتورة شراء ثانية.</li><li>يجب أن تصبح الكمية المحاسبية مساوية للمخزون الفعلي، وأن تُربط Allocations 210 و212 و235 بطبقات موثوقة.</li><li>السطر 4078 داخل الفاتورة 4077 سليم بتكلفة 17؛ لا يُرحّل وحده قبل حل السطر الرئيسي.</li></ol></div>
+    </article>
+
+    <article class="issue">
+      <div class="issue-head"><h3>3) المبيعة 4079 — SAL-0001010 — فاتورة متعددة الأصناف</h3><span class="badge red">Failure 9</span></div>
+      <p>لا يجوز إنشاء قيد جزئي لهذه الفاتورة. يجب حل جميع الأسطر التالية أولًا:</p>
+      <table><thead><tr><th>السطر</th><th>الصنف</th><th>الوضع</th><th>الإجراء</th></tr></thead><tbody>
+        <tr><td>4079</td><td>هيكل ماسترو Variant 951 — كمية 1</td><td>مخزون -1، لا Layer</td><td>تسجيل/ربط استلام شراء حقيقي لنفس Variant والتكلفة الفعلية</td></tr>
+        <tr><td>4080</td><td>هيكل ماسترو Variant 953 — كمية 2</td><td>مخزون -2، لا Layer</td><td>استلام موثق لكمية 2 لنفس Variant أو إبقاء التكلفة معلقة</td></tr>
+        <tr><td>4081</td><td>صندوق خلفي مشكل — كمية 4</td><td>Physical -5 مقابل Cost -4، وManual Add قديم بلا تكلفة</td><td>جرد الصنف ومراجعة Manual Add رقم 2016 وفرق الوحدة قبل إدخال أي شراء</td></tr>
+        <tr><td>4082</td><td>شوكة أمامية طويلة — كمية 2</td><td>وحدة موثقة بسعر 320 ووحدة Pending</td><td>إثبات مصدر الوحدة الثانية؛ لا تفترض أن سعرها 320 لمجرد تطابق الوحدة الأولى</td></tr>
+        <tr><td>4094</td><td>سلك بريك داخلي — كمية 300</td><td>173 موثقة و127 Pending</td><td>إثبات شراء/افتتاحي للـ127 وحدة وربطها بطبقة حقيقية</td></tr>
+      </tbody></table>
+      <div class="steps"><strong>بعد حل الأسطر:</strong> تأكد من تحديث Movements 10691 و10692 و10693 و10694 و10706، ومن إنشاء Snapshots لكل سطر، ثم شغّل Dry Run. عندها فقط يمكن إنشاء قيد Revenue/AR وCOGS/Inventory للفـاتورة كاملة.</div>
+    </article>
+
+    <article class="issue">
+      <div class="issue-head"><h3>4) المبيعة 4102 — SAL-0001016 — إيراد صفر وتكلفة 16,000</h3><span class="badge blue">Failure 15 — قرار محاسبي</span></div>
+      <p><span class="label">الدليل:</span> Variant 603 تكلفته 8,000 وVariant 607 تكلفته 8,000؛ Allocations وMovements موثوقة، لكن قيمة البيع صفر.</p>
+      <div class="steps"><strong>الحل ليس تقنيًا قبل تحديد معنى العملية:</strong><ol><li>اسأل منشئ العملية والمحاسب: هل هي هدية/ترويج، سحب مالك، تحويل داخلي، تسوية مع طرف، أم أن سعر البيع أُدخل خطأ؟</li><li>إذا كان السعر خطأ: صحح المستند التشغيلي بإلغاء/إعادة إصدار موثق، ولا تعدّل total_cost مباشرة بعد إنشاء آثار أخرى.</li><li>إذا كانت هدية أو استخدامًا داخليًا: يحدد المحاسب حساب المصروف أو سحب المالك مقابل المخزون؛ لا يُسجل Sales Revenue وهمي.</li><li>إذا كانت تحويلًا لموقع/جهة أخرى: أعد تصنيف العملية من بيع إلى حركة المخزون الصحيحة.</li><li>وثّق القرار داخل العملية ثم أضف Projection مخصصًا للمعنى المعتمد.</li></ol></div>
+    </article>
+
+    <article class="issue">
+      <div class="issue-head"><h3>5) المبيعتان 4094 و4104 — سلك بريك داخلي</h3><span class="badge red">Failure 16 مرتبط بعجز أقدم</span></div>
+      <div class="grid"><div><span class="label">Physical / Cost Balance:</span> -128</div><div><span class="label">الطبقة القديمة:</span> Layer 37 منتهية، تكلفة 1</div><div><span class="label">Pending:</span> 127 في 4094 + 1 في 4104</div><div><span class="label">السطر 4105:</span> سليم بتكلفة 1</div></div>
+      <div class="steps"><strong>الحل:</strong><ol><li>ابحث عن شراء فعلي يغطي 128 وحدة بعد نفاد Layer 37.</li><li>إذا كانت فاتورة الشراء موجودة وغير مستلمة، سجّل الاستلام الحقيقي بالتكلفة الفعلية؛ النظام سيوزع الوارد على أقدم Pending Allocations.</li><li>لا تمدد سعر Layer 37 تلقائيًا إلى الوحدات الجديدة؛ السعر 1 دليل تاريخي فقط وليس إثبات شراء للوحدات الناقصة.</li><li>بعد الاستلام راجع أن 4094 أخذ 127 و4104 أخذ 1 وأن Movements/Snapshots تطابقت، ثم أصلح الفاتورتين المرتبطتين.</li></ol></div>
+    </article>
+
+    <article class="issue">
+      <div class="issue-head"><h3>6) المبيعة 4108 — SAL-0001020 — فحمات دبل مكبس ذهبي</h3><span class="badge amber">Failure 19</span></div>
+      <div class="grid"><div><span class="label">السطر 4108:</span> Pending بلا Layer، Physical -1</div><div><span class="label">السطر 4109:</span> سليم بتكلفة 3.5</div></div>
+      <div class="steps"><strong>الحل:</strong><ol><li>راجع مصدر القطعة المباعة في 4108، مع الانتباه إلى وجود حركات Sale Cancel قديمة لهذا المنتج بلا تكلفة.</li><li>إن وُجد شراء فعلي غير مسجل/غير مستلم، سجّل الاستلام بالتكلفة الأصلية.</li><li>إن كانت القطعة ناتجة عن إلغاء بيع قديم، يجب أولًا استعادة Cost Allocation الأصلي للإلغاء بدل اختراع Purchase Cost جديد.</li><li>بعد توثيق تكلفة 4108 يمكن ترحيل الفاتورة كاملة؛ لا ترحّل السطر 4109 منفردًا.</li></ol></div>
+    </article>
+
+    <article class="issue">
+      <div class="issue-head"><h3>7) المبيعة 4112 — SAL-0001023 — بسكليت رايدر 48v21a</h3><span class="badge amber">Failure 22</span></div>
+      <div class="grid"><div><span class="label">المخزون الفعلي:</span> 0</div><div><span class="label">Cost Balance:</span> -1</div><div><span class="label">الحركة ذات الصلة:</span> Sale Cancel 9557 للمبيعة 3828 بلا تكلفة</div><div><span class="label">العملية الحالية:</span> Allocation 249 بلا Layer</div></div>
+      <div class="steps"><strong>الحل:</strong><ol><li>راجع المبيعة القديمة 3828 وإلغاءها: هل رجعت الدراجة فعليًا؟ وما Cost Allocation الأصلي قبل الإلغاء؟</li><li>إذا أمكن استعادة التكلفة الأصلية من Allocation/Layer للمبيعة الملغاة، استخدمها لإصلاح مسار الإلغاء ثم البيع 4112.</li><li>إذا كانت الدراجة مشتراة لاحقًا، استخدم Purchase Receipt الحقيقي بدل مسار الإلغاء.</li><li>لا تستخدم سعر بيع 600 كتـكلفة، ولا تعتبر Physical صفر دليلًا على أن التكلفة صفر.</li></ol></div>
+    </article>
+  </section>
+
+  <section class="page-break">
+    <h2>المبيعة 4070 — مشكلة مغلقة شكليًا فقط</h2>
+    <div class="danger">Failure الخاص بها أصبح resolved، لكن فحص سلامة FIFO يجب أن يبقيها ضمن قائمة المراجعة.</div>
+    <table><thead><tr><th>العنصر</th><th>السجل الأول</th><th>السجل الثاني</th><th>الملاحظة</th></tr></thead><tbody>
+      <tr><td>Allocation</td><td>201 — كمية 2 — تكلفة 2,200</td><td>204 — كمية 2 — تكلفة 2,200</td><td>المباع 2 فقط، والمخصص 4</td></tr>
+      <tr><td>Stock Movement</td><td>10675 — كمية -2 — تكلفة 2,200</td><td>10680 — كمية -2 — تكلفة 2,200</td><td>المخزون خرج مرتين محاسبيًا</td></tr>
+      <tr><td>القيد 14</td><td colspan="2">COGS = 2,200</td><td>السطر الفرعي 4073 لديه Snapshot إضافي 200؛ مجموع Snapshots = 2,400</td></tr>
+    </tbody></table>
+    <div class="steps"><strong>الحل:</strong><ol><li>حدد أي زوج Allocation/Movement نتج عن البيع الحقيقي وأي زوج نتج عن إعادة محاولة أو إلغاء/إعادة بيع.</li><li>راجع التوقيت وسجل تعديل/إلغاء الفاتورة و`reversal_of_id` وأي Logs مرتبطة.</li><li>لا تحذف 201 أو204 ولا 10675 أو10680 قبل إثبات التكرار.</li><li>بعد تصحيح أصل التكرار، أعد حساب تكلفة السطرين 4070 و4073، ثم قرر هل القيد 14 يُعكس ويعاد ترحيله أم يُصحح بقيد موثق.</li><li>عدّل منطق Repair كي لا يغلق stale failure إلا إذا كان FIFO Ready وكانت مبالغ COGS/Inventory تطابق التكلفة.</li></ol></div>
+
+    <h2>Over-allocation القديمة</h2>
+    <table><thead><tr><th>Sale</th><th>الفاتورة والصنف</th><th>المبيع / المخصص</th><th>السجلات التي يجب تتبعها</th></tr></thead><tbody>
+      <tr><td>3159</td><td>SAL-0000735 — ذكر بطارية رباعي</td><td>1 / 2</td><td>Allocations 15،16 — Movements 7694،7705</td></tr>
+      <tr><td>3962</td><td>SAL-0000932 — تطويلة شاشة Variant 516</td><td>1 / 3</td><td>Allocations 65،69،70 — Movements 10509،10515،10517؛ توجد تكلفتان مختلفتان 90 و12</td></tr>
+      <tr><td>4015</td><td>SAL-0000968 — لزيق عريض</td><td>1 / 2</td><td>Allocations 144،145 — Movements 10611،10613</td></tr>
+      <tr><td>4017</td><td>SAL-0000970 — جواني 10×3</td><td>2 / 4</td><td>Allocations 147،148 — Movements 10615،10617</td></tr>
+      <tr><td>4057</td><td>SAL-0000994 — زيت بريك Variant 477</td><td>5 / 10</td><td>Allocations 188،208 — Movements 10662،10685</td></tr>
+      <tr><td>4063</td><td>SAL-0000998 — علاقة جوال ألمنيوم</td><td>5 / 10</td><td>Allocations 194،207 — Movements 10668،10683</td></tr>
+      <tr><td>4070</td><td>SAL-0001004 — مطور 1000 واط</td><td>2 / 4</td><td>Allocations 201،204 — Movements 10675،10680</td></tr>
+    </tbody></table>
+    <div class="warning"><strong>طريقة الحل الموحدة:</strong> بناء تقرير زمني لكل بيع يربط إنشاء الفاتورة وتعديلها وإلغاءها واسترجاع المخزون وتخصيص FIFO. بعد إثبات السجل المكرر، تُنفذ المعالجة بخدمة Audited وIdempotent تعكس أثر السجل الخاطئ وتحافظ على سجل المراجعة؛ لا تستخدم DELETE أو UPDATE يدويًا.</div>
+  </section>
+
+  <section class="page-break">
+    <h2>من المسؤول عن كل خطوة؟</h2>
+    <div class="role"><h3>المحاسب</h3><span class="badge blue">قرار وتصنيف</span><ul><li>توفير تكلفة الشراء من الفاتورة الأصلية لكل صنف Pending.</li><li>تحديد معنى المبيعة 4102 واختيار الحساب المقابل للمخزون.</li><li>اعتماد أي عكس أو تصحيح للقيد 14 الخاص بالمبيعة 4070.</li></ul></div>
+    <div class="role"><h3>مسؤول المخزون/المشتريات</h3><span class="badge amber">مستند وجرد</span><ul><li>تأكيد الكميات الفعلية للمنتجات 312 و183 و36 و965.</li><li>العثور على فواتير واستلامات الشراء الحقيقية وعدم إنشاء مشتريات مكررة.</li><li>استخدام Purchase Receipt لإدخال البضاعة الجديدة، لا Quick Add أو تعديل مباشر للمخزون.</li></ul></div>
+    <div class="role"><h3>المبرمج</h3><span class="badge red">إصلاح آمن</span><ul><li>منع إغلاق stale failure عندما تكون FIFO غير Ready أو مبالغ القيد لا تطابق Snapshot.</li><li>إنشاء أداة تشخيص/إصلاح لتكرار Allocation وMovement مع Audit Trail وعكس موثق.</li><li>معالجة فروق Physical Stock مقابل Cost Balance من المصدر، لا بتعديل الرصيد النهائي.</li><li>إعادة تشغيل Repair فقط بعد اكتمال الدليل والقرار.</li></ul></div>
+
+    <h2>قائمة تحقق قبل إغلاق أي حالة</h2>
+    <table class="check"><tbody>
+      <tr><td>الكمية</td><td>Allocation Quantity تساوي الكمية المباعة دون زيادة أو نقص.</td></tr>
+      <tr><td>المصدر</td><td>كل Allocation مرتبط بـCost Layer مطابق للمنتج والـVariant ومن مستند موثوق.</td></tr>
+      <tr><td>الحركة</td><td>Stock Movement Quantity وTotal Cost يطابقان Allocation.</td></tr>
+      <tr><td>Snapshot</td><td>`inventory_total_cost` يساوي مجموع تكلفة FIFO، وليس سعر البيع.</td></tr>
+      <tr><td>القيد</td><td>Revenue وCOGS وInventory صحيحة، المدين يساوي الدائن، ولا يوجد Source Key مكرر.</td></tr>
+      <tr><td>التدقيق</td><td>سبب الإصلاح، المستند، المنفذ، الوقت، والقيم قبل/بعد محفوظة.</td></tr>
+      <tr><td>Failure</td><td>يُغلق فقط بعد نجاح جميع الفحوص السابقة.</td></tr>
+    </tbody></table>
+
+    <h2>الأوامر بعد توفير البيانات</h2>
+    <div class="notice"><div class="ltr">php artisan accounting:repair-projections --dry-run</div><div class="ltr">php artisan accounting:check-integrity --from=2026-09-21 --to=2026-09-23</div><div class="ltr">php artisan accounting:repair-projections</div><div class="ltr">php artisan accounting:check-integrity</div></div>
+    <div class="danger"><strong>ممنوع:</strong> استخدام سعر البيع أو wholesalePrice كتكلفة، استخدام صفر، تعديل boxes.total أو Debt Balance أو Layer Balance يدويًا، أو حذف Allocations وMovements المكررة بلا دليل.</div>
+    <p class="footer-note">أُعد هذا التقرير من مقارنة نسختي قاعدة البيانات 56 و57 ومن منطق الخدمات الحالي في Doctor Bike. الاعتماد النهائي للمعالجة المحاسبية يكون بعد توفير المستندات وقرار المحاسب.</p>
+  </section>
+</body>
+</html>
