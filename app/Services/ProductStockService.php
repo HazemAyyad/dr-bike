@@ -261,7 +261,7 @@ class ProductStockService
                     totalCost: ($cost['cost_complete'] ?? true) ? ($cost['total_cost'] ?? null) : null,
                     costingMethod: $cost['method'] ?? null,
                 );
-                $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
+                $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost, $sizeColorId, $sizeId ?? (int) $variant->sizeId);
 
                 $this->syncProductTotalStock($lockedProduct->fresh(['sizes.colorSizes']));
             } else {
@@ -298,7 +298,7 @@ class ProductStockService
                     totalCost: ($cost['cost_complete'] ?? true) ? ($cost['total_cost'] ?? null) : null,
                     costingMethod: $cost['method'] ?? null,
                 );
-                $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost);
+                $this->persistOutboundCostSnapshot($lockedProduct, $quantity, $referenceType, $referenceId, $cost, null, null);
             }
 
             $this->refreshCloseoutStatus((int) $lockedProduct->id);
@@ -783,7 +783,9 @@ class ProductStockService
         int $quantity,
         ?string $referenceType,
         ?int $referenceId,
-        ?array $cost
+        ?array $cost,
+        ?int $sizeColorId,
+        ?int $sizeId,
     ): void {
         if (! $cost || ! $referenceId) {
             return;
@@ -803,23 +805,54 @@ class ProductStockService
         }
 
         if ($referenceType === 'maintenance' && Schema::hasTable('maintenance_products') && Schema::hasColumn('maintenance_products', 'inventory_total_cost')) {
-            $maintenanceProductId = DB::table('maintenance_products')
+            $maintenanceProduct = DB::table('maintenance_products')
                 ->where('maintenance_id', $referenceId)
                 ->where('product_id', $product->id)
+                ->when($sizeColorId !== null,
+                    fn ($query) => $query->where('size_color_id', $sizeColorId),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->when($sizeId !== null,
+                    fn ($query) => $query->where('size_id', $sizeId))
                 ->where('quantity', $quantity)
                 ->whereNull('inventory_total_cost')
                 ->orderBy('id')
-                ->value('id');
+                ->first();
 
-            if ($maintenanceProductId) {
+            if ($maintenanceProduct) {
                 DB::table('maintenance_products')
-                    ->where('id', $maintenanceProductId)
+                    ->where('id', $maintenanceProduct->id)
                     ->update([
                         'inventory_cost_method' => $cost['method'],
                         'inventory_unit_cost' => $cost['unit_cost'],
                         'inventory_total_cost' => $cost['total_cost'],
                         'updated_at' => now(),
                     ]);
+            }
+
+            if (Schema::hasTable('instant_sales') && Schema::hasColumn('instant_sales', 'maintenance_id')) {
+                $instantSaleId = DB::table('instant_sales')
+                    ->where('maintenance_id', $referenceId)
+                    ->where('product_id', $product->id)
+                    ->when($sizeColorId !== null,
+                        fn ($query) => $query->where('size_color_id', $sizeColorId),
+                        fn ($query) => $query->whereNull('size_color_id'))
+                    ->when($sizeId !== null,
+                        fn ($query) => $query->where('size_id', $sizeId))
+                    ->where('quantity', $quantity)
+                    ->whereNull('inventory_total_cost')
+                    ->orderBy('id')
+                    ->value('id');
+
+                if ($instantSaleId) {
+                    DB::table('instant_sales')
+                        ->where('id', $instantSaleId)
+                        ->update([
+                            'inventory_cost_method' => $cost['method'],
+                            'inventory_unit_cost' => $cost['unit_cost'],
+                            'inventory_total_cost' => $cost['total_cost'],
+                            'updated_at' => now(),
+                        ]);
+                }
             }
         }
     }

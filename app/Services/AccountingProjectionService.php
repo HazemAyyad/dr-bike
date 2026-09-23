@@ -13,9 +13,7 @@ use App\Models\Expense;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
 use App\Models\InventoryAdjustment;
-use App\Models\InventoryCostAllocation;
 use App\Models\OutgoingCheck;
-use App\Models\ProductStockMovement;
 use App\Models\ProfitSale;
 use App\Models\ProjectExpense;
 use App\Models\PurchasePayment;
@@ -35,7 +33,10 @@ use Throwable;
 
 class AccountingProjectionService
 {
-    public function __construct(private AccountingService $accounting) {}
+    public function __construct(
+        private AccountingService $accounting,
+        private InventoryCostIntegrityService $inventoryIntegrity,
+    ) {}
 
     public function sync(Model $model): ?AccountingJournalEntry
     {
@@ -44,51 +45,69 @@ class AccountingProjectionService
         }
 
         try {
-            if ($this->predatesAppliedCutover($model)
-                && ! ($model instanceof InstantSale)
-                && ! ($model instanceof ProfitSale)
-                && ! ($model instanceof IncomingCheck)
-                && ! ($model instanceof OutgoingCheck)
-                && ! ($model instanceof EmployeeOrder)) {
-                $this->resolveFailure($model);
-
-                return null;
-            }
-
-            $entry = match (true) {
-                $model instanceof InstantSale => $this->syncInstantSale($model),
-                $model instanceof InventoryAdjustment => $this->syncInventoryAdjustment($model),
-                $model instanceof ProfitSale => $this->syncProfitSale($model),
-                $model instanceof Expense => $this->syncExpense($model),
-                $model instanceof EmployeeOrder => $this->syncEmployeeAdvance($model),
-                $model instanceof EmployeeAdvanceApplication => $this->syncEmployeeAdvanceApplication($model),
-                $model instanceof SalaryPaymentItem => $this->syncSalaryPayment($model),
-                $model instanceof SalesReturn => $this->syncSalesReturn($model),
-                $model instanceof PurchaseReceipt => $this->syncPurchaseReceipt($model),
-                $model instanceof PurchaseReceiptItem => $this->syncPurchaseReceipt($model->receipt),
-                $model instanceof PurchasePayment => $this->syncPurchasePayment($model),
-                $model instanceof ReturnModel => $this->syncPurchaseReturn($model),
-                $model instanceof Asset => $this->syncAsset($model),
-                $model instanceof AssetLog => $this->syncAssetLog($model),
-                $model instanceof ProjectExpense => $this->syncProjectExpense($model),
-                $model instanceof IncomingCheck => $this->syncIncomingCheck($model),
-                $model instanceof OutgoingCheck => $this->syncOutgoingCheck($model),
-                $model instanceof BoxLog => $this->syncBoxLog($model),
-                $model instanceof SalesOrder => $this->syncSalesOrder($model),
-                $model instanceof DebtTransaction => $this->syncDebtCashMovement($model),
-                $model instanceof SalesOrderSettlement => $this->syncSalesOrderSettlement($model),
-                default => null,
-            };
-
-            $this->resolveFailure($model);
-
-            return $entry;
+            return $this->syncOrFail($model);
         } catch (Throwable $e) {
             $this->recordFailure($model, $e);
             report($e);
 
             return null;
         }
+    }
+
+    /**
+     * Project one source and let the caller handle any failure. Repair tooling
+     * uses this method so a failed retry can never be mistaken for a success.
+     */
+    public function syncOrFail(Model $model): ?AccountingJournalEntry
+    {
+        if (! Schema::hasTable('accounting_journal_entries')) {
+            return null;
+        }
+
+        if ($this->predatesAppliedCutover($model)
+            && ! ($model instanceof InstantSale)
+            && ! ($model instanceof ProfitSale)
+            && ! ($model instanceof IncomingCheck)
+            && ! ($model instanceof OutgoingCheck)
+            && ! ($model instanceof EmployeeOrder)) {
+            $this->resolveFailure($model);
+
+            return null;
+        }
+
+        $entry = match (true) {
+            $model instanceof InstantSale => $this->syncInstantSale($model),
+            $model instanceof InventoryAdjustment => $this->syncInventoryAdjustment($model),
+            $model instanceof ProfitSale => $this->syncProfitSale($model),
+            $model instanceof Expense => $this->syncExpense($model),
+            $model instanceof EmployeeOrder => $this->syncEmployeeAdvance($model),
+            $model instanceof EmployeeAdvanceApplication => $this->syncEmployeeAdvanceApplication($model),
+            $model instanceof SalaryPaymentItem => $this->syncSalaryPayment($model),
+            $model instanceof SalesReturn => $this->syncSalesReturn($model),
+            $model instanceof PurchaseReceipt => $this->syncPurchaseReceipt($model),
+            $model instanceof PurchaseReceiptItem => $this->syncPurchaseReceipt($model->receipt),
+            $model instanceof PurchasePayment => $this->syncPurchasePayment($model),
+            $model instanceof ReturnModel => $this->syncPurchaseReturn($model),
+            $model instanceof Asset => $this->syncAsset($model),
+            $model instanceof AssetLog => $this->syncAssetLog($model),
+            $model instanceof ProjectExpense => $this->syncProjectExpense($model),
+            $model instanceof IncomingCheck => $this->syncIncomingCheck($model),
+            $model instanceof OutgoingCheck => $this->syncOutgoingCheck($model),
+            $model instanceof BoxLog => $this->syncBoxLog($model),
+            $model instanceof SalesOrder => $this->syncSalesOrder($model),
+            $model instanceof DebtTransaction => $this->syncDebtCashMovement($model),
+            $model instanceof SalesOrderSettlement => $this->syncSalesOrderSettlement($model),
+            default => null,
+        };
+
+        $this->resolveFailure($model);
+
+        return $entry;
+    }
+
+    public function recordFailureFor(Model $model, Throwable $exception): void
+    {
+        $this->recordFailure($model, $exception);
     }
 
     public function reverse(Model $model): ?AccountingJournalEntry
@@ -139,14 +158,14 @@ class AccountingProjectionService
         if ($sale->sales_order_id && ! $sale->salesOrder?->financial_posted_at) {
             return null;
         }
-        $lines = collect([$sale])->concat($sale->subProducts);
-        $missingCost = $lines->first(fn (InstantSale $line) => (float) ($line->quantity ?? 0) > 0 && $line->inventory_total_cost === null);
-        if ($missingCost) {
-            throw new RuntimeException('Missing FIFO cost snapshot for instant sale line '.$missingCost->id.'.');
-        }
+        $costInspection = $this->inventoryIntegrity->assertInstantSaleReady($sale);
 
         $total = round(max(0, (float) $sale->total_cost), 4);
         if ($total <= 0) {
+            if ($costInspection['requires_cost']) {
+                throw new RuntimeException('Product sale '.$sale->id.' has zero revenue but a FIFO inventory cost; accounting treatment requires review.');
+            }
+
             return $this->accounting->reverse('instant_sale', (int) $sale->id, now(), 'إزالة فاتورة مبيعات صفرية', auth()->id());
         }
 
@@ -159,7 +178,7 @@ class AccountingProjectionService
             : 0.0;
         $cashAtSale = round($paid - $depositApplied, 4);
         $receivable = round($total - $paid, 4);
-        $cost = round((float) $lines->sum(fn (InstantSale $line) => (float) ($line->inventory_total_cost ?? 0)), 4);
+        $cost = round((float) $costInspection['total_cost'], 4);
         $currency = $sale->paymentBox?->currency ?: 'شيكل';
         $journalLines = [];
         if ($cashAtSale > 0) {
@@ -302,7 +321,7 @@ class AccountingProjectionService
                 ),
             ));
         }
-        $lines[] = $this->line('other_revenue', 0, $total, $sale);
+        $lines[] = $this->line($this->profitSaleRevenueAccount($sale), 0, $total, $sale);
 
         return $this->accounting->post(
             'profit_sale:'.$sale->id,
@@ -643,12 +662,11 @@ class AccountingProjectionService
             return $this->accounting->reverse('purchase_return', (int) $return->id, $return->cancelled_at ?: now(), 'عكس مردود مشتريات غير فعال', auth()->id());
         }
         $return->loadMissing(['items', 'refundBox']);
-        $inventory = round((float) $return->items->sum(fn ($item) => (float) ($item->cost_total ?: $item->line_total ?: ((float) $item->price * (float) $item->quantity))), 4);
-        if ($inventory <= 0) {
-            $inventory = round(max(0, (float) $return->total), 4);
-        }
-        if ($inventory <= 0) {
-            return null;
+        $costInspection = $this->inventoryIntegrity->assertPurchaseReturnReady($return);
+        $inventory = round((float) $costInspection['total_cost'], 4);
+        $settlementAmount = round(max(0, (float) $return->total), 4);
+        if (abs($settlementAmount - $inventory) > 0.0001) {
+            throw new RuntimeException('Purchase return '.$return->id.' settlement amount does not match its verified FIFO inventory cost; variance requires review.');
         }
         $entity = ['seller_id' => $return->seller_id, 'customer_id' => $return->customer_id];
         $debitLines = $return->resolution === 'cash_refund' && $return->refund_box_id
@@ -1394,19 +1412,8 @@ class AccountingProjectionService
         }
         $lines[] = $this->line('sales_revenue', 0, $total, $order);
 
-        $missingCost = ProductStockMovement::query()
-            ->where('reference_type', 'sales_order')
-            ->where('reference_id', $order->id)
-            ->where('quantity', '<', 0)
-            ->whereNull('total_cost')
-            ->exists();
-        if ($missingCost) {
-            throw new RuntimeException('Missing FIFO cost snapshot for sales order '.$order->id.'.');
-        }
-        $cost = round((float) InventoryCostAllocation::query()
-            ->where('reference_type', 'sales_order')
-            ->where('reference_id', $order->id)
-            ->sum('total_cost'), 4);
+        $costInspection = $this->inventoryIntegrity->assertSalesOrderReady($order);
+        $cost = round((float) $costInspection['total_cost'], 4);
         if ($cost > 0) {
             $lines[] = $this->line('cost_of_goods_sold', $cost, 0, $order);
             $lines[] = $this->line('inventory', 0, $cost, $order);
@@ -1421,7 +1428,7 @@ class AccountingProjectionService
             'إثبات طلبية '.($order->serial_number ?: '#'.$order->id),
             $lines,
             [
-                'cost_coverage_complete' => ! $missingCost,
+                'cost_coverage_complete' => true,
                 'customer_deposit_applied' => $depositApplied,
                 'receivable_allocation' => [
                     'customer' => $customerReceivable,
@@ -1710,13 +1717,21 @@ class AccountingProjectionService
         $source = $this->sourceIdentity($model) ?: ['type' => class_basename($model), 'id' => (int) $model->getKey()];
         $key = $this->failureKey($model);
         $existing = DB::table('accounting_projection_failures')->where('source_key', $key)->first();
+        $existingContext = $existing?->context ? json_decode($existing->context, true) : [];
+        $reason = $this->failureReason($e);
         DB::table('accounting_projection_failures')->updateOrInsert(
             ['source_key' => $key],
             [
                 'source_type' => $source['type'],
                 'source_id' => $source['id'],
                 'error' => mb_substr($e->getMessage(), 0, 4000),
-                'context' => json_encode(['model' => $model::class], JSON_UNESCAPED_UNICODE),
+                'context' => json_encode(array_merge(is_array($existingContext) ? $existingContext : [], [
+                    'model' => $model::class,
+                    'reason' => $reason,
+                    'exception' => $e::class,
+                    'message' => mb_substr($e->getMessage(), 0, 4000),
+                    'failed_at' => now()->toISOString(),
+                ]), JSON_UNESCAPED_UNICODE),
                 'attempts' => ((int) ($existing->attempts ?? 0)) + 1,
                 'last_failed_at' => now(),
                 'resolved_at' => null,
@@ -1724,6 +1739,33 @@ class AccountingProjectionService
                 'updated_at' => now(),
             ]
         );
+    }
+
+    private function failureReason(Throwable $exception): string
+    {
+        $message = mb_strtolower($exception->getMessage());
+
+        return match (true) {
+            str_contains($message, 'fifo'), str_contains($message, 'cost'), str_contains($message, 'allocation') => 'inventory_cost_integrity',
+            str_contains($message, 'period'), str_contains($message, 'فترة') => 'accounting_period',
+            str_contains($message, 'account'), str_contains($message, 'الحساب') => 'system_account',
+            str_contains($message, 'carrier'), str_contains($message, 'delivery company') => 'missing_party_dimension',
+            default => 'projection_exception',
+        };
+    }
+
+    private function profitSaleRevenueAccount(ProfitSale $sale): string
+    {
+        $legacyAccount = DB::table('accounting_journal_entries as entries')
+            ->join('accounting_journal_lines as lines', 'lines.journal_entry_id', '=', 'entries.id')
+            ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+            ->where('entries.source_type', 'profit_sale')
+            ->where('entries.source_id', $sale->id)
+            ->whereNull('entries.reverses_entry_id')
+            ->whereIn('accounts.system_key', ['service_revenue', 'other_revenue'])
+            ->value('accounts.system_key');
+
+        return $legacyAccount ?: 'service_revenue';
     }
 
     private function resolveFailure(Model $model): void

@@ -118,6 +118,7 @@ return new class extends Migration
             ['code' => '3200', 'system_key' => 'inventory_revaluation_reserve', 'name_ar' => 'احتياطي إعادة تقييم المخزون', 'name_en' => 'Inventory revaluation reserve', 'type' => 'equity', 'normal_balance' => 'credit', 'is_control' => true],
             ['code' => '4000', 'system_key' => 'sales_revenue', 'name_ar' => 'إيرادات المبيعات', 'name_en' => 'Sales revenue', 'type' => 'revenue', 'normal_balance' => 'credit', 'is_control' => true],
             ['code' => '4100', 'system_key' => 'maintenance_revenue', 'name_ar' => 'إيرادات الصيانة', 'name_en' => 'Maintenance revenue', 'type' => 'revenue', 'normal_balance' => 'credit', 'is_control' => true],
+            ['code' => '4150', 'system_key' => 'service_revenue', 'name_ar' => 'إيرادات الخدمات', 'name_en' => 'Service Revenue', 'type' => 'revenue', 'normal_balance' => 'credit', 'is_control' => true],
             ['code' => '4200', 'system_key' => 'other_revenue', 'name_ar' => 'إيرادات أخرى', 'name_en' => 'Other revenue', 'type' => 'revenue', 'normal_balance' => 'credit', 'is_control' => true],
             ['code' => '4300', 'system_key' => 'inventory_gain', 'name_ar' => 'أرباح جرد المخزون', 'name_en' => 'Inventory count gains', 'type' => 'revenue', 'normal_balance' => 'credit', 'is_control' => true],
             ['code' => '4900', 'system_key' => 'sales_returns', 'name_ar' => 'مردودات المبيعات', 'name_en' => 'Sales returns', 'type' => 'contra_revenue', 'normal_balance' => 'debit', 'is_control' => true],
