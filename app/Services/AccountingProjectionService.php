@@ -714,7 +714,11 @@ class AccountingProjectionService
             return null;
         }
         $entity = ['seller_id' => $payment->seller_id, 'customer_id' => $payment->customer_id];
-        $debtSource = $payment->type === 'initial_payment' ? 'purchase_initial_payment' : 'purchase_payment';
+        $debtSource = match ($payment->type) {
+            'initial_payment' => 'purchase_initial_payment',
+            'account_payment' => 'purchase_account_payment',
+            default => 'purchase_payment',
+        };
         $paymentPartyLines = $this->partyEffectLines(
             $payment,
             $entity,
@@ -725,7 +729,7 @@ class AccountingProjectionService
                 $payment->seller_id,
                 $payment->currency ?: $payment->box?->currency,
                 $debtSource,
-                (int) $payment->bill_id,
+                (int) $payment->id,
                 'purchase_payment',
                 (int) $payment->id,
                 $payment->debt_transaction_id,

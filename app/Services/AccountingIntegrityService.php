@@ -30,6 +30,7 @@ class AccountingIntegrityService
         private AssetDepreciationCalculator $assetDepreciation,
         private DebtLedgerBalanceService $debtBalances,
         private AccountingReconciliationService $reconciliation,
+        private PurchasePaymentSourceIdentityService $purchasePaymentSources,
     ) {}
 
     /** @return array{checks:array<int,array<string,mixed>>,summary:array<string,int>} */
@@ -52,10 +53,12 @@ class AccountingIntegrityService
         $checks[] = $this->checkBoxes($from, $to);
         $checks[] = $this->checkDebtRunningBalances();
         $checks[] = $this->checkSourceDebtIntegrity();
+        $checks[] = $this->checkPurchasePaymentSourceIdentity();
         $checks[] = $this->checkManualDebtBoxes();
         $checks[] = $this->checkDebtBoxCurrencies();
         $checks[] = $this->checkNegativeBoxes();
         $checks[] = $this->checkBoxAdjustmentClassification();
+        $checks[] = $this->checkClearingBalance();
         $checks[] = $this->checkReconciliationScope('cash_reconciliation', ['cash_by_box']);
         $checks[] = $this->checkReconciliationScope('party_reconciliation', [
             'accounts_receivable_customer',
@@ -705,21 +708,63 @@ class AccountingIntegrityService
             ->pluck('id')->map(fn ($id) => (int) $id)->all();
         $legacy = $unclassified->whereNull('created_by')
             ->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $corrections = DB::table('box_logs')
-            ->where('reason_code', 'accounting_correction')
-            ->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $ids = array_values(array_unique(array_merge($newErrors, $legacy, $corrections)));
+        $ids = array_values(array_unique(array_merge($newErrors, $legacy)));
 
         return $this->check(
             'box_unclassified_adjustments',
             $newErrors !== [] ? 'ERROR' : ($ids === [] ? 'PASS' : 'WARNING'),
-            'New unclassified box adjustments are errors; legacy rows and accounting corrections require accountant review.',
+            'New unclassified box adjustments are errors; legacy rows require review without guessing a reason.',
             $ids,
             [
                 'new_without_reason' => $newErrors,
                 'legacy_without_reason' => $legacy,
-                'clearing_corrections' => $corrections,
             ],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function checkClearingBalance(): array
+    {
+        if (! Schema::hasTable('accounting_accounts')
+            || ! Schema::hasTable('accounting_journal_entries')
+            || ! Schema::hasTable('accounting_journal_lines')) {
+            return $this->check('clearing_balance', 'WARNING', 'Accounting ledger tables are unavailable.', []);
+        }
+
+        $balances = DB::table('accounting_journal_lines as lines')
+            ->join('accounting_journal_entries as entries', 'entries.id', '=', 'lines.journal_entry_id')
+            ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+            ->where('accounts.system_key', 'clearing')
+            ->selectRaw('entries.currency, SUM(lines.debit - lines.credit) as balance')
+            ->groupBy('entries.currency')
+            ->get()
+            ->map(fn ($row) => [
+                'currency' => (string) $row->currency,
+                'balance' => round((float) $row->balance, 4),
+            ]);
+        $open = $balances->filter(fn (array $row) => abs($row['balance']) > 0.0001)->values();
+
+        return $this->check(
+            'clearing_balance',
+            $open->isEmpty() ? 'PASS' : 'WARNING',
+            'Clearing is temporary and must return to zero after classification, per currency.',
+            $open->map(fn (array $row) => $row['currency'].':'.$row['balance'])->all(),
+            ['balances' => $balances->values()->all()],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function checkPurchasePaymentSourceIdentity(): array
+    {
+        $items = $this->purchasePaymentSources->inspect();
+        $unsafe = $items->whereIn('status', ['SAFE_TO_REPAIR', 'AMBIGUOUS'])->values();
+
+        return $this->check(
+            'purchase_payment_source_identity',
+            $unsafe->isEmpty() ? 'PASS' : ($unsafe->contains('status', 'AMBIGUOUS') ? 'ERROR' : 'WARNING'),
+            'Purchase payment debt rows must use the PurchasePayment ID as source_id.',
+            $unsafe->map(fn (array $row) => 'payment:'.$row['purchase_payment_id'].':'.$row['status'])->all(),
+            ['items' => $items->values()->all()],
         );
     }
 

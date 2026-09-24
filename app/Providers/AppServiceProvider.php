@@ -37,6 +37,7 @@ use App\Observers\MetaCatalogHierarchyObserver;
 use App\Observers\ProductImageMetaCatalogObserver;
 use App\Observers\ProductMetaCatalogObserver;
 use App\Observers\SizeColorMetaCatalogObserver;
+use App\Services\PartyAccountingTimelineService;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -46,7 +47,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // A request/job-scoped queue prevents recursion and never leaks timeline
+        // reprojection state across concurrent requests or Octane workers.
+        $this->app->scoped(PartyAccountingTimelineService::class);
     }
 
     /**

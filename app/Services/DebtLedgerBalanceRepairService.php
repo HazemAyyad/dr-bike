@@ -9,6 +9,7 @@ class DebtLedgerBalanceRepairService
     public function __construct(
         private DebtLedgerBalanceService $balances,
         private AccountingReconciliationService $reconciliation,
+        private PartyAccountingTimelineService $timeline,
     ) {}
 
     /** @return array<string, mixed> */
@@ -26,6 +27,12 @@ class DebtLedgerBalanceRepairService
                         $issue['seller_id'],
                         $issue['currency'],
                         quiet: true,
+                    );
+                    $this->timeline->schedule(
+                        $issue['customer_id'],
+                        $issue['seller_id'],
+                        $issue['currency'],
+                        $issue['transaction_date'],
                     );
                 }
             }, 3);

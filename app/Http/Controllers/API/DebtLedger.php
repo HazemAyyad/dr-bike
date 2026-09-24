@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\API;
 
 use App\Exceptions\SourceLinkedDebtTransactionException;
-use App\Models\Box;
 use App\Http\Controllers\Controller;
 use App\Models\Bill;
 use App\Models\ContactCategory;
@@ -13,6 +12,7 @@ use App\Models\InstantSale;
 use App\Models\ProfitSale;
 use App\Models\SalesOrder;
 use App\Services\DebtLedgerService;
+use App\Services\BoxAccessService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use ArPHP\I18N\Arabic;
@@ -24,7 +24,10 @@ use Illuminate\Validation\ValidationException;
 
 class DebtLedger extends Controller
 {
-    public function __construct(private DebtLedgerService $ledger)
+    public function __construct(
+        private DebtLedgerService $ledger,
+        private BoxAccessService $boxAccess,
+    )
     {
     }
 
@@ -364,7 +367,7 @@ class DebtLedger extends Controller
                 'currency' => 'nullable|string|in:شيكل,دولار,دينار',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
-                'box_id' => 'required|integer|exists:boxes,id',
+                'box_id' => 'required|integer',
                 'receipt_images' => 'nullable|array',
                 'receipt_images.*' => [
                     'file',
@@ -376,6 +379,8 @@ class DebtLedger extends Controller
             if ($error = $this->ledger->validatePerson($request->customer_id, $request->seller_id)) {
                 return response()->json(['status' => 'error', 'message' => $error], 200);
             }
+
+            $box = $this->boxAccess->findAccessible($request->user(), (int) $data['box_id']);
 
             $imageNames = [];
             $uploadedFiles = $request->file('receipt_images');
@@ -393,7 +398,6 @@ class DebtLedger extends Controller
                 }
             }
 
-            $box = Box::findOrFail($data['box_id']);
             $currency = $box->currency;
 
             $transaction = $this->ledger->createTransaction([
@@ -407,7 +411,7 @@ class DebtLedger extends Controller
                 'box_id' => $data['box_id'] ?? null,
                 'receipt_images' => $imageNames ?: null,
                 'source' => 'manual',
-            ], auth()->id());
+            ], auth()->id(), actor: $request->user());
 
             $personTotals = $this->ledger->calculateTotals($request->customer_id, $request->seller_id);
 
@@ -476,7 +480,7 @@ class DebtLedger extends Controller
                 'currency' => 'nullable|string|in:شيكل,دولار,دينار',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
-                'box_id' => 'required|integer|exists:boxes,id',
+                'box_id' => 'required|integer',
                 'receipt_images' => 'nullable|array',
                 'receipt_images.*' => [
                     'file',
@@ -487,6 +491,7 @@ class DebtLedger extends Controller
 
             $transaction = DebtTransaction::active()->findOrFail($id);
             $this->ledger->assertManualMutationAllowed($transaction);
+            $box = $this->boxAccess->findAccessible($request->user(), (int) $data['box_id']);
 
             $imageNames = $transaction->receipt_images ?? [];
             if ($request->hasFile('receipt_images')) {
@@ -505,7 +510,6 @@ class DebtLedger extends Controller
                 }
             }
 
-            $box = Box::findOrFail($data['box_id']);
             $currency = $box->currency;
 
             $updatePayload = [
@@ -519,7 +523,7 @@ class DebtLedger extends Controller
 
             $updatePayload['box_id'] = (int) $data['box_id'];
 
-            $updated = $this->ledger->updateTransaction($transaction, $updatePayload);
+            $updated = $this->ledger->updateTransaction($transaction, $updatePayload, actor: $request->user());
 
             $personTotals = $this->ledger->calculateTotals(
                 $transaction->customer_id,

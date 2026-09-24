@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Models\Box;
 use App\Models\BoxLog;
+use App\Services\BoxAccessService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -15,42 +16,7 @@ use Illuminate\Validation\ValidationException;
 
 class Boxes extends Controller
 {
-    private function actorVisibleBoxIds(Request $request): ?array
-    {
-        $user = $request->user();
-        if (! $user || $user->type === 'admin' || ! Schema::hasTable('employee_visible_boxes')) {
-            Log::debug('boxes.visible_scope.unrestricted', [
-                'user_id' => $user?->id,
-                'user_type' => $user?->type,
-                'has_visible_table' => Schema::hasTable('employee_visible_boxes'),
-            ]);
-            return null;
-        }
-
-        $employee = $user->employee;
-        if (! $employee) {
-            return [];
-        }
-
-        $ids = $employee->visibleBoxes()
-            ->pluck('boxes.id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
-
-        Log::debug('boxes.visible_scope.employee', [
-            'user_id' => $user->id,
-            'employee_id' => $employee->id,
-            'visible_box_ids' => $ids,
-        ]);
-
-        return $ids;
-    }
-
-    private function actorCanAccessBox(Request $request, int $boxId): bool
-    {
-        $visibleIds = $this->actorVisibleBoxIds($request);
-        return $visibleIds === null || in_array($boxId, $visibleIds, true);
-    }
+    public function __construct(private BoxAccessService $boxAccess) {}
 
     public function addBox(Request $request){
      try{
@@ -115,7 +81,7 @@ class Boxes extends Controller
             
             DB::transaction(function () use ($request, $data) {
                 $box = Box::query()->lockForUpdate()->findOrFail($request->box_id);
-                if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+                if (! $this->boxAccess->canAccess($request->user(), (int) $box->id)) {
                     throw new ModelNotFoundException;
                 }
                 if (abs((float) $data['total'] - (float) $box->total) > 0.0001) {
@@ -175,7 +141,7 @@ class Boxes extends Controller
             $request->validate([
                 'box_id' =>'required|exists:boxes,id']);
                 $box = Box::findOrFail($request->box_id);
-                if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+                if (! $this->boxAccess->canAccess($request->user(), (int) $box->id)) {
                     return response()->json([
                         'status'  => 'error',
                         'message' => __('messages.box_not_found')
@@ -225,7 +191,7 @@ class Boxes extends Controller
 
     private function commonData($condition){
         try{
-            $visibleIds = $this->actorVisibleBoxIds(request());
+            $visibleIds = $this->boxAccess->visibleBoxIds(request()->user());
             $boxes = Box::where('is_shown',$condition)
                 ->when($visibleIds !== null, fn ($q) => $q->whereIn('id', $visibleIds))
                 ->get();
@@ -308,7 +274,7 @@ class Boxes extends Controller
         $msg = $total > 0 ? 'added' : 'deduct';
         DB::transaction(function () use ($request, $total, $reason) {
             $box = Box::query()->lockForUpdate()->findOrFail($request->box_id);
-            if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+            if (! $this->boxAccess->canAccess($request->user(), (int) $box->id)) {
                 throw new ModelNotFoundException;
             }
             $newBalance = round((float) $box->total + $total, 4);
@@ -389,8 +355,8 @@ class Boxes extends Controller
                 $fromBox = $boxes->get((int) $request->from_box_id);
                 $toBox = $boxes->get((int) $request->to_box_id);
                 if (! $fromBox || ! $toBox
-                    || ! $this->actorCanAccessBox($request, (int) $fromBox->id)
-                    || ! $this->actorCanAccessBox($request, (int) $toBox->id)) {
+                    || ! $this->boxAccess->canAccess($request->user(), (int) $fromBox->id)
+                    || ! $this->boxAccess->canAccess($request->user(), (int) $toBox->id)) {
                     throw new ModelNotFoundException;
                 }
                 if ($fromBox->currency !== $toBox->currency) {
@@ -456,7 +422,7 @@ class Boxes extends Controller
 
             DB::transaction(function () use ($request) {
                 $box = Box::query()->lockForUpdate()->findOrFail($request->box_id);
-                if (! $this->actorCanAccessBox($request, (int) $box->id)) {
+                if (! $this->boxAccess->canAccess($request->user(), (int) $box->id)) {
                     throw new ModelNotFoundException;
                 }
                 if (abs((float) $box->total) > 0.0001 || $this->boxHasFinancialHistory((int) $box->id)) {

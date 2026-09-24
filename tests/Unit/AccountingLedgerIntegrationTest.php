@@ -9,6 +9,7 @@ use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\Customer;
 use App\Models\DebtTransaction;
+use App\Models\EmployeeDetail;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenancePayment;
@@ -19,6 +20,8 @@ use App\Models\ReturnModel;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderSettlement;
 use App\Models\SalesReturn;
+use App\Models\Seller;
+use App\Models\User;
 use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AccountingProjectionService;
@@ -26,9 +29,12 @@ use App\Services\AccountingReconciliationService;
 use App\Services\AccountingReportService;
 use App\Services\AccountingService;
 use App\Services\AssetDepreciationCalculator;
+use App\Services\BoxAccessService;
 use App\Services\DebtLedgerBalanceRepairService;
 use App\Services\DebtLedgerService;
 use App\Services\MonthlyAssetDepreciationService;
+use App\Services\PurchasePaymentSourceIdentityService;
+use App\Services\PurchasingService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Artisan;
@@ -59,6 +65,17 @@ class AccountingLedgerIntegrationTest extends TestCase
         Schema::connection('accounting_test')->create('users', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
+            $table->string('type')->default('admin');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        Schema::connection('accounting_test')->create('logs', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->text('description')->nullable();
+            $table->string('type')->nullable();
+            $table->boolean('is_canceled')->default(false);
+            $table->timestamps();
         });
         Schema::connection('accounting_test')->create('customers', function (Blueprint $table) {
             $table->id();
@@ -172,6 +189,19 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->boolean('is_shown')->default(true);
             $table->timestamps();
         });
+        Schema::connection('accounting_test')->create('employee_details', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('user_id');
+            $table->timestamps();
+            $table->softDeletes();
+        });
+        Schema::connection('accounting_test')->create('employee_visible_boxes', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('employee_id');
+            $table->unsignedBigInteger('box_id');
+            $table->timestamps();
+            $table->unique(['employee_id', 'box_id']);
+        });
         Schema::connection('accounting_test')->create('sales_orders', function (Blueprint $table) {
             $table->id();
             $table->string('serial_number')->nullable();
@@ -231,6 +261,12 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->unsignedBigInteger('seller_id')->nullable();
             $table->unsignedBigInteger('customer_id')->nullable();
             $table->string('currency')->default('شيكل');
+            $table->decimal('total', 14, 4)->default(0);
+            $table->decimal('final_total', 14, 4)->default(0);
+            $table->decimal('paid_amount', 14, 4)->default(0);
+            $table->string('status')->default('complete');
+            $table->string('workflow_status')->nullable();
+            $table->string('payment_status')->default('unpaid');
             $table->timestamps();
         });
         Schema::connection('accounting_test')->create('purchase_receipts', function (Blueprint $table) {
@@ -262,7 +298,23 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->string('currency')->default('شيكل');
             $table->string('type')->default('payment');
             $table->date('paid_at')->nullable();
+            $table->text('note')->nullable();
             $table->unsignedBigInteger('debt_transaction_id')->nullable();
+            $table->unsignedBigInteger('box_log_id')->nullable();
+            $table->unsignedBigInteger('created_by')->nullable();
+            $table->timestamps();
+        });
+        Schema::connection('accounting_test')->create('purchase_activity_logs', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('bill_id')->nullable();
+            $table->string('event');
+            $table->string('title');
+            $table->text('description')->nullable();
+            $table->json('before_values')->nullable();
+            $table->json('after_values')->nullable();
+            $table->json('meta')->nullable();
+            $table->string('source_type')->nullable();
+            $table->unsignedBigInteger('source_id')->nullable();
             $table->unsignedBigInteger('created_by')->nullable();
             $table->timestamps();
         });
@@ -415,6 +467,7 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->softDeletes();
             $table->timestamps();
         });
+        (require database_path('migrations/2026_05_20_100000_create_debt_ledger_activity_logs_table.php'))->up();
         (require database_path('migrations/2026_09_19_200000_create_accounting_ledger_tables.php'))->up();
         (require database_path('migrations/2026_09_19_201000_create_accounting_cutovers_table.php'))->up();
         (require database_path('migrations/2026_09_19_202000_add_accounting_sources_to_assets_and_project_expenses.php'))->up();
@@ -1892,6 +1945,200 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertSame($before->updated_at, $after->updated_at);
     }
 
+    public function test_backdated_customer_transaction_reprojects_later_party_journal_without_duplicates(): void
+    {
+        $customer = Customer::query()->create(['name' => 'Timeline Customer', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Timeline cash', 'total' => 500, 'currency' => 'شيكل']);
+        $ledger = app(DebtLedgerService::class);
+        $sale = ProfitSale::withoutEvents(fn () => ProfitSale::query()->create([
+            'customer_id' => $customer->id, 'total_cost' => 150, 'payment_box_value' => 0, 'status' => 'active',
+        ]));
+        DB::table('profit_sales')->where('id', $sale->id)->update(['created_at' => '2026-09-10 10:00:00', 'updated_at' => '2026-09-10 10:00:00']);
+
+        $ledger->createTransaction([
+            'customer_id' => $customer->id, 'type' => 'taken', 'amount' => 100, 'currency' => 'شيكل',
+            'transaction_date' => '2026-09-01', 'source' => 'legacy_seed', 'source_id' => 1,
+        ], applyBox: false, logActivity: false);
+        $saleDebt = $ledger->createTransaction([
+            'customer_id' => $customer->id, 'type' => 'given', 'amount' => 150, 'currency' => 'شيكل',
+            'transaction_date' => '2026-09-10', 'source' => 'profit_sale', 'source_id' => $sale->id,
+        ], applyBox: false, logActivity: false);
+        $entry = app(AccountingProjectionService::class)->syncOrFail($sale->fresh());
+        $this->assertEqualsWithDelta(100, $this->partyAccountAmount($entry->id, 'accounts_payable', 'debit'), 0.0001);
+        $this->assertEqualsWithDelta(50, $this->partyAccountAmount($entry->id, 'accounts_receivable', 'debit'), 0.0001);
+
+        $ledger->createTransaction([
+            'customer_id' => $customer->id, 'type' => 'given', 'amount' => 20, 'currency' => 'شيكل',
+            'transaction_date' => '2026-09-05', 'box_id' => $box->id, 'source' => 'manual',
+        ], logActivity: false);
+
+        $this->assertEqualsWithDelta(-70, (float) $saleDebt->fresh()->balance_after, 0.0001);
+        $this->assertEqualsWithDelta(80, $this->partyAccountAmount($entry->id, 'accounts_payable', 'debit'), 0.0001);
+        $this->assertEqualsWithDelta(70, $this->partyAccountAmount($entry->id, 'accounts_receivable', 'debit'), 0.0001);
+        $this->assertSame(1, AccountingJournalEntry::query()->where('source_type', 'profit_sale')->where('source_id', $sale->id)->count());
+        $this->assertJournalBalanced($entry->fresh('lines'));
+    }
+
+    public function test_backdated_seller_transaction_reprojects_later_purchase_journal_without_duplicates(): void
+    {
+        $seller = Seller::query()->create(['name' => 'Timeline Supplier', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Supplier cash', 'total' => 100, 'currency' => 'شيكل']);
+        $ledger = app(DebtLedgerService::class);
+        DB::table('bills')->insert([
+            'id' => 100, 'seller_id' => $seller->id, 'currency' => 'شيكل', 'final_total' => 150,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $receipt = PurchaseReceipt::withoutEvents(fn () => PurchaseReceipt::query()->create([
+            'bill_id' => 100, 'receipt_number' => 'TL-100', 'received_at' => '2026-09-10',
+        ]));
+        DB::table('purchase_receipt_items')->insert([
+            'purchase_receipt_id' => $receipt->id, 'product_id' => 1, 'accepted_quantity' => 1, 'unit_price' => 150,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $ledger->createTransaction([
+            'seller_id' => $seller->id, 'type' => 'given', 'amount' => 100, 'currency' => 'شيكل',
+            'transaction_date' => '2026-09-01', 'source' => 'legacy_seed', 'source_id' => 2,
+        ], applyBox: false, logActivity: false);
+        $purchaseDebt = $ledger->createTransaction([
+            'seller_id' => $seller->id, 'type' => 'taken', 'amount' => 150, 'currency' => 'شيكل',
+            'transaction_date' => '2026-09-10', 'source' => 'purchase_invoice', 'source_id' => 100,
+        ], applyBox: false, logActivity: false);
+        $entry = app(AccountingProjectionService::class)->syncOrFail($receipt->fresh());
+        $this->assertEqualsWithDelta(100, $this->partyAccountAmount($entry->id, 'accounts_receivable', 'credit'), 0.0001);
+        $this->assertEqualsWithDelta(50, $this->partyAccountAmount($entry->id, 'accounts_payable', 'credit'), 0.0001);
+
+        $ledger->createTransaction([
+            'seller_id' => $seller->id, 'type' => 'taken', 'amount' => 20, 'currency' => 'شيكل',
+            'transaction_date' => '2026-09-05', 'box_id' => $box->id, 'source' => 'manual',
+        ], logActivity: false);
+
+        $this->assertEqualsWithDelta(70, (float) $purchaseDebt->fresh()->balance_after, 0.0001);
+        $this->assertEqualsWithDelta(80, $this->partyAccountAmount($entry->id, 'accounts_receivable', 'credit'), 0.0001);
+        $this->assertEqualsWithDelta(70, $this->partyAccountAmount($entry->id, 'accounts_payable', 'credit'), 0.0001);
+        $this->assertSame(1, AccountingJournalEntry::query()->where('source_type', 'purchase_receipt')->where('source_id', $receipt->id)->count());
+        $this->assertJournalBalanced($entry->fresh('lines'));
+    }
+
+    public function test_purchase_payments_use_payment_identity_and_legacy_inspection_repairs_only_proven_source_ids(): void
+    {
+        $seller = Seller::query()->create(['name' => 'Payment Supplier', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Purchase cash', 'total' => 20000, 'currency' => 'شيكل']);
+        $bill = \App\Models\Bill::query()->create([
+            'seller_id' => $seller->id, 'currency' => 'شيكل', 'total' => 10000,
+            'final_total' => 10000, 'paid_amount' => 0, 'payment_status' => 'unpaid',
+        ]);
+        app(DebtLedgerService::class)->createTransaction([
+            'seller_id' => $seller->id, 'type' => 'taken', 'amount' => 10000, 'currency' => 'شيكل',
+            'transaction_date' => now()->toDateString(), 'source' => 'purchase_invoice', 'source_id' => $bill->id,
+        ], applyBox: false, logActivity: false);
+
+        $payments = collect([5000, 1000, 2000, 2000])->map(
+            fn (int $amount) => app(PurchasingService::class)->recordPayment($bill->fresh(), $amount, $box->id),
+        );
+        $this->assertCount(4, $payments);
+        foreach ($payments as $payment) {
+            $transaction = DebtTransaction::query()->findOrFail($payment->debt_transaction_id);
+            $this->assertSame('purchase_payment', $transaction->source);
+            $this->assertSame((int) $payment->id, (int) $transaction->source_id);
+            $this->assertSame(1, AccountingJournalEntry::query()
+                ->where('source_type', 'purchase_payment')->where('source_id', $payment->id)->count());
+        }
+        $this->assertEqualsWithDelta(10000, (float) $box->fresh()->total, 0.0001);
+
+        $initialBill = \App\Models\Bill::query()->create([
+            'seller_id' => $seller->id, 'currency' => 'شيكل', 'total' => 1000,
+            'final_total' => 1000, 'paid_amount' => 0, 'payment_status' => 'unpaid',
+        ]);
+        app(DebtLedgerService::class)->createTransaction([
+            'seller_id' => $seller->id, 'type' => 'taken', 'amount' => 1000, 'currency' => 'شيكل',
+            'transaction_date' => now()->toDateString(), 'source' => 'purchase_invoice', 'source_id' => $initialBill->id,
+        ], applyBox: false, logActivity: false);
+        $initial = app(PurchasingService::class)->recordPayment($initialBill, 300, $box->id, 'initial_payment');
+        $initialTx = DebtTransaction::query()->findOrFail($initial->debt_transaction_id);
+        $this->assertSame('purchase_initial_payment', $initialTx->source);
+        $this->assertSame((int) $initial->id, (int) $initialTx->source_id);
+
+        $legacy = $payments->get(1);
+        DB::table('debt_transactions')->where('id', $legacy->debt_transaction_id)->update(['source_id' => $bill->id]);
+        $inspection = app(PurchasePaymentSourceIdentityService::class)->run();
+        $item = collect($inspection['items'])->firstWhere('purchase_payment_id', $legacy->id);
+        $this->assertSame('SAFE_TO_REPAIR', $item['status']);
+        $this->assertSame($bill->id, (int) DebtTransaction::query()->find($legacy->debt_transaction_id)->source_id);
+
+        $repaired = app(PurchasePaymentSourceIdentityService::class)->run(true);
+        $this->assertSame(1, $repaired['summary']['repaired']);
+        $this->assertSame((int) $legacy->id, (int) DebtTransaction::query()->find($legacy->debt_transaction_id)->source_id);
+    }
+
+    public function test_clearing_warning_depends_on_open_balance_not_correction_history(): void
+    {
+        $box = Box::query()->create(['name' => 'Correction cash', 'total' => 100, 'currency' => 'شيكل']);
+        $log = BoxLog::withoutEvents(fn () => BoxLog::query()->create([
+            'box_id' => $box->id, 'type' => 'add', 'value' => 100,
+            'description' => 'تصحيح محاسبي', 'reason_code' => 'accounting_correction',
+        ]));
+        app(AccountingProjectionService::class)->syncOrFail($log);
+
+        $check = collect(app(AccountingIntegrityService::class)->run()['checks'])->firstWhere('name', 'clearing_balance');
+        $this->assertSame('WARNING', $check['status']);
+
+        app(AccountingService::class)->post('clearing:classification:'.$log->id, 'clearing_classification', $log->id, now(), 'شيكل', 'تصنيف تصحيح صندوق', [
+            ['account_key' => 'clearing', 'debit' => 100, 'credit' => 0],
+            ['account_key' => 'owner_equity', 'debit' => 0, 'credit' => 100],
+        ]);
+
+        $checks = collect(app(AccountingIntegrityService::class)->run()['checks']);
+        $this->assertSame('PASS', $checks->firstWhere('name', 'clearing_balance')['status']);
+        $this->assertSame('PASS', $checks->firstWhere('name', 'box_unclassified_adjustments')['status']);
+        $this->assertDatabaseHas('box_logs', ['id' => $log->id, 'reason_code' => 'accounting_correction']);
+    }
+
+    public function test_employee_box_access_is_enforced_inside_manual_debt_service(): void
+    {
+        $employeeUser = User::query()->create(['name' => 'Limited Employee', 'type' => 'employee']);
+        $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $admin = User::query()->create(['name' => 'Admin', 'type' => 'admin']);
+        $customer = Customer::query()->create(['name' => 'Permission Customer', 'is_canceled' => false]);
+        $boxA = Box::query()->create(['name' => 'Visible', 'total' => 500, 'currency' => 'شيكل']);
+        $boxB = Box::query()->create(['name' => 'Hidden', 'total' => 500, 'currency' => 'شيكل']);
+        DB::table('employee_visible_boxes')->insert([
+            'employee_id' => $employee->id, 'box_id' => $boxA->id, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $ledger = app(DebtLedgerService::class);
+
+        try {
+            $ledger->createTransaction([
+                'customer_id' => $customer->id, 'type' => 'given', 'amount' => 50,
+                'transaction_date' => '2026-09-01', 'box_id' => $boxB->id, 'source' => 'manual',
+            ], $employeeUser->id, actor: $employeeUser);
+            $this->fail('Hidden box must be rejected.');
+        } catch (\App\Exceptions\BoxAccessDeniedException $exception) {
+            $this->assertSame('الصندوق غير متاح لك.', $exception->getMessage());
+        }
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertEqualsWithDelta(500, (float) $boxB->fresh()->total, 0.0001);
+
+        $transaction = $ledger->createTransaction([
+            'customer_id' => $customer->id, 'type' => 'given', 'amount' => 50,
+            'transaction_date' => '2026-09-01', 'box_id' => $boxA->id, 'source' => 'manual',
+        ], $employeeUser->id, actor: $employeeUser);
+        try {
+            $ledger->updateTransaction($transaction, [
+                'type' => 'given', 'amount' => 50, 'transaction_date' => '2026-09-01', 'box_id' => $boxB->id,
+            ], actor: $employeeUser);
+            $this->fail('Moving a manual debt to a hidden box must be rejected.');
+        } catch (\App\Exceptions\BoxAccessDeniedException) {
+            // Expected.
+        }
+        $this->assertSame($boxA->id, $transaction->fresh()->box_id);
+        $this->assertEqualsWithDelta(450, (float) $boxA->fresh()->total, 0.0001);
+        $this->assertEqualsWithDelta(500, (float) $boxB->fresh()->total, 0.0001);
+
+        $this->assertTrue(app(BoxAccessService::class)->canAccess($admin, $boxA->id));
+        $this->assertTrue(app(BoxAccessService::class)->canAccess($admin, $boxB->id));
+    }
+
     private function createProductSale(
         float $total,
         float $paid,
@@ -1993,5 +2240,14 @@ class AccountingLedgerIntegrationTest extends TestCase
     {
         $entry->loadMissing('lines');
         $this->assertEqualsWithDelta((float) $entry->lines->sum('debit'), (float) $entry->lines->sum('credit'), 0.0001);
+    }
+
+    private function partyAccountAmount(int $entryId, string $accountKey, string $side): float
+    {
+        return (float) DB::table('accounting_journal_lines as lines')
+            ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+            ->where('lines.journal_entry_id', $entryId)
+            ->where('accounts.system_key', $accountKey)
+            ->sum('lines.'.$side);
     }
 }

@@ -2,10 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\RefreshSanctumTokenExpiry;
 use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\Customer;
 use App\Models\DebtTransaction;
+use App\Models\EmployeeDetail;
+use App\Models\EmployeePermission;
+use App\Models\Permission;
 use App\Models\Seller;
 use App\Models\User;
 use App\Services\AccountingProjectionService;
@@ -108,6 +112,65 @@ class DebtLedgerAccountingSafetyTest extends TestCase
         $this->assertSame(0, BoxLog::query()->count());
         $this->assertSame(0, DB::table('accounting_journal_entries')->count());
         $this->assertEqualsWithDelta(100, (float) $box->fresh()->total, 0.001);
+    }
+
+    public function test_employee_cannot_use_hidden_box_in_debt_create_update_or_payment_receive_but_admin_can(): void
+    {
+        $employeeUser = User::factory()->create(['type' => 'employee']);
+        $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $permission = Permission::query()->firstOrCreate(
+            ['name_en' => 'Debts'],
+            ['name' => 'الديون'],
+        );
+        EmployeePermission::query()->create(['employee_id' => $employee->id, 'permission_id' => $permission->id]);
+        $customer = $this->customer('Box Access Customer');
+        $boxA = $this->box(500, 'شيكل', 'Visible A');
+        $boxB = $this->box(500, 'شيكل', 'Hidden B');
+        $employee->visibleBoxes()->attach($boxA->id);
+        Sanctum::actingAs($employeeUser);
+        $this->withoutMiddleware(RefreshSanctumTokenExpiry::class);
+
+        $beforeJournals = DB::table('accounting_journal_entries')->count();
+        $this->postJson('/api/debt-ledger/transaction', [
+            'customer_id' => $customer->id, 'type' => 'given', 'amount' => 50,
+            'transaction_date' => '2026-09-01', 'box_id' => $boxB->id,
+        ])->assertJsonPath('message', 'الصندوق غير متاح لك.');
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertSame(0, BoxLog::query()->count());
+        $this->assertSame($beforeJournals, DB::table('accounting_journal_entries')->count());
+        $this->assertEqualsWithDelta(500, (float) $boxB->fresh()->total, 0.001);
+
+        $this->postJson('/api/debt-ledger/transaction', [
+            'customer_id' => $customer->id, 'type' => 'given', 'amount' => 50,
+            'transaction_date' => '2026-09-01', 'box_id' => $boxA->id,
+        ])->assertJsonPath('status', 'success');
+        $transaction = DebtTransaction::query()->firstOrFail();
+        $beforeLogs = BoxLog::query()->count();
+        $beforeJournals = DB::table('accounting_journal_entries')->count();
+
+        $this->postJson("/api/debt-ledger/transaction/{$transaction->id}/update", [
+            'type' => 'given', 'amount' => 50, 'transaction_date' => '2026-09-01', 'box_id' => $boxB->id,
+        ])->assertJsonPath('message', 'الصندوق غير متاح لك.');
+        $this->assertSame($boxA->id, $transaction->fresh()->box_id);
+        $this->assertSame($beforeLogs, BoxLog::query()->count());
+        $this->assertSame($beforeJournals, DB::table('accounting_journal_entries')->count());
+        $this->assertEqualsWithDelta(450, (float) $boxA->fresh()->total, 0.001);
+        $this->assertEqualsWithDelta(500, (float) $boxB->fresh()->total, 0.001);
+
+        $this->postJson('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'debts' => [['total' => 25, 'box_id' => $boxB->id, 'due_date' => '2026-09-02']],
+        ])->assertJsonPath('message', 'الصندوق غير متاح لك.');
+        $this->assertSame(1, DebtTransaction::query()->count());
+        $this->assertEqualsWithDelta(500, (float) $boxB->fresh()->total, 0.001);
+
+        Sanctum::actingAs($this->user);
+        $this->postJson('/api/debt-ledger/transaction', [
+            'customer_id' => $customer->id, 'type' => 'given', 'amount' => 25,
+            'transaction_date' => '2026-09-03', 'box_id' => $boxB->id,
+        ])->assertJsonPath('status', 'success');
+        $this->assertEqualsWithDelta(475, (float) $boxB->fresh()->total, 0.001);
     }
 
     public function test_backdated_insert_recalculates_only_the_affected_party_currency_in_date_and_id_order(): void

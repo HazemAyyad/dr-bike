@@ -77,6 +77,7 @@ class DebtLedgerBalanceService
                         'customer_id' => $transaction->customer_id ? (int) $transaction->customer_id : null,
                         'seller_id' => $transaction->seller_id ? (int) $transaction->seller_id : null,
                         'currency' => $currency,
+                        'transaction_date' => $transaction->transaction_date?->toDateString(),
                         'transaction_id' => (int) $transaction->id,
                         'stored_balance' => $stored,
                         'expected_balance' => $running,

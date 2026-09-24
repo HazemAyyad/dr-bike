@@ -446,20 +446,6 @@ class PurchasingService
                 throw new \RuntimeException(__('messages.must_be_same_currency_check'));
             }
 
-            $ledgerTx = $this->ledger->createTransaction([
-                'customer_id' => $bill->customer_id,
-                'seller_id' => $bill->seller_id,
-                'type' => 'given',
-                'amount' => $amount,
-                'currency' => $bill->currency,
-                'transaction_date' => now()->toDateString(),
-                'box_id' => $boxId,
-                'source' => $type === 'initial_payment' ? 'purchase_initial_payment' : 'purchase_payment',
-                'source_id' => $bill->id,
-                'note' => $note ?? 'دفعة لفاتورة شراء #'.$bill->id,
-                'receipt_images' => ! empty($receiptImages) ? $receiptImages : null,
-            ], $userId, true);
-
             $payment = PurchasePayment::create([
                 'bill_id' => $bill->id,
                 'seller_id' => $bill->seller_id,
@@ -470,9 +456,25 @@ class PurchasingService
                 'type' => $type,
                 'paid_at' => now()->toDateString(),
                 'note' => $note,
-                'debt_transaction_id' => $ledgerTx->id,
+                'debt_transaction_id' => null,
                 'created_by' => $userId,
             ]);
+
+            $ledgerTx = $this->ledger->createTransaction([
+                'customer_id' => $bill->customer_id,
+                'seller_id' => $bill->seller_id,
+                'type' => 'given',
+                'amount' => $amount,
+                'currency' => $bill->currency,
+                'transaction_date' => now()->toDateString(),
+                'box_id' => $boxId,
+                'source' => $type === 'initial_payment' ? 'purchase_initial_payment' : 'purchase_payment',
+                'source_id' => $payment->id,
+                'note' => $note ?? 'دفعة لفاتورة شراء #'.$bill->id,
+                'receipt_images' => ! empty($receiptImages) ? $receiptImages : null,
+            ], $userId, true);
+
+            $payment->update(['debt_transaction_id' => $ledgerTx->id]);
 
             $bill->update(['paid_amount' => (float) $bill->paid_amount + $amount]);
             $this->refreshPaymentStatus($bill->fresh());
@@ -538,7 +540,7 @@ class PurchasingService
                 'transaction_date' => $payment->paid_at?->format('Y-m-d') ?? now()->toDateString(),
                 'box_id' => $payment->box_id,
                 'source' => 'purchase_initial_payment',
-                'source_id' => $bill->id,
+                'source_id' => $payment->id,
                 'note' => $payment->note ?: 'دفعة أولية لفاتورة شراء #'.$bill->id,
             ], $userId, true);
 

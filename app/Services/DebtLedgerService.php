@@ -15,6 +15,7 @@ use App\Models\OutgoingCheck;
 use App\Models\ProfitSale;
 use App\Models\SalesOrder;
 use App\Models\Seller;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -40,6 +41,8 @@ class DebtLedgerService
     public function __construct(
         private ?DebtLedgerActivityLogger $activityLogger = null,
         private ?DebtLedgerBalanceService $balanceService = null,
+        private ?PartyAccountingTimelineService $partyTimeline = null,
+        private ?BoxAccessService $boxAccess = null,
     ) {}
 
     private function activity(): DebtLedgerActivityLogger
@@ -50,6 +53,16 @@ class DebtLedgerService
     private function balances(): DebtLedgerBalanceService
     {
         return $this->balanceService ?? app(DebtLedgerBalanceService::class);
+    }
+
+    private function timeline(): PartyAccountingTimelineService
+    {
+        return $this->partyTimeline ?? app(PartyAccountingTimelineService::class);
+    }
+
+    private function boxes(): BoxAccessService
+    {
+        return $this->boxAccess ?? app(BoxAccessService::class);
     }
 
     public function normalizeCurrency(?string $currency): string
@@ -397,6 +410,12 @@ class DebtLedgerService
                 $transaction->seller_id,
                 $transaction->currency,
             );
+            $this->timeline()->schedule(
+                $transaction->customer_id,
+                $transaction->seller_id,
+                $transaction->currency,
+                $transaction->transaction_date,
+            );
 
             $this->activity()->logForTransaction(
                 $transaction,
@@ -679,9 +698,10 @@ class DebtLedgerService
         array $data,
         ?int $userId = null,
         bool $applyBox = true,
-        bool $logActivity = true
+        bool $logActivity = true,
+        ?User $actor = null,
     ): DebtTransaction {
-        return DB::transaction(function () use ($data, $userId, $applyBox, $logActivity) {
+        return DB::transaction(function () use ($data, $userId, $applyBox, $logActivity, $actor) {
             $source = trim((string) ($data['source'] ?? 'manual'));
             $isManual = $source === '' || $source === 'manual';
             $box = null;
@@ -689,7 +709,10 @@ class DebtLedgerService
                 if (empty($data['box_id'])) {
                     throw new \InvalidArgumentException('الصندوق مطلوب للحركة اليدوية.');
                 }
-                $box = Box::query()->lockForUpdate()->findOrFail((int) $data['box_id']);
+                $actor ??= $userId ? User::query()->find($userId) : null;
+                $box = $actor
+                    ? $this->boxes()->findAccessible($actor, (int) $data['box_id'], lockForUpdate: true)
+                    : Box::query()->lockForUpdate()->findOrFail((int) $data['box_id']);
             }
             $currency = $this->normalizeCurrency($box?->currency ?? ($data['currency'] ?? 'شيكل'));
             $previousBalance = $this->getPreviousBalance(
@@ -730,6 +753,12 @@ class DebtLedgerService
             );
 
             $transaction = $transaction->fresh(['customer', 'seller']);
+            $this->timeline()->schedule(
+                $transaction->customer_id,
+                $transaction->seller_id,
+                $currency,
+                $transaction->transaction_date,
+            );
 
             if ($logActivity) {
                 $typeLabel = $transaction->type === 'taken' ? 'أخذت' : 'أعطيت';
@@ -1605,6 +1634,12 @@ class DebtLedgerService
 
             $transaction->update(['archived_at' => now()]);
             $this->recalculatePersonCurrencyBalances($transaction->customer_id, $transaction->seller_id, $transaction->currency);
+            $this->timeline()->schedule(
+                $transaction->customer_id,
+                $transaction->seller_id,
+                $transaction->currency,
+                $transaction->transaction_date,
+            );
 
             if ($logActivity) {
                 $this->activity()->logForTransaction(
@@ -1649,6 +1684,12 @@ class DebtLedgerService
 
             $transaction->update(['deleted_at' => now()]);
             $this->recalculatePersonCurrencyBalances($transaction->customer_id, $transaction->seller_id, $transaction->currency);
+            $this->timeline()->schedule(
+                $transaction->customer_id,
+                $transaction->seller_id,
+                $transaction->currency,
+                $transaction->transaction_date,
+            );
 
             if ($logActivity) {
                 $this->activity()->logForTransaction(
@@ -1667,12 +1708,13 @@ class DebtLedgerService
         array $data,
         bool $logActivity = true,
         bool $allowSourceLinked = false,
+        ?User $actor = null,
     ): DebtTransaction {
         if (! $allowSourceLinked) {
             $this->assertManualMutationAllowed($transaction);
         }
 
-        return DB::transaction(function () use ($transaction, $data, $logActivity, $allowSourceLinked) {
+        return DB::transaction(function () use ($transaction, $data, $logActivity, $allowSourceLinked, $actor) {
             $transaction = DebtTransaction::query()->whereKey($transaction->id)->lockForUpdate()->firstOrFail();
             if (! $allowSourceLinked) {
                 $this->assertManualMutationAllowed($transaction);
@@ -1681,6 +1723,7 @@ class DebtLedgerService
             $oldCustomerId = $transaction->customer_id ? (int) $transaction->customer_id : null;
             $oldSellerId = $transaction->seller_id ? (int) $transaction->seller_id : null;
             $oldCurrency = $this->normalizeCurrency($transaction->currency);
+            $oldTransactionDate = $transaction->transaction_date?->toDateString();
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
                 $this->reverseBoxMovement(
                     $transaction,
@@ -1694,7 +1737,12 @@ class DebtLedgerService
             if ($this->shouldSyncBox($transaction) && ! $newBoxId) {
                 throw new \InvalidArgumentException('الصندوق مطلوب للحركة اليدوية.');
             }
-            $newBox = $newBoxId ? Box::query()->lockForUpdate()->findOrFail((int) $newBoxId) : null;
+            $newBox = null;
+            if ($newBoxId) {
+                $newBox = $this->shouldSyncBox($transaction) && $actor
+                    ? $this->boxes()->findAccessible($actor, (int) $newBoxId, lockForUpdate: true)
+                    : Box::query()->lockForUpdate()->findOrFail((int) $newBoxId);
+            }
             $currency = $this->normalizeCurrency($newBox?->currency ?? ($data['currency'] ?? $transaction->currency));
 
             $updatePayload = [
@@ -1732,6 +1780,19 @@ class DebtLedgerService
                 || $oldCurrency !== $currency) {
                 $this->recalculatePersonCurrencyBalances($transaction->customer_id, $transaction->seller_id, $currency);
             }
+
+            $this->timeline()->schedule(
+                $oldCustomerId,
+                $oldSellerId,
+                $oldCurrency,
+                $oldTransactionDate,
+            );
+            $this->timeline()->schedule(
+                $transaction->customer_id,
+                $transaction->seller_id,
+                $currency,
+                min($oldTransactionDate ?: (string) $data['transaction_date'], (string) $data['transaction_date']),
+            );
 
             $transaction = $transaction->fresh(['customer', 'seller']);
 

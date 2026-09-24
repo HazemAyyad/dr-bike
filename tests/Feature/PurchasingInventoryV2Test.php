@@ -12,14 +12,15 @@ use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\PurchaseAmanatStock;
 use App\Models\PurchasePayment;
-use App\Models\PurchasePriceHistory;
 use App\Models\ReturnModel;
 use App\Models\Seller;
 use App\Models\User;
+use App\Services\AccountingIntegrityService;
+use App\Services\AccountingProjectionService;
 use App\Services\InventoryCostingService;
+use App\Services\ProductStockService;
 use App\Services\PurchaseAccountService;
 use App\Services\PurchaseAttachmentService;
-use App\Services\ProductStockService;
 use App\Services\PurchasingService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\UploadedFile;
@@ -377,6 +378,22 @@ class PurchasingInventoryV2Test extends TestCase
         $this->assertEquals(9000, (float) $boxB->fresh()->total);
         $this->assertSame(5, DebtTransaction::where('seller_id', $seller->id)->count());
         $this->assertSame(4, PurchasePayment::where('bill_id', $bill->id)->count());
+        $payments = PurchasePayment::query()->where('bill_id', $bill->id)->orderBy('id')->get();
+        foreach ($payments as $payment) {
+            $transaction = DebtTransaction::query()->findOrFail($payment->debt_transaction_id);
+            $expectedSource = $payment->type === 'initial_payment' ? 'purchase_initial_payment' : 'purchase_payment';
+            $this->assertSame($expectedSource, $transaction->source);
+            $this->assertSame((int) $payment->id, (int) $transaction->source_id);
+            app(AccountingProjectionService::class)->syncOrFail($payment);
+            app(AccountingProjectionService::class)->syncOrFail($payment->fresh());
+            $this->assertSame(1, \App\Models\AccountingJournalEntry::query()
+                ->where('source_type', 'purchase_payment')
+                ->where('source_id', $payment->id)
+                ->count());
+        }
+        $sourceIntegrity = collect(app(AccountingIntegrityService::class)->run()['checks'])
+            ->firstWhere('name', 'source_debt_integrity');
+        $this->assertSame('PASS', $sourceIntegrity['status']);
     }
 
     public function test_supplier_account_payment_can_allocate_oldest_finalized_invoices(): void

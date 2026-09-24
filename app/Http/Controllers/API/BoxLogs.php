@@ -7,6 +7,7 @@ use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\MaintenanceDailyBoxLog;
 use App\Services\BoxReportService;
+use App\Services\BoxAccessService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Doctrine\DBAL\Query\QueryException;
@@ -16,29 +17,7 @@ use Illuminate\Validation\ValidationException;
 
 class BoxLogs extends Controller
 {
-    private function actorVisibleBoxIds(Request $request): ?array
-    {
-        $user = $request->user();
-        if (! $user || $user->type === 'admin' || ! Schema::hasTable('employee_visible_boxes')) {
-            return null;
-        }
-
-        $employee = $user->employee;
-        if (! $employee) {
-            return [];
-        }
-
-        return $employee->visibleBoxes()
-            ->pluck('boxes.id')
-            ->map(fn ($id) => (int) $id)
-            ->all();
-    }
-
-    private function actorCanAccessBox(Request $request, int $boxId): bool
-    {
-        $visibleIds = $this->actorVisibleBoxIds($request);
-        return $visibleIds === null || in_array($boxId, $visibleIds, true);
-    }
+    public function __construct(private BoxAccessService $boxAccess) {}
 
     private function actorCanReportBox(Request $request, Box $box): bool
     {
@@ -68,7 +47,7 @@ class BoxLogs extends Controller
         }
 
         return in_array($box->type, $dailyTypes, true)
-            || $this->actorCanAccessBox($request, (int) $box->id);
+            || $this->boxAccess->canAccess($request->user(), (int) $box->id);
     }
 
     static public function createTransferLog(Box $fromBox, Box $toBox, $description, $value, ?string $note = null, ?int $createdBy = null){
@@ -136,7 +115,7 @@ class BoxLogs extends Controller
 
     public function allBoxLogs(){
         try{
-            $visibleIds = $this->actorVisibleBoxIds(request());
+            $visibleIds = $this->boxAccess->visibleBoxIds(request()->user());
 
             $boxLogs = BoxLog::query()
             ->when($visibleIds !== null, function ($query) use ($visibleIds) {

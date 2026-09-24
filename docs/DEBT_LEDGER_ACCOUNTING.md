@@ -54,3 +54,26 @@ php artisan debt-ledger:check-balances --repair
 
 Repair changes only `debt_transactions.balance_after`. It never guesses or
 changes amounts, parties, types, currencies, boxes, sources, cash, or journals.
+
+## Purchase-payment source identity inspection
+
+New purchase payments use the payment row as their debt source identity:
+
+- `purchase_payment / purchase_payments.id`
+- `purchase_initial_payment / purchase_payments.id`
+- `purchase_account_payment / purchase_payments.id`
+
+Inspect legacy rows without writing:
+
+```bash
+php artisan accounting:inspect-purchase-payment-sources --dry-run
+```
+
+Only rows classified `SAFE_TO_REPAIR` can be changed by the optional repair.
+The proof requires the direct `purchase_payments.debt_transaction_id` link plus
+matching source, amount, party, date, box, and currency. The repair changes only
+`debt_transactions.source_id`; ambiguous rows remain untouched.
+
+```bash
+php artisan accounting:inspect-purchase-payment-sources --repair
+```

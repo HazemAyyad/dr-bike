@@ -2,16 +2,16 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Exceptions\BoxAccessDeniedException;
 use App\Http\Controllers\Controller;
-use App\Services\DebtLedgerService;
-use App\Models\Box;
-use App\Services\SalesDailySessionService;
 use App\Models\Customer;
-use App\Models\Seller;
-use App\Services\EmployeeActivityLogger;
-
 use App\Models\IncomingCheck;
 use App\Models\OutgoingCheck;
+use App\Models\Seller;
+use App\Services\BoxAccessService;
+use App\Services\DebtLedgerService;
+use App\Services\EmployeeActivityLogger;
+use App\Services\SalesDailySessionService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -21,6 +21,7 @@ use Illuminate\Validation\ValidationException;
 
 class PaymentAndRecieve extends Controller
 {
+    public function __construct(private BoxAccessService $boxAccess) {}
 
 
     private function clampBoxLogNote(?string $note, int $max = 500): ?string
@@ -55,7 +56,7 @@ class PaymentAndRecieve extends Controller
             'type'        => 'required|string|in:payment,receive',
             'customer_id' => 'nullable|integer|exists:customers,id',
             'seller_id'   => 'nullable|integer|exists:sellers,id',
-            'box_id'      => 'nullable|integer|exists:boxes,id',
+            'box_id'      => 'nullable|integer',
             'box_value'   => 'nullable|numeric|min:0',
             'box_log_note' => 'nullable|string|max:500',
 
@@ -70,7 +71,7 @@ class PaymentAndRecieve extends Controller
 
             'debts' => 'nullable|array',
             'debts.*.total'    => 'required|numeric|min:1',
-            'debts.*.box_id'    => 'required|integer|exists:boxes,id',
+            'debts.*.box_id'    => 'required|integer',
 
             'debts.*.due_date' => 'nullable|date',
         ]);
@@ -106,7 +107,7 @@ class PaymentAndRecieve extends Controller
                         'message' => __('messages.must_enter_box_value')
                     ], 200);
                 }
-            $box = Box::findOrFail($request->box_id);
+            $box = $this->boxAccess->findAccessible($request->user(), (int) $request->box_id);
             if ($type === 'receive' && $box->isDailySalesBox()) {
                 app(SalesDailySessionService::class)->assertSessionAllowsPayment($request->user(), $box);
             }
@@ -254,7 +255,11 @@ class PaymentAndRecieve extends Controller
             }
             DB::transaction(function () use ($request, $type) {
                 foreach ($request->debts as $debtData) {
-                    $box = Box::query()->lockForUpdate()->findOrFail($debtData['box_id']);
+                    $box = $this->boxAccess->findAccessible(
+                        $request->user(),
+                        (int) $debtData['box_id'],
+                        lockForUpdate: true,
+                    );
                     $transaction = app(DebtLedgerService::class)->createTransaction([
                         'customer_id' => $request->customer_id ?? null,
                         'seller_id' => $request->seller_id ?? null,
@@ -267,7 +272,7 @@ class PaymentAndRecieve extends Controller
                         'note' => $type === 'payment'
                             ? 'دفعة دين يدوية من شاشة الدفع والاستلام'
                             : 'قبض دين يدوي من شاشة الدفع والاستلام',
-                    ], $request->user()?->id);
+                    ], $request->user()?->id, actor: $request->user());
 
                     Logs::createLog(
                         'إنشاء حركة في دفتر الديون',
@@ -305,6 +310,12 @@ class PaymentAndRecieve extends Controller
             'status' => 'error',
             'message' => __('messages.validation_failed'),
             'errors' => $e->errors(),
+        ], 200);
+
+    } catch (BoxAccessDeniedException $e) {
+        return response()->json([
+            'status' => 'error',
+            'message' => $e->getMessage(),
         ], 200);
 
     } catch (QueryException $e) {
