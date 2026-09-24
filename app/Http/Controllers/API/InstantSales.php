@@ -2017,6 +2017,7 @@ public function store(Request $request)
             $date = $request->input('date');
             $normalizedInvoiceSearch = strtoupper(str_replace([' ', '_'], '', $search));
             $invoiceSearchDigits = preg_replace('/\D+/', '', $search) ?? '';
+            $isAsciiSearch = preg_match('/^[\x00-\x7F]+$/', $search) === 1;
             $isZeroPaddedInvoiceSearch = ctype_digit($search)
                 && strlen($search) > 1
                 && str_starts_with($search, '0');
@@ -2074,12 +2075,11 @@ public function store(Request $request)
                         });
                     }
                 };
-                $query->where(function ($q) use ($term, $search, $invoiceSearchDigits, $invoiceSearchPrefix, $isZeroPaddedInvoiceSearch, $partyMatches, $snapshotMatches) {
+                $query->where(function ($q) use ($term, $search, $invoiceSearchDigits, $invoiceSearchPrefix, $isZeroPaddedInvoiceSearch, $isAsciiSearch, $partyMatches, $snapshotMatches) {
                     $q->where('buyer_name', 'like', $term)
                         ->orWhere('buyer_phone', 'like', $term)
                         ->orWhere('buyer_address', 'like', $term)
                         ->orWhere('notes', 'like', $term)
-                        ->orWhere('serial_number', 'like', $term)
                         ->orWhereHas('product', function ($productQuery) use ($term) {
                             $productQuery->where('nameAr', 'like', $term);
                         })
@@ -2097,6 +2097,12 @@ public function store(Request $request)
                         ->orWhereHas('seller', $partyMatches)
                         ->orWhereHas('project.partnership.customer', $partyMatches)
                         ->orWhereHas('project.partnership.seller', $partyMatches);
+
+                    // The legacy serial_number column inherits latin1_swedish_ci.
+                    // Binding Arabic text to it makes MySQL reject the whole query.
+                    if ($isAsciiSearch) {
+                        $q->orWhere('serial_number', 'like', $term);
+                    }
 
                     if (ctype_digit($search)) {
                         $q->orWhere('id', (int) $search)

@@ -254,6 +254,13 @@ class SalesCustomerSearchTest extends TestCase
             $this->assertSame('0594141414', $payload['instant_sales'][0]['buyer_phone']);
         }
 
+        $amrSearchSql = null;
+        DB::listen(function ($query) use (&$amrSearchSql) {
+            if (in_array('%عمرو عامر%', $query->bindings, true)) {
+                $amrSearchSql = $query->sql;
+            }
+        });
+
         foreach (['عمرو عامر', '597448120', 'SAL-0001025'] as $search) {
             $response = (new InstantSales)->getInstantSales(Request::create(
                 '/api/instant/sales',
@@ -271,6 +278,9 @@ class SalesCustomerSearchTest extends TestCase
             $this->assertSame('عمرو عامر', $payload['instant_sales'][0]['buyer_name']);
             $this->assertSame('+972 597448120', $payload['instant_sales'][0]['buyer_phone']);
         }
+
+        $this->assertNotNull($amrSearchSql);
+        $this->assertStringNotContainsString('serial_number', $amrSearchSql);
 
         $dateOnlyResponse = (new InstantSales)->getInstantSales(Request::create(
             '/api/instant/sales',
