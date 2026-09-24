@@ -11,7 +11,7 @@ use App\Http\Controllers\API\Test;
 use App\Http\Controllers\CronJobWebController;
 use App\Http\Controllers\DebtLedgerShareWebController;
 use App\Http\Controllers\EmployeeNotificationWebController;
-use App\Http\Controllers\EmployeePointsResetWebController;
+use App\Http\Controllers\EmployeePointsCleanupWebController;
 use App\Http\Controllers\InventoryLegacyAuditWebController;
 use App\Http\Controllers\ProductEditTestController;
 use App\Http\Controllers\SecurityCenterWebController;
@@ -69,15 +69,15 @@ Route::get('/security-center/login', [SecurityCenterWebController::class, 'login
 Route::post('/security-center/login', [SecurityCenterWebController::class, 'login'])->middleware('throttle:5,1')->name('security-center.login.submit');
 Route::middleware('security.center')->prefix('security-center')->name('security-center.')->group(function () {
     Route::get('/', [SecurityCenterWebController::class, 'index'])->name('index');
-    Route::get('/employee-points', [EmployeePointsResetWebController::class, 'index'])
+    Route::get('/employee-points', [EmployeePointsCleanupWebController::class, 'index'])
         ->name('employee-points.index');
-    Route::post('/employee-points/{employee}/reset', [EmployeePointsResetWebController::class, 'resetEmployee'])
+    Route::delete('/employee-points/{employee}', [EmployeePointsCleanupWebController::class, 'deleteEmployee'])
         ->middleware('throttle:10,1')
         ->whereNumber('employee')
-        ->name('employee-points.reset');
-    Route::post('/employee-points/reset-all', [EmployeePointsResetWebController::class, 'resetAll'])
+        ->name('employee-points.destroy');
+    Route::delete('/employee-points', [EmployeePointsCleanupWebController::class, 'deleteAll'])
         ->middleware('throttle:2,1')
-        ->name('employee-points.reset-all');
+        ->name('employee-points.destroy-all');
     Route::get('/accounting', [AccountingIntegrityWebController::class, 'index'])->name('accounting.index');
     Route::post('/accounting/inspect', [AccountingIntegrityWebController::class, 'inspect'])
         ->middleware('throttle:6,1')

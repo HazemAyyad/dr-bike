@@ -10,6 +10,8 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 
 class EmployeePointsService
 {
@@ -34,67 +36,116 @@ class EmployeePointsService
     }
 
     /**
-     * Bring an employee's lifetime points balance to zero without deleting
-     * historical movements. The returned log is null when already at zero.
+     * Permanently remove an employee's points history and related artifacts.
+     *
+     * @return array<string, int>
      */
-    public function resetToZero(int $employeeId, ?string $notes = null): ?EmployeePointsLog
+    public function deleteHistory(int $employeeId, ?string $auditNote = null): array
     {
-        return DB::transaction(fn () => $this->resetToZeroWithinTransaction($employeeId, $notes));
+        return $this->deleteManyHistories([$employeeId], $auditNote);
     }
 
     /**
-     * Reset several employees atomically.
+     * Permanently remove points history for several employees atomically.
+     * Evidence files are removed after the database transaction commits.
      *
      * @param  array<int>  $employeeIds
-     * @return array<int, EmployeePointsLog>
+     * @return array<string, int>
      */
-    public function resetManyToZero(array $employeeIds, ?string $notes = null): array
+    public function deleteManyHistories(array $employeeIds, ?string $auditNote = null): array
     {
-        $employeeIds = array_values(array_unique(array_map('intval', $employeeIds)));
+        $employeeIds = array_values(array_unique(array_filter(array_map('intval', $employeeIds))));
         sort($employeeIds);
 
-        return DB::transaction(function () use ($employeeIds, $notes) {
-            $logs = [];
+        $result = DB::transaction(function () use ($employeeIds) {
+            $existingEmployeeIds = EmployeeDetail::query()
+                ->whereIn('id', $employeeIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->pluck('id')
+                ->all();
 
-            foreach ($employeeIds as $employeeId) {
-                $log = $this->resetToZeroWithinTransaction($employeeId, $notes);
-                if ($log !== null) {
-                    $logs[] = $log;
-                }
+            $logs = EmployeePointsLog::query()
+                ->whereIn('employee_id', $existingEmployeeIds)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id', 'employee_id', 'image_path']);
+            $logIds = $logs->pluck('id')->all();
+
+            $relatedExecutions = 0;
+            if ($logIds !== [] && Schema::hasTable('employee_point_rule_executions')) {
+                $relatedExecutions = DB::table('employee_point_rule_executions')
+                    ->whereIn('points_log_id', $logIds)
+                    ->update(['points_log_id' => null]);
             }
 
-            return $logs;
+            $notificationTypes = [
+                EmployeeNotificationService::TYPE_EMPLOYEE_POINTS_CHANGED,
+                EmployeeNotificationService::TYPE_EMPLOYEE_REWARD_EARNED,
+            ];
+            $employeeNotifications = Schema::hasTable('employee_notifications')
+                ? DB::table('employee_notifications')
+                    ->whereIn('employee_id', $existingEmployeeIds)
+                    ->whereIn('type', $notificationTypes)
+                    ->delete()
+                : 0;
+            $adminNotifications = Schema::hasTable('admin_notifications')
+                ? DB::table('admin_notifications')
+                    ->whereIn('employee_id', $existingEmployeeIds)
+                    ->whereIn('type', $notificationTypes)
+                    ->delete()
+                : 0;
+            $activityLogs = Schema::hasTable('employee_activity_logs')
+                ? DB::table('employee_activity_logs')
+                    ->whereIn('employee_id', $existingEmployeeIds)
+                    ->where('module', 'employee_points')
+                    ->delete()
+                : 0;
+
+            $logsDeleted = $logIds === []
+                ? 0
+                : EmployeePointsLog::query()->whereIn('id', $logIds)->delete();
+
+            return [
+                'employees_affected' => $logs->pluck('employee_id')->unique()->count(),
+                'logs_deleted' => $logsDeleted,
+                'employee_notifications_deleted' => $employeeNotifications,
+                'admin_notifications_deleted' => $adminNotifications,
+                'activity_logs_deleted' => $activityLogs,
+                'rule_executions_detached' => $relatedExecutions,
+                'evidence_paths' => $logs->pluck('image_path')->filter()->unique()->values()->all(),
+            ];
         });
-    }
 
-    private function resetToZeroWithinTransaction(int $employeeId, ?string $notes): ?EmployeePointsLog
-    {
-        EmployeeDetail::query()->whereKey($employeeId)->lockForUpdate()->firstOrFail();
+        $filesDeleted = 0;
+        $filesFailed = 0;
+        foreach ($result['evidence_paths'] as $path) {
+            try {
+                if (EmployeePointsLog::query()->where('image_path', $path)->exists()) {
+                    continue;
+                }
 
-        $netPoints = EmployeePointsLog::query()
-            ->forEmployee($employeeId)
-            ->lockForUpdate()
-            ->get(['points', 'operation_type'])
-            ->sum(fn (EmployeePointsLog $log) => $log->operation_type === EmployeePointsLog::OPERATION_ADD
-                ? (int) $log->points
-                : -((int) $log->points));
-
-        if ($netPoints === 0) {
-            return null;
+                Storage::disk('public')->delete($path) ? $filesDeleted++ : $filesFailed++;
+            } catch (\Throwable $e) {
+                $filesFailed++;
+                Log::warning('Employee points evidence deletion failed', [
+                    'path' => $path,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
-        $payload = [
-            'points' => abs($netPoints),
-            'category' => 'security_center_reset',
-            'source' => EmployeePointsLog::SOURCE_MANUAL,
-            'reason' => 'تصفير رصيد النقاط من مركز الأمان',
-            'notes' => $notes,
-            'points_date' => Carbon::now()->toDateString(),
-        ];
+        unset($result['evidence_paths']);
+        $result['evidence_files_deleted'] = $filesDeleted;
+        $result['evidence_files_failed'] = $filesFailed;
 
-        return $netPoints > 0
-            ? $this->createLog($employeeId, EmployeePointsLog::OPERATION_DEDUCT, $payload)
-            : $this->createLog($employeeId, EmployeePointsLog::OPERATION_ADD, $payload);
+        Log::notice('Employee points history permanently deleted from security center', [
+            'employee_ids' => $employeeIds,
+            'audit_note' => $auditNote,
+            'result' => $result,
+        ]);
+
+        return $result;
     }
 
     /**
