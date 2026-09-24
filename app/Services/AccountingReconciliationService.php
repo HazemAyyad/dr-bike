@@ -123,23 +123,49 @@ class AccountingReconciliationService
 
     private function compareCustomerDeposits(Collection $comparisons): void
     {
-        if (! Schema::hasTable('sales_order_settlements')
-            || ! Schema::hasTable('sales_orders')
-            || ! Schema::hasTable('boxes')) {
-            return;
+        $sources = collect();
+
+        if (Schema::hasTable('sales_order_settlements')
+            && Schema::hasTable('sales_orders')
+            && Schema::hasTable('boxes')) {
+            $sources = $sources->concat(DB::table('sales_order_settlements as settlements')
+                ->join('sales_orders as orders', 'orders.id', '=', 'settlements.sales_order_id')
+                ->leftJoin('boxes', 'boxes.id', '=', 'settlements.box_id')
+                ->where('settlements.source', 'order_payment')
+                ->where('settlements.cash_amount', '>', 0)
+                ->whereNull('orders.financial_posted_at')
+                ->where('orders.is_debt_collection', false)
+                ->whereNotIn('orders.status', ['canceled', 'returned', 'archived'])
+                ->selectRaw("NULL as dimension_id, COALESCE(NULLIF(boxes.currency, ''), 'شيكل') as currency, SUM(settlements.cash_amount) as amount")
+                ->groupBy('boxes.currency')
+                ->get());
         }
 
-        $operational = DB::table('sales_order_settlements as settlements')
-            ->join('sales_orders as orders', 'orders.id', '=', 'settlements.sales_order_id')
-            ->leftJoin('boxes', 'boxes.id', '=', 'settlements.box_id')
-            ->where('settlements.source', 'order_payment')
-            ->where('settlements.cash_amount', '>', 0)
-            ->whereNull('orders.financial_posted_at')
-            ->where('orders.is_debt_collection', false)
-            ->whereNotIn('orders.status', ['canceled', 'returned', 'archived'])
-            ->selectRaw("NULL as dimension_id, COALESCE(NULLIF(boxes.currency, ''), 'شيكل') as currency, SUM(settlements.cash_amount) as amount")
-            ->groupBy('boxes.currency')
-            ->get();
+        if (Schema::hasTable('maintenance_payments')
+            && Schema::hasTable('maintenance')
+            && Schema::hasColumn('maintenance_payments', 'payment_stage')) {
+            $sources = $sources->concat(DB::table('maintenance_payments as payments')
+                ->join('maintenance as maintenance', 'maintenance.id', '=', 'payments.maintenance_id')
+                ->where('payments.payment_stage', 'pre_delivery')
+                ->whereNull('maintenance.instant_sale_id')
+                ->where('maintenance.status', '!=', 'delivered')
+                ->when(
+                    Schema::hasColumn('maintenance', 'deleted_at'),
+                    fn ($query) => $query->whereNull('maintenance.deleted_at'),
+                )
+                ->selectRaw("NULL as dimension_id, COALESCE(NULLIF(payments.currency, ''), 'شيكل') as currency, SUM(payments.amount) as amount")
+                ->groupBy('payments.currency')
+                ->get());
+        }
+
+        $operational = $sources
+            ->groupBy(fn ($row) => $this->normalizeCurrency($row->currency ?? null))
+            ->map(fn ($rows, $currency) => (object) [
+                'dimension_id' => null,
+                'currency' => $currency,
+                'amount' => $rows->sum(fn ($row) => (float) $row->amount),
+            ])
+            ->values();
 
         $this->merge(
             $comparisons,

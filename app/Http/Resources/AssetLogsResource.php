@@ -14,16 +14,21 @@ class AssetLogsResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
-            return [
-                'asset_id' => $this->asset_id,
-                'asset_name' => $this->asset->name,
-                'date' => $this->created_at? $this->created_at->format('Y-m-d'):null,
-                'depreciation_rate' => $this->asset->depreciation_rate?? 0,
-                'total' => $this->total?? null,
-                'type' => $this->type?? null,
-                'depreciation_period' => $this->depreciation_period,
-                'value_before' => $this->value_before,
-                'depreciation_amount' => $this->depreciation_amount,
-            ];
+        return [
+            'asset_id' => $this->asset_id,
+            'asset_name' => $this->asset->name,
+            'date' => $this->created_at ? $this->created_at->format('Y-m-d') : null,
+            'depreciation_rate' => (float) ($this->asset->months_number ?? 0) > 0
+                ? round(1 / (float) $this->asset->months_number, 8)
+                : 0,
+            'depreciation_rate_percent' => (float) ($this->asset->months_number ?? 0) > 0
+                ? round(100 / (float) $this->asset->months_number, 6)
+                : 0,
+            'total' => $this->total ?? null,
+            'type' => $this->type ?? null,
+            'depreciation_period' => $this->depreciation_period,
+            'value_before' => $this->value_before,
+            'depreciation_amount' => $this->depreciation_amount,
+        ];
     }
 }

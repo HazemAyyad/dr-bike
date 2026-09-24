@@ -3,7 +3,11 @@
 namespace Tests\Unit;
 
 use App\Models\AccountingJournalEntry;
+use App\Models\Asset;
+use App\Models\AssetLog;
 use App\Models\InstantSale;
+use App\Models\Maintenance;
+use App\Models\MaintenancePayment;
 use App\Models\ProfitSale;
 use App\Models\PurchasePayment;
 use App\Models\PurchaseReceipt;
@@ -14,10 +18,14 @@ use App\Models\SalesReturn;
 use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AccountingProjectionService;
+use App\Services\AccountingReconciliationService;
 use App\Services\AccountingReportService;
 use App\Services\AccountingService;
+use App\Services\AssetDepreciationCalculator;
+use App\Services\MonthlyAssetDepreciationService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
@@ -48,17 +56,23 @@ class AccountingLedgerIntegrationTest extends TestCase
         });
         Schema::connection('accounting_test')->create('assets', function (Blueprint $table) {
             $table->id();
+            $table->string('name')->nullable();
             $table->unsignedInteger('months_number')->default(1);
             $table->decimal('price', 14, 4)->default(0);
+            $table->decimal('depreciation_rate', 14, 8)->default(0);
             $table->decimal('depreciation_price', 14, 4)->default(0);
+            $table->json('media')->nullable();
             $table->timestamps();
         });
         Schema::connection('accounting_test')->create('asset_logs', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('asset_id')->nullable();
             $table->string('type')->nullable();
+            $table->decimal('total', 14, 4)->default(0);
+            $table->decimal('value_before', 14, 4)->nullable();
             $table->decimal('depreciation_amount', 14, 4)->default(0);
             $table->string('depreciation_period')->nullable();
+            $table->unsignedBigInteger('processed_by_user_id')->nullable();
             $table->timestamps();
         });
         Schema::connection('accounting_test')->create('expenses', function (Blueprint $table) {
@@ -77,16 +91,37 @@ class AccountingLedgerIntegrationTest extends TestCase
         });
         Schema::connection('accounting_test')->create('maintenance', function (Blueprint $table) {
             $table->id();
+            $table->unsignedBigInteger('customer_id')->nullable();
+            $table->unsignedBigInteger('seller_id')->nullable();
             $table->string('status')->nullable();
             $table->decimal('invoice_total', 14, 4)->default(0);
+            $table->decimal('paid_amount', 14, 4)->default(0);
             $table->unsignedBigInteger('instant_sale_id')->nullable();
             $table->softDeletes();
+            $table->timestamps();
+        });
+        Schema::connection('accounting_test')->create('maintenance_payments', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('maintenance_id');
+            $table->unsignedBigInteger('maintenance_daily_session_id')->nullable();
+            $table->unsignedBigInteger('box_id')->nullable();
+            $table->unsignedBigInteger('instant_sale_id')->nullable();
+            $table->unsignedBigInteger('created_by')->nullable();
+            $table->string('method', 32)->default('cash');
+            $table->decimal('amount', 14, 4)->default(0);
+            $table->string('currency', 32)->default('شيكل');
+            $table->text('note')->nullable();
             $table->timestamps();
         });
         Schema::connection('accounting_test')->create('maintenance_products', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('maintenance_id');
+            $table->unsignedBigInteger('product_id');
+            $table->unsignedBigInteger('size_id')->nullable();
+            $table->unsignedBigInteger('size_color_id')->nullable();
             $table->decimal('quantity', 14, 4)->default(0);
+            $table->string('inventory_cost_method')->nullable();
+            $table->decimal('inventory_unit_cost', 14, 6)->nullable();
             $table->decimal('inventory_total_cost', 14, 4)->nullable();
             $table->timestamps();
         });
@@ -352,6 +387,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         (require database_path('migrations/2026_09_19_203000_add_box_id_to_outgoing_checks_table.php'))->up();
         (require database_path('migrations/2026_09_19_204000_add_carrier_credit_to_sales_returns.php'))->up();
         (require database_path('migrations/2026_09_23_100000_add_service_revenue_account.php'))->up();
+        (require database_path('migrations/2026_09_24_100000_add_payment_stage_to_maintenance_payments.php'))->up();
     }
 
     protected function tearDown(): void
@@ -423,6 +459,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertTrue(Schema::hasColumn('sales_returns', 'carrier_credit_amount'));
         $this->assertTrue(DB::table('accounting_accounts')->where('system_key', 'customer_deposits')->exists());
         $this->assertTrue(DB::table('accounting_accounts')->where('system_key', 'service_revenue')->exists());
+        $this->assertTrue(Schema::hasColumn('maintenance_payments', 'payment_stage'));
     }
 
     public function test_order_deposit_is_released_into_revenue_without_double_counting_cash(): void
@@ -953,6 +990,464 @@ class AccountingLedgerIntegrationTest extends TestCase
             '--from' => now()->toDateString(),
             '--to' => now()->toDateString(),
         ])->assertExitCode(1);
+    }
+
+    public function test_maintenance_prepayment_is_released_at_delivery_without_double_counting_cash(): void
+    {
+        $this->ensureBox();
+        $maintenance = Maintenance::withoutEvents(fn () => Maintenance::query()->create([
+            'customer_id' => 7,
+            'status' => 'in_progress',
+            'invoice_total' => 1000,
+            'paid_amount' => 300,
+        ]));
+        $prepayment = MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+            'maintenance_id' => $maintenance->id,
+            'box_id' => 1,
+            'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
+            'method' => 'cash',
+            'amount' => 300,
+            'currency' => 'شيكل',
+        ]));
+
+        $depositEntry = app(AccountingProjectionService::class)->syncOrFail($prepayment)->load('lines.account');
+        $this->assertEqualsWithDelta(300, $depositEntry->lines->firstWhere('account.system_key', 'cash')->debit, 0.0001);
+        $this->assertEqualsWithDelta(300, $depositEntry->lines->firstWhere('account.system_key', 'customer_deposits')->credit, 0.0001);
+
+        $sale = InstantSale::withoutEvents(fn () => InstantSale::query()->create([
+            'maintenance_id' => $maintenance->id,
+            'total_cost' => 1000,
+            'quantity' => 1,
+            'buyer_id' => 7,
+            'payment_box_id' => 1,
+            'payment_box_value' => 500,
+            'status' => 'active',
+        ]));
+        MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+            'maintenance_id' => $maintenance->id,
+            'box_id' => 1,
+            'instant_sale_id' => $sale->id,
+            'payment_stage' => MaintenancePayment::STAGE_DELIVERY,
+            'method' => 'cash',
+            'amount' => 200,
+            'currency' => 'شيكل',
+        ]));
+        $prepayment->updateQuietly(['instant_sale_id' => $sale->id]);
+        $maintenance->updateQuietly([
+            'status' => 'delivered',
+            'paid_amount' => 500,
+            'instant_sale_id' => $sale->id,
+        ]);
+
+        $invoiceEntry = app(AccountingProjectionService::class)->syncOrFail($sale->fresh())->load('lines.account');
+        $byAccount = $invoiceEntry->lines->groupBy(fn ($line) => $line->account->system_key);
+        $this->assertEqualsWithDelta(300, $byAccount['customer_deposits']->sum('debit'), 0.0001);
+        $this->assertEqualsWithDelta(200, $byAccount['cash']->sum('debit'), 0.0001);
+        $this->assertEqualsWithDelta(500, $byAccount['accounts_receivable']->sum('debit'), 0.0001);
+        $this->assertEqualsWithDelta(1000, $byAccount['maintenance_revenue']->sum('credit'), 0.0001);
+        $this->assertJournalBalanced($invoiceEntry);
+
+        app(AccountingProjectionService::class)->syncOrFail($prepayment->fresh());
+        app(AccountingProjectionService::class)->syncOrFail($sale->fresh());
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'maintenance_payment')
+            ->where('source_id', $prepayment->id)
+            ->count());
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'instant_sale')
+            ->where('source_id', $sale->id)
+            ->count());
+        $this->assertEqualsWithDelta(500, DB::table('accounting_journal_lines as lines')
+            ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+            ->where('accounts.system_key', 'cash')
+            ->sum(DB::raw('lines.debit - lines.credit')), 0.0001);
+    }
+
+    public function test_maintenance_delivery_supports_full_prepayment_full_cash_and_full_debt(): void
+    {
+        $this->ensureBox();
+        foreach ([
+            ['prepaid' => 1000, 'delivery' => 0, 'receivable' => 0],
+            ['prepaid' => 0, 'delivery' => 1000, 'receivable' => 0],
+            ['prepaid' => 0, 'delivery' => 0, 'receivable' => 1000],
+        ] as $index => $scenario) {
+            $maintenance = Maintenance::withoutEvents(fn () => Maintenance::query()->create([
+                'customer_id' => 100 + $index,
+                'status' => 'in_progress',
+                'invoice_total' => 1000,
+                'paid_amount' => $scenario['prepaid'],
+            ]));
+            if ($scenario['prepaid'] > 0) {
+                $prepayment = MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+                    'maintenance_id' => $maintenance->id,
+                    'box_id' => 1,
+                    'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
+                    'amount' => $scenario['prepaid'],
+                    'currency' => 'شيكل',
+                ]));
+                app(AccountingProjectionService::class)->syncOrFail($prepayment);
+            }
+            $sale = InstantSale::withoutEvents(fn () => InstantSale::query()->create([
+                'maintenance_id' => $maintenance->id,
+                'total_cost' => 1000,
+                'quantity' => 1,
+                'buyer_id' => 100 + $index,
+                'payment_box_id' => 1,
+                'payment_box_value' => $scenario['prepaid'] + $scenario['delivery'],
+                'status' => 'active',
+            ]));
+            if ($scenario['delivery'] > 0) {
+                MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+                    'maintenance_id' => $maintenance->id,
+                    'box_id' => 1,
+                    'instant_sale_id' => $sale->id,
+                    'payment_stage' => MaintenancePayment::STAGE_DELIVERY,
+                    'amount' => $scenario['delivery'],
+                    'currency' => 'شيكل',
+                ]));
+            }
+            $maintenance->updateQuietly(['status' => 'delivered', 'instant_sale_id' => $sale->id]);
+
+            $entry = app(AccountingProjectionService::class)->syncOrFail($sale->fresh())->load('lines.account');
+            $deposits = $entry->lines->where('account.system_key', 'customer_deposits')->sum('debit');
+            $cash = $entry->lines->where('account.system_key', 'cash')->sum('debit');
+            $receivable = $entry->lines->where('account.system_key', 'accounts_receivable')->sum('debit');
+            $this->assertEqualsWithDelta($scenario['prepaid'], $deposits, 0.0001);
+            $this->assertEqualsWithDelta($scenario['delivery'], $cash, 0.0001);
+            $this->assertEqualsWithDelta($scenario['receivable'], $receivable, 0.0001);
+            $this->assertJournalBalanced($entry);
+        }
+    }
+
+    public function test_maintenance_prepayment_with_fifo_parts_posts_cogs_and_inventory(): void
+    {
+        $this->ensureBox();
+        $maintenance = Maintenance::withoutEvents(fn () => Maintenance::query()->create([
+            'customer_id' => 17,
+            'status' => 'in_progress',
+            'invoice_total' => 100,
+            'paid_amount' => 30,
+        ]));
+        $prepayment = MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+            'maintenance_id' => $maintenance->id,
+            'box_id' => 1,
+            'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
+            'amount' => 30,
+            'currency' => 'شيكل',
+        ]));
+        app(AccountingProjectionService::class)->syncOrFail($prepayment);
+        $sale = $this->createProductSale(100, 30, 1, 25);
+        $sale->updateQuietly(['maintenance_id' => $maintenance->id, 'buyer_id' => 17]);
+        DB::table('inventory_cost_allocations')
+            ->where('reference_type', 'instant_sale')
+            ->where('reference_id', $sale->id)
+            ->update(['reference_type' => 'maintenance', 'reference_id' => $maintenance->id]);
+        DB::table('product_stock_movements')
+            ->where('reference_type', 'instant_sale')
+            ->where('reference_id', $sale->id)
+            ->update(['reference_type' => 'maintenance', 'reference_id' => $maintenance->id]);
+        DB::table('maintenance_products')->insert([
+            'maintenance_id' => $maintenance->id,
+            'product_id' => $sale->product_id,
+            'quantity' => 1,
+            'inventory_cost_method' => 'fifo',
+            'inventory_unit_cost' => 25,
+            'inventory_total_cost' => 25,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $maintenance->updateQuietly(['status' => 'delivered', 'instant_sale_id' => $sale->id]);
+
+        $entry = app(AccountingProjectionService::class)->syncOrFail($sale->fresh())->load('lines.account');
+        $this->assertEntryAccounts($entry, [
+            'customer_deposits', 'accounts_receivable', 'maintenance_revenue',
+            'cost_of_goods_sold', 'inventory',
+        ]);
+        $this->assertFalse($entry->lines->pluck('account.system_key')->contains('cash'));
+        $this->assertJournalBalanced($entry);
+    }
+
+    public function test_maintenance_deposit_reconciliation_matches_before_and_after_delivery(): void
+    {
+        DB::table('boxes')->insert(['id' => 1, 'name' => 'صيانة', 'total' => 300, 'currency' => 'شيكل']);
+        $maintenance = Maintenance::withoutEvents(fn () => Maintenance::query()->create([
+            'customer_id' => 27,
+            'status' => 'in_progress',
+            'invoice_total' => 1000,
+            'paid_amount' => 300,
+        ]));
+        $prepayment = MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+            'maintenance_id' => $maintenance->id,
+            'box_id' => 1,
+            'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
+            'amount' => 300,
+            'currency' => 'شيكل',
+        ]));
+        app(AccountingProjectionService::class)->syncOrFail($prepayment);
+
+        $before = collect(app(AccountingReconciliationService::class)->reconcile()['comparisons'])
+            ->firstWhere('scope', 'customer_deposits');
+        $this->assertTrue($before['matches']);
+        $this->assertEqualsWithDelta(300, $before['operational_balance'], 0.0001);
+
+        $sale = InstantSale::withoutEvents(fn () => InstantSale::query()->create([
+            'maintenance_id' => $maintenance->id,
+            'total_cost' => 1000,
+            'quantity' => 1,
+            'buyer_id' => 27,
+            'payment_box_id' => 1,
+            'payment_box_value' => 300,
+            'status' => 'active',
+        ]));
+        $prepayment->updateQuietly(['instant_sale_id' => $sale->id]);
+        $maintenance->updateQuietly(['status' => 'delivered', 'instant_sale_id' => $sale->id]);
+        app(AccountingProjectionService::class)->syncOrFail($sale->fresh());
+
+        $after = collect(app(AccountingReconciliationService::class)->reconcile()['comparisons'])
+            ->firstWhere('scope', 'customer_deposits');
+        $this->assertTrue($after['matches']);
+        $this->assertEqualsWithDelta(0, $after['operational_balance'], 0.0001);
+        $this->assertEqualsWithDelta(0, $after['ledger_balance'], 0.0001);
+    }
+
+    public function test_maintenance_prepayment_sync_command_is_dry_run_safe_and_idempotent(): void
+    {
+        $this->ensureBox();
+        $maintenance = Maintenance::withoutEvents(fn () => Maintenance::query()->create([
+            'customer_id' => 37,
+            'status' => 'in_progress',
+            'invoice_total' => 200,
+            'paid_amount' => 50,
+        ]));
+        $payment = MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+            'maintenance_id' => $maintenance->id,
+            'box_id' => 1,
+            'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
+            'amount' => 50,
+            'currency' => 'شيكل',
+        ]));
+
+        $this->assertSame(0, Artisan::call('accounting:sync-maintenance-prepayments', ['--dry-run' => true]));
+        $this->assertFalse(AccountingJournalEntry::query()
+            ->where('source_type', 'maintenance_payment')
+            ->where('source_id', $payment->id)
+            ->exists());
+
+        $this->assertSame(0, Artisan::call('accounting:sync-maintenance-prepayments'));
+        $this->assertSame(0, Artisan::call('accounting:sync-maintenance-prepayments'));
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'maintenance_payment')
+            ->where('source_id', $payment->id)
+            ->count());
+    }
+
+    public function test_maintenance_prepayment_reversal_offsets_cash_and_customer_deposit(): void
+    {
+        $this->ensureBox();
+        $maintenance = Maintenance::withoutEvents(fn () => Maintenance::query()->create([
+            'customer_id' => 47,
+            'status' => 'ongoing',
+            'invoice_total' => 100,
+            'paid_amount' => 100,
+        ]));
+        foreach ([100, -100] as $amount) {
+            $payment = MaintenancePayment::withoutEvents(fn () => MaintenancePayment::query()->create([
+                'maintenance_id' => $maintenance->id,
+                'box_id' => 1,
+                'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
+                'method' => $amount > 0 ? 'cash' : 'cancellation_reversal',
+                'amount' => $amount,
+                'currency' => 'شيكل',
+            ]));
+            app(AccountingProjectionService::class)->syncOrFail($payment);
+        }
+
+        foreach (['cash', 'customer_deposits'] as $account) {
+            $balance = DB::table('accounting_journal_lines as lines')
+                ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+                ->where('accounts.system_key', $account)
+                ->sum(DB::raw('lines.debit - lines.credit'));
+            $this->assertEqualsWithDelta(0, $balance, 0.0001);
+        }
+    }
+
+    public function test_straight_line_depreciation_reaches_zero_after_useful_life(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل 12 شهر',
+            'price' => 12000,
+            'depreciation_price' => 12000,
+            'depreciation_rate' => 1 / 12,
+            'months_number' => 12,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+        ]));
+        $service = app(MonthlyAssetDepreciationService::class);
+        foreach (range(1, 12) as $month) {
+            $result = $service->run(sprintf('2026-%02d', $month), null, $asset->id);
+            $this->assertSame(1, $result['processed']);
+        }
+
+        $logs = AssetLog::query()->where('asset_id', $asset->id)->where('type', 'depreciate')->get();
+        $this->assertCount(12, $logs);
+        $this->assertEqualsWithDelta(12000, $logs->sum('depreciation_amount'), 0.0001);
+        $this->assertEqualsWithDelta(0, (float) $asset->fresh()->depreciation_price, 0.0001);
+        $this->assertTrue($logs->every(fn ($log) => abs((float) $log->depreciation_amount - 1000) < 0.0001));
+    }
+
+    public function test_straight_line_rounding_has_no_residual_and_preview_matches_actual(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل 3 أشهر',
+            'price' => 10000,
+            'depreciation_price' => 10000,
+            'depreciation_rate' => 1 / 3,
+            'months_number' => 3,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+        ]));
+        $calculator = app(AssetDepreciationCalculator::class);
+        $preview = $calculator->calculate($asset, '2026-01');
+        app(MonthlyAssetDepreciationService::class)->run('2026-01', null, $asset->id);
+        $firstLog = AssetLog::query()->where('asset_id', $asset->id)->where('type', 'depreciate')->firstOrFail();
+        $this->assertEqualsWithDelta($preview['next_depreciation_amount'], (float) $firstLog->depreciation_amount, 0.0001);
+        $journal = AccountingJournalEntry::query()
+            ->where('source_type', 'asset_depreciation')
+            ->where('source_id', $firstLog->id)
+            ->firstOrFail()
+            ->load('lines.account');
+        $this->assertEqualsWithDelta(
+            (float) $firstLog->depreciation_amount,
+            (float) $journal->lines->firstWhere('account.system_key', 'depreciation_expense')->debit,
+            0.0001,
+        );
+        $this->assertEqualsWithDelta(
+            (float) $firstLog->depreciation_amount,
+            (float) $journal->lines->firstWhere('account.system_key', 'accumulated_depreciation')->credit,
+            0.0001,
+        );
+
+        app(MonthlyAssetDepreciationService::class)->run('2026-02', null, $asset->id);
+        app(MonthlyAssetDepreciationService::class)->run('2026-03', null, $asset->id);
+        $this->assertEqualsWithDelta(0, (float) $asset->fresh()->depreciation_price, 0.0001);
+        $this->assertEqualsWithDelta(10000, (float) AssetLog::query()
+            ->where('asset_id', $asset->id)
+            ->where('type', 'depreciate')
+            ->sum('depreciation_amount'), 0.0001);
+    }
+
+    public function test_depreciation_is_idempotent_and_not_allowed_before_acquisition_month(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل مستقبلي',
+            'price' => 1200,
+            'depreciation_price' => 1200,
+            'depreciation_rate' => 1 / 12,
+            'months_number' => 12,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-10-01',
+        ]));
+        $service = app(MonthlyAssetDepreciationService::class);
+        $before = $service->run('2026-09', null, $asset->id);
+        $first = $service->run('2026-10', null, $asset->id);
+        $duplicate = $service->run('2026-10', null, $asset->id);
+
+        $this->assertSame(0, $before['processed']);
+        $this->assertSame(1, $first['processed']);
+        $this->assertSame(0, $duplicate['processed']);
+        $this->assertSame(1, AssetLog::query()->where('asset_id', $asset->id)->where('type', 'depreciate')->count());
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'asset_depreciation')
+            ->count());
+    }
+
+    public function test_legacy_asset_uses_current_book_value_over_remaining_periods_without_rewriting_history(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل قديم',
+            'price' => 10000,
+            'depreciation_price' => 9000,
+            'depreciation_rate' => 0.01,
+            'months_number' => 100,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+        ]));
+        foreach (range(1, 5) as $month) {
+            AssetLog::withoutEvents(fn () => AssetLog::query()->create([
+                'asset_id' => $asset->id,
+                'type' => 'depreciate',
+                'total' => 9000,
+                'value_before' => 10000,
+                'depreciation_amount' => 200,
+                'depreciation_period' => sprintf('2026-%02d', $month),
+            ]));
+        }
+
+        $calculation = app(AssetDepreciationCalculator::class)->calculate($asset->fresh(), '2026-06');
+        $this->assertSame(5, $calculation['used_periods']);
+        $this->assertSame(95, $calculation['remaining_periods']);
+        $this->assertEqualsWithDelta(round(9000 / 95, 2), $calculation['next_depreciation_amount'], 0.0001);
+        $this->assertSame(5, AssetLog::query()->where('asset_id', $asset->id)->count());
+    }
+
+    public function test_legacy_zero_effect_depreciation_logs_do_not_consume_useful_life(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل بسجلات قديمة بلا أثر',
+            'price' => 90000,
+            'depreciation_price' => 90000,
+            'depreciation_rate' => 1 / 240,
+            'months_number' => 240,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+        ]));
+        AssetLog::withoutEvents(fn () => AssetLog::query()->create([
+            'asset_id' => $asset->id,
+            'type' => 'create',
+            'total' => 90000,
+        ]));
+        foreach (range(1, 3) as $month) {
+            AssetLog::withoutEvents(fn () => AssetLog::query()->create([
+                'asset_id' => $asset->id,
+                'type' => 'depreciate',
+                'total' => 90000,
+                'depreciation_period' => sprintf('2026-%02d', $month),
+            ]));
+        }
+
+        $calculation = app(AssetDepreciationCalculator::class)->calculate($asset->fresh(), '2026-04');
+        $this->assertSame(0, $calculation['used_periods']);
+        $this->assertSame(240, $calculation['remaining_periods']);
+        $this->assertEqualsWithDelta(375, $calculation['next_depreciation_amount'], 0.0001);
+        $this->assertSame(4, AssetLog::query()->where('asset_id', $asset->id)->count());
+    }
+
+    public function test_exhausted_legacy_asset_with_book_value_returns_warning_without_silent_write(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل يحتاج مراجعة',
+            'price' => 1000,
+            'depreciation_price' => 100,
+            'depreciation_rate' => 0.5,
+            'months_number' => 2,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+        ]));
+        foreach (['2026-01', '2026-02'] as $period) {
+            AssetLog::withoutEvents(fn () => AssetLog::query()->create([
+                'asset_id' => $asset->id,
+                'type' => 'depreciate',
+                'total' => 100,
+                'depreciation_amount' => 450,
+                'depreciation_period' => $period,
+            ]));
+        }
+
+        $result = app(MonthlyAssetDepreciationService::class)->run('2026-03', null, $asset->id);
+        $this->assertSame(0, $result['processed']);
+        $this->assertNotEmpty($result['warnings']);
+        $this->assertEqualsWithDelta(100, (float) $asset->fresh()->depreciation_price, 0.0001);
+        $this->assertSame(2, AssetLog::query()->where('asset_id', $asset->id)->count());
     }
 
     private function createProductSale(

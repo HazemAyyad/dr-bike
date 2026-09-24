@@ -9,6 +9,7 @@ use App\Models\BoxLog;
 use App\Models\Expense;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
+use App\Models\MaintenancePayment;
 use App\Models\ProfitSale;
 use App\Models\PurchasePayment;
 use App\Models\PurchaseReceipt;
@@ -23,7 +24,10 @@ use Illuminate\Support\Facades\Schema;
 
 class AccountingIntegrityService
 {
-    public function __construct(private InventoryCostIntegrityService $inventoryIntegrity) {}
+    public function __construct(
+        private InventoryCostIntegrityService $inventoryIntegrity,
+        private AssetDepreciationCalculator $assetDepreciation,
+    ) {}
 
     /** @return array{checks:array<int,array<string,mixed>>,summary:array<string,int>} */
     public function run(?Carbon $from = null, ?Carbon $to = null): array
@@ -39,6 +43,7 @@ class AccountingIntegrityService
         $checks[] = $this->checkPurchaseReturns($from, $to);
         $checks[] = $this->checkSalesReturns($from, $to);
         $checks[] = $this->checkMaintenance($from, $to);
+        $checks[] = $this->checkMaintenancePrepayments($from, $to);
         $checks[] = $this->checkExpenses($from, $to);
         $checks[] = $this->checkAssets($from, $to);
         $checks[] = $this->checkBoxes($from, $to);
@@ -299,6 +304,201 @@ class AccountingIntegrityService
     }
 
     /** @return array<string, mixed> */
+    private function checkMaintenancePrepayments(Carbon $from, Carbon $to): array
+    {
+        if (! Schema::hasTable('maintenance_payments')
+            || ! Schema::hasColumn('maintenance_payments', 'payment_stage')) {
+            return $this->check(
+                'maintenance_prepayments',
+                'WARNING',
+                'Maintenance payment stages are not available until the additive migration is applied.',
+                [],
+            );
+        }
+
+        $errors = [];
+        $warnings = [];
+
+        MaintenancePayment::query()
+            ->whereBetween('created_at', [$from, $to])
+            ->where('payment_stage', MaintenancePayment::STAGE_PRE_DELIVERY)
+            ->whereRaw('ABS(amount) > 0.0001')
+            ->with('maintenance')
+            ->orderBy('id')
+            ->chunkById(200, function ($payments) use (&$errors) {
+                foreach ($payments as $payment) {
+                    $lines = DB::table('accounting_journal_entries as entries')
+                        ->join('accounting_journal_lines as lines', 'lines.journal_entry_id', '=', 'entries.id')
+                        ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+                        ->where('entries.source_type', 'maintenance_payment')
+                        ->where('entries.source_id', $payment->id)
+                        ->where('entries.status', AccountingJournalEntry::STATUS_POSTED)
+                        ->whereNull('entries.reverses_entry_id')
+                        ->get(['accounts.system_key', 'lines.debit', 'lines.credit', 'lines.box_id']);
+                    $accounts = $lines->pluck('system_key')->unique();
+                    $cashBoxMatches = $lines->contains(fn ($line) => $line->system_key === 'cash'
+                        && (int) $line->box_id === (int) $payment->box_id);
+
+                    if (! $accounts->contains('cash')
+                        || ! $accounts->contains('customer_deposits')
+                        || ! $cashBoxMatches) {
+                        $errors[] = 'payment:'.$payment->id;
+                    }
+                }
+            });
+
+        $deliveryDuplicates = DB::table('maintenance_payments as payments')
+            ->join('accounting_journal_entries as entries', function ($join) {
+                $join->on('entries.source_id', '=', 'payments.id')
+                    ->where('entries.source_type', 'maintenance_payment');
+            })
+            ->whereBetween('payments.created_at', [$from, $to])
+            ->where('payments.payment_stage', MaintenancePayment::STAGE_DELIVERY)
+            ->where('entries.status', AccountingJournalEntry::STATUS_POSTED)
+            ->whereNull('entries.reverses_entry_id')
+            ->pluck('payments.id')
+            ->map(fn ($id) => 'delivery_double_post:'.$id)
+            ->all();
+        $errors = array_merge($errors, $deliveryDuplicates);
+
+        Maintenance::query()
+            ->whereBetween('created_at', [$from, $to])
+            ->where('status', 'delivered')
+            ->whereNotNull('instant_sale_id')
+            ->with(['payments', 'instantSale'])
+            ->orderBy('id')
+            ->chunkById(200, function ($rows) use (&$errors, &$warnings) {
+                foreach ($rows as $maintenance) {
+                    $typed = $maintenance->payments->whereNotNull('payment_stage');
+                    if ($typed->isEmpty()) {
+                        if ($maintenance->payments->isNotEmpty()) {
+                            $warnings[] = 'legacy_payment_stage:'.$maintenance->id;
+                        }
+
+                        continue;
+                    }
+
+                    $prepaid = round((float) $typed
+                        ->where('payment_stage', MaintenancePayment::STAGE_PRE_DELIVERY)
+                        ->sum('amount'), 4);
+                    $deliveryPaid = round((float) $typed
+                        ->where('payment_stage', MaintenancePayment::STAGE_DELIVERY)
+                        ->sum('amount'), 4);
+                    $invoiceTotal = round((float) $maintenance->invoice_total, 4);
+                    $paid = round($prepaid + $deliveryPaid, 4);
+                    if ($prepaid - $invoiceTotal > 0.0001
+                        || abs($paid - (float) ($maintenance->instantSale?->payment_box_value ?? 0)) > 0.01) {
+                        $errors[] = 'settlement:'.$maintenance->id;
+
+                        continue;
+                    }
+
+                    $journalLines = DB::table('accounting_journal_entries as entries')
+                        ->join('accounting_journal_lines as lines', 'lines.journal_entry_id', '=', 'entries.id')
+                        ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+                        ->where('entries.source_type', 'instant_sale')
+                        ->where('entries.source_id', $maintenance->instant_sale_id)
+                        ->where('entries.status', AccountingJournalEntry::STATUS_POSTED)
+                        ->whereNull('entries.reverses_entry_id')
+                        ->get(['accounts.system_key', 'lines.debit', 'lines.credit']);
+                    $depositReleased = (float) $journalLines
+                        ->where('system_key', 'customer_deposits')
+                        ->sum(fn ($line) => (float) $line->debit - (float) $line->credit);
+                    $cashAtDelivery = (float) $journalLines
+                        ->where('system_key', 'cash')
+                        ->sum(fn ($line) => (float) $line->debit - (float) $line->credit);
+                    $revenue = (float) $journalLines
+                        ->where('system_key', 'maintenance_revenue')
+                        ->sum(fn ($line) => (float) $line->credit - (float) $line->debit);
+
+                    if (abs($depositReleased - $prepaid) > 0.01
+                        || abs($cashAtDelivery - $deliveryPaid) > 0.01
+                        || abs($revenue - $invoiceTotal) > 0.01) {
+                        $errors[] = 'invoice_release:'.$maintenance->id;
+                    }
+
+                    if ($maintenance->customer_id) {
+                        $receivable = (float) $journalLines
+                            ->where('system_key', 'accounts_receivable')
+                            ->sum(fn ($line) => (float) $line->debit - (float) $line->credit);
+                        if (abs(($paid + max(0, $receivable)) - $invoiceTotal) > 0.01) {
+                            $errors[] = 'invoice_balance:'.$maintenance->id;
+                        }
+                    }
+                }
+            });
+
+        $legacyIds = MaintenancePayment::query()
+            ->whereBetween('created_at', [$from, $to])
+            ->whereNull('payment_stage')
+            ->pluck('id')
+            ->map(fn ($id) => 'legacy_payment:'.$id)
+            ->all();
+        $warnings = array_merge($warnings, $legacyIds);
+
+        $balanceIssues = $this->maintenanceDepositBalanceIssues();
+        $errors = array_values(array_unique(array_merge($errors, $balanceIssues)));
+        $warnings = array_values(array_unique($warnings));
+
+        return $this->check(
+            'maintenance_prepayments',
+            $errors !== [] ? 'ERROR' : ($warnings !== [] ? 'WARNING' : 'PASS'),
+            'Maintenance prepayments require cash/customer-deposit journals and must be released exactly once at delivery.',
+            array_values(array_unique(array_merge($errors, $warnings))),
+            ['errors' => $errors, 'legacy_warnings' => $warnings],
+        );
+    }
+
+    /** @return array<int, string> */
+    private function maintenanceDepositBalanceIssues(): array
+    {
+        $operational = DB::table('maintenance_payments as payments')
+            ->join('maintenance as maintenance', 'maintenance.id', '=', 'payments.maintenance_id')
+            ->where('payments.payment_stage', MaintenancePayment::STAGE_PRE_DELIVERY)
+            ->whereNull('maintenance.instant_sale_id')
+            ->where('maintenance.status', '!=', 'delivered')
+            ->when(
+                Schema::hasColumn('maintenance', 'deleted_at'),
+                fn ($query) => $query->whereNull('maintenance.deleted_at'),
+            )
+            ->selectRaw("COALESCE(NULLIF(payments.currency, ''), 'شيكل') as currency, SUM(payments.amount) as amount")
+            ->groupBy('payments.currency')
+            ->get()
+            ->keyBy(fn ($row) => $this->normalizeCurrency($row->currency));
+
+        $ledger = DB::table('accounting_journal_lines as lines')
+            ->join('accounting_journal_entries as entries', 'entries.id', '=', 'lines.journal_entry_id')
+            ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+            ->leftJoin('instant_sales as sales', function ($join) {
+                $join->on('sales.id', '=', 'entries.source_id')
+                    ->where('entries.source_type', 'instant_sale');
+            })
+            ->where('accounts.system_key', 'customer_deposits')
+            ->where('entries.status', AccountingJournalEntry::STATUS_POSTED)
+            ->where(function ($query) {
+                $query->where('entries.source_type', 'maintenance_payment')
+                    ->orWhere(fn ($nested) => $nested
+                        ->where('entries.source_type', 'instant_sale')
+                        ->whereNotNull('sales.maintenance_id'));
+            })
+            ->selectRaw('entries.currency, SUM(lines.credit - lines.debit) as amount')
+            ->groupBy('entries.currency')
+            ->get()
+            ->keyBy(fn ($row) => $this->normalizeCurrency($row->currency));
+
+        return $operational->keys()->merge($ledger->keys())->unique()
+            ->filter(function ($currency) use ($operational, $ledger) {
+                $expected = (float) ($operational->get($currency)->amount ?? 0);
+                $actual = (float) ($ledger->get($currency)->amount ?? 0);
+
+                return abs($actual - $expected) > 0.01;
+            })
+            ->map(fn ($currency) => 'customer_deposit_balance:'.$currency)
+            ->values()
+            ->all();
+    }
+
+    /** @return array<string, mixed> */
     private function checkExpenses(Carbon $from, Carbon $to): array
     {
         $errors = [];
@@ -325,7 +525,8 @@ class AccountingIntegrityService
     private function checkAssets(Carbon $from, Carbon $to): array
     {
         $errors = [];
-        Asset::query()->whereBetween('created_at', [$from, $to])->orderBy('id')->chunkById(200, function ($rows) use (&$errors) {
+        $warnings = [];
+        Asset::query()->whereBetween('created_at', [$from, $to])->orderBy('id')->chunkById(200, function ($rows) use (&$errors, &$warnings) {
             foreach ($rows as $asset) {
                 if ((float) $asset->price <= 0.0001) {
                     continue;
@@ -333,6 +534,10 @@ class AccountingIntegrityService
                 $accounts = $this->journalAccounts('asset', (int) $asset->id);
                 if (! $accounts->contains('fixed_assets') || ! $accounts->intersect(['cash', 'clearing'])->count()) {
                     $errors[] = 'asset:'.$asset->id;
+                }
+                $calculation = $this->assetDepreciation->calculate($asset, now()->format('Y-m'));
+                if ($calculation['warning']) {
+                    $warnings[] = 'asset_review:'.$asset->id;
                 }
             }
         });
@@ -345,7 +550,13 @@ class AccountingIntegrityService
             }
         });
 
-        return $this->check('assets', $errors === [] ? 'PASS' : 'ERROR', 'Asset purchases and depreciation logs require their corresponding journals.', $errors);
+        return $this->check(
+            'assets',
+            $errors !== [] ? 'ERROR' : ($warnings !== [] ? 'WARNING' : 'PASS'),
+            'Asset purchases and depreciation logs require journals; exhausted useful lives with remaining value require review.',
+            array_values(array_unique(array_merge($errors, $warnings))),
+            ['errors' => array_values(array_unique($errors)), 'warnings' => array_values(array_unique($warnings))],
+        );
     }
 
     /** @return array<string, mixed> */
@@ -454,6 +665,15 @@ class AccountingIntegrityService
             ->when($customerId, fn ($query) => $query->where('lines.customer_id', $customerId))
             ->when($sellerId, fn ($query) => $query->where('lines.seller_id', $sellerId))
             ->exists();
+    }
+
+    private function normalizeCurrency(?string $currency): string
+    {
+        return match (strtoupper(trim((string) $currency))) {
+            'USD', 'دولار' => 'دولار',
+            'JOD', 'دينار' => 'دينار',
+            default => 'شيكل',
+        };
     }
 
     /** @param array<int, mixed> $ids @param array<string, mixed> $details @return array<string, mixed> */

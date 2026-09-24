@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+
 class AssetLogs extends Controller
 {
     private function filteredLogs(Request $request)
@@ -25,7 +26,7 @@ class AssetLogs extends Controller
         ]);
 
         return AssetLog::query()
-            ->with('asset:id,name,depreciation_rate')
+            ->with('asset:id,name,depreciation_rate,months_number')
             ->when($filters['asset_id'] ?? null, fn ($q, $id) => $q->where('asset_id', $id))
             ->when($filters['type'] ?? null, fn ($q, $type) => $q->where('type', $type))
             ->when($filters['period'] ?? null, fn ($q, $period) => $q->where('depreciation_period', $period))
@@ -33,112 +34,103 @@ class AssetLogs extends Controller
             ->when($filters['to'] ?? null, fn ($q, $to) => $q->whereDate('created_at', '<=', $to));
     }
 
-    public function getAllLogs(Request $request){
-        try{
-        $logs = $this->filteredLogs($request)->latest('id')->get();
-        $formatted =  AssetLogsResource::collection($logs);
+    public function getAllLogs(Request $request)
+    {
+        try {
+            $logs = $this->filteredLogs($request)->latest('id')->get();
+            $formatted = AssetLogsResource::collection($logs);
 
-
-        return response()->json([
-            'status'=>'success',
-            'asset_logs' => $formatted,
-        ],200);
-    }
-
-            catch (QueryException $e) {
+            return response()->json([
+                'status' => 'success',
+                'asset_logs' => $formatted,
+            ], 200);
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }
-    public function getAssetLogs(Request $request){
-      try{
-        $request->validate(['asset_id'=>'required|exists:assets,id']);
 
-        $asset = Asset::findOrFail($request->asset_id);
-        $logs = $asset->logs;
-        $formatted = AssetLogsResource::collection($logs);
+    public function getAssetLogs(Request $request)
+    {
+        try {
+            $request->validate(['asset_id' => 'required|exists:assets,id']);
 
-        return response()->json([
-            'status'=>'success',
-            'asset_logs' => $formatted,
-        ],200);
-    }
+            $asset = Asset::findOrFail($request->asset_id);
+            $logs = $asset->logs;
+            $formatted = AssetLogsResource::collection($logs);
 
-
-    catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'success',
+                'asset_logs' => $formatted,
+            ], 200);
+        } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
             ], 200);
-        }
-
-     catch (ModelNotFoundException $e) {
+        } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.asset_not_found'),
             ], 200);
-        }
-     catch (QueryException $e) {
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
-
-  }
-
-
-     public function getAllLogsReport(Request $request){
-        try{
-
-
-        $logs = $this->filteredLogs($request)->latest('id')->get();
-
-        $reportHtml = view('pdf.asset-logs', [
-            'logs' => $logs,
-            'summary' => [
-                'count' => $logs->count(),
-                'depreciation_total' => round((float) $logs->sum('depreciation_amount'), 2),
-                'period' => $request->input('period'),
-            ],
-        ])->render();
-
-        $arabic = new Arabic();
-        $positions = $arabic->arIdentify($reportHtml);
-
-        for ($i = count($positions) - 1; $i >= 0; $i -= 2) {
-            $utf8ar = $arabic->utf8Glyphs(
-                substr($reportHtml, $positions[$i - 1], $positions[$i] - $positions[$i - 1])
-            );
-            $reportHtml = substr_replace($reportHtml, $utf8ar, $positions[$i - 1], $positions[$i] - $positions[$i - 1]);
-        }
-        $pdf = Pdf::loadHTML($reportHtml);
-
-        return $pdf->download('asset-logs.pdf');
 
     }
 
-            catch (QueryException $e) {
+    public function getAllLogsReport(Request $request)
+    {
+        try {
+
+            $logs = $this->filteredLogs($request)->latest('id')->get();
+
+            $reportHtml = view('pdf.asset-logs', [
+                'logs' => $logs,
+                'summary' => [
+                    'count' => $logs->count(),
+                    'depreciation_total' => round((float) $logs->sum('depreciation_amount'), 2),
+                    'period' => $request->input('period'),
+                ],
+            ])->render();
+
+            $arabic = new Arabic;
+            $positions = $arabic->arIdentify($reportHtml);
+
+            for ($i = count($positions) - 1; $i >= 0; $i -= 2) {
+                $utf8ar = $arabic->utf8Glyphs(
+                    substr($reportHtml, $positions[$i - 1], $positions[$i] - $positions[$i - 1])
+                );
+                $reportHtml = substr_replace($reportHtml, $utf8ar, $positions[$i - 1], $positions[$i] - $positions[$i - 1]);
+            }
+            $pdf = Pdf::loadHTML($reportHtml);
+
+            return $pdf->download('asset-logs.pdf');
+
+        } catch (QueryException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong')
+                'message' => __('messages.something_wrong'),
             ], 200);
         }
     }

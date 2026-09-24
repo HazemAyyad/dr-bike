@@ -7,6 +7,7 @@ use App\Http\Resources\AssetResource;
 use App\Models\Asset;
 use App\Models\AssetLog;
 use App\Models\Box;
+use App\Services\AssetDepreciationCalculator;
 use App\Services\ExpenseBoxAccessService;
 use App\Services\MonthlyAssetDepreciationService;
 use Illuminate\Database\Eloquent\Builder;
@@ -47,8 +48,8 @@ class Assets extends Controller
                 'name' => 'required|string|max:255',
                 'price' => 'required|numeric|min:1',
                 'notes' => 'nullable|string',
-                'depreciation_rate' => 'required|numeric|min:0',
-                'months_number' => 'required|numeric|min:1',
+                'depreciation_rate' => 'nullable|numeric|min:0',
+                'months_number' => 'required|integer|min:1',
                 'box_id' => 'required|integer|exists:boxes,id',
                 'acquired_at' => 'nullable|date',
                 'media' => 'nullable|array|max:15',
@@ -63,7 +64,7 @@ class Assets extends Controller
             $files = $this->fileStorage($request);
             $data['media'] = $files;
             $data['depreciation_price'] = $request->price;
-            $data['depreciation_rate'] = $request->depreciation_rate / 100;
+            $data['depreciation_rate'] = round(1 / (int) $data['months_number'], 8);
             $data['acquired_at'] = $data['acquired_at'] ?? now()->toDateString();
 
             DB::transaction(function () use ($data, $request) {
@@ -77,7 +78,7 @@ class Assets extends Controller
                 BoxLogs::createBoxLog($box, 'شراء أصل: '.$asset->name, 'minus', (float) $asset->price, $asset->notes);
                 Logs::createLog(
                     'اضافة أصل جديد',
-                    'تم اضافة الأصل '.$request->name.' بسعر '.$request->price.' ونسبة هلاك بقيمة '.$request->depreciation_rate,
+                    'تم اضافة الأصل '.$request->name.' بسعر '.$request->price.' وعمر إنتاجي '.$data['months_number'].' شهرًا',
                     'assets'
                 );
                 AssetLog::create([
@@ -144,7 +145,12 @@ class Assets extends Controller
                 'total_assets_original_prices' => round((float) (clone $query)->sum('price'), 2),
                 'total_assets_depreciate_prices' => round((float) (clone $query)->sum('depreciation_price'), 2),
                 'accumulated_depreciation' => round((float) ((clone $query)->sum('price') - (clone $query)->sum('depreciation_price')), 2),
-                'average_depreciation_rate' => round((float) (clone $query)->avg('depreciation_rate'), 4),
+                'average_depreciation_rate' => round((float) $assets
+                    ->filter(fn (Asset $asset) => (float) $asset->months_number > 0)
+                    ->avg(fn (Asset $asset) => 1 / (float) $asset->months_number), 8),
+                'average_depreciation_rate_percent' => round((float) $assets
+                    ->filter(fn (Asset $asset) => (float) $asset->months_number > 0)
+                    ->avg(fn (Asset $asset) => 100 / (float) $asset->months_number), 4),
                 'assets_count' => $assets->count(),
                 'depreciation_period' => $period,
             ], 200);
@@ -225,7 +231,7 @@ class Assets extends Controller
         }
     }
 
-    public function depreciationPreview(Request $request)
+    public function depreciationPreview(Request $request, AssetDepreciationCalculator $calculator)
     {
         try {
             $period = now()->format('Y-m');
@@ -236,30 +242,7 @@ class Assets extends Controller
                 ->orderBy('name')
                 ->get();
 
-            $rows = $assets->map(function (Asset $asset) use ($period) {
-                $before = max(0, (float) $asset->depreciation_price);
-                $rate = max(0, (float) $asset->depreciation_rate);
-                $alreadyProcessed = (bool) $asset->depreciated_this_month;
-                $eligible = ! $alreadyProcessed && $before > 0 && $rate > 0;
-                $amount = $eligible ? min($before, round($before * $rate, 2)) : 0;
-
-                return [
-                    'asset_id' => $asset->id,
-                    'name' => $asset->name,
-                    'period' => $period,
-                    'value_before' => round($before, 2),
-                    'depreciation_rate' => $rate,
-                    'depreciation_amount' => round($amount, 2),
-                    'value_after' => round(max(0, $before - $amount), 2),
-                    'eligible' => $eligible,
-                    'already_depreciated' => $alreadyProcessed,
-                    'skip_reason' => $eligible
-                        ? null
-                        : ($alreadyProcessed
-                            ? 'تم إهلاك الأصل لهذا الشهر'
-                            : ($before <= 0 ? 'اكتمل إهلاك الأصل' : 'نسبة الإهلاك صفر')),
-                ];
-            });
+            $rows = $assets->map(fn (Asset $asset) => $calculator->calculate($asset, $period));
 
             $eligible = $rows->where('eligible')->values();
 
@@ -315,6 +298,13 @@ class Assets extends Controller
                 ->where('depreciation_period', $period)
                 ->exists();
             $asset['depreciation_period'] = $period;
+            $asset['acquired_at'] = $asset->acquired_at?->format('Y-m-d');
+            $asset['depreciation_rate'] = (float) $asset->months_number > 0
+                ? round(1 / (float) $asset->months_number, 8)
+                : 0;
+            $asset['depreciation_rate_percent'] = (float) $asset->months_number > 0
+                ? round(100 / (float) $asset->months_number, 6)
+                : 0;
             $asset['logs'] = $asset->logs()
                 ->get(['total', 'created_at', 'type', 'depreciation_period']);
 
@@ -355,7 +345,9 @@ class Assets extends Controller
                 'name' => 'required|string|max:255',
                 'price' => 'required|numeric|min:1',
                 'notes' => 'nullable|string',
-                'depreciation_rate' => 'required|numeric|min:0',
+                'depreciation_rate' => 'nullable|numeric|min:0',
+                'months_number' => 'required|integer|min:1',
+                'acquired_at' => 'nullable|date',
                 'media' => 'nullable|array|max:15',
                 'media.*' => [
                     'nullable',
@@ -382,7 +374,7 @@ class Assets extends Controller
                 ],
             ]);
 
-            $data['depreciation_rate'] = $request->depreciation_rate / 100;
+            $data['depreciation_rate'] = round(1 / (int) $data['months_number'], 8);
             $updatedData = Arr::except($data, ['asset_id', 'media']);
             $asset = DB::transaction(function () use ($data, $updatedData, $request, $access) {
                 $asset = Asset::query()->lockForUpdate()->findOrFail($data['asset_id']);

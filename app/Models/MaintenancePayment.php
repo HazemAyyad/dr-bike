@@ -7,11 +7,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class MaintenancePayment extends Model
 {
+    public const STAGE_PRE_DELIVERY = 'pre_delivery';
+
+    public const STAGE_DELIVERY = 'delivery';
+
     protected $fillable = [
         'maintenance_id',
         'maintenance_daily_session_id',
         'box_id',
         'instant_sale_id',
+        'payment_stage',
         'created_by',
         'method',
         'amount',
@@ -25,7 +30,7 @@ class MaintenancePayment extends Model
 
     public function maintenance(): BelongsTo
     {
-        return $this->belongsTo(Maintenance::class);
+        return $this->belongsTo(Maintenance::class)->withTrashed();
     }
 
     public function session(): BelongsTo
@@ -36,6 +41,11 @@ class MaintenancePayment extends Model
     public function box(): BelongsTo
     {
         return $this->belongsTo(Box::class);
+    }
+
+    public function instantSale(): BelongsTo
+    {
+        return $this->belongsTo(InstantSale::class);
     }
 
     public function createdBy(): BelongsTo

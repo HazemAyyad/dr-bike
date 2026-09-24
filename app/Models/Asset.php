@@ -27,6 +27,10 @@ class Asset extends Model
     protected $casts = [
         'media' => 'array',
         'acquired_at' => 'date',
+        'price' => 'float',
+        'depreciation_rate' => 'float',
+        'depreciation_price' => 'float',
+        'months_number' => 'integer',
     ];
 
     public function box()
@@ -51,12 +55,11 @@ class Asset extends Model
 
     public static function depreciateAverage()
     {
-        $depreciates = Asset::sum('depreciation_rate');
-        $count = Asset::whereNotNull('depreciation_rate')->count();
-        if ($count === 0) {
+        $assets = Asset::query()->where('months_number', '>', 0)->get(['months_number']);
+        if ($assets->isEmpty()) {
             return 0;
         }
 
-        return $depreciates / $count;
+        return $assets->avg(fn (Asset $asset) => 1 / (float) $asset->months_number);
     }
 }

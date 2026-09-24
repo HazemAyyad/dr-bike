@@ -14,6 +14,7 @@ use App\Models\Image3dProduct;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
 use App\Models\InventoryAdjustment;
+use App\Models\MaintenancePayment;
 use App\Models\NormalImageProduct;
 use App\Models\OutgoingCheck;
 use App\Models\Product;
@@ -64,6 +65,7 @@ class AppServiceProvider extends ServiceProvider
 
         foreach ([
             InstantSale::class,
+            MaintenancePayment::class,
             InventoryAdjustment::class,
             ProfitSale::class,
             Expense::class,

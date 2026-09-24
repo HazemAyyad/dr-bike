@@ -6,9 +6,9 @@ use App\Models\Box;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenanceDailyBoxLog;
+use App\Models\MaintenanceDailySession;
 use App\Models\MaintenancePayment;
 use App\Models\MaintenanceProduct;
-use App\Models\MaintenanceDailySession;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -115,8 +115,7 @@ class MaintenanceDeliveryService
         ?string $editReason = null,
         ?array $serviceLines = null,
         ?array $additionalCharges = null
-    ): Maintenance
-    {
+    ): Maintenance {
         $editReason = trim((string) $editReason);
         if ($maintenance->status === 'delivered' && $editReason === '') {
             throw ValidationException::withMessages([
@@ -305,10 +304,11 @@ class MaintenanceDeliveryService
                     'maintenance_daily_session_id' => $movement['session']->id ?? $maintenanceSession?->id,
                     'box_id' => $movement['box']->id ?? $paymentBox['id'] ?? null,
                     'instant_sale_id' => $instantSale->id,
+                    'payment_stage' => MaintenancePayment::STAGE_DELIVERY,
                     'created_by' => $user->id,
                     'method' => $payment['method'],
                     'amount' => $payment['amount'],
-                    'currency' => 'شيكل',
+                    'currency' => $movement['box']->currency ?? 'شيكل',
                     'note' => $payment['note'] ?? null,
                 ]);
             }
@@ -412,6 +412,7 @@ class MaintenanceDeliveryService
                 'maintenance_daily_session_id' => $movement['session']->id,
                 'box_id' => $movement['box']->id,
                 'instant_sale_id' => null,
+                'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
                 'created_by' => $user->id,
                 'method' => 'cash',
                 'amount' => $amount,
@@ -462,8 +463,7 @@ class MaintenanceDeliveryService
         }
 
         $payments = $maintenance->payments
-            ->filter(fn (MaintenancePayment $payment) =>
-                $payment->method === 'cash' && (float) $payment->amount > 0
+            ->filter(fn (MaintenancePayment $payment) => $payment->method === 'cash' && (float) $payment->amount > 0
             );
         $reversalSession = $payments->isNotEmpty()
             ? $this->maintenanceDailyBoxService->requireOpenSession($user)
@@ -519,6 +519,7 @@ class MaintenanceDeliveryService
                 'maintenance_daily_session_id' => $reversalSession->id,
                 'box_id' => $box->id,
                 'instant_sale_id' => null,
+                'payment_stage' => MaintenancePayment::STAGE_PRE_DELIVERY,
                 'created_by' => $user->id,
                 'method' => 'cancellation_reversal',
                 'amount' => -$amount,

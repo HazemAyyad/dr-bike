@@ -13,6 +13,7 @@ use App\Models\Expense;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
 use App\Models\InventoryAdjustment;
+use App\Models\MaintenancePayment;
 use App\Models\OutgoingCheck;
 use App\Models\ProfitSale;
 use App\Models\ProjectExpense;
@@ -297,6 +298,30 @@ class AccountingProjectionRepairService
             ];
         }
 
+        if ($model instanceof MaintenancePayment) {
+            $issues = [];
+            if ($model->payment_stage !== MaintenancePayment::STAGE_PRE_DELIVERY) {
+                $issues[] = [
+                    'code' => 'not_pre_delivery',
+                    'message' => 'Only a classified pre-delivery maintenance payment requires its own journal.',
+                ];
+            }
+            if (! $model->box_id) {
+                $issues[] = [
+                    'code' => 'missing_cash_box',
+                    'message' => 'The maintenance prepayment has no cash box.',
+                ];
+            }
+
+            return [
+                'repairable' => $issues === [],
+                'message' => $issues === []
+                    ? 'Maintenance prepayment classification and cash box are complete.'
+                    : 'Maintenance prepayment evidence requires review.',
+                'issues' => $issues,
+            ];
+        }
+
         return [
             'repairable' => true,
             'message' => 'Source exists and has no known unresolved FIFO blocker.',
@@ -405,6 +430,10 @@ class AccountingProjectionRepairService
             return $accounts->contains('depreciation_expense')
                 && $accounts->contains('accumulated_depreciation');
         }
+        if ($model instanceof MaintenancePayment) {
+            return $accounts->contains('cash')
+                && $accounts->contains('customer_deposits');
+        }
         if ($model instanceof ProjectExpense) {
             return $accounts->contains('project_expense')
                 && $accounts->contains($model->box_id ? 'cash' : 'clearing');
@@ -439,6 +468,8 @@ class AccountingProjectionRepairService
         }
 
         return match (true) {
+            $model instanceof MaintenancePayment => $model->payment_stage === MaintenancePayment::STAGE_PRE_DELIVERY
+                && abs((float) $model->amount) > 0.0001,
             $model instanceof ProfitSale => ! $model->isCancelled() && (float) $model->total_cost > 0,
             $model instanceof SalesOrder => ! $model->is_debt_collection && $model->status !== 'canceled' && $model->financial_posted_at !== null,
             $model instanceof SalesReturn => in_array($model->return_type, ['direct', 'partial'], true) && $model->status === 'completed' && ! $model->cancelled_at,
@@ -501,6 +532,7 @@ class AccountingProjectionRepairService
     {
         return match ($sourceType) {
             'instant_sale' => InstantSale::class,
+            'maintenance_payment' => MaintenancePayment::class,
             'inventory_adjustment' => InventoryAdjustment::class,
             'profit_sale' => ProfitSale::class,
             'expense' => Expense::class,

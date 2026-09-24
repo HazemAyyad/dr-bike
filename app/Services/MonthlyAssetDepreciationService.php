@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\DB;
 
 class MonthlyAssetDepreciationService
 {
+    public function __construct(private AssetDepreciationCalculator $calculator) {}
+
     /**
-     * @return array{processed:int, skipped:int}
+     * @return array{processed:int, skipped:int, warnings:array<int, array<string, mixed>>}
      */
     public function run(?string $period = null, ?int $userId = null, ?int $assetId = null): array
     {
@@ -18,26 +20,23 @@ class MonthlyAssetDepreciationService
 
         $processed = 0;
         $skipped = 0;
+        $warnings = [];
 
         Asset::query()
             ->when($assetId, fn ($query) => $query->whereKey($assetId))
             ->orderBy('id')
             ->pluck('id')
-            ->each(function (int $id) use ($period, $userId, &$processed, &$skipped) {
-                $didProcess = DB::transaction(function () use ($id, $period, $userId) {
+            ->each(function (int $id) use ($period, $userId, &$processed, &$skipped, &$warnings) {
+                $result = DB::transaction(function () use ($id, $period, $userId) {
                     $asset = Asset::query()->lockForUpdate()->findOrFail($id);
-
-                    if (AssetLog::query()->where('asset_id', $id)->where('depreciation_period', $period)->exists()) {
-                        return false;
+                    $calculation = $this->calculator->calculate($asset, $period);
+                    if (! $calculation['eligible']) {
+                        return ['processed' => false, 'calculation' => $calculation];
                     }
 
-                    $before = max(0, (float) $asset->depreciation_price);
-                    if ($before <= 0 || (float) $asset->depreciation_rate <= 0) {
-                        return false;
-                    }
-
-                    $amount = min($before, round($before * (float) $asset->depreciation_rate, 2));
-                    $after = max(0, round($before - $amount, 2));
+                    $before = (float) $calculation['value_before'];
+                    $amount = (float) $calculation['next_depreciation_amount'];
+                    $after = (float) $calculation['value_after'];
                     $asset->update(['depreciation_price' => $after]);
 
                     AssetLog::create([
@@ -50,12 +49,22 @@ class MonthlyAssetDepreciationService
                         'processed_by_user_id' => $userId,
                     ]);
 
-                    return true;
+                    return ['processed' => true, 'calculation' => $calculation];
                 }, 3);
 
-                $didProcess ? $processed++ : $skipped++;
+                if ($result['processed']) {
+                    $processed++;
+                } else {
+                    $skipped++;
+                    if ($result['calculation']['warning']) {
+                        $warnings[] = [
+                            'asset_id' => $id,
+                            'warning' => $result['calculation']['warning'],
+                        ];
+                    }
+                }
             });
 
-        return compact('processed', 'skipped');
+        return compact('processed', 'skipped', 'warnings');
     }
 }

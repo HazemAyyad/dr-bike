@@ -13,6 +13,7 @@ use App\Models\Expense;
 use App\Models\IncomingCheck;
 use App\Models\InstantSale;
 use App\Models\InventoryAdjustment;
+use App\Models\MaintenancePayment;
 use App\Models\OutgoingCheck;
 use App\Models\ProfitSale;
 use App\Models\ProjectExpense;
@@ -77,6 +78,7 @@ class AccountingProjectionService
 
         $entry = match (true) {
             $model instanceof InstantSale => $this->syncInstantSale($model),
+            $model instanceof MaintenancePayment => $this->syncMaintenancePayment($model),
             $model instanceof InventoryAdjustment => $this->syncInventoryAdjustment($model),
             $model instanceof ProfitSale => $this->syncProfitSale($model),
             $model instanceof Expense => $this->syncExpense($model),
@@ -154,7 +156,7 @@ class AccountingProjectionService
             return $this->accounting->reverse('instant_sale', (int) $sale->id, $sale->cancelled_at ?: now(), 'عكس فاتورة مبيعات ملغاة', auth()->id());
         }
 
-        $sale->loadMissing(['subProducts', 'paymentBox', 'salesOrder']);
+        $sale->loadMissing(['subProducts', 'paymentBox', 'salesOrder', 'maintenance.payments']);
         if ($sale->sales_order_id && ! $sale->salesOrder?->financial_posted_at) {
             return null;
         }
@@ -170,14 +172,52 @@ class AccountingProjectionService
         }
 
         $paid = min($total, round(max(0, (float) ($sale->payment_box_value ?? 0)), 4));
-        $depositApplied = $sale->sales_order_id
-            ? min($paid, round((float) $sale->salesOrder?->settlements()
+        $depositApplied = 0.0;
+        if ($sale->sales_order_id) {
+            $depositApplied = min($paid, round((float) $sale->salesOrder?->settlements()
                 ->where('source', 'order_payment')
                 ->where('cash_amount', '>', 0)
-                ->sum('cash_amount'), 4))
-            : 0.0;
+                ->sum('cash_amount'), 4));
+        } elseif ($sale->maintenance_id) {
+            $typedPayments = $sale->maintenance?->payments
+                ?->whereNotNull('payment_stage')
+                ->values() ?? collect();
+
+            if ($typedPayments->isNotEmpty()) {
+                $paymentCurrencies = $typedPayments
+                    ->pluck('currency')
+                    ->map(fn ($currency) => $this->accounting->normalizeCurrency($currency))
+                    ->filter()
+                    ->unique();
+                $saleCurrency = $this->accounting->normalizeCurrency($sale->paymentBox?->currency ?: 'شيكل');
+                if ($paymentCurrencies->contains(fn ($currency) => $currency !== $saleCurrency)) {
+                    throw new RuntimeException('Maintenance sale '.$sale->id.' contains payments in a currency different from the invoice currency.');
+                }
+
+                $prepaid = round((float) $typedPayments
+                    ->where('payment_stage', MaintenancePayment::STAGE_PRE_DELIVERY)
+                    ->sum('amount'), 4);
+                $deliveryPaid = round((float) $typedPayments
+                    ->where('payment_stage', MaintenancePayment::STAGE_DELIVERY)
+                    ->sum('amount'), 4);
+                $recordedPaid = round($prepaid + $deliveryPaid, 4);
+
+                if ($prepaid < -0.0001 || $recordedPaid < -0.0001 || $recordedPaid - $total > 0.0001) {
+                    throw new RuntimeException('Maintenance sale '.$sale->id.' has invalid typed payment totals.');
+                }
+                if (abs($recordedPaid - (float) ($sale->payment_box_value ?? 0)) > 0.01) {
+                    throw new RuntimeException('Maintenance sale '.$sale->id.' payment records do not match the invoice paid amount.');
+                }
+
+                $paid = min($total, max(0, $recordedPaid));
+                $depositApplied = min($paid, max(0, $prepaid));
+            }
+        }
         $cashAtSale = round($paid - $depositApplied, 4);
         $receivable = round($total - $paid, 4);
+        if (abs(($depositApplied + $cashAtSale + $receivable) - $total) > 0.0001) {
+            throw new RuntimeException('Sale '.$sale->id.' settlement does not balance to the invoice total.');
+        }
         $cost = round((float) $costInspection['total_cost'], 4);
         $currency = $sale->paymentBox?->currency ?: 'شيكل';
         $journalLines = [];
@@ -259,6 +299,57 @@ class AccountingProjectionService
                 ],
             ],
             $sale->created_by ?: auth()->id(),
+        );
+    }
+
+    private function syncMaintenancePayment(MaintenancePayment $payment): ?AccountingJournalEntry
+    {
+        if ($payment->payment_stage !== MaintenancePayment::STAGE_PRE_DELIVERY) {
+            return null;
+        }
+
+        $payment->loadMissing(['maintenance', 'box']);
+        $amount = round((float) $payment->amount, 4);
+        if (abs($amount) <= 0.0001) {
+            return null;
+        }
+        if (! $payment->box_id) {
+            throw new RuntimeException('Maintenance prepayment '.$payment->id.' is missing its cash box.');
+        }
+
+        $entity = [
+            'customer_id' => $payment->maintenance?->customer_id,
+            'seller_id' => $payment->maintenance?->seller_id,
+            'box_id' => $payment->box_id,
+        ];
+        $absoluteAmount = abs($amount);
+        $lines = $amount > 0
+            ? [
+                $this->line('cash', $absoluteAmount, 0, $payment, $entity),
+                $this->line('customer_deposits', 0, $absoluteAmount, $payment, $entity),
+            ]
+            : [
+                $this->line('customer_deposits', $absoluteAmount, 0, $payment, $entity),
+                $this->line('cash', 0, $absoluteAmount, $payment, $entity),
+            ];
+
+        return $this->accounting->post(
+            'maintenance_payment:'.$payment->id.':deposit',
+            'maintenance_payment',
+            (int) $payment->id,
+            $payment->created_at ?: now(),
+            $payment->currency ?: $payment->box?->currency ?: 'شيكل',
+            $amount > 0
+                ? 'عربون صيانة #'.$payment->maintenance_id
+                : 'عكس عربون صيانة #'.$payment->maintenance_id,
+            $lines,
+            [
+                'maintenance_id' => $payment->maintenance_id,
+                'payment_stage' => $payment->payment_stage,
+                'instant_sale_id' => $payment->instant_sale_id,
+                'payment_method' => $payment->method,
+            ],
+            $payment->created_by ?: auth()->id(),
         );
     }
 
@@ -1678,6 +1769,7 @@ class AccountingProjectionService
     {
         return match (true) {
             $model instanceof InstantSale => ['type' => 'instant_sale', 'id' => (int) ($model->parent_id ?: $model->id)],
+            $model instanceof MaintenancePayment => ['type' => 'maintenance_payment', 'id' => (int) $model->id],
             $model instanceof InventoryAdjustment => ['type' => 'inventory_adjustment', 'id' => (int) $model->id],
             $model instanceof ProfitSale => ['type' => 'profit_sale', 'id' => (int) $model->id],
             $model instanceof Expense => ['type' => 'expense', 'id' => (int) $model->id],
