@@ -180,6 +180,12 @@ class SalesCustomerSearchTest extends TestCase
             'phone' => '0594141414',
             'sub_phone' => '0564141414',
         ]);
+        DB::table('sellers')->insert([
+            'id' => 49,
+            'name' => 'عمرو عامر',
+            'phone' => '+972 597448120',
+            'sub_phone' => null,
+        ]);
         DB::table('projects')->insert([
             'id' => 41,
             'name' => 'مشروع تاجر قديم',
@@ -200,6 +206,21 @@ class SalesCustomerSearchTest extends TestCase
             'status' => 'active',
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+        DB::table('instant_sales')->insert([
+            'id' => 4114,
+            'serial_number' => 'SAL-0001025',
+            'product_id' => null,
+            'total_cost' => 180,
+            'cost' => 180,
+            'quantity' => 1,
+            'buyer_type' => 'seller',
+            'seller_id' => 49,
+            'buyer_name' => 'عمرو عامر',
+            'buyer_phone' => '+972 597448120',
+            'status' => 'active',
+            'created_at' => '2026-09-23 19:33:35',
+            'updated_at' => '2026-09-23 19:33:38',
         ]);
 
         foreach (['ليلى', '0564444444'] as $search) {
@@ -231,6 +252,24 @@ class SalesCustomerSearchTest extends TestCase
             $this->assertCount(1, $payload['instant_sales']);
             $this->assertSame('السيلاوي  بايك', $payload['instant_sales'][0]['buyer_name']);
             $this->assertSame('0594141414', $payload['instant_sales'][0]['buyer_phone']);
+        }
+
+        foreach (['عمرو عامر', '597448120', 'SAL-0001025'] as $search) {
+            $response = (new InstantSales)->getInstantSales(Request::create(
+                '/api/instant/sales',
+                'GET',
+                [
+                    'date' => '2026-09-24',
+                    'search' => $search,
+                ]
+            ));
+            $payload = $response->getData(true);
+
+            $this->assertSame('success', $payload['status']);
+            $this->assertCount(1, $payload['instant_sales']);
+            $this->assertSame(4114, $payload['instant_sales'][0]['id']);
+            $this->assertSame('عمرو عامر', $payload['instant_sales'][0]['buyer_name']);
+            $this->assertSame('+972 597448120', $payload['instant_sales'][0]['buyer_phone']);
         }
 
         $dateOnlyResponse = (new InstantSales)->getInstantSales(Request::create(

@@ -2080,8 +2080,6 @@ public function store(Request $request)
                         ->orWhere('buyer_address', 'like', $term)
                         ->orWhere('notes', 'like', $term)
                         ->orWhere('serial_number', 'like', $term)
-                        ->orWhereRaw("CONCAT('SAL-', LPAD(id, 7, '0')) LIKE ?", [$term])
-                        ->orWhereRaw("CONCAT('MNT-', LPAD(maintenance_id, 6, '0')) LIKE ?", [$term])
                         ->orWhereHas('product', function ($productQuery) use ($term) {
                             $productQuery->where('nameAr', 'like', $term);
                         })
