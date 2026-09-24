@@ -739,10 +739,16 @@ class Bills extends Controller
         ], 200);
     }
 
-private function getBills($statuses)
+private function getBills($statuses, ?array $workflowStatuses = null)
 {
     try {
-        $bills = Bill::whereIn('status', (array) $statuses) 
+        $bills = Bill::query()
+            ->where(function ($query) use ($statuses, $workflowStatuses) {
+                $query->whereIn('status', (array) $statuses);
+                if ($workflowStatuses !== null) {
+                    $query->orWhereIn('workflow_status', $workflowStatuses);
+                }
+            })
             ->with(['seller:id,name', 'customer:id,name'])
             ->withCount([
                 'items as items_count',
@@ -1089,7 +1095,10 @@ private function getBills($statuses)
     }
 
     public function getFinishedBills(){
-        return $this->getBills('finished');
+        return $this->getBills(
+            statuses: ['finished'],
+            workflowStatuses: ['received', 'finalized'],
+        );
     }
 
     // if there's missing values for at least one item and bill isn't finished yet and all items have status
