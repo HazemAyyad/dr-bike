@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
+use App\Services\AssetDepreciationWorkflowService;
+use App\Services\MaintenancePrepaymentSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -23,16 +25,27 @@ class AccountingIntegrityWebController extends Controller
         Request $request,
         AccountingProjectionRepairService $repair,
         AccountingIntegrityService $integrity,
+        MaintenancePrepaymentSyncService $prepayments,
+        AssetDepreciationWorkflowService $depreciation,
     ): View {
-        [$from, $to, $input] = $this->validatedDates($request);
+        $data = $request->validate([
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d'],
+            'depreciation_period' => ['nullable', 'date_format:Y-m'],
+        ]);
+        [$from, $to, $input] = $this->datesFromValidated($data);
         $this->ensureAccountingTablesReady();
+        $period = (string) ($data['depreciation_period'] ?? now()->format('Y-m'));
 
         return $this->page([
             'mode' => 'preview',
             'repairResult' => $repair->run(true),
+            'prepaymentResult' => $prepayments->run(true),
+            'depreciationResult' => $depreciation->preview($period),
             'integrityResult' => $integrity->run($from, $to),
             'from' => $input['from'],
             'to' => $input['to'],
+            'depreciationPeriod' => $period,
         ]);
     }
 
@@ -50,17 +63,7 @@ class AccountingIntegrityWebController extends Controller
             'confirmation.in' => 'اكتب عبارة التأكيد كما تظهر تمامًا: إصلاح القيود',
         ]);
 
-        $expected = (string) config('accounting_integrity.web_repair_token', '');
-        if ($expected === '') {
-            throw ValidationException::withMessages([
-                'access_token' => 'الإصلاح من الويب معطّل حتى يتم ضبط ACCOUNTING_REPAIR_WEB_TOKEN على السيرفر.',
-            ]);
-        }
-        if (! hash_equals($expected, (string) $data['access_token'])) {
-            throw ValidationException::withMessages([
-                'access_token' => 'رمز مركز الأمان غير صحيح، ولم يتم تنفيذ أي إصلاح.',
-            ]);
-        }
+        $this->ensureValidRepairToken((string) $data['access_token']);
 
         $this->ensureAccountingTablesReady();
         [$from, $to, $input] = $this->datesFromValidated($data);
@@ -91,15 +94,88 @@ class AccountingIntegrityWebController extends Controller
         ]);
     }
 
-    /** @return array{0:?Carbon,1:?Carbon,2:array{from:?string,to:?string}} */
-    private function validatedDates(Request $request): array
-    {
+    public function syncMaintenancePrepayments(
+        Request $request,
+        MaintenancePrepaymentSyncService $prepayments,
+        AccountingIntegrityService $integrity,
+    ): View {
         $data = $request->validate([
+            'access_token' => ['required', 'string', 'max:500'],
+            'confirmation' => ['required', 'string', 'in:ترحيل عربونات الصيانة'],
             'from' => ['nullable', 'date_format:Y-m-d'],
             'to' => ['nullable', 'date_format:Y-m-d'],
+        ], [
+            'confirmation.in' => 'اكتب عبارة التأكيد كما تظهر تمامًا: ترحيل عربونات الصيانة',
+        ]);
+        $this->ensureValidRepairToken((string) $data['access_token']);
+        $this->ensureAccountingTablesReady();
+        [$from, $to, $input] = $this->datesFromValidated($data);
+
+        Log::notice('maintenance_prepayment_sync_started_from_web', [
+            'ip' => $request->ip(),
+        ]);
+        $result = $prepayments->run(false);
+        $remaining = $prepayments->run(true);
+        $integrityResult = $integrity->run($from, $to);
+        Log::notice('maintenance_prepayment_sync_finished_from_web', [
+            'ip' => $request->ip(),
+            'summary' => $result['summary'],
+            'remaining_summary' => $remaining['summary'],
         ]);
 
-        return $this->datesFromValidated($data);
+        return $this->page([
+            'mode' => 'prepayment_sync',
+            'prepaymentResult' => $result,
+            'remainingPrepaymentResult' => $remaining,
+            'integrityResult' => $integrityResult,
+            'from' => $input['from'],
+            'to' => $input['to'],
+        ]);
+    }
+
+    public function runAssetDepreciation(
+        Request $request,
+        AssetDepreciationWorkflowService $depreciation,
+        AccountingIntegrityService $integrity,
+    ): View {
+        $data = $request->validate([
+            'access_token' => ['required', 'string', 'max:500'],
+            'confirmation' => ['required', 'string', 'in:تنفيذ إهلاك الأصول'],
+            'depreciation_period' => ['required', 'date_format:Y-m'],
+        ], [
+            'confirmation.in' => 'اكتب عبارة التأكيد كما تظهر تمامًا: تنفيذ إهلاك الأصول',
+        ]);
+        $this->ensureValidRepairToken((string) $data['access_token']);
+        $this->ensureAccountingTablesReady();
+        $period = (string) $data['depreciation_period'];
+        if ($period !== now()->format('Y-m')) {
+            throw ValidationException::withMessages([
+                'depreciation_period' => 'التنفيذ من الويب مسموح للشهر الحالي فقط؛ الفترات الأخرى تحتاج مراجعة محاسبية وأمرًا يدويًا.',
+            ]);
+        }
+
+        Log::notice('asset_depreciation_started_from_web', [
+            'ip' => $request->ip(),
+            'period' => $period,
+        ]);
+        $result = $depreciation->run($period, null);
+        $periodDate = Carbon::createFromFormat('Y-m-d', $period.'-01');
+        $integrityResult = $integrity->run($periodDate->copy()->startOfMonth(), $periodDate->copy()->endOfMonth());
+        Log::notice('asset_depreciation_finished_from_web', [
+            'ip' => $request->ip(),
+            'period' => $period,
+            'execution' => $result['execution'],
+        ]);
+
+        return $this->page([
+            'mode' => 'depreciation_run',
+            'depreciationResult' => $result['after'],
+            'depreciationExecution' => $result,
+            'integrityResult' => $integrityResult,
+            'from' => $periodDate->copy()->startOfMonth()->toDateString(),
+            'to' => $periodDate->copy()->endOfMonth()->toDateString(),
+            'depreciationPeriod' => $period,
+        ]);
     }
 
     /** @param array<string, mixed> $data @return array{0:?Carbon,1:?Carbon,2:array{from:?string,to:?string}} */
@@ -130,6 +206,21 @@ class AccountingIntegrityWebController extends Controller
         }
     }
 
+    private function ensureValidRepairToken(string $provided): void
+    {
+        $expected = (string) config('accounting_integrity.web_repair_token', '');
+        if ($expected === '') {
+            throw ValidationException::withMessages([
+                'access_token' => 'الإصلاح من الويب معطّل حتى يتم ضبط ACCOUNTING_REPAIR_WEB_TOKEN على السيرفر.',
+            ]);
+        }
+        if (! hash_equals($expected, $provided)) {
+            throw ValidationException::withMessages([
+                'access_token' => 'رمز مركز الأمان غير صحيح، ولم يتم تنفيذ أي إصلاح.',
+            ]);
+        }
+    }
+
     /** @param array<string, mixed> $overrides */
     private function page(array $overrides = []): View
     {
@@ -137,15 +228,20 @@ class AccountingIntegrityWebController extends Controller
             'mode' => null,
             'repairResult' => null,
             'remainingResult' => null,
+            'prepaymentResult' => null,
+            'remainingPrepaymentResult' => null,
+            'depreciationResult' => null,
+            'depreciationExecution' => null,
             'integrityResult' => null,
             'from' => null,
             'to' => null,
+            'depreciationPeriod' => now()->format('Y-m'),
             'migrationStatus' => $this->migrationStatus(),
             'webRepairEnabled' => (string) config('accounting_integrity.web_repair_token', '') !== '',
         ], $overrides));
     }
 
-    /** @return array{ready:bool,tables:array<string,bool>,service_revenue:bool} */
+    /** @return array{ready:bool,tables:array<string,bool>,service_revenue:bool,maintenance_payment_stage:bool,asset_depreciation_fields:bool} */
     private function migrationStatus(): array
     {
         $tables = collect([
@@ -159,11 +255,24 @@ class AccountingIntegrityWebController extends Controller
         $serviceRevenue = $tables['accounting_accounts']
             && Schema::hasColumn('accounting_accounts', 'system_key')
             && DB::table('accounting_accounts')->where('system_key', 'service_revenue')->exists();
+        $maintenancePaymentStage = Schema::hasTable('maintenance_payments')
+            && Schema::hasColumn('maintenance_payments', 'payment_stage');
+        $assetDepreciationFields = Schema::hasTable('assets')
+            && Schema::hasColumn('assets', 'months_number')
+            && Schema::hasColumn('assets', 'depreciation_price')
+            && Schema::hasTable('asset_logs')
+            && Schema::hasColumn('asset_logs', 'depreciation_period')
+            && Schema::hasColumn('asset_logs', 'depreciation_amount');
 
         return [
-            'ready' => ! in_array(false, $tables, true) && $serviceRevenue,
+            'ready' => ! in_array(false, $tables, true)
+                && $serviceRevenue
+                && $maintenancePaymentStage
+                && $assetDepreciationFields,
             'tables' => $tables,
             'service_revenue' => $serviceRevenue,
+            'maintenance_payment_stage' => $maintenancePaymentStage,
+            'asset_depreciation_fields' => $assetDepreciationFields,
         ];
     }
 }

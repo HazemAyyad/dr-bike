@@ -75,6 +75,12 @@ Route::middleware('security.center')->prefix('security-center')->name('security-
     Route::post('/accounting/repair', [AccountingIntegrityWebController::class, 'repair'])
         ->middleware('throttle:2,1')
         ->name('accounting.repair');
+    Route::post('/accounting/maintenance-prepayments/sync', [AccountingIntegrityWebController::class, 'syncMaintenancePrepayments'])
+        ->middleware('throttle:2,1')
+        ->name('accounting.maintenance-prepayments.sync');
+    Route::post('/accounting/assets/depreciation/run', [AccountingIntegrityWebController::class, 'runAssetDepreciation'])
+        ->middleware('throttle:1,1')
+        ->name('accounting.assets.depreciation.run');
     Route::post('/blocks', [SecurityCenterWebController::class, 'block'])->name('blocks.store');
     Route::post('/blocks/{block}/unblock', [SecurityCenterWebController::class, 'unblock'])->whereNumber('block')->name('blocks.unblock');
     Route::post('/geolocation/refresh', [SecurityCenterWebController::class, 'refreshGeolocation'])->middleware('throttle:6,1')->name('geolocation.refresh');

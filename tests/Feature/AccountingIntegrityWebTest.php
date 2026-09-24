@@ -4,6 +4,8 @@ namespace Tests\Feature;
 
 use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
+use App\Services\AssetDepreciationWorkflowService;
+use App\Services\MaintenancePrepaymentSyncService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -40,12 +42,27 @@ class AccountingIntegrityWebTest extends TestCase
             $table->string('system_key')->unique();
         });
         DB::table('accounting_accounts')->insert(['system_key' => 'service_revenue']);
+        Schema::create('maintenance_payments', function (Blueprint $table) {
+            $table->id();
+            $table->string('payment_stage')->nullable();
+        });
+        Schema::create('assets', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedInteger('months_number')->default(1);
+            $table->decimal('depreciation_price', 14, 4)->default(0);
+        });
+        Schema::create('asset_logs', function (Blueprint $table) {
+            $table->id();
+            $table->string('depreciation_period')->nullable();
+            $table->decimal('depreciation_amount', 14, 4)->default(0);
+        });
     }
 
     protected function tearDown(): void
     {
         DB::purge('accounting_web_test');
         DB::setDefaultConnection($this->originalConnection);
+        Carbon::setTestNow();
         parent::tearDown();
     }
 
@@ -76,14 +93,25 @@ class AccountingIntegrityWebTest extends TestCase
         })->andReturn($this->integrityResult());
         $this->app->instance(AccountingIntegrityService::class, $integrity);
 
+        $prepayments = Mockery::mock(MaintenancePrepaymentSyncService::class);
+        $prepayments->shouldReceive('run')->once()->with(true)->andReturn($this->prepaymentResult());
+        $this->app->instance(MaintenancePrepaymentSyncService::class, $prepayments);
+
+        $depreciation = Mockery::mock(AssetDepreciationWorkflowService::class);
+        $depreciation->shouldReceive('preview')->once()->with('2026-09')->andReturn($this->depreciationPreview());
+        $this->app->instance(AssetDepreciationWorkflowService::class, $depreciation);
+
         $this->withSession(['security_center_authenticated' => true])
             ->post('/security-center/accounting/inspect', [
                 'from' => '2026-09-21',
                 'to' => '2026-09-23',
+                'depreciation_period' => '2026-09',
             ])
             ->assertOk()
             ->assertSee('اكتملت المعاينة بوضع القراءة فقط')
             ->assertSee('instant_sale:12')
+            ->assertSee('جاهزة للترحيل كعربون صيانة')
+            ->assertSee('أصل تجريبي')
             ->assertSee('PASS 1');
     }
 
@@ -128,6 +156,89 @@ class AccountingIntegrityWebTest extends TestCase
             ->assertSee('المتبقي بعد الإصلاح');
     }
 
+    public function test_maintenance_prepayment_sync_rejects_wrong_token_without_writing(): void
+    {
+        $prepayments = Mockery::mock(MaintenancePrepaymentSyncService::class);
+        $prepayments->shouldNotReceive('run');
+        $this->app->instance(MaintenancePrepaymentSyncService::class, $prepayments);
+
+        $this->withSession(['security_center_authenticated' => true])
+            ->from('/security-center/accounting')
+            ->post('/security-center/accounting/maintenance-prepayments/sync', [
+                'access_token' => 'wrong',
+                'confirmation' => 'ترحيل عربونات الصيانة',
+            ])
+            ->assertRedirect('/security-center/accounting')
+            ->assertSessionHasErrors('access_token');
+    }
+
+    public function test_confirmed_maintenance_prepayment_sync_runs_once_then_previews_remaining(): void
+    {
+        $prepayments = Mockery::mock(MaintenancePrepaymentSyncService::class);
+        $prepayments->shouldReceive('run')->once()->with(false)->andReturn($this->prepaymentResult('projected'));
+        $prepayments->shouldReceive('run')->once()->with(true)->andReturn($this->prepaymentResult('already_posted'));
+        $this->app->instance(MaintenancePrepaymentSyncService::class, $prepayments);
+
+        $integrity = Mockery::mock(AccountingIntegrityService::class);
+        $integrity->shouldReceive('run')->once()->with(null, null)->andReturn($this->integrityResult());
+        $this->app->instance(AccountingIntegrityService::class, $integrity);
+
+        $this->withSession(['security_center_authenticated' => true])
+            ->post('/security-center/accounting/maintenance-prepayments/sync', [
+                'access_token' => 'accounting-secret',
+                'confirmation' => 'ترحيل عربونات الصيانة',
+            ])
+            ->assertOk()
+            ->assertSee('اكتمل ترحيل عربونات الصيانة')
+            ->assertSee('حالة العربونات بعد التنفيذ');
+    }
+
+    public function test_asset_depreciation_web_run_is_limited_to_current_month(): void
+    {
+        Carbon::setTestNow('2026-09-24 12:00:00');
+        $depreciation = Mockery::mock(AssetDepreciationWorkflowService::class);
+        $depreciation->shouldNotReceive('run');
+        $this->app->instance(AssetDepreciationWorkflowService::class, $depreciation);
+
+        $this->withSession(['security_center_authenticated' => true])
+            ->from('/security-center/accounting')
+            ->post('/security-center/accounting/assets/depreciation/run', [
+                'access_token' => 'accounting-secret',
+                'confirmation' => 'تنفيذ إهلاك الأصول',
+                'depreciation_period' => '2026-08',
+            ])
+            ->assertRedirect('/security-center/accounting')
+            ->assertSessionHasErrors('depreciation_period');
+    }
+
+    public function test_confirmed_asset_depreciation_runs_current_month_and_checks_integrity(): void
+    {
+        Carbon::setTestNow('2026-09-24 12:00:00');
+        $depreciation = Mockery::mock(AssetDepreciationWorkflowService::class);
+        $depreciation->shouldReceive('run')->once()->with('2026-09', null)->andReturn([
+            'before' => $this->depreciationPreview(),
+            'execution' => ['processed' => 1, 'skipped' => 0, 'warnings' => []],
+            'after' => $this->depreciationPreview('already_depreciated'),
+        ]);
+        $this->app->instance(AssetDepreciationWorkflowService::class, $depreciation);
+
+        $integrity = Mockery::mock(AccountingIntegrityService::class);
+        $integrity->shouldReceive('run')->once()->withArgs(function (?Carbon $from, ?Carbon $to) {
+            return $from?->toDateString() === '2026-09-01' && $to?->toDateString() === '2026-09-30';
+        })->andReturn($this->integrityResult());
+        $this->app->instance(AccountingIntegrityService::class, $integrity);
+
+        $this->withSession(['security_center_authenticated' => true])
+            ->post('/security-center/accounting/assets/depreciation/run', [
+                'access_token' => 'accounting-secret',
+                'confirmation' => 'تنفيذ إهلاك الأصول',
+                'depreciation_period' => '2026-09',
+            ])
+            ->assertOk()
+            ->assertSee('اكتمل تنفيذ إهلاك الشهر المحدد')
+            ->assertSee('نُفذ الإهلاك على 1 أصل');
+    }
+
     /** @return array<string, mixed> */
     private function repairResult(string $status = 'repairable'): array
     {
@@ -166,6 +277,63 @@ class AccountingIntegrityWebTest extends TestCase
                 'message' => 'All journals are balanced.',
                 'ids' => [],
                 'details' => [],
+            ]],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function prepaymentResult(string $status = 'ready'): array
+    {
+        return [
+            'summary' => [
+                'total' => 1,
+                'already_posted' => $status === 'already_posted' ? 1 : 0,
+                'ready' => $status === 'ready' ? 1 : 0,
+                'projected' => $status === 'projected' ? 1 : 0,
+                'failed' => 0,
+                'skipped' => 0,
+            ],
+            'items' => [[
+                'payment_id' => 18,
+                'maintenance_id' => 150,
+                'amount' => 50,
+                'currency' => 'شيكل',
+                'box_id' => 103,
+                'status' => $status,
+                'message' => $status === 'ready'
+                    ? 'جاهزة للترحيل كعربون صيانة.'
+                    : 'نتيجة تنفيذ تجريبية.',
+            ]],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function depreciationPreview(string $status = 'eligible'): array
+    {
+        $eligible = $status === 'eligible';
+
+        return [
+            'period' => '2026-09',
+            'summary' => [
+                'total' => 1,
+                'eligible' => $eligible ? 1 : 0,
+                'already_depreciated' => $status === 'already_depreciated' ? 1 : 0,
+                'requires_review' => 0,
+                'skipped' => $eligible ? 0 : 1,
+                'depreciation_amount' => $eligible ? 100 : 0,
+            ],
+            'items' => [[
+                'asset_id' => 1,
+                'name' => 'أصل تجريبي',
+                'current_book_value' => $eligible ? 1200 : 1100,
+                'useful_life_months' => 12,
+                'used_periods' => $eligible ? 0 : 1,
+                'remaining_periods' => $eligible ? 12 : 11,
+                'depreciation_amount' => $eligible ? 100 : 0,
+                'value_after' => 1100,
+                'status' => $status,
+                'warning' => null,
+                'skip_reason' => $eligible ? null : 'تم إهلاك الأصل لهذه الفترة.',
             ]],
         ];
     }
