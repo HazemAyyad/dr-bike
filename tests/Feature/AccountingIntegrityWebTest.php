@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\User;
 use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AssetDepreciationWorkflowService;
@@ -34,6 +35,11 @@ class AccountingIntegrityWebTest extends TestCase
         DB::purge('accounting_web_test');
         DB::setDefaultConnection('accounting_web_test');
 
+        Schema::create('users', function (Blueprint $table) {
+            $table->id();
+            $table->string('name')->nullable();
+            $table->softDeletes();
+        });
         foreach (['accounting_journal_entries', 'accounting_projection_failures', 'inventory_cost_layers', 'inventory_cost_allocations'] as $table) {
             Schema::create($table, fn (Blueprint $blueprint) => $blueprint->id());
         }
@@ -214,8 +220,10 @@ class AccountingIntegrityWebTest extends TestCase
     public function test_confirmed_asset_depreciation_runs_current_month_and_checks_integrity(): void
     {
         Carbon::setTestNow('2026-09-24 12:00:00');
+        DB::table('users')->insert(['id' => 15, 'name' => 'Accounting operator']);
+        $user = User::query()->findOrFail(15);
         $depreciation = Mockery::mock(AssetDepreciationWorkflowService::class);
-        $depreciation->shouldReceive('run')->once()->with('2026-09', null)->andReturn([
+        $depreciation->shouldReceive('run')->once()->with('2026-09', 15)->andReturn([
             'before' => $this->depreciationPreview(),
             'execution' => ['processed' => 1, 'skipped' => 0, 'warnings' => []],
             'after' => $this->depreciationPreview('already_depreciated'),
@@ -228,7 +236,8 @@ class AccountingIntegrityWebTest extends TestCase
         })->andReturn($this->integrityResult());
         $this->app->instance(AccountingIntegrityService::class, $integrity);
 
-        $this->withSession(['security_center_authenticated' => true])
+        $this->actingAs($user)
+            ->withSession(['security_center_authenticated' => true])
             ->post('/security-center/accounting/assets/depreciation/run', [
                 'access_token' => 'accounting-secret',
                 'confirmation' => 'تنفيذ إهلاك الأصول',

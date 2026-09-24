@@ -4,12 +4,14 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\AssetResource;
+use App\Models\AccountingJournalEntry;
 use App\Models\Asset;
 use App\Models\AssetLog;
 use App\Models\Box;
 use App\Services\AssetDepreciationCalculator;
 use App\Services\ExpenseBoxAccessService;
 use App\Services\MonthlyAssetDepreciationService;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -336,7 +338,7 @@ class Assets extends Controller
         }
     }
 
-    public function editAsset(Request $request, ExpenseBoxAccessService $access)
+    public function editAsset(Request $request)
     {
         try {
 
@@ -376,43 +378,34 @@ class Assets extends Controller
 
             $data['depreciation_rate'] = round(1 / (int) $data['months_number'], 8);
             $updatedData = Arr::except($data, ['asset_id', 'media']);
-            $asset = DB::transaction(function () use ($data, $updatedData, $request, $access) {
+            $asset = DB::transaction(function () use ($data, $updatedData) {
                 $asset = Asset::query()->lockForUpdate()->findOrFail($data['asset_id']);
                 $newPrice = round((float) $updatedData['price'], 4);
                 $oldPrice = round((float) $asset->price, 4);
-                $difference = round($newPrice - $oldPrice, 4);
+                if (abs($newPrice - $oldPrice) > 0.0001) {
+                    throw ValidationException::withMessages([
+                        'price' => ['لا يمكن تعديل تكلفة الأصل بعد تسجيله. يجب استخدام عملية تعديل تكلفة أصل مستقلة.'],
+                    ]);
+                }
 
-                if (abs($difference) > 0.0001) {
-                    if ($asset->logs()->where('type', '!=', 'create')->exists()) {
-                        throw ValidationException::withMessages([
-                            'price' => ['لا يمكن تغيير تكلفة أصل بدأ إهلاكه. استخدم قيد محاسبي مستقل.'],
-                        ]);
+                if (array_key_exists('acquired_at', $updatedData)) {
+                    $oldAcquiredAt = $asset->acquired_at?->format('Y-m-d');
+                    $newAcquiredAt = $updatedData['acquired_at']
+                        ? Carbon::parse($updatedData['acquired_at'])->toDateString()
+                        : null;
+                    $updatedData['acquired_at'] = $newAcquiredAt;
+                    if ($newAcquiredAt !== $oldAcquiredAt) {
+                        $hasDepreciation = $asset->logs()->where('type', 'depreciate')->exists();
+                        $hasAccountingJournal = AccountingJournalEntry::query()
+                            ->where('source_type', 'asset')
+                            ->where('source_id', $asset->id)
+                            ->exists();
+                        if ($hasDepreciation || $hasAccountingJournal) {
+                            throw ValidationException::withMessages([
+                                'acquired_at' => ['لا يمكن تغيير تاريخ اقتناء أصل بدأ استخدامه محاسبيًا. استخدم إجراء تصحيح محاسبي مستقل.'],
+                            ]);
+                        }
                     }
-                    if (! $asset->box_id) {
-                        throw ValidationException::withMessages([
-                            'price' => ['لا يمكن تغيير تكلفة أصل افتتاحي بلا صندوق ممول. استخدم قيد محاسبي مستقل.'],
-                        ]);
-                    }
-                    if (! $access->canUse($request->user(), (int) $asset->box_id)) {
-                        throw ValidationException::withMessages([
-                            'price' => ['الصندوق الممول للأصل غير مسموح للموظف أو أن جلسته اليومية مغلقة.'],
-                        ]);
-                    }
-
-                    $box = Box::query()->lockForUpdate()->findOrFail($asset->box_id);
-                    if ($difference > 0 && (float) $box->total + 0.0001 < $difference) {
-                        throw ValidationException::withMessages(['price' => [__('messages.box_out_of_money')]]);
-                    }
-                    $box->update(['total' => (float) $box->total - $difference]);
-                    BoxLogs::createBoxLog(
-                        $box,
-                        'تعديل تكلفة أصل: '.$asset->name,
-                        $difference > 0 ? 'minus' : 'plus',
-                        abs($difference),
-                        'فرق تعديل تكلفة الأصل'
-                    );
-                    $updatedData['depreciation_price'] = $newPrice;
-                    $asset->logs()->where('type', 'create')->update(['total' => $newPrice]);
                 }
 
                 $asset->update($updatedData);

@@ -33,7 +33,7 @@ class FinancialAffairsPermissionRoutesTest extends TestCase
             ['GET', 'api/get/all/assets', 'Financial Assets View'],
             ['POST', 'api/add/asset', 'Financial Assets Manage'],
             ['POST', 'api/delete/asset', 'Financial Assets Delete'],
-            ['GET', 'api/depreciate/all/assets', 'Financial Assets Depreciate'],
+            ['POST', 'api/depreciate/all/assets', 'Financial Assets Depreciate'],
             ['GET', 'api/get/all/asset/logs/report', 'Financial Assets Reports'],
             ['GET', 'api/get/all/papers', 'Financial Official Papers View'],
             ['POST', 'api/store/paper', 'Financial Official Papers Manage'],

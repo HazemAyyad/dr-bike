@@ -969,7 +969,7 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->middleware('check.permission:Financial Assets Manage');
     Route::get('/get/all/assets' , [Assets::class,'getAssets'])
         ->middleware('check.permission:Financial Assets View');
-    Route::get('/depreciate/all/assets' , [Assets::class,'depreciatAllAssets'])
+    Route::post('/depreciate/all/assets' , [Assets::class,'depreciatAllAssets'])
         ->middleware('check.permission:Financial Assets Depreciate');
     Route::get('/assets/depreciation/preview' , [Assets::class,'depreciationPreview'])
         ->middleware('check.permission:Financial Assets Depreciate');

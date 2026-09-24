@@ -28,12 +28,24 @@ class AssetDepreciationCalculator
             ->where('type', 'depreciate')
             ->where('depreciation_period', $period)
             ->exists();
+        $latestProcessedPeriod = $asset->logs()
+            ->where('type', 'depreciate')
+            ->whereNotNull('depreciation_period')
+            ->max('depreciation_period');
         $warning = null;
         $skipReason = null;
         $status = 'eligible';
         $eligible = true;
 
-        if ($usefulLife <= 0) {
+        if ($alreadyProcessed) {
+            $eligible = false;
+            $status = 'already_depreciated';
+            $skipReason = 'تم إهلاك الأصل لهذه الفترة.';
+        } elseif ($latestProcessedPeriod && $latestProcessedPeriod > $period) {
+            $eligible = false;
+            $status = 'requires_review';
+            $warning = 'يوجد إهلاك منفذ لفترة أحدث؛ لا يمكن تنفيذ إهلاك رجعي تلقائيًا.';
+        } elseif ($usefulLife <= 0) {
             $eligible = false;
             $status = 'requires_review';
             $warning = 'العمر الإنتاجي غير صالح ويحتاج مراجعة.';
@@ -45,10 +57,6 @@ class AssetDepreciationCalculator
             $eligible = false;
             $status = 'not_yet_acquired';
             $skipReason = 'الفترة المطلوبة تسبق شهر اقتناء الأصل.';
-        } elseif ($alreadyProcessed) {
-            $eligible = false;
-            $status = 'already_depreciated';
-            $skipReason = 'تم إهلاك الأصل لهذه الفترة.';
         } elseif ($currentBookValue <= 0.0001) {
             $eligible = false;
             $status = 'fully_depreciated';

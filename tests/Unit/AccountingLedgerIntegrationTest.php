@@ -57,6 +57,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         Schema::connection('accounting_test')->create('assets', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
+            $table->text('notes')->nullable();
             $table->unsignedInteger('months_number')->default(1);
             $table->decimal('price', 14, 4)->default(0);
             $table->decimal('depreciation_rate', 14, 8)->default(0);
@@ -395,6 +396,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         DB::disconnect('accounting_test');
         DB::setDefaultConnection($this->originalConnection);
         config(['database.default' => $this->originalConnection]);
+        Carbon::setTestNow();
         parent::tearDown();
     }
 
@@ -1271,6 +1273,225 @@ class AccountingLedgerIntegrationTest extends TestCase
         }
     }
 
+    public function test_asset_edit_rejects_price_change_without_touching_box_asset_or_journal(): void
+    {
+        [$asset, $entry] = $this->createAccountingAsset();
+        $boxBefore = (float) DB::table('boxes')->where('id', 1)->value('total');
+        $entryBefore = $entry->fresh('lines')->toArray();
+
+        $response = $this->withoutMiddleware()->postJson('/api/edit/asset', [
+            'asset_id' => $asset->id,
+            'name' => $asset->name,
+            'price' => 12000,
+            'notes' => $asset->notes,
+            'months_number' => 100,
+            'acquired_at' => '2026-01-01',
+            'media' => [],
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('errors.price.0', 'لا يمكن تعديل تكلفة الأصل بعد تسجيله. يجب استخدام عملية تعديل تكلفة أصل مستقلة.');
+        $this->assertEqualsWithDelta(10000, (float) $asset->fresh()->price, 0.0001);
+        $this->assertEqualsWithDelta($boxBefore, (float) DB::table('boxes')->where('id', 1)->value('total'), 0.0001);
+        $this->assertSame($entryBefore, $entry->fresh('lines')->toArray());
+    }
+
+    public function test_asset_edit_rejects_acquisition_date_change_after_depreciation(): void
+    {
+        [$asset, $entry] = $this->createAccountingAsset();
+        AssetLog::withoutEvents(fn () => AssetLog::query()->create([
+            'asset_id' => $asset->id,
+            'type' => 'depreciate',
+            'total' => 9900,
+            'value_before' => 10000,
+            'depreciation_amount' => 100,
+            'depreciation_period' => '2026-02',
+        ]));
+        $entryDate = $entry->entry_date->toDateString();
+
+        $response = $this->withoutMiddleware()->postJson('/api/edit/asset', [
+            'asset_id' => $asset->id,
+            'name' => $asset->name,
+            'price' => 10000,
+            'notes' => $asset->notes,
+            'months_number' => 100,
+            'acquired_at' => '2026-02-01',
+            'media' => [],
+        ]);
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('errors.acquired_at.0', 'لا يمكن تغيير تاريخ اقتناء أصل بدأ استخدامه محاسبيًا. استخدم إجراء تصحيح محاسبي مستقل.');
+        $this->assertSame('2026-01-01', $asset->fresh()->acquired_at?->toDateString());
+        $this->assertSame($entryDate, $entry->fresh()->entry_date->toDateString());
+    }
+
+    public function test_legacy_asset_edit_without_acquisition_date_keeps_it_null(): void
+    {
+        [$asset] = $this->createAccountingAsset(['acquired_at' => null]);
+
+        $this->withoutMiddleware()->postJson('/api/edit/asset', [
+            'asset_id' => $asset->id,
+            'name' => 'أصل Legacy معدل',
+            'price' => 10000,
+            'notes' => 'بدون تاريخ مؤكد',
+            'months_number' => 100,
+            'media' => [],
+        ])->assertOk()->assertJsonPath('status', 'success');
+
+        $this->assertNull($asset->fresh()->acquired_at);
+
+        $this->withoutMiddleware()->postJson('/api/edit/asset', [
+            'asset_id' => $asset->id,
+            'name' => 'أصل Legacy معدل',
+            'price' => 10000,
+            'notes' => 'بدون تاريخ مؤكد',
+            'months_number' => 100,
+            'acquired_at' => '2026-01-01',
+            'media' => [],
+        ])->assertOk()
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('errors.acquired_at.0', 'لا يمكن تغيير تاريخ اقتناء أصل بدأ استخدامه محاسبيًا. استخدم إجراء تصحيح محاسبي مستقل.');
+        $this->assertNull($asset->fresh()->acquired_at);
+    }
+
+    public function test_non_financial_asset_edit_does_not_rewrite_purchase_journal(): void
+    {
+        [$asset, $entry] = $this->createAccountingAsset(['media' => ['old.jpg']]);
+        $entryBefore = $entry->fresh('lines');
+        $lineIdsBefore = $entryBefore->lines->pluck('id')->all();
+        $postedAtBefore = $entryBefore->posted_at?->toDateTimeString();
+        $boxBefore = $entryBefore->lines->firstWhere('credit', '>', 0)?->box_id;
+
+        $this->withoutMiddleware()->postJson('/api/edit/asset', [
+            'asset_id' => $asset->id,
+            'name' => 'اسم وصفي جديد',
+            'price' => 10000,
+            'notes' => 'ملاحظات جديدة',
+            'months_number' => 100,
+            'acquired_at' => '2026-01-01',
+            'media' => [],
+        ])->assertOk()->assertJsonPath('status', 'success');
+
+        $asset->refresh();
+        $entry->refresh()->load('lines');
+        $this->assertSame('اسم وصفي جديد', $asset->name);
+        $this->assertSame('ملاحظات جديدة', $asset->notes);
+        $this->assertSame([], $asset->media);
+        $this->assertEqualsWithDelta(10000, (float) $asset->price, 0.0001);
+        $this->assertSame('2026-01-01', $asset->acquired_at?->toDateString());
+        $this->assertSame('2026-01-01', $entry->entry_date->toDateString());
+        $this->assertSame('شيكل', $entry->currency);
+        $this->assertSame($postedAtBefore, $entry->posted_at?->toDateTimeString());
+        $this->assertSame($lineIdsBefore, $entry->lines->pluck('id')->all());
+        $this->assertSame($boxBefore, $entry->lines->firstWhere('credit', '>', 0)?->box_id);
+        $this->assertEqualsWithDelta(10000, (float) $entry->lines->sum('debit'), 0.0001);
+        $this->assertEqualsWithDelta(10000, (float) $entry->lines->sum('credit'), 0.0001);
+    }
+
+    public function test_bulk_depreciation_uses_post_and_get_is_not_allowed(): void
+    {
+        Carbon::setTestNow('2026-09-24 12:00:00');
+        [$asset] = $this->createAccountingAsset([
+            'price' => 1200,
+            'depreciation_price' => 1200,
+            'months_number' => 12,
+        ]);
+
+        $this->withoutMiddleware()->postJson('/api/depreciate/all/assets')
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('result.processed', 1);
+        $this->assertTrue(AssetLog::query()
+            ->where('asset_id', $asset->id)
+            ->where('depreciation_period', '2026-09')
+            ->exists());
+        $this->getJson('/api/depreciate/all/assets')->assertStatus(405);
+    }
+
+    public function test_backdated_depreciation_after_newer_period_requires_review_without_writes(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل بفترات أحدث',
+            'price' => 10000,
+            'depreciation_price' => 8000,
+            'depreciation_rate' => 0.01,
+            'months_number' => 100,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+            'media' => [],
+        ]));
+        foreach (['2026-09', '2026-10'] as $period) {
+            AssetLog::withoutEvents(fn () => AssetLog::query()->create([
+                'asset_id' => $asset->id,
+                'type' => 'depreciate',
+                'total' => $period === '2026-09' ? 9000 : 8000,
+                'depreciation_amount' => 1000,
+                'depreciation_period' => $period,
+            ]));
+        }
+        $logsBefore = AssetLog::query()->count();
+        $journalsBefore = AccountingJournalEntry::query()->count();
+
+        $calculation = app(AssetDepreciationCalculator::class)->calculate($asset->fresh(), '2026-08');
+        $result = app(MonthlyAssetDepreciationService::class)->run('2026-08', 15, $asset->id);
+
+        $this->assertSame('requires_review', $calculation['status']);
+        $this->assertSame('يوجد إهلاك منفذ لفترة أحدث؛ لا يمكن تنفيذ إهلاك رجعي تلقائيًا.', $calculation['warning']);
+        $this->assertSame(0, $result['processed']);
+        $this->assertSame($logsBefore, AssetLog::query()->count());
+        $this->assertSame($journalsBefore, AccountingJournalEntry::query()->count());
+        $this->assertEqualsWithDelta(8000, (float) $asset->fresh()->depreciation_price, 0.0001);
+    }
+
+    public function test_existing_requested_depreciation_period_is_reported_as_already_depreciated(): void
+    {
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create([
+            'name' => 'أصل مهلك لنفس الشهر',
+            'price' => 10000,
+            'depreciation_price' => 9000,
+            'depreciation_rate' => 0.01,
+            'months_number' => 100,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+            'media' => [],
+        ]));
+        AssetLog::withoutEvents(fn () => AssetLog::query()->create([
+            'asset_id' => $asset->id,
+            'type' => 'depreciate',
+            'total' => 9000,
+            'depreciation_amount' => 1000,
+            'depreciation_period' => '2026-09',
+        ]));
+
+        $calculation = app(AssetDepreciationCalculator::class)->calculate($asset, '2026-09');
+
+        $this->assertSame('already_depreciated', $calculation['status']);
+        $this->assertFalse($calculation['eligible']);
+    }
+
+    public function test_depreciation_log_and_journal_keep_processed_user(): void
+    {
+        DB::table('users')->insert(['id' => 15, 'name' => 'Accounting operator']);
+        [$asset] = $this->createAccountingAsset([
+            'price' => 1200,
+            'depreciation_price' => 1200,
+            'months_number' => 12,
+        ]);
+
+        $result = app(MonthlyAssetDepreciationService::class)->run('2026-09', 15, $asset->id);
+        $log = AssetLog::query()->where('asset_id', $asset->id)->where('type', 'depreciate')->firstOrFail();
+        $journal = AccountingJournalEntry::query()
+            ->where('source_type', 'asset_depreciation')
+            ->where('source_id', $log->id)
+            ->firstOrFail();
+
+        $this->assertSame(1, $result['processed']);
+        $this->assertSame(15, (int) $log->processed_by_user_id);
+        $this->assertSame(15, (int) $journal->created_by);
+    }
+
     public function test_straight_line_depreciation_reaches_zero_after_useful_life(): void
     {
         $asset = Asset::withoutEvents(fn () => Asset::query()->create([
@@ -1448,6 +1669,30 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertNotEmpty($result['warnings']);
         $this->assertEqualsWithDelta(100, (float) $asset->fresh()->depreciation_price, 0.0001);
         $this->assertSame(2, AssetLog::query()->where('asset_id', $asset->id)->count());
+    }
+
+    /** @return array{0:Asset,1:AccountingJournalEntry} */
+    private function createAccountingAsset(array $overrides = []): array
+    {
+        $this->ensureBox();
+        $attributes = array_merge([
+            'name' => 'أصل محاسبي',
+            'notes' => 'ملاحظة أصلية',
+            'price' => 10000,
+            'depreciation_price' => 10000,
+            'depreciation_rate' => 0.01,
+            'months_number' => 100,
+            'box_id' => 1,
+            'currency' => 'شيكل',
+            'acquired_at' => '2026-01-01',
+            'media' => [],
+        ], $overrides);
+        $asset = Asset::withoutEvents(fn () => Asset::query()->create($attributes));
+        $entry = app(AccountingProjectionService::class)->syncOrFail($asset);
+
+        $this->assertInstanceOf(AccountingJournalEntry::class, $entry);
+
+        return [$asset->fresh(), $entry];
     }
 
     private function createProductSale(

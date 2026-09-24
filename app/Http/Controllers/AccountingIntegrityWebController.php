@@ -158,7 +158,7 @@ class AccountingIntegrityWebController extends Controller
             'ip' => $request->ip(),
             'period' => $period,
         ]);
-        $result = $depreciation->run($period, null);
+        $result = $depreciation->run($period, $request->user()?->id);
         $periodDate = Carbon::createFromFormat('Y-m-d', $period.'-01');
         $integrityResult = $integrity->run($periodDate->copy()->startOfMonth(), $periodDate->copy()->endOfMonth());
         Log::notice('asset_depreciation_finished_from_web', [
