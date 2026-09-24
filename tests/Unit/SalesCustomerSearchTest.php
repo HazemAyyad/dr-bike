@@ -105,7 +105,10 @@ class SalesCustomerSearchTest extends TestCase
         $response = (new ProfitSales)->getProfitSales(Request::create(
             '/api/all/profit/sales',
             'GET',
-            ['search' => '0563333333']
+            [
+                'date' => '2020-01-01',
+                'search' => '0563333333',
+            ]
         ));
         $payload = $response->getData(true);
 
@@ -113,6 +116,13 @@ class SalesCustomerSearchTest extends TestCase
         $this->assertCount(1, $payload['profit_sales']);
         $this->assertSame('سامي الربحي', $payload['profit_sales'][0]['buyer_name']);
         $this->assertSame('0593333333', $payload['profit_sales'][0]['buyer_phone']);
+
+        $dateOnlyResponse = (new ProfitSales)->getProfitSales(Request::create(
+            '/api/all/profit/sales',
+            'GET',
+            ['date' => '2020-01-01']
+        ));
+        $this->assertCount(0, $dateOnlyResponse->getData(true)['profit_sales']);
     }
 
     public function test_instant_sales_search_matches_linked_customer_name_and_phone(): void
@@ -139,7 +149,10 @@ class SalesCustomerSearchTest extends TestCase
             $response = (new InstantSales)->getInstantSales(Request::create(
                 '/api/instant/sales',
                 'GET',
-                ['search' => $search]
+                [
+                    'date' => '2020-01-01',
+                    'search' => $search,
+                ]
             ));
             $payload = $response->getData(true);
 
@@ -148,6 +161,13 @@ class SalesCustomerSearchTest extends TestCase
             $this->assertSame('ليلى الفوري', $payload['instant_sales'][0]['buyer_name']);
             $this->assertSame('0594444444', $payload['instant_sales'][0]['buyer_phone']);
         }
+
+        $dateOnlyResponse = (new InstantSales)->getInstantSales(Request::create(
+            '/api/instant/sales',
+            'GET',
+            ['date' => '2020-01-01']
+        ));
+        $this->assertCount(0, $dateOnlyResponse->getData(true)['instant_sales']);
     }
 
     /** @return list<int> */

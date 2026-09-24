@@ -2024,11 +2024,6 @@ public function store(Request $request)
             if (preg_match('/^(SAL|MNT)-?\d+$/i', $normalizedInvoiceSearch, $invoiceMatch) === 1) {
                 $invoiceSearchPrefix = strtoupper($invoiceMatch[1]);
             }
-            $looksLikeInvoiceSearch = $search !== ''
-                && (
-                    $invoiceSearchPrefix !== null
-                    || (ctype_digit($search) && strlen($search) <= 7)
-                );
             $sortDirection = strtolower((string) $request->input('sort_direction', 'desc')) === 'asc'
                 ? 'asc'
                 : 'desc';
@@ -2051,7 +2046,7 @@ public function store(Request $request)
                     'seller:id,name,phone,sub_phone',
                 ]);
 
-            if (! empty($date) && ! $looksLikeInvoiceSearch) {
+            if (! empty($date) && $search === '') {
                 $query->whereDate('created_at', $date);
             }
 

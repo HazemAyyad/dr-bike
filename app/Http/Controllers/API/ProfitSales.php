@@ -297,7 +297,7 @@ public function getProfitSales(Request $request)
                 'paymentBox:id,name',
             ])
             ->when(
-                $data['date'] ?? null,
+                $search === '' ? ($data['date'] ?? null) : null,
                 fn ($query, $date) => $query->whereDate('created_at', $date)
             )
             ->when($search !== '', function ($query) use ($search) {
