@@ -350,6 +350,7 @@ class Assets extends Controller
                 'depreciation_rate' => 'nullable|numeric|min:0',
                 'months_number' => 'required|integer|min:1',
                 'acquired_at' => 'nullable|date',
+                'estimate_change_reason' => 'nullable|string|max:1000',
                 'media' => 'nullable|array|max:15',
                 'media.*' => [
                     'nullable',
@@ -377,9 +378,11 @@ class Assets extends Controller
             ]);
 
             $data['depreciation_rate'] = round(1 / (int) $data['months_number'], 8);
-            $updatedData = Arr::except($data, ['asset_id', 'media']);
-            $asset = DB::transaction(function () use ($data, $updatedData) {
+            $updatedData = Arr::except($data, ['asset_id', 'media', 'estimate_change_reason']);
+            $asset = DB::transaction(function () use ($data, $updatedData, $request) {
                 $asset = Asset::query()->lockForUpdate()->findOrFail($data['asset_id']);
+                $oldMonthsNumber = (int) $asset->months_number;
+                $newMonthsNumber = (int) $updatedData['months_number'];
                 $newPrice = round((float) $updatedData['price'], 4);
                 $oldPrice = round((float) $asset->price, 4);
                 if (abs($newPrice - $oldPrice) > 0.0001) {
@@ -409,6 +412,21 @@ class Assets extends Controller
                 }
 
                 $asset->update($updatedData);
+                if ($oldMonthsNumber !== $newMonthsNumber
+                    && $asset->logs()->where('type', 'depreciate')->exists()) {
+                    Logs::createLog(
+                        'تغيير تقدير العمر الإنتاجي لأصل',
+                        json_encode([
+                            'asset_id' => (int) $asset->id,
+                            'old_months_number' => $oldMonthsNumber,
+                            'new_months_number' => $newMonthsNumber,
+                            'reason' => $data['estimate_change_reason'] ?? null,
+                            'changed_by' => $request->user()?->id,
+                            'changed_at' => now()->toIso8601String(),
+                        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                        'asset_estimate_change',
+                    );
+                }
 
                 return $asset->fresh();
             }, 3);

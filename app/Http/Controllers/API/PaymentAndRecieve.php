@@ -7,7 +7,6 @@ use App\Services\DebtLedgerService;
 use App\Models\Box;
 use App\Services\SalesDailySessionService;
 use App\Models\Customer;
-use App\Models\Debt;
 use App\Models\Seller;
 use App\Services\EmployeeActivityLogger;
 
@@ -16,6 +15,7 @@ use App\Models\OutgoingCheck;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -252,79 +252,45 @@ class PaymentAndRecieve extends Controller
                     'message' => __('messages.must_select_customer_or_seller')
                 ], 200);
             }
-            foreach($request->debts as $debtData){
+            DB::transaction(function () use ($request, $type) {
+                foreach ($request->debts as $debtData) {
+                    $box = Box::query()->lockForUpdate()->findOrFail($debtData['box_id']);
+                    $transaction = app(DebtLedgerService::class)->createTransaction([
+                        'customer_id' => $request->customer_id ?? null,
+                        'seller_id' => $request->seller_id ?? null,
+                        'type' => $type === 'receive' ? 'taken' : 'given',
+                        'amount' => $debtData['total'],
+                        'currency' => $box->currency,
+                        'transaction_date' => $debtData['due_date'] ?? now()->toDateString(),
+                        'box_id' => $box->id,
+                        'source' => 'manual',
+                        'note' => $type === 'payment'
+                            ? 'دفعة دين يدوية من شاشة الدفع والاستلام'
+                            : 'قبض دين يدوي من شاشة الدفع والاستلام',
+                    ], $request->user()?->id);
 
-                 $box = Box::findOrFail($debtData['box_id']);
-                   if($box->currency!=='شيكل'){
-                        return response()->json([
-                            'status'=>'error',
-                            'message'=>__('messages.currency_shekel'),
-                        ],200);
-                    }
-
-                    if($type === 'payment' && $box->total < $debtData['total']){
-                            return response()->json([
-                            'status'=>'error',
-                            'message'=>__('messages.box_out_of_money'),
-                        ],200);
-                    }
-            }
-            foreach ($request->debts as $debtData) {
-
-                $debt = Debt::create([
-                    'customer_id' => $request->customer_id ?? null,
-                    'seller_id'   => $request->seller_id ?? null,
-                    'total'       => $debtData['total'],
-                    'due_date'    => $debtData['due_date'] ?? null,
-                    'type'        => $type === 'receive' ? 'we owe' : 'owed to us',
-                ]);
-
-                if ($debt->type === 'we owe') {
-                    $box->update([
-                        'total' => (float) ($box->total ?? 0) + (float) $debt->total,
-                    ]);
-                    BoxLogs::createBoxLog(
-                        $box,
-                        'تم اخذ دين من الشخص '.' '.($debt->customer_id ? $debt->customer->name : $debt->seller->name).' '.'من الصندوق',
-                        'add',
-                        $debt->total
+                    Logs::createLog(
+                        'إنشاء حركة في دفتر الديون',
+                        'تم إنشاء الحركة #'.$transaction->id.' من شاشة الدفع والاستلام بقيمة '.$transaction->amount.' '.$transaction->currency,
+                        'debts'
                     );
-                } else {
-                    $box->update([
-                        'total' => (float) ($box->total ?? 0) - (float) $debt->total,
-                    ]);
-                    BoxLogs::createBoxLog(
-                        $box,
-                        'تم اعطاء دين  للشخص '.' '.($debt->customer_id ? $debt->customer->name : $debt->seller->name).' '.'لصالح الصندوق',
-                        'minus',
-                        $debt->total
+                    app(EmployeeActivityLogger::class)->log(
+                        null,
+                        $request->user(),
+                        'debts',
+                        'created_debt_ledger_transaction',
+                        'إضافة حركة إلى دفتر الديون',
+                        'تمت إضافة حركة دفتر ديون بقيمة '.$transaction->amount,
+                        $transaction,
+                        (float) $transaction->amount,
+                        [
+                            'person_type' => $transaction->customer_id ? 'customer' : 'seller',
+                            'person_id' => (int) ($transaction->customer_id ?: $transaction->seller_id),
+                            'transaction_type' => $transaction->type,
+                        ]
                     );
                 }
-                Logs::createLog(
-                    $type === 'payment' ? 'انشاء دين علينا' : 'انشاء دين لنا',
-                    ($type === 'payment'
-                        ? "تم اضافة دين علينا بعد الدفع بقيمة {$debt->total}"
-                        : "تم اضافة دين لنا بعد القبض بقيمة {$debt->total}"),
-                    'debts'
-                );
-                app(EmployeeActivityLogger::class)->log(
-                    null,
-                    $request->user(),
-                    'debts',
-                    'created_debt_from_transaction',
-                    $type === 'payment' ? 'إضافة دين بعد الدفع' : 'إضافة دين بعد القبض',
-                    $type === 'payment'
-                        ? "تمت إضافة دين علينا بعد الدفع بقيمة {$debt->total}"
-                        : "تمت إضافة دين لنا بعد القبض بقيمة {$debt->total}",
-                    $debt,
-                    (float) $debt->total,
-                    [
-                        'person_type' => $debt->customer_id ? 'customer' : 'seller',
-                        'person_id' => (int) ($debt->customer_id ?: $debt->seller_id),
-                        'debt_type' => $debt->type,
-                    ]
-                );
-            }
+            });
         }
 
         return response()->json([

@@ -91,6 +91,9 @@ Route::middleware('security.center')->prefix('security-center')->name('security-
     Route::post('/accounting/assets/depreciation/run', [AccountingIntegrityWebController::class, 'runAssetDepreciation'])
         ->middleware('throttle:1,1')
         ->name('accounting.assets.depreciation.run');
+    Route::post('/accounting/debt-ledger/balances/repair', [AccountingIntegrityWebController::class, 'repairDebtLedgerBalances'])
+        ->middleware('throttle:2,1')
+        ->name('accounting.debt-ledger.balances.repair');
     Route::post('/blocks', [SecurityCenterWebController::class, 'block'])->name('blocks.store');
     Route::post('/blocks/{block}/unblock', [SecurityCenterWebController::class, 'unblock'])->whereNumber('block')->name('blocks.unblock');
     Route::post('/geolocation/refresh', [SecurityCenterWebController::class, 'refreshGeolocation'])->middleware('throttle:6,1')->name('geolocation.refresh');

@@ -831,7 +831,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Boxes Section,Dail
 
 Route::group(['middleware'=>['auth:sanctum','check.permission:Debts','refresh.token.expiry']] , function() {
 
-     // debts
+   // Legacy/deprecated debt endpoints. Kept for old app compatibility only;
+   // new debt writes must use debt_transactions through /debt-ledger/*.
    Route::post('/add/debt' , [Debts::class,'store']);
    Route::post('/show/debt' , [Debts::class,'showDebt']);
    Route::post('/edit/debt' , [Debts::class,'editDebt']);

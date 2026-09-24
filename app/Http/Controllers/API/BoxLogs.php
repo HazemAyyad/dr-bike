@@ -71,23 +71,38 @@ class BoxLogs extends Controller
             || $this->actorCanAccessBox($request, (int) $box->id);
     }
 
-    static public function createTransferLog(Box $fromBox , Box $toBox ,$description, $value, ?string $note = null){
+    static public function createTransferLog(Box $fromBox, Box $toBox, $description, $value, ?string $note = null, ?int $createdBy = null){
 
 
-        BoxLog::create([
+        $payload = [
             'from_box_id' => $fromBox->id,
             'to_box_id' => $toBox->id,
             'description' => $description,
             'note' => $note,
             'value' => $value,
             'type' => 'transfer',
-        ]);
+        ];
+        if (Schema::hasColumn('box_logs', 'reason_code')) {
+            $payload['reason_code'] = 'box_transfer';
+        }
+        if (Schema::hasColumn('box_logs', 'created_by')) {
+            $payload['created_by'] = $createdBy;
+        }
+        BoxLog::create($payload);
     
 
 }
 
 
-    static public function createBoxLog(Box $box, $description, $type, $value, ?string $note = null)
+    static public function createBoxLog(
+        Box $box,
+        $description,
+        $type,
+        $value,
+        ?string $note = null,
+        ?string $reasonCode = null,
+        ?int $createdBy = null,
+    )
     {
         $payload = [
             'box_id' => $box->id,
@@ -103,6 +118,12 @@ class BoxLogs extends Controller
 
         if (Schema::hasColumn('box_logs', 'type')) {
             $payload['type'] = $type;
+        }
+        if (Schema::hasColumn('box_logs', 'reason_code')) {
+            $payload['reason_code'] = $reasonCode;
+        }
+        if (Schema::hasColumn('box_logs', 'created_by')) {
+            $payload['created_by'] = $createdBy;
         }
 
         // Legacy column from original migration

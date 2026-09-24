@@ -1262,11 +1262,28 @@ class AccountingProjectionService
             return null;
         }
         if ($log->type !== 'transfer') {
-            if (! in_array($log->description, ['تم اضافة رصيد للصندوق', 'تم سحب رصيد من الصندوق'], true)) {
+            $reason = $log->reason_code;
+            $legacyAdjustment = ! $reason
+                && in_array($log->description, ['تم اضافة رصيد للصندوق', 'تم سحب رصيد من الصندوق'], true);
+            if (! $legacyAdjustment && ! in_array($reason, [
+                'owner_contribution',
+                'owner_withdrawal',
+                'cash_overage',
+                'cash_shortage',
+                'accounting_correction',
+            ], true)) {
                 return null;
             }
             $log->loadMissing('box');
-            $isIncrease = $log->description === 'تم اضافة رصيد للصندوق';
+            $isIncrease = in_array($reason, ['owner_contribution', 'cash_overage'], true)
+                || ($reason === 'accounting_correction' && $log->type === 'add')
+                || ($legacyAdjustment && $log->description === 'تم اضافة رصيد للصندوق');
+            $counterAccount = match ($reason) {
+                'cash_overage' => 'cash_overage_income',
+                'cash_shortage' => 'cash_shortage_expense',
+                'accounting_correction' => 'clearing',
+                default => 'owner_equity',
+            };
 
             return $this->accounting->post(
                 'box_adjustment:'.$log->id,
@@ -1278,14 +1295,14 @@ class AccountingProjectionService
                 $isIncrease
                     ? [
                         $this->line('cash', $amount, 0, $log, ['box_id' => $log->box_id]),
-                        $this->line('owner_equity', 0, $amount, $log),
+                        $this->line($counterAccount, 0, $amount, $log),
                     ]
                     : [
-                        $this->line('owner_equity', $amount, 0, $log),
+                        $this->line($counterAccount, $amount, 0, $log),
                         $this->line('cash', 0, $amount, $log, ['box_id' => $log->box_id]),
                     ],
-                ['manual_box_balance_adjustment' => true, 'note' => $log->note],
-                auth()->id(),
+                ['manual_box_balance_adjustment' => true, 'reason_code' => $reason, 'note' => $log->note],
+                $log->created_by ?: auth()->id(),
             );
         }
         if (! $log->from_box_id || ! $log->to_box_id) {
@@ -1306,7 +1323,7 @@ class AccountingProjectionService
                 $this->line('cash', 0, $amount, $log, ['box_id' => $log->from_box_id]),
             ],
             ['from_box_id' => $log->from_box_id, 'to_box_id' => $log->to_box_id],
-            auth()->id(),
+            $log->created_by ?: auth()->id(),
         );
     }
 

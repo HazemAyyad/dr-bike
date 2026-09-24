@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Box;
 use App\Models\Customer;
 use App\Models\Debt;
 use App\Models\DebtTransaction;
@@ -31,12 +32,14 @@ class DebtLedgerTest extends TestCase
     public function test_create_transaction_for_customer_calculates_balance_after(): void
     {
         $customer = Customer::create(['name' => 'Test Customer', 'phone' => '0599000001', 'is_canceled' => false]);
+        $box = Box::create(['name' => 'Main', 'total' => 1000, 'currency' => 'شيكل', 'is_shown' => 1]);
 
         $first = $this->postJson('/api/debt-ledger/transaction', [
             'customer_id' => $customer->id,
             'type' => 'taken',
             'amount' => 100,
             'transaction_date' => '2026-05-01',
+            'box_id' => $box->id,
         ]);
 
         $first->assertStatus(200)
@@ -48,6 +51,7 @@ class DebtLedgerTest extends TestCase
             'type' => 'given',
             'amount' => 30,
             'transaction_date' => '2026-05-02',
+            'box_id' => $box->id,
         ]);
 
         $second->assertStatus(200)
@@ -58,12 +62,14 @@ class DebtLedgerTest extends TestCase
     public function test_create_transaction_for_seller(): void
     {
         $seller = Seller::create(['name' => 'Test Seller', 'phone' => '0599000002', 'is_canceled' => false]);
+        $box = Box::create(['name' => 'Main', 'total' => 1000, 'currency' => 'شيكل', 'is_shown' => 1]);
 
         $response = $this->postJson('/api/debt-ledger/transaction', [
             'seller_id' => $seller->id,
             'type' => 'taken',
             'amount' => 50,
             'transaction_date' => '2026-05-01',
+            'box_id' => $box->id,
         ]);
 
         $response->assertStatus(200)

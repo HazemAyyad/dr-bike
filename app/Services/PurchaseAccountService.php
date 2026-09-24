@@ -71,20 +71,6 @@ class PurchaseAccountService
                 throw new \RuntimeException(__('messages.must_be_same_currency_check'));
             }
 
-            $tx = $this->ledger->createTransaction([
-                'customer_id' => $data['customer_id'] ?? null,
-                'seller_id' => $data['seller_id'] ?? null,
-                'type' => 'given',
-                'amount' => $amount,
-                'currency' => $currency,
-                'transaction_date' => $data['paid_at'] ?? now()->toDateString(),
-                'box_id' => $box->id,
-                'source' => 'purchase_account_payment',
-                'source_id' => null,
-                'note' => $data['note'] ?? 'دفعة مورد على الحساب',
-                'receipt_images' => ! empty($data['receipt_images'] ?? []) ? $data['receipt_images'] : null,
-            ], $userId, true);
-
             $payment = PurchasePayment::create([
                 'bill_id' => null,
                 'seller_id' => $data['seller_id'] ?? null,
@@ -95,9 +81,25 @@ class PurchaseAccountService
                 'type' => 'account_payment',
                 'paid_at' => $data['paid_at'] ?? now()->toDateString(),
                 'note' => $data['note'] ?? null,
-                'debt_transaction_id' => $tx->id,
+                'debt_transaction_id' => null,
                 'created_by' => $userId,
             ]);
+
+            $tx = $this->ledger->createTransaction([
+                'customer_id' => $data['customer_id'] ?? null,
+                'seller_id' => $data['seller_id'] ?? null,
+                'type' => 'given',
+                'amount' => $amount,
+                'currency' => $currency,
+                'transaction_date' => $data['paid_at'] ?? now()->toDateString(),
+                'box_id' => $box->id,
+                'source' => 'purchase_account_payment',
+                'source_id' => $payment->id,
+                'note' => $data['note'] ?? 'دفعة مورد على الحساب',
+                'receipt_images' => ! empty($data['receipt_images'] ?? []) ? $data['receipt_images'] : null,
+            ], $userId, true);
+
+            $payment->update(['debt_transaction_id' => $tx->id]);
 
             $allocations = $data['allocations'] ?? [];
             if (! empty($allocations) && ! empty($data['allocate_oldest_first'])) {

@@ -6,6 +6,7 @@ use App\Models\AccountingJournalEntry;
 use App\Models\Asset;
 use App\Models\AssetLog;
 use App\Models\BoxLog;
+use App\Models\DebtTransaction;
 use App\Models\Expense;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
@@ -27,6 +28,8 @@ class AccountingIntegrityService
     public function __construct(
         private InventoryCostIntegrityService $inventoryIntegrity,
         private AssetDepreciationCalculator $assetDepreciation,
+        private DebtLedgerBalanceService $debtBalances,
+        private AccountingReconciliationService $reconciliation,
     ) {}
 
     /** @return array{checks:array<int,array<string,mixed>>,summary:array<string,int>} */
@@ -47,6 +50,21 @@ class AccountingIntegrityService
         $checks[] = $this->checkExpenses($from, $to);
         $checks[] = $this->checkAssets($from, $to);
         $checks[] = $this->checkBoxes($from, $to);
+        $checks[] = $this->checkDebtRunningBalances();
+        $checks[] = $this->checkSourceDebtIntegrity();
+        $checks[] = $this->checkManualDebtBoxes();
+        $checks[] = $this->checkDebtBoxCurrencies();
+        $checks[] = $this->checkNegativeBoxes();
+        $checks[] = $this->checkBoxAdjustmentClassification();
+        $checks[] = $this->checkReconciliationScope('cash_reconciliation', ['cash_by_box']);
+        $checks[] = $this->checkReconciliationScope('party_reconciliation', [
+            'accounts_receivable_customer',
+            'accounts_payable_customer',
+            'accounts_receivable_seller',
+            'accounts_payable_seller',
+            'carrier_receivable',
+        ]);
+        $checks[] = $this->checkSourceLinkedManualMutation($from, $to);
         $checks[] = $this->checkPartyDimensions($from, $to);
         $checks[] = $this->checkInventoryLayersAndAllocations();
         $checks[] = $this->checkProjectionFailures($from, $to);
@@ -564,7 +582,13 @@ class AccountingIntegrityService
     {
         $errors = [];
         BoxLog::query()->whereBetween('created_at', [$from, $to])
-            ->where(fn (Builder $query) => $query->where('type', 'transfer')->orWhereIn('description', ['تم اضافة رصيد للصندوق', 'تم سحب رصيد من الصندوق']))
+            ->where(function (Builder $query) {
+                $query->where('type', 'transfer')
+                    ->orWhereIn('description', ['تم اضافة رصيد للصندوق', 'تم سحب رصيد من الصندوق']);
+                if (Schema::hasColumn('box_logs', 'reason_code')) {
+                    $query->orWhereNotNull('reason_code');
+                }
+            })
             ->orderBy('id')->chunkById(200, function ($rows) use (&$errors) {
                 foreach ($rows as $log) {
                     $type = $log->type === 'transfer' ? 'box_transfer' : 'box_adjustment';
@@ -575,6 +599,167 @@ class AccountingIntegrityService
             });
 
         return $this->check('cashboxes', $errors === [] ? 'PASS' : 'ERROR', 'Transfers and manual cashbox balance changes require accounting effects.', $errors);
+    }
+
+    /** @return array<string, mixed> */
+    private function checkDebtRunningBalances(): array
+    {
+        if (! Schema::hasTable('debt_transactions')) {
+            return $this->check('debt_running_balance', 'WARNING', 'Debt Ledger table is unavailable.', []);
+        }
+        $issues = $this->debtBalances->inspect();
+
+        return $this->check(
+            'debt_running_balance',
+            $issues->isEmpty() ? 'PASS' : 'ERROR',
+            'Debt balance_after must match the chronological running balance for each party and currency.',
+            $issues->pluck('transaction_id')->all(),
+            ['issues' => $issues->values()->all()],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function checkSourceDebtIntegrity(): array
+    {
+        if (! Schema::hasTable('debt_transactions')) {
+            return $this->check('source_debt_integrity', 'WARNING', 'Debt Ledger table is unavailable.', []);
+        }
+
+        $missingSourceIds = DebtTransaction::query()->active()
+            ->whereNotNull('source')->whereNotIn('source', ['', 'manual'])
+            ->whereNull('source_id')
+            ->pluck('id')->map(fn ($id) => 'missing_source_id:'.$id)->all();
+        $duplicates = DB::table('debt_transactions')
+            ->whereNull('archived_at')->whereNull('deleted_at')
+            ->whereNotNull('source_id')->whereNotNull('source')->whereNotIn('source', ['', 'manual'])
+            ->selectRaw('source, source_id, COUNT(*) as duplicate_count')
+            ->groupBy('source', 'source_id')->havingRaw('COUNT(*) > 1')
+            ->get()->map(fn ($row) => 'duplicate:'.$row->source.':'.$row->source_id)->all();
+        $ids = array_merge($missingSourceIds, $duplicates);
+
+        return $this->check(
+            'source_debt_integrity',
+            $ids === [] ? 'PASS' : 'ERROR',
+            'Source-linked debt rows require a traceable source and no duplicate active entry per source.',
+            $ids,
+            ['missing_source_ids' => $missingSourceIds, 'duplicates' => $duplicates],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function checkManualDebtBoxes(): array
+    {
+        if (! Schema::hasTable('debt_transactions')) {
+            return $this->check('manual_debt_box', 'WARNING', 'Debt Ledger table is unavailable.', []);
+        }
+        $ids = DebtTransaction::query()->active()
+            ->where(fn ($query) => $query->whereNull('source')->orWhereIn('source', ['', 'manual']))
+            ->whereNull('box_id')->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        return $this->check(
+            'manual_debt_box',
+            $ids === [] ? 'PASS' : 'WARNING',
+            'Legacy manual debt rows without a box require review; new manual rows are blocked by validation.',
+            $ids,
+            ['classification' => 'legacy_warning', 'code' => 'manual_debt_without_box'],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function checkDebtBoxCurrencies(): array
+    {
+        if (! Schema::hasTable('debt_transactions') || ! Schema::hasTable('boxes')) {
+            return $this->check('debt_box_currency', 'WARNING', 'Debt Ledger or boxes table is unavailable.', []);
+        }
+        $ids = DB::table('debt_transactions as transactions')
+            ->join('boxes', 'boxes.id', '=', 'transactions.box_id')
+            ->whereNull('transactions.archived_at')->whereNull('transactions.deleted_at')
+            ->whereRaw("COALESCE(NULLIF(transactions.currency, ''), 'شيكل') <> COALESCE(NULLIF(boxes.currency, ''), 'شيكل')")
+            ->pluck('transactions.id')->map(fn ($id) => (int) $id)->all();
+
+        return $this->check('debt_box_currency', $ids === [] ? 'PASS' : 'ERROR', 'Debt transaction currency must match its cash box currency.', $ids);
+    }
+
+    /** @return array<string, mixed> */
+    private function checkNegativeBoxes(): array
+    {
+        if (! Schema::hasTable('boxes')) {
+            return $this->check('negative_boxes', 'WARNING', 'Boxes table is unavailable.', []);
+        }
+        $ids = DB::table('boxes')->where('total', '<', -0.0001)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        return $this->check('negative_boxes', $ids === [] ? 'PASS' : 'ERROR', 'Cash boxes must never have a negative permanent balance.', $ids);
+    }
+
+    /** @return array<string, mixed> */
+    private function checkBoxAdjustmentClassification(): array
+    {
+        if (! Schema::hasTable('box_logs') || ! Schema::hasColumn('box_logs', 'reason_code')) {
+            return $this->check('box_unclassified_adjustments', 'WARNING', 'reason_code migration is not applied.', []);
+        }
+        $unclassified = DB::table('box_logs')
+            ->whereNull('reason_code')
+            ->whereIn('description', ['تم اضافة رصيد للصندوق', 'تم سحب رصيد من الصندوق'])
+            ->get(['id', 'created_by']);
+        $newErrors = $unclassified->whereNotNull('created_by')
+            ->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $legacy = $unclassified->whereNull('created_by')
+            ->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $corrections = DB::table('box_logs')
+            ->where('reason_code', 'accounting_correction')
+            ->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $ids = array_values(array_unique(array_merge($newErrors, $legacy, $corrections)));
+
+        return $this->check(
+            'box_unclassified_adjustments',
+            $newErrors !== [] ? 'ERROR' : ($ids === [] ? 'PASS' : 'WARNING'),
+            'New unclassified box adjustments are errors; legacy rows and accounting corrections require accountant review.',
+            $ids,
+            [
+                'new_without_reason' => $newErrors,
+                'legacy_without_reason' => $legacy,
+                'clearing_corrections' => $corrections,
+            ],
+        );
+    }
+
+    /** @param array<int, string> $scopes @return array<string, mixed> */
+    private function checkReconciliationScope(string $name, array $scopes): array
+    {
+        $result = $this->reconciliation->reconcile();
+        $mismatches = collect($result['comparisons'] ?? [])
+            ->whereIn('scope', $scopes)
+            ->where('matches', false)
+            ->values();
+
+        return $this->check(
+            $name,
+            $mismatches->isEmpty() ? 'PASS' : 'ERROR',
+            'Operational balances must reconcile to the General Ledger at the required dimension level.',
+            $mismatches->map(fn (array $row) => $row['scope'].':'.($row['dimension_id'] ?? 'all').':'.$row['currency'])->all(),
+            ['comparisons' => collect($result['comparisons'] ?? [])->whereIn('scope', $scopes)->values()->all()],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function checkSourceLinkedManualMutation(Carbon $from, Carbon $to): array
+    {
+        if (! Schema::hasTable('debt_ledger_activity_logs')) {
+            return $this->check('source_linked_manual_mutation', 'PASS', 'No auditable source-linked manual mutation was detected.', []);
+        }
+        $ids = DB::table('debt_ledger_activity_logs as activity')
+            ->join('debt_transactions as transactions', 'transactions.id', '=', 'activity.debt_transaction_id')
+            ->whereBetween('activity.created_at', [$from, $to])
+            ->whereIn('activity.action', ['transaction_updated', 'transaction_archived', 'transaction_deleted', 'transaction_restored'])
+            ->whereNotNull('transactions.source')->whereNotIn('transactions.source', ['', 'manual'])
+            ->pluck('activity.id')->map(fn ($id) => (int) $id)->all();
+
+        return $this->check(
+            'source_linked_manual_mutation',
+            $ids === [] ? 'PASS' : 'ERROR',
+            'Audit history indicates a source-linked debt transaction was manually changed.',
+            $ids,
+        );
     }
 
     /** @return array<string, mixed> */

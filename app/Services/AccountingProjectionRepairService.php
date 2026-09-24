@@ -439,8 +439,15 @@ class AccountingProjectionRepairService
                 && $accounts->contains($model->box_id ? 'cash' : 'clearing');
         }
         if ($model instanceof BoxLog) {
+            $counterAccount = match ($model->reason_code) {
+                'cash_overage' => 'cash_overage_income',
+                'cash_shortage' => 'cash_shortage_expense',
+                'accounting_correction' => 'clearing',
+                default => 'owner_equity',
+            };
+
             return $accounts->contains('cash')
-                && ($model->type === 'transfer' || $accounts->contains('owner_equity'));
+                && ($model->type === 'transfer' || $accounts->contains($counterAccount));
         }
         if ($model instanceof DebtTransaction) {
             return $accounts->contains('cash')

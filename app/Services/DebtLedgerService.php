@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Exceptions\SourceLinkedDebtTransactionException;
 use App\Http\Controllers\API\BoxLogs;
 use App\Models\Box;
 use App\Models\ContactCategoryAssignment;
@@ -36,11 +37,19 @@ class DebtLedgerService
 
     public const CURRENCIES = ['شيكل', 'دولار', 'دينار'];
 
-    public function __construct(private ?DebtLedgerActivityLogger $activityLogger = null) {}
+    public function __construct(
+        private ?DebtLedgerActivityLogger $activityLogger = null,
+        private ?DebtLedgerBalanceService $balanceService = null,
+    ) {}
 
     private function activity(): DebtLedgerActivityLogger
     {
         return $this->activityLogger ?? app(DebtLedgerActivityLogger::class);
+    }
+
+    private function balances(): DebtLedgerBalanceService
+    {
+        return $this->balanceService ?? app(DebtLedgerBalanceService::class);
     }
 
     public function normalizeCurrency(?string $currency): string
@@ -330,6 +339,8 @@ class DebtLedgerService
                 ->lockForUpdate()
                 ->get();
 
+            $transactions->each(fn (DebtTransaction $transaction) => $this->assertManualMutationAllowed($transaction));
+
             foreach ($transactions as $transaction) {
                 $this->archiveTransaction($transaction);
                 $count++;
@@ -353,6 +364,8 @@ class DebtLedgerService
                 ->lockForUpdate()
                 ->get();
 
+            $transactions->each(fn (DebtTransaction $transaction) => $this->assertManualMutationAllowed($transaction));
+
             foreach ($transactions as $transaction) {
                 $this->restoreTransaction($transaction);
                 $count++;
@@ -364,11 +377,14 @@ class DebtLedgerService
 
     public function restoreTransaction(DebtTransaction $transaction): void
     {
+        $this->assertManualMutationAllowed($transaction);
         if ($transaction->deleted_at) {
             throw new \RuntimeException(__('messages.ledger_transaction_not_restorable'));
         }
 
         DB::transaction(function () use ($transaction) {
+            $transaction = DebtTransaction::query()->whereKey($transaction->id)->lockForUpdate()->firstOrFail();
+            $this->assertManualMutationAllowed($transaction);
             $transaction->update(['archived_at' => null]);
             $transaction = $transaction->fresh(['customer', 'seller']);
 
@@ -376,7 +392,11 @@ class DebtLedgerService
                 $this->applyBoxMovement($transaction, (int) $transaction->box_id);
             }
 
-            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+            $this->recalculatePersonCurrencyBalances(
+                $transaction->customer_id,
+                $transaction->seller_id,
+                $transaction->currency,
+            );
 
             $this->activity()->logForTransaction(
                 $transaction,
@@ -662,7 +682,16 @@ class DebtLedgerService
         bool $logActivity = true
     ): DebtTransaction {
         return DB::transaction(function () use ($data, $userId, $applyBox, $logActivity) {
-            $currency = $this->normalizeCurrency($data['currency'] ?? 'شيكل');
+            $source = trim((string) ($data['source'] ?? 'manual'));
+            $isManual = $source === '' || $source === 'manual';
+            $box = null;
+            if ($isManual) {
+                if (empty($data['box_id'])) {
+                    throw new \InvalidArgumentException('الصندوق مطلوب للحركة اليدوية.');
+                }
+                $box = Box::query()->lockForUpdate()->findOrFail((int) $data['box_id']);
+            }
+            $currency = $this->normalizeCurrency($box?->currency ?? ($data['currency'] ?? 'شيكل'));
             $previousBalance = $this->getPreviousBalance(
                 $data['customer_id'] ?? null,
                 $data['seller_id'] ?? null,
@@ -685,7 +714,7 @@ class DebtLedgerService
                 'receipt_images' => $data['receipt_images'] ?? null,
                 'transaction_date' => $data['transaction_date'],
                 'box_id' => $data['box_id'] ?? null,
-                'source' => $data['source'] ?? 'manual',
+                'source' => $source === '' ? 'manual' : $source,
                 'source_id' => $data['source_id'] ?? null,
                 'created_by' => $userId,
             ]);
@@ -693,6 +722,12 @@ class DebtLedgerService
             if ($applyBox && ! empty($data['box_id'])) {
                 $this->applyBoxMovement($transaction, (int) $data['box_id']);
             }
+
+            $this->recalculatePersonCurrencyBalances(
+                $transaction->customer_id,
+                $transaction->seller_id,
+                $currency,
+            );
 
             $transaction = $transaction->fresh(['customer', 'seller']);
 
@@ -1026,7 +1061,7 @@ class DebtLedgerService
                     ['snapshot' => $this->activity()->transactionSnapshot($transaction)]
                 );
             }
-            $this->deleteTransaction($transaction, logActivity: false);
+            $this->deleteTransaction($transaction, logActivity: false, allowSourceLinked: true);
         }
     }
 
@@ -1059,7 +1094,7 @@ class DebtLedgerService
                     'إزالة معاملة مرتبطة بـ '.$this->ledgerSourceActivitySuffix($source, $sourceId).' (لا مبلغ دين)',
                     ['snapshot' => $this->activity()->transactionSnapshot($existing)]
                 );
-                $this->deleteTransaction($existing, logActivity: false);
+                $this->deleteTransaction($existing, logActivity: false, allowSourceLinked: true);
             }
 
             return null;
@@ -1081,7 +1116,7 @@ class DebtLedgerService
 
         if ($existing) {
             $before = $this->activity()->transactionSnapshot($existing);
-            $updated = $this->updateTransaction($existing, $payload, logActivity: false);
+            $updated = $this->updateTransaction($existing, $payload, logActivity: false, allowSourceLinked: true);
             $this->activity()->logForTransaction(
                 $updated,
                 'auto_updated',
@@ -1256,7 +1291,7 @@ class DebtLedgerService
 
     public function applyBoxMovement(DebtTransaction $transaction, int $boxId): void
     {
-        $box = Box::findOrFail($boxId);
+        $box = Box::query()->lockForUpdate()->findOrFail($boxId);
 
         if ($this->normalizeCurrency($box->currency) !== $this->normalizeCurrency($transaction->currency)) {
             throw new \RuntimeException(__('messages.must_be_same_currency_check'));
@@ -1273,16 +1308,23 @@ class DebtLedgerService
                 'دفتر الديون - أخذت من '.$personName,
                 'add',
                 $transaction->amount,
-                $transaction->note
+                $transaction->note,
+                'debt_ledger_cash',
+                $transaction->created_by,
             );
         } else {
+            if ((float) $box->total + 0.0001 < (float) $transaction->amount) {
+                throw new \RuntimeException('رصيد الصندوق غير كافٍ لتنفيذ الحركة.');
+            }
             $box->update(['total' => $box->total - $transaction->amount]);
             BoxLogs::createBoxLog(
                 $box,
                 'دفتر الديون - أعطيت لـ '.$personName,
                 'minus',
                 $transaction->amount,
-                $transaction->note
+                $transaction->note,
+                'debt_ledger_cash',
+                $transaction->created_by,
             );
         }
     }
@@ -1526,34 +1568,30 @@ class DebtLedgerService
 
     public function recalculateBalances(?int $customerId, ?int $sellerId): void
     {
-        $transactions = $this->baseQuery($customerId, $sellerId)
-            ->orderBy('transaction_date')
-            ->orderBy('id')
-            ->get();
-
         foreach (self::CURRENCIES as $currency) {
-            $running = 0.0;
-
-            foreach ($transactions->where('currency', $currency) as $transaction) {
-                $amount = (float) $transaction->amount;
-                $running = $transaction->type === 'taken'
-                    ? $running + $amount
-                    : $running - $amount;
-
-                if ((float) $transaction->balance_after !== $running) {
-                    $transaction->update(['balance_after' => $running]);
-                }
-            }
+            $this->recalculatePersonCurrencyBalances($customerId, $sellerId, $currency);
         }
+    }
+
+    public function recalculatePersonCurrencyBalances(?int $customerId, ?int $sellerId, string $currency): int
+    {
+        return $this->balances()->recalculatePersonCurrencyBalances(
+            $customerId,
+            $sellerId,
+            $this->normalizeCurrency($currency),
+        );
     }
 
     public function archiveTransaction(DebtTransaction $transaction, bool $logActivity = true): void
     {
+        $this->assertManualMutationAllowed($transaction);
         if ($transaction->deleted_at) {
             throw new \RuntimeException(__('messages.ledger_transaction_not_restorable'));
         }
 
         DB::transaction(function () use ($transaction, $logActivity) {
+            $transaction = DebtTransaction::query()->whereKey($transaction->id)->lockForUpdate()->firstOrFail();
+            $this->assertManualMutationAllowed($transaction);
             $before = $this->activity()->transactionSnapshot($transaction);
 
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
@@ -1566,7 +1604,7 @@ class DebtLedgerService
             }
 
             $transaction->update(['archived_at' => now()]);
-            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+            $this->recalculatePersonCurrencyBalances($transaction->customer_id, $transaction->seller_id, $transaction->currency);
 
             if ($logActivity) {
                 $this->activity()->logForTransaction(
@@ -1580,9 +1618,20 @@ class DebtLedgerService
         });
     }
 
-    public function deleteTransaction(DebtTransaction $transaction, bool $logActivity = true): void
+    public function deleteTransaction(
+        DebtTransaction $transaction,
+        bool $logActivity = true,
+        bool $allowSourceLinked = false,
+    ): void
     {
-        DB::transaction(function () use ($transaction, $logActivity) {
+        if (! $allowSourceLinked) {
+            $this->assertManualMutationAllowed($transaction);
+        }
+        DB::transaction(function () use ($transaction, $logActivity, $allowSourceLinked) {
+            $transaction = DebtTransaction::query()->whereKey($transaction->id)->lockForUpdate()->firstOrFail();
+            if (! $allowSourceLinked) {
+                $this->assertManualMutationAllowed($transaction);
+            }
             if ($transaction->archived_at || $transaction->deleted_at) {
                 return;
             }
@@ -1599,7 +1648,7 @@ class DebtLedgerService
             }
 
             $transaction->update(['deleted_at' => now()]);
-            $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+            $this->recalculatePersonCurrencyBalances($transaction->customer_id, $transaction->seller_id, $transaction->currency);
 
             if ($logActivity) {
                 $this->activity()->logForTransaction(
@@ -1616,12 +1665,22 @@ class DebtLedgerService
     public function updateTransaction(
         DebtTransaction $transaction,
         array $data,
-        bool $logActivity = true
+        bool $logActivity = true,
+        bool $allowSourceLinked = false,
     ): DebtTransaction {
-        return DB::transaction(function () use ($transaction, $data, $logActivity) {
+        if (! $allowSourceLinked) {
+            $this->assertManualMutationAllowed($transaction);
+        }
+
+        return DB::transaction(function () use ($transaction, $data, $logActivity, $allowSourceLinked) {
+            $transaction = DebtTransaction::query()->whereKey($transaction->id)->lockForUpdate()->firstOrFail();
+            if (! $allowSourceLinked) {
+                $this->assertManualMutationAllowed($transaction);
+            }
             $before = $this->activity()->transactionSnapshot($transaction);
             $oldCustomerId = $transaction->customer_id ? (int) $transaction->customer_id : null;
             $oldSellerId = $transaction->seller_id ? (int) $transaction->seller_id : null;
+            $oldCurrency = $this->normalizeCurrency($transaction->currency);
             if ($this->shouldSyncBox($transaction) && $transaction->box_id) {
                 $this->reverseBoxMovement(
                     $transaction,
@@ -1631,9 +1690,12 @@ class DebtLedgerService
                 );
             }
 
-            $currency = array_key_exists('currency', $data)
-                ? $this->normalizeCurrency($data['currency'])
-                : $this->normalizeCurrency($transaction->currency);
+            $newBoxId = array_key_exists('box_id', $data) ? $data['box_id'] : $transaction->box_id;
+            if ($this->shouldSyncBox($transaction) && ! $newBoxId) {
+                throw new \InvalidArgumentException('الصندوق مطلوب للحركة اليدوية.');
+            }
+            $newBox = $newBoxId ? Box::query()->lockForUpdate()->findOrFail((int) $newBoxId) : null;
+            $currency = $this->normalizeCurrency($newBox?->currency ?? ($data['currency'] ?? $transaction->currency));
 
             $updatePayload = [
                 'type' => $data['type'],
@@ -1664,10 +1726,11 @@ class DebtLedgerService
             // A source document may be reassigned to another person. Recalculate
             // both ledgers so the debt is removed from the old owner and added to
             // the new one with correct running balances.
-            $this->recalculateBalances($oldCustomerId, $oldSellerId);
+            $this->recalculatePersonCurrencyBalances($oldCustomerId, $oldSellerId, $oldCurrency);
             if ($oldCustomerId !== ($transaction->customer_id ? (int) $transaction->customer_id : null)
-                || $oldSellerId !== ($transaction->seller_id ? (int) $transaction->seller_id : null)) {
-                $this->recalculateBalances($transaction->customer_id, $transaction->seller_id);
+                || $oldSellerId !== ($transaction->seller_id ? (int) $transaction->seller_id : null)
+                || $oldCurrency !== $currency) {
+                $this->recalculatePersonCurrencyBalances($transaction->customer_id, $transaction->seller_id, $currency);
             }
 
             $transaction = $transaction->fresh(['customer', 'seller']);
@@ -1703,13 +1766,24 @@ class DebtLedgerService
         return $source === 'manual' || $source === '';
     }
 
+    public function assertManualMutationAllowed(DebtTransaction $transaction): void
+    {
+        $source = trim((string) ($transaction->source ?? ''));
+        if ($source !== '' && $source !== 'manual') {
+            throw new SourceLinkedDebtTransactionException(
+                $source,
+                $transaction->source_id ? (int) $transaction->source_id : null,
+            );
+        }
+    }
+
     public function reverseBoxMovement(
         DebtTransaction $transaction,
         int $boxId,
         string $type,
         float $amount
     ): void {
-        $box = Box::findOrFail($boxId);
+        $box = Box::query()->lockForUpdate()->findOrFail($boxId);
 
         $txCurrency = $this->normalizeCurrency($transaction->currency);
         if ($this->normalizeCurrency($box->currency) !== $txCurrency) {
@@ -1721,13 +1795,18 @@ class DebtLedgerService
             : $transaction->seller?->name;
 
         if ($type === 'taken') {
+            if ((float) $box->total + 0.0001 < $amount) {
+                throw new \RuntimeException('رصيد الصندوق غير كافٍ لتنفيذ الحركة.');
+            }
             $box->update(['total' => $box->total - $amount]);
             BoxLogs::createBoxLog(
                 $box,
                 'دفتر الديون - تعديل (إلغاء أخذت) '.$personName,
                 'minus',
                 $amount,
-                $transaction->note
+                $transaction->note,
+                'debt_ledger_cash_reversal',
+                auth()->id(),
             );
         } else {
             $box->update(['total' => $box->total + $amount]);
@@ -1736,7 +1815,9 @@ class DebtLedgerService
                 'دفتر الديون - تعديل (إلغاء أعطيت) '.$personName,
                 'add',
                 $amount,
-                $transaction->note
+                $transaction->note,
+                'debt_ledger_cash_reversal',
+                auth()->id(),
             );
         }
     }

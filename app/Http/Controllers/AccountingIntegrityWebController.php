@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AssetDepreciationWorkflowService;
+use App\Services\DebtLedgerBalanceRepairService;
 use App\Services\MaintenancePrepaymentSyncService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -27,6 +28,7 @@ class AccountingIntegrityWebController extends Controller
         AccountingIntegrityService $integrity,
         MaintenancePrepaymentSyncService $prepayments,
         AssetDepreciationWorkflowService $depreciation,
+        DebtLedgerBalanceRepairService $debtBalances,
     ): View {
         $data = $request->validate([
             'from' => ['nullable', 'date_format:Y-m-d'],
@@ -42,6 +44,7 @@ class AccountingIntegrityWebController extends Controller
             'repairResult' => $repair->run(true),
             'prepaymentResult' => $prepayments->run(true),
             'depreciationResult' => $depreciation->preview($period),
+            'debtBalanceResult' => $debtBalances->run(true),
             'integrityResult' => $integrity->run($from, $to),
             'from' => $input['from'],
             'to' => $input['to'],
@@ -178,6 +181,42 @@ class AccountingIntegrityWebController extends Controller
         ]);
     }
 
+    public function repairDebtLedgerBalances(
+        Request $request,
+        DebtLedgerBalanceRepairService $debtBalances,
+        AccountingIntegrityService $integrity,
+    ): View {
+        $data = $request->validate([
+            'access_token' => ['required', 'string', 'max:500'],
+            'confirmation' => ['required', 'string', 'in:إصلاح أرصدة دفتر الديون'],
+            'from' => ['nullable', 'date_format:Y-m-d'],
+            'to' => ['nullable', 'date_format:Y-m-d'],
+        ], [
+            'confirmation.in' => 'اكتب عبارة التأكيد كما تظهر تمامًا: إصلاح أرصدة دفتر الديون',
+        ]);
+        $this->ensureValidRepairToken((string) $data['access_token']);
+        $this->ensureAccountingTablesReady();
+        [$from, $to, $input] = $this->datesFromValidated($data);
+
+        Log::notice('debt_ledger_balance_repair_started_from_web', [
+            'ip' => $request->ip(),
+        ]);
+        $result = $debtBalances->run(false);
+        $integrityResult = $integrity->run($from, $to);
+        Log::notice('debt_ledger_balance_repair_finished_from_web', [
+            'ip' => $request->ip(),
+            'summary' => $result['summary'],
+        ]);
+
+        return $this->page([
+            'mode' => 'debt_balance_repair',
+            'debtBalanceResult' => $result,
+            'integrityResult' => $integrityResult,
+            'from' => $input['from'],
+            'to' => $input['to'],
+        ]);
+    }
+
     /** @param array<string, mixed> $data @return array{0:?Carbon,1:?Carbon,2:array{from:?string,to:?string}} */
     private function datesFromValidated(array $data): array
     {
@@ -232,6 +271,7 @@ class AccountingIntegrityWebController extends Controller
             'remainingPrepaymentResult' => null,
             'depreciationResult' => null,
             'depreciationExecution' => null,
+            'debtBalanceResult' => null,
             'integrityResult' => null,
             'from' => null,
             'to' => null,
@@ -241,7 +281,7 @@ class AccountingIntegrityWebController extends Controller
         ], $overrides));
     }
 
-    /** @return array{ready:bool,tables:array<string,bool>,service_revenue:bool,maintenance_payment_stage:bool,asset_depreciation_fields:bool} */
+    /** @return array<string, mixed> */
     private function migrationStatus(): array
     {
         $tables = collect([
@@ -263,16 +303,29 @@ class AccountingIntegrityWebController extends Controller
             && Schema::hasTable('asset_logs')
             && Schema::hasColumn('asset_logs', 'depreciation_period')
             && Schema::hasColumn('asset_logs', 'depreciation_amount');
+        $debtLedgerSafety = Schema::hasTable('debt_transactions')
+            && Schema::hasTable('boxes')
+            && Schema::hasTable('box_logs')
+            && Schema::hasColumn('box_logs', 'reason_code')
+            && Schema::hasColumn('box_logs', 'created_by');
+        $cashDifferenceAccounts = $tables['accounting_accounts']
+            && DB::table('accounting_accounts')
+                ->whereIn('system_key', ['cash_overage_income', 'cash_shortage_expense'])
+                ->distinct()->count('system_key') === 2;
 
         return [
             'ready' => ! in_array(false, $tables, true)
                 && $serviceRevenue
                 && $maintenancePaymentStage
-                && $assetDepreciationFields,
+                && $assetDepreciationFields
+                && $debtLedgerSafety
+                && $cashDifferenceAccounts,
             'tables' => $tables,
             'service_revenue' => $serviceRevenue,
             'maintenance_payment_stage' => $maintenancePaymentStage,
             'asset_depreciation_fields' => $assetDepreciationFields,
+            'debt_ledger_safety' => $debtLedgerSafety,
+            'cash_difference_accounts' => $cashDifferenceAccounts,
         ];
     }
 }

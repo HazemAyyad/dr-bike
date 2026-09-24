@@ -30,12 +30,22 @@
         'already_depreciated' => 'مُهلكة لهذا الشهر', 'requires_review' => 'تحتاج مراجعة',
         'skipped' => 'غير منفذة', 'depreciation_amount' => 'قيمة الإهلاك المتوقع',
     ];
+    $debtBalanceSummaryLabels = [
+        'total_issues' => 'الفروقات المكتشفة', 'affected_groups' => 'أشخاص/عملات متأثرة',
+        'repaired_rows' => 'صفوف balance_after المصححة', 'remaining_issues' => 'الفروقات المتبقية',
+        'accounting_mismatches' => 'فروقات GL المتبقية',
+    ];
     $checkLabels = [
         'journal_balance' => 'توازن القيود', 'product_sales' => 'مبيعات المنتجات',
         'profit_sales' => 'البيع الربحي/الخدمات', 'purchases' => 'المشتريات والمدفوعات',
         'purchase_returns' => 'مرتجعات المشتريات', 'sales_returns' => 'مرتجعات المبيعات',
         'maintenance' => 'الصيانة', 'maintenance_prepayments' => 'عربونات الصيانة', 'expenses' => 'المصروفات', 'assets' => 'الأصول والإهلاك',
         'cashboxes' => 'الصناديق', 'party_dimensions' => 'ربط الذمم بالأطراف',
+        'debt_running_balance' => 'الرصيد المتسلسل للديون', 'source_debt_integrity' => 'سلامة مصادر الديون',
+        'manual_debt_box' => 'صندوق الحركة اليدوية', 'debt_box_currency' => 'عملة الدين والصندوق',
+        'negative_boxes' => 'الصناديق السالبة', 'box_unclassified_adjustments' => 'تصنيف تعديلات الصندوق',
+        'cash_reconciliation' => 'مطابقة النقد حسب الصندوق', 'party_reconciliation' => 'مطابقة الذمم حسب الطرف',
+        'source_linked_manual_mutation' => 'تعديل يدوي لحركة مرتبطة بمصدر',
         'inventory_cost_integrity' => 'سلامة FIFO', 'projection_failures' => 'أخطاء الترحيل المفتوحة',
     ];
 @endphp
@@ -59,6 +69,8 @@
                 <span class="migration-item {{ $migrationStatus['service_revenue'] ? 'ok' : 'bad' }}"><span class="ltr code">service_revenue</span> · {{ $migrationStatus['service_revenue'] ? 'موجود' : 'مفقود' }}</span>
                 <span class="migration-item {{ $migrationStatus['maintenance_payment_stage'] ? 'ok' : 'bad' }}"><span class="ltr code">maintenance_payments.payment_stage</span> · {{ $migrationStatus['maintenance_payment_stage'] ? 'موجود' : 'مفقود' }}</span>
                 <span class="migration-item {{ $migrationStatus['asset_depreciation_fields'] ? 'ok' : 'bad' }}">حقول الإهلاك الشهري · {{ $migrationStatus['asset_depreciation_fields'] ? 'موجودة' : 'مفقودة' }}</span>
+                <span class="migration-item {{ $migrationStatus['debt_ledger_safety'] ? 'ok' : 'bad' }}">حماية دفتر الديون وحقول Box Logs · {{ $migrationStatus['debt_ledger_safety'] ? 'موجودة' : 'مفقودة' }}</span>
+                <span class="migration-item {{ $migrationStatus['cash_difference_accounts'] ? 'ok' : 'bad' }}">حسابا زيادة/عجز الصندوق · {{ $migrationStatus['cash_difference_accounts'] ? 'موجودان' : 'مفقودان' }}</span>
             </div>
         </div>
     </section>
@@ -68,6 +80,7 @@
     @if($mode === 'repair')<div class="success">اكتملت محاولة الإصلاح. راجع نتيجة التنفيذ والأخطاء المتبقية والفحص اللاحق أدناه.</div>@endif
     @if($mode === 'prepayment_sync')<div class="success">اكتمل ترحيل عربونات الصيانة القابلة للترحيل. لم يتم تعديل أرصدة الصناديق أو مبالغ الصيانة.</div>@endif
     @if($mode === 'depreciation_run')<div class="success">اكتمل تنفيذ إهلاك الشهر المحدد. راجع عدد الأصول والقيود والتحذيرات أدناه.</div>@endif
+    @if($mode === 'debt_balance_repair')<div class="success">اكتمل تصحيح الحقل المشتق balance_after فقط. لم تتغير المبالغ أو الصناديق أو القيود المحاسبية.</div>@endif
 
     <section class="panel">
         <div class="panel-head"><h2>المعاينة + فحص السلامة</h2><span class="muted">فلتر التاريخ يخص فحص السلامة فقط؛ أخطاء الترحيل تعرض كل السجلات المفتوحة.</span></div>
@@ -132,6 +145,21 @@
         </section>
     @endif
 
+    @if($debtBalanceResult)
+        <section class="panel">
+            <div class="panel-head"><h2>الرصيد المتسلسل لدفتر الديون</h2><span class="badge {{ $mode === 'debt_balance_repair' ? 'warning-badge' : 'pass' }}">{{ $mode === 'debt_balance_repair' ? 'بعد الإصلاح' : 'معاينة فقط' }}</span></div>
+            <div class="panel-body">
+                <div class="notice help">المعاينة تقارن <span class="ltr code">balance_after</span> المخزن بالرصيد المتوقع حسب <span class="ltr code">transaction_date ثم id</span> لكل شخص وعملة. الإصلاح لا يغيّر المبلغ أو النوع أو العملة أو الصندوق أو المصدر أو النقد أو القيود.</div>
+                <div class="summary">@foreach($debtBalanceSummaryLabels as $key => $label)<div class="metric"><div class="label">{{ $label }}</div><div class="value">{{ number_format($debtBalanceResult['summary'][$key] ?? 0) }}</div></div>@endforeach</div>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>الطرف</th><th>العملة</th><th>الحركة</th><th>المخزن</th><th>المتوقع</th><th>الفرق</th></tr></thead><tbody>
+            @forelse($debtBalanceResult['items'] as $item)
+                <tr><td>{{ $item['person_type'] === 'customer' ? 'زبون' : 'مورد' }} #{{ $item['person_id'] }}</td><td>{{ $item['currency'] }}</td><td>#{{ $item['transaction_id'] }}</td><td>{{ number_format($item['stored_balance'], 2) }}</td><td>{{ number_format($item['expected_balance'], 2) }}</td><td>{{ number_format($item['difference'], 2) }}</td></tr>
+            @empty<tr><td class="empty" colspan="6">كل أرصدة دفتر الديون المتسلسلة صحيحة.</td></tr>@endforelse
+            </tbody></table></div>
+        </section>
+    @endif
+
     @if($integrityResult)
         <section class="panel">
             <div class="panel-head"><h2>نتيجة فحص السلامة</h2><div class="actions"><span class="badge pass">PASS {{ $integrityResult['summary']['pass'] }}</span><span class="badge warning-badge">WARNING {{ $integrityResult['summary']['warning'] }}</span><span class="badge error-badge">ERROR {{ $integrityResult['summary']['error'] }}</span></div></div>
@@ -140,6 +168,20 @@
             </tbody></table></div>
         </section>
     @endif
+
+    <section class="panel danger-zone">
+        <div class="panel-head"><h2>إصلاح الرصيد المتسلسل لدفتر الديون</h2><span class="badge error-badge">يعدل balance_after فقط</span></div>
+        <div class="panel-body">
+            <div class="warning help"><strong>ما الذي سيتغير؟</strong> يعيد حساب الحقل المشتق <span class="ltr code">debt_transactions.balance_after</span> حسب التاريخ وID للشخص والعملة المتأثرة فقط. لا يغيّر المبالغ أو الصناديق أو النقد أو القيود، ثم يعرض نتيجة المطابقة المحاسبية بدون اختراع أي قيد.</div>
+            <form class="repair-grid" method="POST" action="{{ route('security-center.accounting.debt-ledger.balances.repair') }}" onsubmit="return confirm('هل راجعت معاينة فروقات دفتر الديون والنسخة الاحتياطية وتريد تصحيح balance_after فقط؟')">
+                @csrf
+                <input type="hidden" name="from" value="{{ $from }}"><input type="hidden" name="to" value="{{ $to }}">
+                <div><label>رمز إصلاح المحاسبة</label><input class="field ltr" type="password" name="access_token" autocomplete="current-password" required></div>
+                <div><label>اكتب بالضبط: إصلاح أرصدة دفتر الديون</label><input class="field" name="confirmation" autocomplete="off" placeholder="إصلاح أرصدة دفتر الديون" required></div>
+                <div style="align-self:end"><button class="button danger" type="submit" {{ $migrationStatus['ready'] && $webRepairEnabled ? '' : 'disabled' }}>تنفيذ إصلاح balance_after</button></div>
+            </form>
+        </div>
+    </section>
 
     <section class="panel danger-zone">
         <div class="panel-head"><h2>ترحيل عربونات الصيانة</h2><span class="badge error-badge">يضيف قيودًا محاسبية</span></div>

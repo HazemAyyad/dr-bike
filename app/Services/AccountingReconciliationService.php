@@ -44,7 +44,7 @@ class AccountingReconciliationService
             ->groupBy('id', 'currency')
             ->get();
         $ledger = $this->ledgerBalances('cash', 'lines.box_id');
-        $this->merge($comparisons, 'cash_by_box', $operational, $ledger);
+        $this->merge($comparisons, 'cash_by_box', $operational, $ledger, 'box');
     }
 
     private function compareInventory(Collection $comparisons): void
@@ -73,32 +73,57 @@ class AccountingReconciliationService
             ->groupBy('customer_id', 'seller_id', 'currency')
             ->get();
 
-        $receivable = $active->groupBy('currency')->map(fn ($rows, $currency) => (object) [
-            'dimension_id' => null,
-            'currency' => $currency,
-            'amount' => $rows->sum(fn ($row) => abs(min((float) $row->signed_balance, 0))),
-        ])->values();
-        if (Schema::hasTable('sales_orders') && Schema::hasColumn('sales_orders', 'carrier_receivable_balance')) {
-            $carrierReceivable = (float) DB::table('sales_orders')->sum('carrier_receivable_balance');
-            $shekel = $receivable->first(fn ($row) => $this->normalizeCurrency($row->currency) === 'شيكل');
-            if ($shekel) {
-                $shekel->amount = (float) $shekel->amount + $carrierReceivable;
-            } elseif (abs($carrierReceivable) > 0.0001) {
-                $receivable->push((object) [
-                    'dimension_id' => null,
-                    'currency' => 'شيكل',
-                    'amount' => $carrierReceivable,
-                ]);
-            }
-        }
-        $payable = $active->groupBy('currency')->map(fn ($rows, $currency) => (object) [
-            'dimension_id' => null,
-            'currency' => $currency,
-            'amount' => $rows->sum(fn ($row) => max((float) $row->signed_balance, 0)),
-        ])->values();
+        foreach ([
+            ['column' => 'customer_id', 'type' => 'customer'],
+            ['column' => 'seller_id', 'type' => 'seller'],
+        ] as $party) {
+            $rows = $active
+                ->filter(fn ($row) => $row->{$party['column']} !== null)
+                ->values();
+            $receivable = $rows->map(fn ($row) => (object) [
+                'dimension_id' => (int) $row->{$party['column']},
+                'currency' => $row->currency,
+                'amount' => abs(min((float) $row->signed_balance, 0)),
+            ])->values();
+            $payable = $rows->map(fn ($row) => (object) [
+                'dimension_id' => (int) $row->{$party['column']},
+                'currency' => $row->currency,
+                'amount' => max((float) $row->signed_balance, 0),
+            ])->values();
 
-        $this->merge($comparisons, 'accounts_receivable', $receivable, $this->ledgerBalances('accounts_receivable'));
-        $this->merge($comparisons, 'accounts_payable', $payable, $this->ledgerBalances('accounts_payable', null, true));
+            $dimension = 'lines.'.$party['column'];
+            $this->merge(
+                $comparisons,
+                'accounts_receivable_'.$party['type'],
+                $receivable,
+                $this->ledgerBalances('accounts_receivable', $dimension, false, true),
+                $party['type'],
+            );
+            $this->merge(
+                $comparisons,
+                'accounts_payable_'.$party['type'],
+                $payable,
+                $this->ledgerBalances('accounts_payable', $dimension, true, true),
+                $party['type'],
+            );
+        }
+
+        if (Schema::hasTable('sales_orders')
+            && Schema::hasColumn('sales_orders', 'carrier_receivable_balance')
+            && Schema::hasColumn('sales_orders', 'delivery_company_id')) {
+            $carrierOperational = DB::table('sales_orders')
+                ->whereNotNull('delivery_company_id')
+                ->selectRaw("delivery_company_id as dimension_id, 'شيكل' as currency, SUM(carrier_receivable_balance) as amount")
+                ->groupBy('delivery_company_id')
+                ->get();
+            $this->merge(
+                $comparisons,
+                'carrier_receivable',
+                $carrierOperational,
+                $this->ledgerBalances('accounts_receivable', 'lines.delivery_company_id', false, true),
+                'delivery_company',
+            );
+        }
     }
 
     private function compareChecks(Collection $comparisons): void
@@ -222,7 +247,12 @@ class AccountingReconciliationService
         }
     }
 
-    private function ledgerBalances(string $accountKey, ?string $dimension = null, bool $creditNormal = false): Collection
+    private function ledgerBalances(
+        string $accountKey,
+        ?string $dimension = null,
+        bool $creditNormal = false,
+        bool $requireDimension = false,
+    ): Collection
     {
         $dimensionSql = $dimension ?: 'NULL';
         $balanceSql = $creditNormal ? 'SUM(lines.credit - lines.debit)' : 'SUM(lines.debit - lines.credit)';
@@ -231,13 +261,20 @@ class AccountingReconciliationService
             ->join('accounting_journal_entries as entries', 'entries.id', '=', 'lines.journal_entry_id')
             ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
             ->where('accounts.system_key', $accountKey)
+            ->when($dimension && $requireDimension, fn ($query) => $query->whereNotNull($dimension))
             ->selectRaw("{$dimensionSql} as dimension_id, entries.currency, {$balanceSql} as amount")
             ->groupBy('entries.currency')
             ->when($dimension, fn ($query) => $query->groupByRaw($dimension))
             ->get();
     }
 
-    private function merge(Collection $comparisons, string $scope, Collection $operational, Collection $ledger): void
+    private function merge(
+        Collection $comparisons,
+        string $scope,
+        Collection $operational,
+        Collection $ledger,
+        ?string $dimensionType = null,
+    ): void
     {
         $normalize = fn ($row) => ($row->dimension_id ?? 'all').'|'.$this->normalizeCurrency($row->currency ?? null);
         $operational = $operational->keyBy($normalize);
@@ -250,6 +287,7 @@ class AccountingReconciliationService
             $difference = round($book - $actual, 4);
             $comparisons->push([
                 'scope' => $scope,
+                'dimension_type' => $dimensionType,
                 'dimension_id' => ($source->dimension_id ?? null) !== null ? (int) $source->dimension_id : null,
                 'currency' => $this->normalizeCurrency($source->currency ?? null),
                 'operational_balance' => $actual,

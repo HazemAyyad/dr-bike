@@ -5,6 +5,10 @@ namespace Tests\Unit;
 use App\Models\AccountingJournalEntry;
 use App\Models\Asset;
 use App\Models\AssetLog;
+use App\Models\Box;
+use App\Models\BoxLog;
+use App\Models\Customer;
+use App\Models\DebtTransaction;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenancePayment;
@@ -22,6 +26,8 @@ use App\Services\AccountingReconciliationService;
 use App\Services\AccountingReportService;
 use App\Services\AccountingService;
 use App\Services\AssetDepreciationCalculator;
+use App\Services\DebtLedgerBalanceRepairService;
+use App\Services\DebtLedgerService;
 use App\Services\MonthlyAssetDepreciationService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
@@ -53,6 +59,20 @@ class AccountingLedgerIntegrationTest extends TestCase
         Schema::connection('accounting_test')->create('users', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
+        });
+        Schema::connection('accounting_test')->create('customers', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('phone')->nullable();
+            $table->boolean('is_canceled')->default(false);
+            $table->timestamps();
+        });
+        Schema::connection('accounting_test')->create('sellers', function (Blueprint $table) {
+            $table->id();
+            $table->string('name');
+            $table->string('phone')->nullable();
+            $table->boolean('is_canceled')->default(false);
+            $table->timestamps();
         });
         Schema::connection('accounting_test')->create('assets', function (Blueprint $table) {
             $table->id();
@@ -88,6 +108,11 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->id();
             $table->string('type')->nullable();
             $table->string('description')->nullable();
+            $table->text('note')->nullable();
+            $table->decimal('value', 14, 4)->default(0);
+            $table->unsignedBigInteger('box_id')->nullable();
+            $table->unsignedBigInteger('from_box_id')->nullable();
+            $table->unsignedBigInteger('to_box_id')->nullable();
             $table->timestamps();
         });
         Schema::connection('accounting_test')->create('maintenance', function (Blueprint $table) {
@@ -143,6 +168,9 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->string('name');
             $table->decimal('total', 18, 4)->default(0);
             $table->string('currency')->default('شيكل');
+            $table->string('type')->nullable();
+            $table->boolean('is_shown')->default(true);
+            $table->timestamps();
         });
         Schema::connection('accounting_test')->create('sales_orders', function (Blueprint $table) {
             $table->id();
@@ -376,9 +404,14 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->decimal('amount', 14, 4);
             $table->string('currency')->default('شيكل');
             $table->decimal('balance_after', 14, 4)->default(0);
+            $table->text('note')->nullable();
+            $table->json('receipt_images')->nullable();
+            $table->date('transaction_date')->nullable();
+            $table->unsignedBigInteger('box_id')->nullable();
             $table->string('source')->nullable();
             $table->unsignedBigInteger('source_id')->nullable();
             $table->timestamp('archived_at')->nullable();
+            $table->unsignedBigInteger('created_by')->nullable();
             $table->softDeletes();
             $table->timestamps();
         });
@@ -389,6 +422,8 @@ class AccountingLedgerIntegrationTest extends TestCase
         (require database_path('migrations/2026_09_19_204000_add_carrier_credit_to_sales_returns.php'))->up();
         (require database_path('migrations/2026_09_23_100000_add_service_revenue_account.php'))->up();
         (require database_path('migrations/2026_09_24_100000_add_payment_stage_to_maintenance_payments.php'))->up();
+        (require database_path('migrations/2026_09_24_100000_add_reason_code_to_box_logs.php'))->up();
+        (require database_path('migrations/2026_09_24_100100_add_cash_difference_accounts.php'))->up();
     }
 
     protected function tearDown(): void
@@ -1693,6 +1728,168 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertInstanceOf(AccountingJournalEntry::class, $entry);
 
         return [$asset->fresh(), $entry];
+    }
+
+    public function test_manual_debt_cash_is_atomic_backdated_balances_recalculate_and_source_rows_are_protected(): void
+    {
+        $customer = Customer::query()->create(['name' => 'Ledger customer', 'phone' => '0599000011']);
+        $box = Box::query()->create(['name' => 'Ledger box', 'total' => 1000, 'currency' => 'شيكل']);
+        $ledger = app(DebtLedgerService::class);
+        $payload = fn (string $type, float $amount, string $date) => [
+            'customer_id' => $customer->id,
+            'type' => $type,
+            'amount' => $amount,
+            'currency' => 'دولار',
+            'transaction_date' => $date,
+            'box_id' => $box->id,
+            'source' => 'manual',
+        ];
+
+        $first = $ledger->createTransaction($payload('taken', 100, '2026-09-01'), null, logActivity: false);
+        $last = $ledger->createTransaction($payload('given', 40, '2026-09-10'), null, logActivity: false);
+        $middle = $ledger->createTransaction($payload('taken', 20, '2026-09-05'), null, logActivity: false);
+
+        $this->assertSame('شيكل', $middle->currency);
+        $this->assertEqualsWithDelta(100, (float) $first->fresh()->balance_after, 0.0001);
+        $this->assertEqualsWithDelta(120, (float) $middle->fresh()->balance_after, 0.0001);
+        $this->assertEqualsWithDelta(80, (float) $last->fresh()->balance_after, 0.0001);
+        $this->assertEqualsWithDelta(1080, (float) $box->fresh()->total, 0.0001);
+
+        $beforeTransactions = DebtTransaction::query()->count();
+        $beforeLogs = BoxLog::query()->count();
+        try {
+            $ledger->createTransaction($payload('given', 2000, '2026-09-12'), null, logActivity: false);
+            $this->fail('Insufficient cash must fail.');
+        } catch (RuntimeException $exception) {
+            $this->assertSame('رصيد الصندوق غير كافٍ لتنفيذ الحركة.', $exception->getMessage());
+        }
+        $this->assertSame($beforeTransactions, DebtTransaction::query()->count());
+        $this->assertSame($beforeLogs, BoxLog::query()->count());
+        $this->assertEqualsWithDelta(1080, (float) $box->fresh()->total, 0.0001);
+
+        $source = DebtTransaction::query()->create([
+            'customer_id' => $customer->id,
+            'type' => 'given',
+            'amount' => 50,
+            'currency' => 'شيكل',
+            'balance_after' => 30,
+            'transaction_date' => '2026-09-15',
+            'source' => 'instant_sale',
+            'source_id' => 77,
+        ]);
+        $this->expectException(\App\Exceptions\SourceLinkedDebtTransactionException::class);
+        $ledger->archiveTransaction($source, logActivity: false);
+    }
+
+    public function test_box_adjustment_reason_accounts_and_transfer_projection_are_idempotent(): void
+    {
+        $from = Box::query()->create(['name' => 'From', 'total' => 1000, 'currency' => 'شيكل']);
+        $to = Box::query()->create(['name' => 'To', 'total' => 200, 'currency' => 'شيكل']);
+        $projection = app(AccountingProjectionService::class);
+        $reasons = [
+            'owner_contribution' => 'owner_equity',
+            'owner_withdrawal' => 'owner_equity',
+            'cash_overage' => 'cash_overage_income',
+            'cash_shortage' => 'cash_shortage_expense',
+            'accounting_correction' => 'clearing',
+        ];
+
+        foreach ($reasons as $reason => $counterAccount) {
+            $log = BoxLog::query()->create([
+                'box_id' => $from->id,
+                'description' => str_contains($reason, 'withdrawal') || str_contains($reason, 'shortage') ? 'تم سحب رصيد من الصندوق' : 'تم اضافة رصيد للصندوق',
+                'type' => str_contains($reason, 'withdrawal') || str_contains($reason, 'shortage') ? 'minus' : 'add',
+                'value' => 25,
+                'reason_code' => $reason,
+                'created_by' => null,
+            ]);
+            $projection->sync($log);
+            $projection->sync($log->fresh());
+            $entry = AccountingJournalEntry::query()->where('source_type', 'box_adjustment')->where('source_id', $log->id)->firstOrFail();
+            $this->assertSame(1, AccountingJournalEntry::query()->where('source_key', 'box_adjustment:'.$log->id)->count());
+            $this->assertEntryAccounts($entry, ['cash', $counterAccount]);
+            $this->assertJournalBalanced($entry);
+        }
+
+        $transfer = BoxLog::query()->create([
+            'from_box_id' => $from->id,
+            'to_box_id' => $to->id,
+            'description' => 'تم نقل رصيد للصندوق',
+            'type' => 'transfer',
+            'value' => 300,
+            'reason_code' => 'box_transfer',
+            'created_by' => null,
+        ]);
+        $projection->sync($transfer);
+        $projection->sync($transfer->fresh());
+        $entry = AccountingJournalEntry::query()->where('source_type', 'box_transfer')->where('source_id', $transfer->id)->firstOrFail();
+        $this->assertSame(1, AccountingJournalEntry::query()->where('source_key', 'box_transfer:'.$transfer->id)->count());
+        $this->assertJournalBalanced($entry);
+        $this->assertEqualsWithDelta(300, (float) $entry->lines()->where('box_id', $to->id)->value('debit'), 0.0001);
+        $this->assertEqualsWithDelta(300, (float) $entry->lines()->where('box_id', $from->id)->value('credit'), 0.0001);
+    }
+
+    public function test_reconciliation_is_per_customer_supplier_and_delivery_company(): void
+    {
+        DB::table('debt_transactions')->insert([
+            ['customer_id' => 10, 'seller_id' => null, 'type' => 'given', 'amount' => 100, 'currency' => 'شيكل', 'balance_after' => -100, 'transaction_date' => '2026-09-01', 'created_at' => now(), 'updated_at' => now()],
+            ['customer_id' => 20, 'seller_id' => null, 'type' => 'given', 'amount' => 100, 'currency' => 'شيكل', 'balance_after' => -100, 'transaction_date' => '2026-09-01', 'created_at' => now(), 'updated_at' => now()],
+            ['customer_id' => null, 'seller_id' => 30, 'type' => 'taken', 'amount' => 70, 'currency' => 'شيكل', 'balance_after' => 70, 'transaction_date' => '2026-09-01', 'created_at' => now(), 'updated_at' => now()],
+        ]);
+        app(AccountingService::class)->post('party:test', 'test', 501, '2026-09-01', 'شيكل', 'party test', [
+            ['account_key' => 'accounts_receivable', 'debit' => 200, 'credit' => 0, 'customer_id' => 20],
+            ['account_key' => 'opening_balance', 'debit' => 0, 'credit' => 200],
+        ]);
+        DB::table('sales_orders')->insert([
+            'serial_number' => 'C-1',
+            'delivery_company_id' => 40,
+            'carrier_receivable_balance' => 55,
+            'status' => 'delivered',
+            'is_debt_collection' => 0,
+            'total' => 55,
+            'payment_amount' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $comparisons = collect(app(AccountingReconciliationService::class)->reconcile()['comparisons']);
+        $customers = $comparisons->where('scope', 'accounts_receivable_customer')->whereIn('dimension_id', [10, 20]);
+        $this->assertCount(2, $customers);
+        $this->assertEqualsCanonicalizing([-100.0, 100.0], $customers->pluck('difference')->map(fn ($value) => (float) $value)->all());
+        $this->assertFalse($customers->every(fn (array $row) => $row['matches']));
+        $this->assertNotNull(
+            $comparisons->first(fn ($row) => $row['scope'] === 'accounts_payable_seller' && $row['dimension_id'] === 30),
+            $comparisons->toJson(),
+        );
+        $this->assertNotNull($comparisons->first(fn ($row) => $row['scope'] === 'carrier_receivable' && $row['dimension_id'] === 40));
+    }
+
+    public function test_debt_balance_repair_preview_is_read_only_and_repair_only_changes_derived_balance(): void
+    {
+        $firstId = DB::table('debt_transactions')->insertGetId([
+            'customer_id' => 10, 'type' => 'taken', 'amount' => 100, 'currency' => 'شيكل', 'balance_after' => 999,
+            'transaction_date' => '2026-09-01', 'source' => 'legacy_test', 'source_id' => 1, 'created_at' => now(), 'updated_at' => '2026-09-01 10:00:00',
+        ]);
+        $secondId = DB::table('debt_transactions')->insertGetId([
+            'customer_id' => 10, 'type' => 'given', 'amount' => 40, 'currency' => 'شيكل', 'balance_after' => 888,
+            'transaction_date' => '2026-09-10', 'source' => 'legacy_test', 'source_id' => 2, 'created_at' => now(), 'updated_at' => '2026-09-01 11:00:00',
+        ]);
+        $before = DB::table('debt_transactions')->where('id', $secondId)->first();
+        $repair = app(DebtLedgerBalanceRepairService::class);
+
+        $preview = $repair->run(true);
+        $this->assertSame(2, $preview['summary']['total_issues']);
+        $this->assertEqualsWithDelta(999, (float) DB::table('debt_transactions')->where('id', $firstId)->value('balance_after'), 0.0001);
+
+        $result = $repair->run(false);
+        $this->assertSame(2, $result['summary']['repaired_rows']);
+        $this->assertSame(0, $result['summary']['remaining_issues']);
+        $this->assertEqualsWithDelta(100, (float) DB::table('debt_transactions')->where('id', $firstId)->value('balance_after'), 0.0001);
+        $this->assertEqualsWithDelta(60, (float) DB::table('debt_transactions')->where('id', $secondId)->value('balance_after'), 0.0001);
+        $after = DB::table('debt_transactions')->where('id', $secondId)->first();
+        $this->assertSame($before->amount, $after->amount);
+        $this->assertSame($before->source, $after->source);
+        $this->assertSame($before->updated_at, $after->updated_at);
     }
 
     private function createProductSale(

@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AssetDepreciationWorkflowService;
+use App\Services\DebtLedgerBalanceRepairService;
 use App\Services\MaintenancePrepaymentSyncService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
@@ -47,7 +48,28 @@ class AccountingIntegrityWebTest extends TestCase
             $table->id();
             $table->string('system_key')->unique();
         });
-        DB::table('accounting_accounts')->insert(['system_key' => 'service_revenue']);
+        DB::table('accounting_accounts')->insert([
+            ['system_key' => 'service_revenue'],
+            ['system_key' => 'cash_overage_income'],
+            ['system_key' => 'cash_shortage_expense'],
+        ]);
+        Schema::create('boxes', function (Blueprint $table) {
+            $table->id();
+            $table->decimal('total', 14, 4)->default(0);
+            $table->string('currency')->default('شيكل');
+        });
+        Schema::create('box_logs', function (Blueprint $table) {
+            $table->id();
+            $table->string('reason_code')->nullable();
+            $table->unsignedBigInteger('created_by')->nullable();
+        });
+        Schema::create('debt_transactions', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('customer_id')->nullable();
+            $table->unsignedBigInteger('seller_id')->nullable();
+            $table->string('currency')->default('شيكل');
+            $table->decimal('balance_after', 14, 4)->default(0);
+        });
         Schema::create('maintenance_payments', function (Blueprint $table) {
             $table->id();
             $table->string('payment_stage')->nullable();
@@ -107,6 +129,10 @@ class AccountingIntegrityWebTest extends TestCase
         $depreciation->shouldReceive('preview')->once()->with('2026-09')->andReturn($this->depreciationPreview());
         $this->app->instance(AssetDepreciationWorkflowService::class, $depreciation);
 
+        $debtBalances = Mockery::mock(DebtLedgerBalanceRepairService::class);
+        $debtBalances->shouldReceive('run')->once()->with(true)->andReturn($this->debtBalanceResult());
+        $this->app->instance(DebtLedgerBalanceRepairService::class, $debtBalances);
+
         $this->withSession(['security_center_authenticated' => true])
             ->post('/security-center/accounting/inspect', [
                 'from' => '2026-09-21',
@@ -118,7 +144,28 @@ class AccountingIntegrityWebTest extends TestCase
             ->assertSee('instant_sale:12')
             ->assertSee('جاهزة للترحيل كعربون صيانة')
             ->assertSee('أصل تجريبي')
+            ->assertSee('الرصيد المتسلسل لدفتر الديون')
             ->assertSee('PASS 1');
+    }
+
+    public function test_confirmed_debt_balance_repair_updates_only_through_the_safe_workflow(): void
+    {
+        $debtBalances = Mockery::mock(DebtLedgerBalanceRepairService::class);
+        $debtBalances->shouldReceive('run')->once()->with(false)->andReturn($this->debtBalanceResult(false));
+        $this->app->instance(DebtLedgerBalanceRepairService::class, $debtBalances);
+
+        $integrity = Mockery::mock(AccountingIntegrityService::class);
+        $integrity->shouldReceive('run')->once()->with(null, null)->andReturn($this->integrityResult());
+        $this->app->instance(AccountingIntegrityService::class, $integrity);
+
+        $this->withSession(['security_center_authenticated' => true])
+            ->post('/security-center/accounting/debt-ledger/balances/repair', [
+                'access_token' => 'accounting-secret',
+                'confirmation' => 'إصلاح أرصدة دفتر الديون',
+            ])
+            ->assertOk()
+            ->assertSee('اكتمل تصحيح الحقل المشتق balance_after فقط')
+            ->assertSee('صفوف balance_after المصححة');
     }
 
     public function test_repair_rejects_wrong_token_without_calling_services(): void
@@ -344,6 +391,32 @@ class AccountingIntegrityWebTest extends TestCase
                 'warning' => null,
                 'skip_reason' => $eligible ? null : 'تم إهلاك الأصل لهذه الفترة.',
             ]],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function debtBalanceResult(bool $dryRun = true): array
+    {
+        return [
+            'dry_run' => $dryRun,
+            'summary' => [
+                'total_issues' => 1,
+                'affected_groups' => 1,
+                'repaired_rows' => $dryRun ? 0 : 1,
+                'remaining_issues' => $dryRun ? 1 : 0,
+                'accounting_mismatches' => 0,
+            ],
+            'items' => [[
+                'person_type' => 'customer',
+                'person_id' => 8,
+                'currency' => 'شيكل',
+                'transaction_id' => 22,
+                'stored_balance' => 150,
+                'expected_balance' => 100,
+                'difference' => 50,
+            ]],
+            'remaining_items' => [],
+            'reconciliation' => null,
         ];
     }
 }

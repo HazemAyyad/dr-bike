@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Exceptions\SourceLinkedDebtTransactionException;
+use App\Models\Box;
 use App\Http\Controllers\Controller;
 use App\Models\Bill;
 use App\Models\ContactCategory;
@@ -362,7 +364,7 @@ class DebtLedger extends Controller
                 'currency' => 'nullable|string|in:شيكل,دولار,دينار',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
-                'box_id' => 'nullable|integer|exists:boxes,id',
+                'box_id' => 'required|integer|exists:boxes,id',
                 'receipt_images' => 'nullable|array',
                 'receipt_images.*' => [
                     'file',
@@ -391,11 +393,8 @@ class DebtLedger extends Controller
                 }
             }
 
-            $currency = $data['currency'] ?? null;
-            if (! empty($data['box_id'])) {
-                $box = \App\Models\Box::find($data['box_id']);
-                $currency = $box?->currency ?? $currency;
-            }
+            $box = Box::findOrFail($data['box_id']);
+            $currency = $box->currency;
 
             $transaction = $this->ledger->createTransaction([
                 'customer_id' => $request->customer_id,
@@ -458,6 +457,8 @@ class DebtLedger extends Controller
                 'status' => 'error',
                 'message' => __('messages.ledger_transaction_not_found'),
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -475,7 +476,7 @@ class DebtLedger extends Controller
                 'currency' => 'nullable|string|in:شيكل,دولار,دينار',
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
-                'box_id' => 'nullable|integer|exists:boxes,id',
+                'box_id' => 'required|integer|exists:boxes,id',
                 'receipt_images' => 'nullable|array',
                 'receipt_images.*' => [
                     'file',
@@ -485,6 +486,7 @@ class DebtLedger extends Controller
             ]);
 
             $transaction = DebtTransaction::active()->findOrFail($id);
+            $this->ledger->assertManualMutationAllowed($transaction);
 
             $imageNames = $transaction->receipt_images ?? [];
             if ($request->hasFile('receipt_images')) {
@@ -503,11 +505,8 @@ class DebtLedger extends Controller
                 }
             }
 
-            $currency = $data['currency'] ?? $transaction->currency;
-            if ($request->filled('box_id')) {
-                $box = \App\Models\Box::find($data['box_id']);
-                $currency = $box?->currency ?? $currency;
-            }
+            $box = Box::findOrFail($data['box_id']);
+            $currency = $box->currency;
 
             $updatePayload = [
                 'type' => $data['type'],
@@ -518,9 +517,7 @@ class DebtLedger extends Controller
                 'receipt_images' => $request->hasFile('receipt_images') ? $imageNames : null,
             ];
 
-            if ($request->filled('box_id')) {
-                $updatePayload['box_id'] = (int) $data['box_id'];
-            }
+            $updatePayload['box_id'] = (int) $data['box_id'];
 
             $updated = $this->ledger->updateTransaction($transaction, $updatePayload);
 
@@ -548,6 +545,10 @@ class DebtLedger extends Controller
                 'status' => 'error',
                 'message' => __('messages.ledger_transaction_not_found'),
             ], 200);
+        } catch (SourceLinkedDebtTransactionException $e) {
+            return $this->sourceLinkedMutationResponse($e);
+        } catch (\RuntimeException|\InvalidArgumentException $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -574,11 +575,15 @@ class DebtLedger extends Controller
                 'total_given' => $personTotals['total_given'],
                 'balance' => $personTotals['balance'],
             ], 200);
+        } catch (SourceLinkedDebtTransactionException $e) {
+            return $this->sourceLinkedMutationResponse($e);
         } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.ledger_transaction_not_found'),
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -605,11 +610,15 @@ class DebtLedger extends Controller
                 'total_given' => $personTotals['total_given'],
                 'balance' => $personTotals['balance'],
             ], 200);
+        } catch (SourceLinkedDebtTransactionException $e) {
+            return $this->sourceLinkedMutationResponse($e);
         } catch (ModelNotFoundException $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => __('messages.ledger_transaction_not_found'),
             ], 200);
+        } catch (\RuntimeException $e) {
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 200);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
@@ -887,6 +896,8 @@ class DebtLedger extends Controller
                 'total_given' => $personTotals['total_given'],
                 'balance' => $personTotals['balance'],
             ], 200);
+        } catch (SourceLinkedDebtTransactionException $e) {
+            return $this->sourceLinkedMutationResponse($e);
         } catch (\RuntimeException $e) {
             return response()->json([
                 'status' => 'error',
@@ -934,6 +945,8 @@ class DebtLedger extends Controller
                 'balance' => $personTotals['balance'],
                 'archive_balance' => $archiveTotals['balance'],
             ], 200);
+        } catch (SourceLinkedDebtTransactionException $e) {
+            return $this->sourceLinkedMutationResponse($e);
         } catch (\RuntimeException $e) {
             return response()->json([
                 'status' => 'error',
@@ -1347,5 +1360,15 @@ class DebtLedger extends Controller
                 'message' => __('messages.something_wrong'),
             ], 200);
         }
+    }
+
+    private function sourceLinkedMutationResponse(SourceLinkedDebtTransactionException $exception)
+    {
+        return response()->json([
+            'status' => 'error',
+            'message' => $exception->getMessage(),
+            'source' => $exception->source,
+            'source_id' => $exception->sourceId,
+        ], 200);
     }
 }

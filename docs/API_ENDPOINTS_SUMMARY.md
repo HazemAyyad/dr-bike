@@ -369,7 +369,7 @@
 |--------|------|--------|
 | POST | /add/asset | إضافة أصل |
 | GET | /get/all/assets | كل الأصول |
-| GET | /depreciate/all/assets | اهلاك كل الأصول |
+| POST | /depreciate/all/assets | اهلاك كل الأصول |
 | POST | /show/asset | عرض أصل |
 | POST | /edit/asset | تعديل أصل |
 | POST | /delete/asset | حذف أصل |
