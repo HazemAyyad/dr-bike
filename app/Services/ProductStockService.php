@@ -432,7 +432,10 @@ class ProductStockService
         }
 
         DB::transaction(function () use ($product, $quantityDelta, $type, $sizeColorId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost, $costingMethod, $reason) {
-            $lockedProduct = Product::lockForUpdate()->findOrFail($product->id);
+            $productQuery = $product->trashed()
+                ? Product::withTrashed()
+                : Product::query();
+            $lockedProduct = $productQuery->lockForUpdate()->findOrFail($product->id);
 
             if ($sizeColorId !== null && $sizeColorId > 0) {
                 $variant = SizeColor::query()
