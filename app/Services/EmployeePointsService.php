@@ -2,12 +2,13 @@
 
 namespace App\Services;
 
-use App\Models\EmployeePointCategory;
 use App\Models\EmployeeDetail;
+use App\Models\EmployeePointCategory;
 use App\Models\EmployeePointsLog;
 use App\Models\EmployeeRewardRule;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class EmployeePointsService
@@ -30,6 +31,70 @@ class EmployeePointsService
     public function deductPoints(int $employeeId, array $payload): EmployeePointsLog
     {
         return $this->createLog($employeeId, EmployeePointsLog::OPERATION_DEDUCT, $payload);
+    }
+
+    /**
+     * Bring an employee's lifetime points balance to zero without deleting
+     * historical movements. The returned log is null when already at zero.
+     */
+    public function resetToZero(int $employeeId, ?string $notes = null): ?EmployeePointsLog
+    {
+        return DB::transaction(fn () => $this->resetToZeroWithinTransaction($employeeId, $notes));
+    }
+
+    /**
+     * Reset several employees atomically.
+     *
+     * @param  array<int>  $employeeIds
+     * @return array<int, EmployeePointsLog>
+     */
+    public function resetManyToZero(array $employeeIds, ?string $notes = null): array
+    {
+        $employeeIds = array_values(array_unique(array_map('intval', $employeeIds)));
+        sort($employeeIds);
+
+        return DB::transaction(function () use ($employeeIds, $notes) {
+            $logs = [];
+
+            foreach ($employeeIds as $employeeId) {
+                $log = $this->resetToZeroWithinTransaction($employeeId, $notes);
+                if ($log !== null) {
+                    $logs[] = $log;
+                }
+            }
+
+            return $logs;
+        });
+    }
+
+    private function resetToZeroWithinTransaction(int $employeeId, ?string $notes): ?EmployeePointsLog
+    {
+        EmployeeDetail::query()->whereKey($employeeId)->lockForUpdate()->firstOrFail();
+
+        $netPoints = EmployeePointsLog::query()
+            ->forEmployee($employeeId)
+            ->lockForUpdate()
+            ->get(['points', 'operation_type'])
+            ->sum(fn (EmployeePointsLog $log) => $log->operation_type === EmployeePointsLog::OPERATION_ADD
+                ? (int) $log->points
+                : -((int) $log->points));
+
+        if ($netPoints === 0) {
+            return null;
+        }
+
+        $payload = [
+            'points' => abs($netPoints),
+            'category' => 'security_center_reset',
+            'source' => EmployeePointsLog::SOURCE_MANUAL,
+            'reason' => 'تصفير رصيد النقاط من مركز الأمان',
+            'notes' => $notes,
+            'points_date' => Carbon::now()->toDateString(),
+        ];
+
+        return $netPoints > 0
+            ? $this->createLog($employeeId, EmployeePointsLog::OPERATION_DEDUCT, $payload)
+            : $this->createLog($employeeId, EmployeePointsLog::OPERATION_ADD, $payload);
     }
 
     /**
