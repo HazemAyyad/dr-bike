@@ -36,6 +36,7 @@ class EmployeeDetailResource extends JsonResource
             'end_work_time' => $this->end_work_time,
 
             'fingerprint_enabled' => (bool) ($this->fingerprint_enabled ?? false),
+            'can_delegate_permissions' => (bool) ($this->can_delegate_permissions ?? false),
             'device_user_id' => $this->device_user_id ? (string) $this->device_user_id : null,
             'last_fingerprint_scan_at' => $this->formatFingerprintTimestamp(
                 $this->device_user_id

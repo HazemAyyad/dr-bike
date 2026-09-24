@@ -185,6 +185,12 @@ class EmployeeDetails extends Controller
             'Employee Tasks', 'Edit Employee Task', 'Clone Employee Task' => 'employee_tasks',
             'Special Tasks' => 'special_tasks',
             'Debts', 'Boxes Section', 'Expenses and Financial Affairs', 'Daily Boxes' => 'financial',
+            'Financial Expenses View', 'Financial Expenses Create', 'Financial Expenses Edit',
+            'Financial Expenses Reports', 'Financial Destructions View', 'Financial Destructions Manage',
+            'Financial Assets View', 'Financial Assets Manage', 'Financial Assets Delete',
+            'Financial Assets Depreciate', 'Financial Assets Reports',
+            'Financial Official Papers View', 'Financial Official Papers Manage',
+            'Financial Official Papers Delete' => 'financial',
             'Checks', 'Checks Incoming View', 'Checks Outgoing View',
             'Checks Incoming Create', 'Checks Outgoing Create' => 'checks',
             'Maintenance', 'Maintenance Services Settings' => 'maintenance',
@@ -401,15 +407,48 @@ class EmployeeDetails extends Controller
             return $existingPermissionIds;
         }
 
-        $adminOnlyIds = $this->adminOnlyGrantablePermissionIds();
-        if (empty($adminOnlyIds)) {
-            return $requestedPermissionIds;
+        $editableIds = $this->delegablePermissionIdsForActor($request);
+        $preservedIds = array_values(array_diff($existingPermissionIds, $editableIds));
+        $editableRequestedIds = array_values(array_intersect($requestedPermissionIds, $editableIds));
+
+        return array_values(array_unique(array_merge($editableRequestedIds, $preservedIds)));
+    }
+
+    /** @return int[] */
+    private function delegablePermissionIdsForActor(Request $request): array
+    {
+        $actor = $request->user();
+        if (! $actor) {
+            return [];
+        }
+        if ($actor->type === 'admin') {
+            return Permission::query()
+                ->where('name_en', '!=', 'Expenses and Financial Affairs')
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+        if (! $this->actorCanManageEmployeePermissions($request) || ! $actor->employee) {
+            return [];
         }
 
-        $preservedAdminOnlyIds = array_values(array_intersect($existingPermissionIds, $adminOnlyIds));
-        $editableRequestedIds = array_values(array_diff($requestedPermissionIds, $adminOnlyIds));
-
-        return array_values(array_unique(array_merge($editableRequestedIds, $preservedAdminOnlyIds)));
+        return $actor->employee->permissions()
+            ->whereHas('permission', function ($query) {
+                $query->where('name_en', '!=', 'Expenses and Financial Affairs');
+                if ($this->permissionsGrantPolicyColumnExists()) {
+                    $query->where(function ($policy) {
+                        $policy->whereNull('grant_policy')
+                            ->orWhere('grant_policy', '!=', self::GRANT_POLICY_ADMIN_ONLY);
+                    });
+                } else {
+                    $query->whereNotIn('name_en', $this->adminOnlyGrantablePermissionNames());
+                }
+            })
+            ->pluck('permission_id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function actorCanManageEmployeePermissions(Request $request): bool
@@ -423,9 +462,7 @@ class EmployeeDetails extends Controller
             return true;
         }
 
-        return (bool) $actor->employee?->permissions()
-            ->whereHas('permission', fn ($q) => $q->where('name_en', 'Employees Permissions Manage'))
-            ->exists();
+        return (bool) ($actor->employee?->can_delegate_permissions ?? false);
     }
 
     private function actorCanViewEmployeePermissions(Request $request): bool
@@ -444,7 +481,7 @@ class EmployeeDetails extends Controller
                 'Employees Permissions View',
                 'Employees Permissions Manage',
             ]))
-            ->exists();
+            ->exists() || (bool) ($actor->employee?->can_delegate_permissions ?? false);
     }
 
     private function actorCanManageEmployeeFingerprint(Request $request): bool
@@ -1523,6 +1560,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             // Fingerprint (optional)
             'fingerprint_enabled' => ['nullable', 'boolean'],
+            'can_delegate_permissions' => ['nullable', 'boolean'],
             'device_user_id' => [
                 'nullable',
                 'string',
@@ -1567,6 +1605,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             'fingerprint_enabled' => $this->actorCanManageEmployeeFingerprint($request)
                 ? (bool) ($data['fingerprint_enabled'] ?? false)
                 : false,
+            'can_delegate_permissions' => ($request->user()?->type ?? null) === 'admin'
+                ? (bool) ($data['can_delegate_permissions'] ?? false)
+                : false,
             'device_user_id' => $this->actorCanManageEmployeeFingerprint($request)
                 ? $this->normalizeDeviceUserId($data['device_user_id'] ?? null)
                 : null,
@@ -1578,9 +1619,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             ? $this->normalizePermissionIds($data['permissions'] ?? [])
             : [];
         if (($request->user()?->type ?? null) === 'employee') {
-            $newPermissionIds = array_values(array_diff(
+            $newPermissionIds = array_values(array_intersect(
                 $newPermissionIds,
-                $this->adminOnlyGrantablePermissionIds()
+                $this->delegablePermissionIdsForActor($request)
             ));
         }
 
@@ -1593,7 +1634,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             }
         }
 
-        if ($this->actorCanManageEmployeePermissions($request)) {
+        if (($request->user()?->type ?? null) === 'admin') {
             $this->syncEmployeeVisibleBoxes(
                 $employee,
                 $this->normalizeBoxIds($data['visible_box_ids'] ?? [])
@@ -1688,6 +1729,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
             // Fingerprint (optional)
             'fingerprint_enabled' => ['nullable', 'boolean'],
+            'can_delegate_permissions' => ['nullable', 'boolean'],
             'device_user_id' => [
                 'nullable',
                 'string',
@@ -1729,6 +1771,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
 
         if (! $this->actorCanManageEmployeeFingerprint($request)) {
             unset($updateData['fingerprint_enabled'], $updateData['device_user_id']);
+        }
+        if (($request->user()?->type ?? null) !== 'admin') {
+            unset($updateData['can_delegate_permissions']);
         }
 
         $finalData = array_merge($updateData,
@@ -1782,7 +1827,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
         }
     }
 
-            if ($this->actorCanManageEmployeePermissions($request)) {
+            if (($request->user()?->type ?? null) === 'admin') {
                 $this->syncEmployeeVisibleBoxes(
                     $employee,
                     $this->normalizeBoxIds($data['visible_box_ids'] ?? [])
@@ -2044,15 +2089,24 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
     // retrieve the permissions in the system
     public function allPermissions(){
         try{
-            $query = Permission::query()->orderBy('id');
+            $query = Permission::query()
+                ->where('name_en', '!=', 'Expenses and Financial Affairs')
+                ->orderBy('id');
             if (($requestUser = request()->user()) && $requestUser->type === 'employee') {
-                if ($this->permissionsGrantPolicyColumnExists()) {
+                if ($this->actorCanManageEmployeePermissions(request())) {
+                    $query->whereIn('id', $this->delegablePermissionIdsForActor(request()));
+                } elseif ($this->actorCanViewEmployeePermissions(request()) && $this->permissionsGrantPolicyColumnExists()) {
                     $query->where(function ($q) {
                         $q->whereNull('grant_policy')
                             ->orWhere('grant_policy', '!=', self::GRANT_POLICY_ADMIN_ONLY);
                     });
-                } else {
+                } elseif ($this->actorCanViewEmployeePermissions(request())) {
                     $query->whereNotIn('name_en', $this->adminOnlyGrantablePermissionNames());
+                } else {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'غير مسموح لك بمشاهدة الصلاحيات.',
+                    ], 403);
                 }
             }
 
@@ -2068,7 +2122,9 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 'status' => 'success',
                 'permissions' => $permissions,
                 'permissions of the system' => $permissions,
-                'boxes' => $this->visibleBoxesPayload(),
+                'boxes' => ($requestUser?->type ?? null) === 'admin'
+                    ? $this->visibleBoxesPayload()
+                    : [],
             ], 200);
         } catch (QueryException $e) {
             return response(['status' => 'error', 'message' => __('messages.retrieve_data_error')], 200);

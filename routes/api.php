@@ -35,6 +35,7 @@ use App\Http\Controllers\API\Destructions;
 use App\Http\Controllers\API\Draws;
 use App\Http\Controllers\API\EmployeeAttendanceReportController;
 use App\Http\Controllers\API\EmployeeDetails;
+use App\Http\Controllers\API\EmployeePermissionDelegationController;
 use App\Http\Controllers\API\EmployeeOrders;
 use App\Http\Controllers\API\EmployeeActivityLogController;
 use App\Http\Controllers\API\EmployeePointCategoryController;
@@ -310,11 +311,17 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
         ->middleware('check.permission:Employees Delete');
     Route::post('/restore/suspended/employee' , [EmployeeDetails::class,'restoreSuspendedEmployee'])
         ->middleware('check.permission:Employees Delete');
-    Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions'])
-        ->middleware('check.permission:Employees Permissions View,Employees Permissions Manage');
+    Route::get('/all/permissions' , [EmployeeDetails::class,'allPermissions']);
     Route::post('/employee/permissions' , [EmployeeDetails::class,'getEmployeePermissions'])
         ->middleware('check.permission:Employees View,Employees Edit Basic,Employees Delete,Employees Permissions View,Employees Permissions Manage');
     Route::post('/permissions/grant-policy' , [EmployeeDetails::class,'updatePermissionGrantPolicy'])
+        ->middleware('admin');
+    Route::get('/employees/{employee}/permission-context', [EmployeePermissionDelegationController::class, 'context'])
+        ->whereNumber('employee');
+    Route::patch('/employees/{employee}/permissions', [EmployeePermissionDelegationController::class, 'sync'])
+        ->whereNumber('employee');
+    Route::patch('/admin/employees/{employee}/permission-delegation', [EmployeePermissionDelegationController::class, 'setDelegation'])
+        ->whereNumber('employee')
         ->middleware('admin');
 
     Route::post('/show/employee/financial/details' , [EmployeeDetails::class,'showFinancialDetails'])
@@ -955,75 +962,120 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
 
 });
 
-Route::group(['middleware'=>['auth:sanctum','check.permission:Expenses and Financial Affairs','refresh.token.expiry']] , function() {
+Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function() {
 
       // assets
-    Route::post('/add/asset' , [Assets::class,'store']);
-    Route::get('/get/all/assets' , [Assets::class,'getAssets']);
-    Route::get('/depreciate/all/assets' , [Assets::class,'depreciatAllAssets']);
-    Route::get('/assets/depreciation/preview' , [Assets::class,'depreciationPreview']);
-    Route::post('/show/asset' , [Assets::class,'showAsset']);
-    Route::post('/edit/asset' , [Assets::class,'editAsset']);
-    Route::post('/delete/asset' , [Assets::class,'deleteAsset']);
-    Route::post('/depreciate/one/asset' , [Assets::class,'depreciateOneAsset']);
+    Route::post('/add/asset' , [Assets::class,'store'])
+        ->middleware('check.permission:Financial Assets Manage');
+    Route::get('/get/all/assets' , [Assets::class,'getAssets'])
+        ->middleware('check.permission:Financial Assets View');
+    Route::get('/depreciate/all/assets' , [Assets::class,'depreciatAllAssets'])
+        ->middleware('check.permission:Financial Assets Depreciate');
+    Route::get('/assets/depreciation/preview' , [Assets::class,'depreciationPreview'])
+        ->middleware('check.permission:Financial Assets Depreciate');
+    Route::post('/show/asset' , [Assets::class,'showAsset'])
+        ->middleware('check.permission:Financial Assets View');
+    Route::post('/edit/asset' , [Assets::class,'editAsset'])
+        ->middleware('check.permission:Financial Assets Manage');
+    Route::post('/delete/asset' , [Assets::class,'deleteAsset'])
+        ->middleware('check.permission:Financial Assets Delete');
+    Route::post('/depreciate/one/asset' , [Assets::class,'depreciateOneAsset'])
+        ->middleware('check.permission:Financial Assets Depreciate');
 
   // asset logs
-    Route::get('/get/all/asset/logs' , [AssetLogs::class,'getAllLogs']);
-    Route::post('/get/asset/logs' , [AssetLogs::class,'getAssetLogs']);
-    Route::get('/get/all/asset/logs/report' , [AssetLogs::class,'getAllLogsReport']);
+    Route::get('/get/all/asset/logs' , [AssetLogs::class,'getAllLogs'])
+        ->middleware('check.permission:Financial Assets View');
+    Route::post('/get/asset/logs' , [AssetLogs::class,'getAssetLogs'])
+        ->middleware('check.permission:Financial Assets View');
+    Route::get('/get/all/asset/logs/report' , [AssetLogs::class,'getAllLogsReport'])
+        ->middleware('check.permission:Financial Assets Reports');
 
 
     // expenses
-      Route::get('/expenses/available-boxes' , [ExpensesAPI::class,'availableBoxes']);
-      Route::get('/expenses/report' , [ExpensesAPI::class,'report']);
+      Route::get('/expenses/available-boxes' , [ExpensesAPI::class,'availableBoxes'])
+          ->middleware('check.permission:Financial Expenses Create');
+      Route::get('/expenses/report' , [ExpensesAPI::class,'report'])
+          ->middleware('check.permission:Financial Expenses Reports');
       Route::get('/expenses/report/export/{format}' , [ExpensesAPI::class,'exportReport'])
-          ->whereIn('format', ['pdf', 'xlsx', 'csv', 'data']);
-      Route::post('/store/expense' , [ExpensesAPI::class,'store']);
-      Route::get('/get/all/expenses' , [ExpensesAPI::class,'getExpenses']);
-      Route::post('/show/expense' , [ExpensesAPI::class,'showExpense']);
-      Route::post('/edit/expense' , [ExpensesAPI::class,'editExpense']);
+          ->whereIn('format', ['pdf', 'xlsx', 'csv', 'data'])
+          ->middleware('check.permission:Financial Expenses Reports');
+      Route::post('/store/expense' , [ExpensesAPI::class,'store'])
+          ->middleware('check.permission:Financial Expenses Create');
+      Route::get('/get/all/expenses' , [ExpensesAPI::class,'getExpenses'])
+          ->middleware('check.permission:Financial Expenses View');
+      Route::post('/show/expense' , [ExpensesAPI::class,'showExpense'])
+          ->middleware('check.permission:Financial Expenses View');
+      Route::post('/edit/expense' , [ExpensesAPI::class,'editExpense'])
+          ->middleware('check.permission:Financial Expenses Edit');
 
     // destructions
-      Route::post('/store/destruction' , [Destructions::class,'store']);
-      Route::post('/store/destructions/batch' , [Destructions::class,'storeBatch']);
-      Route::get('/destructions/cost-layers' , [Destructions::class,'costLayers']);
-      Route::get('/get/all/destructions' , [Destructions::class,'getDestructions']);
-      Route::post('/show/destruction' , [Destructions::class,'showDestruction']);
-      Route::post('/edit/destruction' , [Destructions::class,'editDestruction']);
+      Route::post('/store/destruction' , [Destructions::class,'store'])
+          ->middleware('check.permission:Financial Destructions Manage');
+      Route::post('/store/destructions/batch' , [Destructions::class,'storeBatch'])
+          ->middleware('check.permission:Financial Destructions Manage');
+      Route::get('/destructions/cost-layers' , [Destructions::class,'costLayers'])
+          ->middleware('check.permission:Financial Destructions Manage');
+      Route::get('/get/all/destructions' , [Destructions::class,'getDestructions'])
+          ->middleware('check.permission:Financial Destructions View');
+      Route::post('/show/destruction' , [Destructions::class,'showDestruction'])
+          ->middleware('check.permission:Financial Destructions View');
+      Route::post('/edit/destruction' , [Destructions::class,'editDestruction'])
+          ->middleware('check.permission:Financial Destructions Manage');
 
    
    
    
     // treasuries
-    Route::post('/store/treasury', [Treasuries::class, 'store']);
-    Route::get('/get/all/treasuries', [Treasuries::class, 'getTreasuries']);
-    Route::post('/cancel/treasury', [Treasuries::class, 'cancelTreasury']);
+    Route::post('/store/treasury', [Treasuries::class, 'store'])
+        ->middleware('check.permission:Financial Official Papers Manage');
+    Route::get('/get/all/treasuries', [Treasuries::class, 'getTreasuries'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/cancel/treasury', [Treasuries::class, 'cancelTreasury'])
+        ->middleware('check.permission:Financial Official Papers Delete');
 
         // fileBoxes
-    Route::post('/store/file-box', [FileBoxes::class, 'store']);
-    Route::get('/all/file-boxes', [FileBoxes::class, 'allFileBoxes']);
-    Route::post('/file-box/details', [FileBoxes::class, 'fileBoxDetails']);
-    Route::post('/cancel/file-box', [FileBoxes::class, 'cancelFileBox']);
+    Route::post('/store/file-box', [FileBoxes::class, 'store'])
+        ->middleware('check.permission:Financial Official Papers Manage');
+    Route::get('/all/file-boxes', [FileBoxes::class, 'allFileBoxes'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/file-box/details', [FileBoxes::class, 'fileBoxDetails'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/cancel/file-box', [FileBoxes::class, 'cancelFileBox'])
+        ->middleware('check.permission:Financial Official Papers Delete');
 
         // files
-    Route::post('/store/file', [Files::class, 'store']);
-    Route::post('/delete/file', [Files::class, 'cancelFile']);
-    Route::get('/get/all/files', [Files::class, 'allFiles']);
-    Route::post('/file/papers', [Files::class, 'getFileDetails']);
+    Route::post('/store/file', [Files::class, 'store'])
+        ->middleware('check.permission:Financial Official Papers Manage');
+    Route::post('/delete/file', [Files::class, 'cancelFile'])
+        ->middleware('check.permission:Financial Official Papers Delete');
+    Route::get('/get/all/files', [Files::class, 'allFiles'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/file/papers', [Files::class, 'getFileDetails'])
+        ->middleware('check.permission:Financial Official Papers View');
 
     // pictures
-    Route::post('/store/picture', [Pictures::class, 'store']);
-    Route::get('/get/all/pictures', [Pictures::class, 'getAllPictures']);
-    Route::post('/show/picture', [Pictures::class, 'showPicture']);
-    Route::post('/edit/picture', [Pictures::class, 'editPicture']);
-    Route::post('/delete/picture', [Pictures::class, 'deletePicture']);
+    Route::post('/store/picture', [Pictures::class, 'store'])
+        ->middleware('check.permission:Financial Official Papers Manage');
+    Route::get('/get/all/pictures', [Pictures::class, 'getAllPictures'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/show/picture', [Pictures::class, 'showPicture'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/edit/picture', [Pictures::class, 'editPicture'])
+        ->middleware('check.permission:Financial Official Papers Manage');
+    Route::post('/delete/picture', [Pictures::class, 'deletePicture'])
+        ->middleware('check.permission:Financial Official Papers Delete');
 
     // papers
-    Route::post('/store/paper', [Papers::class, 'store']);
-    Route::get('/get/all/papers', [Papers::class, 'getPapers']);
-    Route::post('/cancel/paper', [Papers::class, 'cancelPaper']);
-    Route::post('/get/paper/details', [Papers::class, 'showPaper']);
-    Route::post('/edit/paper', [Papers::class, 'editPaper']);
+    Route::post('/store/paper', [Papers::class, 'store'])
+        ->middleware('check.permission:Financial Official Papers Manage');
+    Route::get('/get/all/papers', [Papers::class, 'getPapers'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/cancel/paper', [Papers::class, 'cancelPaper'])
+        ->middleware('check.permission:Financial Official Papers Delete');
+    Route::post('/get/paper/details', [Papers::class, 'showPaper'])
+        ->middleware('check.permission:Financial Official Papers View');
+    Route::post('/edit/paper', [Papers::class, 'editPaper'])
+        ->middleware('check.permission:Financial Official Papers Manage');
 
 
 });

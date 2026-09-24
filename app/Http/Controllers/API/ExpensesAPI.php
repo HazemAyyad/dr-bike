@@ -175,6 +175,12 @@ class ExpensesAPI extends Controller
 
             $expense = Expense::with('box:id,name,total,currency')->
             findOrFail($request->expense_id);
+            if ($expense->expense_type === 'salary' && ! $this->canViewSalaryExpenses($request)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'غير مسموح لك بمشاهدة قيد الراتب.',
+                ], 403);
+            }
 
             $formattedMedia  = [];
             if($expense->media && count($expense->media) > 0){
@@ -325,6 +331,12 @@ class ExpensesAPI extends Controller
 
         return Expense::query()
             ->with('box:id,name,currency,type')
+            ->when(! $this->canViewSalaryExpenses($request), function (Builder $query) {
+                $query->where(function (Builder $salaryScope) {
+                    $salaryScope->whereNull('expense_type')
+                        ->orWhere('expense_type', '!=', 'salary');
+                });
+            })
             ->when($data['search'] ?? null, function (Builder $query, string $search) {
                 $query->where(function (Builder $nested) use ($search) {
                     $nested->where('name', 'like', "%{$search}%")
@@ -338,6 +350,19 @@ class ExpensesAPI extends Controller
             ->when($data['to'] ?? null, fn (Builder $query, string $to) => $query->whereDate(DB::raw('COALESCE(expense_date, created_at)'), '<=', $to))
             ->when(isset($data['min_price']), fn (Builder $query) => $query->where('price', '>=', $data['min_price']))
             ->when(isset($data['max_price']), fn (Builder $query) => $query->where('price', '<=', $data['max_price']));
+    }
+
+    private function canViewSalaryExpenses(Request $request): bool
+    {
+        $user = $request->user();
+        if (! $user) {
+            return false;
+        }
+
+        return $user->type === 'admin' || $user->hasEmployeePermission(
+            'Employees Financial View',
+            'Employees Salary Pay'
+        );
     }
 
     public function report(Request $request)
