@@ -48,7 +48,7 @@ class SalesCustomerSearchTest extends TestCase
         ]);
         DB::table('sellers')->insert([
             'id' => 20,
-            'name' => 'محمود المورد',
+            'name' => 'محمود  المورد',
             'phone' => '0592222222',
             'sub_phone' => '0562222222',
         ]);
@@ -68,9 +68,9 @@ class SalesCustomerSearchTest extends TestCase
                 'id' => 2,
                 'serial_number' => 'SO-2',
                 'customer_id' => null,
-                'partner_type' => 'seller',
+                'partner_type' => 'trader',
                 'partner_id' => 20,
-                'customer_name' => 'اسم قديم',
+                'customer_name' => 'محمود  المورد',
                 'status' => 'delivered',
                 'created_at' => now(),
                 'updated_at' => now(),
@@ -79,11 +79,11 @@ class SalesCustomerSearchTest extends TestCase
 
         $this->assertSame([1], $this->filteredSalesOrderIds('أحمد'));
         $this->assertSame([1], $this->filteredSalesOrderIds('0561111111'));
-        $this->assertSame([2], $this->filteredSalesOrderIds('محمود'));
+        $this->assertSame([2], $this->filteredSalesOrderIds('محمود المورد'));
         $this->assertSame([2], $this->filteredSalesOrderIds('0592222222'));
     }
 
-    public function test_profit_sales_search_returns_linked_customer_phone(): void
+    public function test_profit_sales_search_returns_linked_customer_or_seller(): void
     {
         DB::table('customers')->insert([
             'id' => 30,
@@ -97,6 +97,22 @@ class SalesCustomerSearchTest extends TestCase
             'notes' => 'ربح',
             'buyer_type' => 'customer',
             'customer_id' => 30,
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('sellers')->insert([
+            'id' => 31,
+            'name' => 'عمرو  التاجر',
+            'phone' => '0593131313',
+            'sub_phone' => '0563131313',
+        ]);
+        DB::table('profit_sales')->insert([
+            'id' => 31,
+            'total_cost' => 125,
+            'notes' => 'بيع لتاجر',
+            'buyer_type' => 'seller',
+            'seller_id' => 31,
             'status' => 'active',
             'created_at' => now(),
             'updated_at' => now(),
@@ -117,6 +133,20 @@ class SalesCustomerSearchTest extends TestCase
         $this->assertSame('سامي الربحي', $payload['profit_sales'][0]['buyer_name']);
         $this->assertSame('0593333333', $payload['profit_sales'][0]['buyer_phone']);
 
+        foreach (['عمرو التاجر', '0563131313'] as $search) {
+            $sellerResponse = (new ProfitSales)->getProfitSales(Request::create(
+                '/api/all/profit/sales',
+                'GET',
+                ['search' => $search]
+            ));
+            $sellerPayload = $sellerResponse->getData(true);
+
+            $this->assertSame('success', $sellerPayload['status']);
+            $this->assertCount(1, $sellerPayload['profit_sales']);
+            $this->assertSame('عمرو  التاجر', $sellerPayload['profit_sales'][0]['buyer_name']);
+            $this->assertSame('0593131313', $sellerPayload['profit_sales'][0]['buyer_phone']);
+        }
+
         $dateOnlyResponse = (new ProfitSales)->getProfitSales(Request::create(
             '/api/all/profit/sales',
             'GET',
@@ -125,7 +155,7 @@ class SalesCustomerSearchTest extends TestCase
         $this->assertCount(0, $dateOnlyResponse->getData(true)['profit_sales']);
     }
 
-    public function test_instant_sales_search_matches_linked_customer_name_and_phone(): void
+    public function test_instant_sales_search_matches_direct_customer_and_legacy_project_seller(): void
     {
         DB::table('customers')->insert([
             'id' => 40,
@@ -140,6 +170,33 @@ class SalesCustomerSearchTest extends TestCase
             'quantity' => 1,
             'buyer_type' => 'customer',
             'buyer_id' => 40,
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('sellers')->insert([
+            'id' => 41,
+            'name' => 'السيلاوي  بايك',
+            'phone' => '0594141414',
+            'sub_phone' => '0564141414',
+        ]);
+        DB::table('projects')->insert([
+            'id' => 41,
+            'name' => 'مشروع تاجر قديم',
+        ]);
+        DB::table('partnerships')->insert([
+            'id' => 41,
+            'project_id' => 41,
+            'customer_id' => null,
+            'seller_id' => 41,
+        ]);
+        DB::table('instant_sales')->insert([
+            'id' => 41,
+            'total_cost' => 150,
+            'cost' => 150,
+            'quantity' => 1,
+            'project_id' => 41,
+            'type' => 'project',
             'status' => 'active',
             'created_at' => now(),
             'updated_at' => now(),
@@ -160,6 +217,20 @@ class SalesCustomerSearchTest extends TestCase
             $this->assertCount(1, $payload['instant_sales']);
             $this->assertSame('ليلى الفوري', $payload['instant_sales'][0]['buyer_name']);
             $this->assertSame('0594444444', $payload['instant_sales'][0]['buyer_phone']);
+        }
+
+        foreach (['السيلاوي بايك', '0564141414'] as $search) {
+            $response = (new InstantSales)->getInstantSales(Request::create(
+                '/api/instant/sales',
+                'GET',
+                ['search' => $search]
+            ));
+            $payload = $response->getData(true);
+
+            $this->assertSame('success', $payload['status']);
+            $this->assertCount(1, $payload['instant_sales']);
+            $this->assertSame('السيلاوي  بايك', $payload['instant_sales'][0]['buyer_name']);
+            $this->assertSame('0594141414', $payload['instant_sales'][0]['buyer_phone']);
         }
 
         $dateOnlyResponse = (new InstantSales)->getInstantSales(Request::create(
@@ -247,6 +318,12 @@ class SalesCustomerSearchTest extends TestCase
         Schema::create('projects', function (Blueprint $table) {
             $table->id();
             $table->string('name')->nullable();
+        });
+        Schema::create('partnerships', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('project_id');
+            $table->unsignedBigInteger('customer_id')->nullable();
+            $table->unsignedBigInteger('seller_id')->nullable();
         });
         Schema::create('offer_packages', function (Blueprint $table) {
             $table->id();

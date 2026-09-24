@@ -289,6 +289,7 @@ public function getProfitSales(Request $request)
         ]);
 
         $search = trim((string) ($data['search'] ?? ''));
+        $tokens = preg_split('/\s+/u', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [$search];
 
         $profitSales = ProfitSale::query()
             ->with([
@@ -300,25 +301,29 @@ public function getProfitSales(Request $request)
                 $search === '' ? ($data['date'] ?? null) : null,
                 fn ($query, $date) => $query->whereDate('created_at', $date)
             )
-            ->when($search !== '', function ($query) use ($search) {
+            ->when($search !== '', function ($query) use ($search, $tokens) {
                 $term = "%{$search}%";
-                $query->where(function ($searchQuery) use ($search, $term) {
+                $partyMatches = static function ($partyQuery) use ($tokens) {
+                    foreach ($tokens as $token) {
+                        $partyQuery->where(function ($identityQuery) use ($token) {
+                            $tokenTerm = "%{$token}%";
+                            $identityQuery->where('name', 'like', $tokenTerm)
+                                ->orWhere('phone', 'like', $tokenTerm)
+                                ->orWhere('sub_phone', 'like', $tokenTerm);
+                        });
+                    }
+                };
+                $snapshotMatches = static function ($snapshotQuery) use ($tokens) {
+                    foreach ($tokens as $token) {
+                        $snapshotQuery->where('buyer_name', 'like', "%{$token}%");
+                    }
+                };
+                $query->where(function ($searchQuery) use ($search, $term, $partyMatches, $snapshotMatches) {
                     $searchQuery->where('buyer_name', 'like', $term)
                         ->orWhere('notes', 'like', $term)
-                        ->orWhereHas('customer', function ($customerQuery) use ($term) {
-                            $customerQuery->where(function ($identityQuery) use ($term) {
-                                $identityQuery->where('name', 'like', $term)
-                                    ->orWhere('phone', 'like', $term)
-                                    ->orWhere('sub_phone', 'like', $term);
-                            });
-                        })
-                        ->orWhereHas('seller', function ($sellerQuery) use ($term) {
-                            $sellerQuery->where(function ($identityQuery) use ($term) {
-                                $identityQuery->where('name', 'like', $term)
-                                    ->orWhere('phone', 'like', $term)
-                                    ->orWhere('sub_phone', 'like', $term);
-                            });
-                        });
+                        ->orWhere($snapshotMatches)
+                        ->orWhereHas('customer', $partyMatches)
+                        ->orWhereHas('seller', $partyMatches);
 
                     if (ctype_digit($search)) {
                         $searchQuery->orWhere('id', (int) $search);

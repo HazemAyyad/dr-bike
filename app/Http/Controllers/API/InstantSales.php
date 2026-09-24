@@ -2044,6 +2044,8 @@ public function store(Request $request)
                     'updatedByUser:id,name',
                     'buyerCustomer:id,name,phone,sub_phone',
                     'seller:id,name,phone,sub_phone',
+                    'project.partnership.customer:id,name,phone,sub_phone',
+                    'project.partnership.seller:id,name,phone,sub_phone',
                 ]);
 
             if (! empty($date) && $search === '') {
@@ -2052,7 +2054,27 @@ public function store(Request $request)
 
             if ($search !== '') {
                 $term = '%'.$search.'%';
-                $query->where(function ($q) use ($term, $search, $invoiceSearchDigits, $invoiceSearchPrefix, $isZeroPaddedInvoiceSearch) {
+                $tokens = preg_split('/\s+/u', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [$search];
+                $partyMatches = static function ($partyQuery) use ($tokens) {
+                    foreach ($tokens as $token) {
+                        $partyQuery->where(function ($identityQuery) use ($token) {
+                            $tokenTerm = "%{$token}%";
+                            $identityQuery->where('name', 'like', $tokenTerm)
+                                ->orWhere('phone', 'like', $tokenTerm)
+                                ->orWhere('sub_phone', 'like', $tokenTerm);
+                        });
+                    }
+                };
+                $snapshotMatches = static function ($snapshotQuery) use ($tokens) {
+                    foreach ($tokens as $token) {
+                        $tokenTerm = "%{$token}%";
+                        $snapshotQuery->where(function ($identityQuery) use ($tokenTerm) {
+                            $identityQuery->where('buyer_name', 'like', $tokenTerm)
+                                ->orWhere('buyer_phone', 'like', $tokenTerm);
+                        });
+                    }
+                };
+                $query->where(function ($q) use ($term, $search, $invoiceSearchDigits, $invoiceSearchPrefix, $isZeroPaddedInvoiceSearch, $partyMatches, $snapshotMatches) {
                     $q->where('buyer_name', 'like', $term)
                         ->orWhere('buyer_phone', 'like', $term)
                         ->orWhere('buyer_address', 'like', $term)
@@ -2072,20 +2094,11 @@ public function store(Request $request)
                         ->orWhereHas('offerPackage', function ($packageQuery) use ($term) {
                             $packageQuery->where('name', 'like', $term);
                         })
-                        ->orWhereHas('buyerCustomer', function ($customerQuery) use ($term) {
-                            $customerQuery->where(function ($identityQuery) use ($term) {
-                                $identityQuery->where('name', 'like', $term)
-                                    ->orWhere('phone', 'like', $term)
-                                    ->orWhere('sub_phone', 'like', $term);
-                            });
-                        })
-                        ->orWhereHas('seller', function ($sellerQuery) use ($term) {
-                            $sellerQuery->where(function ($identityQuery) use ($term) {
-                                $identityQuery->where('name', 'like', $term)
-                                    ->orWhere('phone', 'like', $term)
-                                    ->orWhere('sub_phone', 'like', $term);
-                            });
-                        });
+                        ->orWhere($snapshotMatches)
+                        ->orWhereHas('buyerCustomer', $partyMatches)
+                        ->orWhereHas('seller', $partyMatches)
+                        ->orWhereHas('project.partnership.customer', $partyMatches)
+                        ->orWhereHas('project.partnership.seller', $partyMatches);
 
                     if (ctype_digit($search)) {
                         $q->orWhere('id', (int) $search)
@@ -2110,7 +2123,10 @@ public function store(Request $request)
 
         $formatted = $instantSales->map(function ($sale) {
                 $buyerLabel = $this->buyerTypeLabelAr($sale->buyer_type ?? 'unknown');
-                $linkedBuyer = $sale->seller ?? $sale->buyerCustomer;
+                $linkedBuyer = $sale->seller
+                    ?? $sale->buyerCustomer
+                    ?? $sale->project?->partnership?->seller
+                    ?? $sale->project?->partnership?->customer;
                 $buyerName = trim((string) $sale->buyer_name) !== ''
                     ? $sale->buyer_name
                     : $linkedBuyer?->name;

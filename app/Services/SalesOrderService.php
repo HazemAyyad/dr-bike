@@ -207,24 +207,38 @@ class SalesOrderService
 
         if (! empty($filters['search'])) {
             $search = trim((string) $filters['search']);
-            $partyMatches = static function ($partyQuery) use ($search) {
-                $partyQuery->where(function ($identityQuery) use ($search) {
-                    $identityQuery->where('name', 'like', "%{$search}%")
-                        ->orWhere('phone', 'like', "%{$search}%")
-                        ->orWhere('sub_phone', 'like', "%{$search}%");
-                });
+            $tokens = preg_split('/\s+/u', $search, -1, PREG_SPLIT_NO_EMPTY) ?: [$search];
+            $partyMatches = static function ($partyQuery) use ($tokens) {
+                foreach ($tokens as $token) {
+                    $partyQuery->where(function ($identityQuery) use ($token) {
+                        $term = "%{$token}%";
+                        $identityQuery->where('name', 'like', $term)
+                            ->orWhere('phone', 'like', $term)
+                            ->orWhere('sub_phone', 'like', $term);
+                    });
+                }
             };
-            $query->where(function ($q) use ($search, $partyMatches) {
+            $snapshotMatches = static function ($snapshotQuery) use ($tokens) {
+                foreach ($tokens as $token) {
+                    $term = "%{$token}%";
+                    $snapshotQuery->where(function ($identityQuery) use ($term) {
+                        $identityQuery->where('customer_name', 'like', $term)
+                            ->orWhere('customer_phone', 'like', $term);
+                    });
+                }
+            };
+            $query->where(function ($q) use ($search, $partyMatches, $snapshotMatches) {
                 $q->where('serial_number', 'like', "%{$search}%")
                     ->orWhere('customer_name', 'like', "%{$search}%")
                     ->orWhere('customer_phone', 'like', "%{$search}%")
+                    ->orWhere($snapshotMatches)
                     ->orWhereHas('customer', $partyMatches)
                     ->orWhere(function ($partnerQuery) use ($partyMatches) {
                         $partnerQuery->where('partner_type', 'customer')
                             ->whereHas('partnerCustomer', $partyMatches);
                     })
                     ->orWhere(function ($partnerQuery) use ($partyMatches) {
-                        $partnerQuery->where('partner_type', 'seller')
+                        $partnerQuery->whereIn('partner_type', ['seller', 'trader'])
                             ->whereHas('partnerSeller', $partyMatches);
                     });
             });
