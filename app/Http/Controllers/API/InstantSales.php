@@ -2047,6 +2047,8 @@ public function store(Request $request)
                 'subProducts.sizeColor.size',
                     'createdByUser:id,name',
                     'updatedByUser:id,name',
+                    'buyerCustomer:id,name,phone,sub_phone',
+                    'seller:id,name,phone,sub_phone',
                 ]);
 
             if (! empty($date) && ! $looksLikeInvoiceSearch) {
@@ -2074,6 +2076,20 @@ public function store(Request $request)
                         })
                         ->orWhereHas('offerPackage', function ($packageQuery) use ($term) {
                             $packageQuery->where('name', 'like', $term);
+                        })
+                        ->orWhereHas('buyerCustomer', function ($customerQuery) use ($term) {
+                            $customerQuery->where(function ($identityQuery) use ($term) {
+                                $identityQuery->where('name', 'like', $term)
+                                    ->orWhere('phone', 'like', $term)
+                                    ->orWhere('sub_phone', 'like', $term);
+                            });
+                        })
+                        ->orWhereHas('seller', function ($sellerQuery) use ($term) {
+                            $sellerQuery->where(function ($identityQuery) use ($term) {
+                                $identityQuery->where('name', 'like', $term)
+                                    ->orWhere('phone', 'like', $term)
+                                    ->orWhere('sub_phone', 'like', $term);
+                            });
                         });
 
                     if (ctype_digit($search)) {
@@ -2099,6 +2115,13 @@ public function store(Request $request)
 
         $formatted = $instantSales->map(function ($sale) {
                 $buyerLabel = $this->buyerTypeLabelAr($sale->buyer_type ?? 'unknown');
+                $linkedBuyer = $sale->seller ?? $sale->buyerCustomer;
+                $buyerName = trim((string) $sale->buyer_name) !== ''
+                    ? $sale->buyer_name
+                    : $linkedBuyer?->name;
+                $buyerPhone = trim((string) $sale->buyer_phone) !== ''
+                    ? $sale->buyer_phone
+                    : ($linkedBuyer?->phone ?: $linkedBuyer?->sub_phone);
                 $isPackageSale = $sale->offer_package_id !== null;
                 $packageName = $sale->offerPackage?->name;
                 $hasAdditionalProducts = $isPackageSale && $sale->subProducts->contains(
@@ -2144,8 +2167,8 @@ public function store(Request $request)
                     'buyer_type' => $sale->buyer_type,
                     'buyer_type_label_ar' => $buyerLabel,
                     'buyer_id' => $sale->buyer_id,
-                    'buyer_name' => $sale->buyer_name,
-                    'buyer_phone' => $sale->buyer_phone,
+                    'buyer_name' => $buyerName,
+                    'buyer_phone' => $buyerPhone,
                     'buyer_address' => $sale->buyer_address,
                     'project_name' => $sale->project?->name,
                     'status' => $sale->status ?? 'active',

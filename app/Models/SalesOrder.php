@@ -104,6 +104,16 @@ class SalesOrder extends Model
         return $this->belongsTo(Customer::class);
     }
 
+    public function partnerCustomer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'partner_id');
+    }
+
+    public function partnerSeller(): BelongsTo
+    {
+        return $this->belongsTo(Seller::class, 'partner_id');
+    }
+
     public function city(): BelongsTo
     {
         return $this->belongsTo(City::class);

@@ -138,7 +138,7 @@ class SalesOrderService
     {
         $query = SalesOrder::query()
             ->with([
-                'customer:id,name,phone',
+                'customer:id,name,phone,sub_phone',
                 'city:id,name_ar',
                 'createdByUser:id,name',
                 'deliveryCompany:id,name,code,delivery_type',
@@ -207,10 +207,26 @@ class SalesOrderService
 
         if (! empty($filters['search'])) {
             $search = trim((string) $filters['search']);
-            $query->where(function ($q) use ($search) {
+            $partyMatches = static function ($partyQuery) use ($search) {
+                $partyQuery->where(function ($identityQuery) use ($search) {
+                    $identityQuery->where('name', 'like', "%{$search}%")
+                        ->orWhere('phone', 'like', "%{$search}%")
+                        ->orWhere('sub_phone', 'like', "%{$search}%");
+                });
+            };
+            $query->where(function ($q) use ($search, $partyMatches) {
                 $q->where('serial_number', 'like', "%{$search}%")
                     ->orWhere('customer_name', 'like', "%{$search}%")
-                    ->orWhere('customer_phone', 'like', "%{$search}%");
+                    ->orWhere('customer_phone', 'like', "%{$search}%")
+                    ->orWhereHas('customer', $partyMatches)
+                    ->orWhere(function ($partnerQuery) use ($partyMatches) {
+                        $partnerQuery->where('partner_type', 'customer')
+                            ->whereHas('partnerCustomer', $partyMatches);
+                    })
+                    ->orWhere(function ($partnerQuery) use ($partyMatches) {
+                        $partnerQuery->where('partner_type', 'seller')
+                            ->whereHas('partnerSeller', $partyMatches);
+                    });
             });
         }
 

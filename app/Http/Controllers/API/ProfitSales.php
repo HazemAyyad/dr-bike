@@ -285,14 +285,46 @@ public function getProfitSales(Request $request)
     try {
         $data = $request->validate([
             'date' => ['nullable', 'date_format:Y-m-d'],
+            'search' => ['nullable', 'string', 'max:255'],
         ]);
 
+        $search = trim((string) ($data['search'] ?? ''));
+
         $profitSales = ProfitSale::query()
-            ->with(['customer:id,name', 'seller:id,name', 'paymentBox:id,name'])
+            ->with([
+                'customer:id,name,phone,sub_phone',
+                'seller:id,name,phone,sub_phone',
+                'paymentBox:id,name',
+            ])
             ->when(
                 $data['date'] ?? null,
                 fn ($query, $date) => $query->whereDate('created_at', $date)
             )
+            ->when($search !== '', function ($query) use ($search) {
+                $term = "%{$search}%";
+                $query->where(function ($searchQuery) use ($search, $term) {
+                    $searchQuery->where('buyer_name', 'like', $term)
+                        ->orWhere('notes', 'like', $term)
+                        ->orWhereHas('customer', function ($customerQuery) use ($term) {
+                            $customerQuery->where(function ($identityQuery) use ($term) {
+                                $identityQuery->where('name', 'like', $term)
+                                    ->orWhere('phone', 'like', $term)
+                                    ->orWhere('sub_phone', 'like', $term);
+                            });
+                        })
+                        ->orWhereHas('seller', function ($sellerQuery) use ($term) {
+                            $sellerQuery->where(function ($identityQuery) use ($term) {
+                                $identityQuery->where('name', 'like', $term)
+                                    ->orWhere('phone', 'like', $term)
+                                    ->orWhere('sub_phone', 'like', $term);
+                            });
+                        });
+
+                    if (ctype_digit($search)) {
+                        $searchQuery->orWhere('id', (int) $search);
+                    }
+                });
+            })
             ->orderByDesc('id')
             ->get();
         $profitSales->transform(function (ProfitSale $sale) {
@@ -304,6 +336,11 @@ public function getProfitSales(Request $request)
             if ($sale->paymentBox && empty($sale->payment_box_name)) {
                 $sale->payment_box_name = $sale->paymentBox->name;
             }
+            $linkedBuyer = $sale->customer ?? $sale->seller;
+            $sale->setAttribute(
+                'buyer_phone',
+                $linkedBuyer?->phone ?: $linkedBuyer?->sub_phone
+            );
 
             return $sale;
         });
