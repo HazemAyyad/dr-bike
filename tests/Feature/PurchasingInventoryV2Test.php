@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\AccountingJournalEntry;
 use App\Models\Bill;
 use App\Models\Box;
 use App\Models\Customer;
@@ -22,8 +23,10 @@ use App\Services\ProductStockService;
 use App\Services\PurchaseAccountService;
 use App\Services\PurchaseAttachmentService;
 use App\Services\PurchasingService;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -394,6 +397,119 @@ class PurchasingInventoryV2Test extends TestCase
         $sourceIntegrity = collect(app(AccountingIntegrityService::class)->run()['checks'])
             ->firstWhere('name', 'source_debt_integrity');
         $this->assertSame('PASS', $sourceIntegrity['status']);
+    }
+
+    public function test_initial_purchase_payment_moves_cash_now_and_finalize_does_not_deduct_it_again(): void
+    {
+        Carbon::setTestNow('2026-09-01 10:00:00');
+        $seller = Seller::create(['name' => 'Initial Payment Supplier', 'phone' => '0593001']);
+        $product = $this->product(1301, 0);
+        $box = Box::create(['name' => 'Initial cash', 'total' => 10000, 'currency' => 'شيكل']);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 1, 'purchase_price' => 10000],
+            ],
+            'initial_payment' => 3000,
+            'box_id' => $box->id,
+        ], $this->user->id);
+
+        $payment = PurchasePayment::query()->where('bill_id', $bill->id)->sole();
+        $transaction = DebtTransaction::query()->findOrFail($payment->debt_transaction_id);
+        $this->assertEqualsWithDelta(7000, (float) $box->fresh()->total, 0.001);
+        $this->assertSame('awaiting_receiving', $bill->fresh()->workflow_status);
+        $this->assertSame('initial_payment', $payment->type);
+        $this->assertSame('2026-09-01', $payment->paid_at?->format('Y-m-d'));
+        $this->assertSame('purchase_initial_payment', $transaction->source);
+        $this->assertSame((int) $payment->id, (int) $transaction->source_id);
+        $this->assertSame($box->id, $transaction->box_id);
+        $this->assertEqualsWithDelta(3000, (float) $transaction->amount, 0.001);
+
+        $entry = app(AccountingProjectionService::class)->syncOrFail($payment->fresh());
+        $this->assertNotNull($entry);
+        $this->assertSame('2026-09-01', $entry->entry_date?->format('Y-m-d'));
+        $cashCredit = DB::table('accounting_journal_lines as lines')
+            ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+            ->where('lines.journal_entry_id', $entry->id)
+            ->where('accounts.system_key', 'cash')
+            ->value('lines.credit');
+        $this->assertEqualsWithDelta(3000, (float) $cashCredit, 0.001);
+        $this->assertFalse(DB::table('accounting_journal_lines as lines')
+            ->join('accounting_accounts as accounts', 'accounts.id', '=', 'lines.account_id')
+            ->where('lines.journal_entry_id', $entry->id)
+            ->whereIn('accounts.system_key', ['inventory', 'cogs', 'expense'])
+            ->exists());
+
+        app(PurchasingService::class)->receive($bill, [
+            'received_at' => '2026-09-03',
+            'items' => [[
+                'bill_item_id' => $bill->items()->first()->id,
+                'accepted_quantity' => 1,
+                'unit_price' => 10000,
+            ]],
+        ], $this->user->id);
+        Carbon::setTestNow('2026-09-03 11:00:00');
+        app(PurchasingService::class)->finalize($bill->fresh(), 0, null, $this->user->id);
+
+        $this->assertEqualsWithDelta(7000, (float) $box->fresh()->total, 0.001);
+        $this->assertSame(1, PurchasePayment::query()->where('bill_id', $bill->id)->count());
+        $this->assertSame(1, DebtTransaction::query()
+            ->where('source', 'purchase_initial_payment')
+            ->where('source_id', $payment->id)
+            ->count());
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'purchase_payment')
+            ->where('source_id', $payment->id)
+            ->count());
+        $this->assertEqualsWithDelta(7000, (float) DebtTransaction::query()
+            ->where('source', 'purchase_invoice')
+            ->where('source_id', $bill->id)
+            ->firstOrFail()
+            ->balance_after, 0.001);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_initial_and_finalize_payments_keep_their_own_dates_and_cash_movements(): void
+    {
+        Carbon::setTestNow('2026-09-01 09:00:00');
+        $seller = Seller::create(['name' => 'Dated Payment Supplier', 'phone' => '0593002']);
+        $product = $this->product(1302, 0);
+        $box = Box::create(['name' => 'Dated cash', 'total' => 10000, 'currency' => 'شيكل']);
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [['product_id' => $product->id, 'quantity' => 1, 'purchase_price' => 10000]],
+            'initial_payment' => 3000,
+            'box_id' => $box->id,
+        ], $this->user->id);
+        app(PurchasingService::class)->receive($bill, [
+            'received_at' => '2026-09-03',
+            'items' => [[
+                'bill_item_id' => $bill->items()->first()->id,
+                'accepted_quantity' => 1,
+                'unit_price' => 10000,
+            ]],
+        ], $this->user->id);
+
+        Carbon::setTestNow('2026-09-03 12:00:00');
+        app(PurchasingService::class)->finalize($bill->fresh(), 2000, $box->id, $this->user->id);
+
+        $payments = PurchasePayment::query()->where('bill_id', $bill->id)->orderBy('id')->get();
+        $this->assertCount(2, $payments);
+        $this->assertSame(['initial_payment', 'payment'], $payments->pluck('type')->all());
+        $this->assertSame(['2026-09-01', '2026-09-03'], $payments->map(fn ($payment) => $payment->paid_at?->format('Y-m-d'))->all());
+        $this->assertSame(['purchase_initial_payment', 'purchase_payment'], $payments->map(
+            fn ($payment) => DebtTransaction::query()->findOrFail($payment->debt_transaction_id)->source,
+        )->all());
+        $this->assertEqualsWithDelta(5000, (float) $box->fresh()->total, 0.001);
+
+        foreach ($payments as $payment) {
+            $entry = app(AccountingProjectionService::class)->syncOrFail($payment->fresh());
+            $this->assertSame($payment->paid_at?->format('Y-m-d'), $entry?->entry_date?->format('Y-m-d'));
+        }
+
+        Carbon::setTestNow();
     }
 
     public function test_supplier_account_payment_can_allocate_oldest_finalized_invoices(): void

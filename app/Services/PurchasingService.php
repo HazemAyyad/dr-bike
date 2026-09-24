@@ -15,6 +15,7 @@ use App\Models\PurchaseProduct;
 use App\Models\PurchaseReceipt;
 use App\Models\Size;
 use App\Models\SizeColor;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -24,8 +25,8 @@ class PurchasingService
         private InventoryCostingService $costing,
         private DebtLedgerService $ledger,
         private PurchaseActivityService $activity,
-    ) {
-    }
+        private BoxAccessService $boxAccess,
+    ) {}
 
     public function createPurchase(array $data, ?int $userId = null): Bill
     {
@@ -332,6 +333,7 @@ class PurchasingService
                 $bill->id,
                 $userId,
             );
+
             return $bill->fresh();
         });
     }
@@ -418,7 +420,7 @@ class PurchasingService
             $this->syncPendingInitialPaymentsToLedger($bill->fresh(), $userId);
 
             if ($initialPayment > 0) {
-                $this->recordPayment($bill->fresh(), $initialPayment, $boxId, 'initial_payment', 'دفعة أولية لفاتورة شراء #'.$bill->id, $userId);
+                $this->recordPayment($bill->fresh(), $initialPayment, $boxId, 'payment', 'دفعة عند اعتماد فاتورة شراء #'.$bill->id, $userId);
             } else {
                 $this->refreshPaymentStatus($bill->fresh());
             }
@@ -441,9 +443,12 @@ class PurchasingService
                 throw new \RuntimeException(__('messages.must_select_box'));
             }
 
-            $box = Box::query()->lockForUpdate()->findOrFail($boxId);
+            $box = $this->lockPaymentBox((int) $boxId, $userId);
             if ($this->ledger->normalizeCurrency($box->currency) !== $this->ledger->normalizeCurrency($bill->currency)) {
                 throw new \RuntimeException(__('messages.must_be_same_currency_check'));
+            }
+            if ((float) $box->total + 0.0001 < $amount) {
+                throw new \RuntimeException('رصيد الصندوق غير كافٍ لتنفيذ الحركة.');
             }
 
             $payment = PurchasePayment::create([
@@ -466,7 +471,7 @@ class PurchasingService
                 'type' => 'given',
                 'amount' => $amount,
                 'currency' => $bill->currency,
-                'transaction_date' => now()->toDateString(),
+                'transaction_date' => $payment->paid_at?->format('Y-m-d') ?? now()->toDateString(),
                 'box_id' => $boxId,
                 'source' => $type === 'initial_payment' ? 'purchase_initial_payment' : 'purchase_payment',
                 'source_id' => $payment->id,
@@ -494,9 +499,12 @@ class PurchasingService
             throw new \RuntimeException(__('messages.must_select_box'));
         }
 
-        $box = Box::query()->lockForUpdate()->findOrFail($boxId);
+        $box = $this->lockPaymentBox((int) $boxId, $userId);
         if ($this->ledger->normalizeCurrency($box->currency) !== $this->ledger->normalizeCurrency($bill->currency)) {
             throw new \RuntimeException(__('messages.must_be_same_currency_check'));
+        }
+        if ((float) $box->total + 0.0001 < $amount) {
+            throw new \RuntimeException('رصيد الصندوق غير كافٍ لتنفيذ الحركة.');
         }
 
         $payment = PurchasePayment::create([
@@ -509,9 +517,24 @@ class PurchasingService
             'type' => 'initial_payment',
             'paid_at' => now()->toDateString(),
             'note' => 'دفعة أولية عند إنشاء الفاتورة',
+            'debt_transaction_id' => null,
             'created_by' => $userId,
         ]);
 
+        $ledgerTx = $this->ledger->createTransaction([
+            'customer_id' => $bill->customer_id,
+            'seller_id' => $bill->seller_id,
+            'type' => 'given',
+            'amount' => $amount,
+            'currency' => $bill->currency,
+            'transaction_date' => $payment->paid_at?->format('Y-m-d') ?? now()->toDateString(),
+            'box_id' => $box->id,
+            'source' => 'purchase_initial_payment',
+            'source_id' => $payment->id,
+            'note' => $payment->note,
+        ], $userId, true);
+
+        $payment->update(['debt_transaction_id' => $ledgerTx->id]);
         $bill->update(['paid_amount' => (float) $bill->paid_amount + $amount]);
         $this->refreshPaymentStatus($bill->fresh());
         $this->activity->log($bill, 'initial_payment_created', 'تسجيل دفعة أولية', 'تم تسجيل دفعة أولية عند إنشاء فاتورة شراء', null, $payment->toArray(), null, 'purchase_payment', $payment->id, $userId);
@@ -531,6 +554,22 @@ class PurchasingService
             ->get();
 
         foreach ($payments as $payment) {
+            $existing = DebtTransaction::query()
+                ->active()
+                ->where('source', 'purchase_initial_payment')
+                ->where('source_id', $payment->id)
+                ->lockForUpdate()
+                ->get();
+            if ($existing->isNotEmpty()) {
+                if ($existing->count() !== 1 || ! $this->matchesPendingInitialPayment($existing->first(), $payment, $bill)) {
+                    throw new \RuntimeException('تعذر ربط الدفعة الأولية القديمة بحركة صندوق مؤكدة؛ تحتاج مراجعة محاسبية.');
+                }
+                $payment->update(['debt_transaction_id' => $existing->first()->id]);
+                $this->activity->log($bill, 'initial_payment_linked_to_existing_ledger', 'ربط دفعة أولية قديمة', 'تم ربط الدفعة الأولية بحركة الديون المطابقة دون إنشاء حركة صندوق جديدة', null, $payment->fresh()->toArray(), null, 'purchase_payment', $payment->id, $userId);
+
+                continue;
+            }
+
             $tx = $this->ledger->createTransaction([
                 'customer_id' => $bill->customer_id,
                 'seller_id' => $bill->seller_id,
@@ -547,6 +586,32 @@ class PurchasingService
             $payment->update(['debt_transaction_id' => $tx->id]);
             $this->activity->log($bill, 'initial_payment_synced_to_ledger', 'ترحيل دفعة أولية للديون', 'تم ترحيل الدفعة الأولية بعد إثبات أصل فاتورة الشراء', null, $payment->fresh()->toArray(), null, 'purchase_payment', $payment->id, $userId);
         }
+    }
+
+    private function matchesPendingInitialPayment(DebtTransaction $transaction, PurchasePayment $payment, Bill $bill): bool
+    {
+        return $transaction->type === 'given'
+            && (int) ($transaction->customer_id ?? 0) === (int) ($bill->customer_id ?? 0)
+            && (int) ($transaction->seller_id ?? 0) === (int) ($bill->seller_id ?? 0)
+            && (int) ($transaction->box_id ?? 0) === (int) ($payment->box_id ?? 0)
+            && abs((float) $transaction->amount - (float) $payment->amount) <= 0.0001
+            && $this->ledger->normalizeCurrency($transaction->currency)
+                === $this->ledger->normalizeCurrency($payment->currency ?: $bill->currency)
+            && $transaction->transaction_date?->format('Y-m-d')
+                === ($payment->paid_at?->format('Y-m-d') ?? now()->toDateString());
+    }
+
+    private function lockPaymentBox(int $boxId, ?int $userId): Box
+    {
+        if ($userId === null) {
+            return Box::query()->lockForUpdate()->findOrFail($boxId);
+        }
+
+        return $this->boxAccess->findAccessible(
+            User::query()->find($userId),
+            $boxId,
+            lockForUpdate: true,
+        );
     }
 
     public function priceIntelligence(int $productId, ?int $sellerId = null, ?int $customerId = null): array
@@ -726,6 +791,7 @@ class PurchasingService
                 ['seller_id' => $sellerId, 'product_id' => $productId],
                 ['price' => $latest->unit_price],
             );
+
             return;
         }
         PurchaseProduct::query()
@@ -805,6 +871,7 @@ class PurchasingService
                     'products' => ['اللون المحدد لا يتبع الحجم المحدد.'],
                 ]);
             }
+
             return [(int) $variant->sizeId, $resolvedSizeColorId];
         }
 

@@ -13,6 +13,7 @@ use App\Models\EmployeeDetail;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenancePayment;
+use App\Models\OutgoingCheck;
 use App\Models\ProfitSale;
 use App\Models\PurchasePayment;
 use App\Models\PurchaseReceipt;
@@ -37,9 +38,12 @@ use App\Services\PurchasePaymentSourceIdentityService;
 use App\Services\PurchasingService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
+use Mockery\MockInterface;
 use RuntimeException;
 use Tests\TestCase;
 
@@ -175,10 +179,38 @@ class AccountingLedgerIntegrationTest extends TestCase
         });
         Schema::connection('accounting_test')->create('outgoing_checks', function (Blueprint $table) {
             $table->id();
+            $table->unsignedBigInteger('customer_id')->nullable();
             $table->unsignedBigInteger('seller_id')->nullable();
             $table->string('status')->default('not_cashed');
             $table->decimal('total', 14, 4)->default(0);
+            $table->date('due_date')->nullable();
             $table->string('currency')->default('شيكل');
+            $table->string('check_id')->nullable();
+            $table->string('bank_name')->nullable();
+            $table->string('img')->nullable();
+            $table->string('back_image')->nullable();
+            $table->unsignedBigInteger('box_id')->nullable();
+            $table->text('notes')->nullable();
+            $table->timestamps();
+        });
+        Schema::connection('accounting_test')->create('incoming_checks', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('from_customer')->nullable();
+            $table->unsignedBigInteger('from_seller')->nullable();
+            $table->unsignedBigInteger('to_customer')->nullable();
+            $table->unsignedBigInteger('to_seller')->nullable();
+            $table->decimal('total', 14, 4)->default(0);
+            $table->date('due_date')->nullable();
+            $table->string('currency')->default('شيكل');
+            $table->string('check_id')->nullable();
+            $table->string('bank_name')->nullable();
+            $table->string('front_image')->nullable();
+            $table->string('back_image')->nullable();
+            $table->string('status')->default('not_cashed');
+            $table->text('notes')->nullable();
+            $table->date('received_at')->nullable();
+            $table->string('batch_number')->nullable();
+            $table->timestamps();
         });
         Schema::connection('accounting_test')->create('boxes', function (Blueprint $table) {
             $table->id();
@@ -267,6 +299,27 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->string('status')->default('complete');
             $table->string('workflow_status')->nullable();
             $table->string('payment_status')->default('unpaid');
+            $table->text('notes')->nullable();
+            $table->unsignedBigInteger('created_by')->nullable();
+            $table->timestamp('finalized_at')->nullable();
+            $table->unsignedBigInteger('approved_by')->nullable();
+            $table->timestamps();
+        });
+        Schema::connection('accounting_test')->create('bill_items', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('bill_id');
+            $table->unsignedBigInteger('product_id')->nullable();
+            $table->unsignedBigInteger('size_id')->nullable();
+            $table->unsignedBigInteger('size_color_id')->nullable();
+            $table->decimal('quantity', 14, 4)->default(0);
+            $table->decimal('ordered_quantity', 14, 4)->default(0);
+            $table->decimal('received_owned_quantity', 14, 4)->default(0);
+            $table->decimal('custody_quantity', 14, 4)->default(0);
+            $table->decimal('damaged_quantity', 14, 4)->default(0);
+            $table->decimal('mismatched_quantity', 14, 4)->default(0);
+            $table->decimal('price', 14, 4)->default(0);
+            $table->decimal('final_unit_price', 14, 4)->default(0);
+            $table->string('status')->nullable();
             $table->timestamps();
         });
         Schema::connection('accounting_test')->create('purchase_receipts', function (Blueprint $table) {
@@ -2071,6 +2124,369 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertSame((int) $legacy->id, (int) DebtTransaction::query()->find($legacy->debt_transaction_id)->source_id);
     }
 
+    public function test_open_purchase_initial_payment_moves_cash_and_posts_on_its_payment_date(): void
+    {
+        Carbon::setTestNow('2026-09-01 08:00:00');
+        $admin = User::query()->create(['name' => 'Purchase Admin', 'type' => 'admin']);
+        $seller = Seller::query()->create(['name' => 'Pay Now Supplier', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Pay now cash', 'total' => 10000, 'currency' => 'شيكل']);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [],
+            'total' => 10000,
+            'currency' => 'شيكل',
+            'initial_payment' => 3000,
+            'box_id' => $box->id,
+        ], $admin->id);
+
+        $payment = PurchasePayment::query()->where('bill_id', $bill->id)->sole();
+        $transaction = DebtTransaction::query()->findOrFail($payment->debt_transaction_id);
+        $this->assertEqualsWithDelta(7000, (float) $box->fresh()->total, 0.0001);
+        $this->assertSame('purchase_initial_payment', $transaction->source);
+        $this->assertSame((int) $payment->id, (int) $transaction->source_id);
+        $this->assertSame('2026-09-01', $transaction->transaction_date?->format('Y-m-d'));
+        $entry = AccountingJournalEntry::query()
+            ->where('source_type', 'purchase_payment')
+            ->where('source_id', $payment->id)
+            ->firstOrFail();
+        $this->assertSame('2026-09-01', $entry->entry_date?->format('Y-m-d'));
+        $this->assertEqualsWithDelta(3000, $this->partyAccountAmount($entry->id, 'cash', 'credit'), 0.0001);
+        $this->assertEqualsWithDelta(0, $this->partyAccountAmount($entry->id, 'inventory', 'debit'), 0.0001);
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'purchase_payment')
+            ->where('source_id', $payment->id)
+            ->count());
+    }
+
+    public function test_employee_cannot_create_initial_purchase_payment_from_hidden_box(): void
+    {
+        $employeeUser = User::query()->create(['name' => 'Purchase Employee', 'type' => 'employee']);
+        $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $seller = Seller::query()->create(['name' => 'Restricted Supplier', 'is_canceled' => false]);
+        $visible = Box::query()->create(['name' => 'Purchase visible', 'total' => 5000, 'currency' => 'شيكل']);
+        $hidden = Box::query()->create(['name' => 'Purchase hidden', 'total' => 5000, 'currency' => 'شيكل']);
+        DB::table('employee_visible_boxes')->insert([
+            'employee_id' => $employee->id,
+            'box_id' => $visible->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        try {
+            app(PurchasingService::class)->createPurchase([
+                'seller_id' => $seller->id,
+                'products' => [],
+                'total' => 1000,
+                'initial_payment' => 300,
+                'box_id' => $hidden->id,
+            ], $employeeUser->id);
+            $this->fail('Hidden purchase box should be rejected.');
+        } catch (\App\Exceptions\BoxAccessDeniedException $exception) {
+            $this->assertSame('الصندوق غير متاح لك.', $exception->getMessage());
+        }
+
+        $this->assertSame(0, \App\Models\Bill::query()->count());
+        $this->assertSame(0, PurchasePayment::query()->count());
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertEqualsWithDelta(5000, (float) $hidden->fresh()->total, 0.0001);
+    }
+
+    public function test_finalize_does_not_deduct_initial_payment_twice_and_keeps_later_payment_date(): void
+    {
+        Carbon::setTestNow('2026-09-01 08:00:00');
+        $admin = User::query()->create(['name' => 'Finalize Admin', 'type' => 'admin']);
+        $seller = Seller::query()->create(['name' => 'Finalize Supplier', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Finalize cash', 'total' => 20000, 'currency' => 'شيكل']);
+        $service = app(PurchasingService::class);
+
+        $bill = $service->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [],
+            'total' => 10000,
+            'initial_payment' => 3000,
+            'box_id' => $box->id,
+        ], $admin->id);
+        $this->insertReceivedBillItem($bill->id, 10000);
+        $service->finalize($bill->fresh(), 0, null, $admin->id);
+
+        $this->assertEqualsWithDelta(17000, (float) $box->fresh()->total, 0.0001);
+        $this->assertSame(1, PurchasePayment::query()->where('bill_id', $bill->id)->count());
+        $initial = PurchasePayment::query()->where('bill_id', $bill->id)->firstOrFail();
+        $this->assertSame(1, DebtTransaction::query()
+            ->where('source', 'purchase_initial_payment')
+            ->where('source_id', $initial->id)
+            ->count());
+
+        $secondBill = $service->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [],
+            'total' => 10000,
+            'initial_payment' => 3000,
+            'box_id' => $box->id,
+        ], $admin->id);
+        $this->insertReceivedBillItem($secondBill->id, 10000);
+        Carbon::setTestNow('2026-09-03 12:00:00');
+        $service->finalize($secondBill->fresh(), 2000, $box->id, $admin->id);
+
+        $payments = PurchasePayment::query()->where('bill_id', $secondBill->id)->orderBy('id')->get();
+        $this->assertCount(2, $payments);
+        $this->assertSame(['initial_payment', 'payment'], $payments->pluck('type')->all());
+        $this->assertSame(
+            ['2026-09-01', '2026-09-03'],
+            $payments->map(fn (PurchasePayment $payment) => $payment->paid_at?->format('Y-m-d'))->all(),
+        );
+        $this->assertEqualsWithDelta(12000, (float) $box->fresh()->total, 0.0001);
+        foreach ($payments as $payment) {
+            $transaction = DebtTransaction::query()->findOrFail($payment->debt_transaction_id);
+            $this->assertSame((int) $payment->id, (int) $transaction->source_id);
+            $this->assertSame($payment->paid_at?->format('Y-m-d'), $transaction->transaction_date?->format('Y-m-d'));
+            $entry = AccountingJournalEntry::query()
+                ->where('source_type', 'purchase_payment')
+                ->where('source_id', $payment->id)
+                ->firstOrFail();
+            $this->assertSame($payment->paid_at?->format('Y-m-d'), $entry->entry_date?->format('Y-m-d'));
+        }
+    }
+
+    public function test_integrity_reports_legacy_initial_payments_without_cash_link_without_repairing_them(): void
+    {
+        $seller = Seller::query()->create(['name' => 'Legacy Initial Supplier', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Legacy cash', 'total' => 5000, 'currency' => 'شيكل']);
+        $bill = \App\Models\Bill::query()->create([
+            'seller_id' => $seller->id,
+            'currency' => 'شيكل',
+            'total' => 1000,
+            'workflow_status' => 'awaiting_receiving',
+        ]);
+        $payment = PurchasePayment::withoutEvents(fn () => PurchasePayment::query()->create([
+            'bill_id' => $bill->id,
+            'seller_id' => $seller->id,
+            'box_id' => $box->id,
+            'amount' => 300,
+            'currency' => 'شيكل',
+            'type' => 'initial_payment',
+            'paid_at' => '2026-08-31',
+            'debt_transaction_id' => null,
+        ]));
+
+        $check = collect(app(AccountingIntegrityService::class)->run()['checks'])
+            ->firstWhere('name', 'purchase_initial_payment_pending_cash');
+        $this->assertSame('WARNING', $check['status']);
+        $this->assertSame($payment->id, $check['details']['items'][0]['payment_id']);
+        $this->assertSame($bill->id, $check['details']['items'][0]['bill_id']);
+        $this->assertSame($box->id, $check['details']['items'][0]['box_id']);
+        $this->assertEqualsWithDelta(300, $check['details']['items'][0]['amount'], 0.0001);
+        $this->assertSame('2026-08-31', $check['details']['items'][0]['paid_at']);
+        $this->assertSame('awaiting_receiving', $check['details']['items'][0]['bill_workflow_status']);
+        $this->assertNull($payment->fresh()->debt_transaction_id);
+        $this->assertEqualsWithDelta(5000, (float) $box->fresh()->total, 0.0001);
+    }
+
+    public function test_finalize_syncs_one_legacy_initial_payment_once_using_payment_identity(): void
+    {
+        Carbon::setTestNow('2026-09-03 10:00:00');
+        $admin = User::query()->create(['name' => 'Legacy Finalize Admin', 'type' => 'admin']);
+        $seller = Seller::query()->create(['name' => 'Legacy Finalize Supplier', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Legacy finalize cash', 'total' => 10000, 'currency' => 'شيكل']);
+        $bill = \App\Models\Bill::query()->create([
+            'seller_id' => $seller->id,
+            'currency' => 'شيكل',
+            'total' => 10000,
+            'paid_amount' => 3000,
+            'workflow_status' => 'received',
+            'payment_status' => 'partially_paid',
+        ]);
+        $this->insertReceivedBillItem($bill->id, 10000);
+        $payment = PurchasePayment::withoutEvents(fn () => PurchasePayment::query()->create([
+            'bill_id' => $bill->id,
+            'seller_id' => $seller->id,
+            'box_id' => $box->id,
+            'amount' => 3000,
+            'currency' => 'شيكل',
+            'type' => 'initial_payment',
+            'paid_at' => '2026-09-01',
+            'debt_transaction_id' => null,
+            'created_by' => $admin->id,
+        ]));
+
+        $service = app(PurchasingService::class);
+        $service->finalize($bill->fresh(), 0, null, $admin->id);
+        $linkedTransactionId = $payment->fresh()->debt_transaction_id;
+        $this->assertNotNull($linkedTransactionId);
+        $this->assertEqualsWithDelta(7000, (float) $box->fresh()->total, 0.0001);
+        $this->assertDatabaseHas('debt_transactions', [
+            'id' => $linkedTransactionId,
+            'source' => 'purchase_initial_payment',
+            'source_id' => $payment->id,
+        ]);
+        $this->assertSame(
+            '2026-09-01',
+            DebtTransaction::query()->findOrFail($linkedTransactionId)->transaction_date?->format('Y-m-d'),
+        );
+
+        $service->finalize($bill->fresh(), 0, null, $admin->id);
+        $this->assertEqualsWithDelta(7000, (float) $box->fresh()->total, 0.0001);
+        $this->assertSame(1, DebtTransaction::query()
+            ->where('source', 'purchase_initial_payment')
+            ->where('source_id', $payment->id)
+            ->count());
+    }
+
+    public function test_payment_receive_preflight_rejects_hidden_box_before_earlier_cash_mutation(): void
+    {
+        $employeeUser = User::query()->create(['name' => 'Atomic Employee', 'type' => 'employee']);
+        $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $customer = Customer::query()->create(['name' => 'Atomic Customer', 'is_canceled' => false]);
+        $visible = Box::query()->create(['name' => 'Visible cash', 'total' => 1000, 'currency' => 'شيكل']);
+        $hidden = Box::query()->create(['name' => 'Hidden cash', 'total' => 1000, 'currency' => 'شيكل']);
+        DB::table('employee_visible_boxes')->insert([
+            'employee_id' => $employee->id,
+            'box_id' => $visible->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->actingAs($employeeUser);
+
+        $this->withoutMiddleware()->postJson('/api/add/transaction', [
+            'type' => 'receive',
+            'customer_id' => $customer->id,
+            'box_id' => $visible->id,
+            'box_value' => 300,
+            'box_log_note' => 'must rollback',
+            'debts' => [['total' => 50, 'box_id' => $hidden->id]],
+        ])->assertOk()->assertJsonPath('message', 'الصندوق غير متاح لك.');
+
+        $this->assertEqualsWithDelta(1000, (float) $visible->fresh()->total, 0.0001);
+        $this->assertEqualsWithDelta(1000, (float) $hidden->fresh()->total, 0.0001);
+        $this->assertSame(0, BoxLog::query()->count());
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertSame(0, AccountingJournalEntry::query()->count());
+    }
+
+    public function test_payment_receive_preflight_aggregates_all_cash_out_for_each_box(): void
+    {
+        $admin = User::query()->create(['name' => 'Atomic Admin', 'type' => 'admin']);
+        $customer = Customer::query()->create(['name' => 'Combined Customer', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Combined cash', 'total' => 1000, 'currency' => 'شيكل']);
+        $this->actingAs($admin);
+
+        $this->withoutMiddleware()->postJson('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'box_id' => $box->id,
+            'box_value' => 600,
+            'debts' => [['total' => 500, 'box_id' => $box->id]],
+        ])->assertOk()->assertJsonPath('status', 'error');
+
+        $this->assertEqualsWithDelta(1000, (float) $box->fresh()->total, 0.0001);
+        $this->assertSame(0, BoxLog::query()->count());
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertSame(0, AccountingJournalEntry::query()->count());
+    }
+
+    public function test_payment_receive_commits_cash_check_and_debt_together_without_duplicate_journals(): void
+    {
+        $admin = User::query()->create(['name' => 'Atomic Success Admin', 'type' => 'admin']);
+        $customer = Customer::query()->create(['name' => 'Atomic Success Customer', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Atomic success cash', 'total' => 2000, 'currency' => 'شيكل']);
+        $this->actingAs($admin);
+
+        $this->withoutMiddleware()->postJson('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'box_id' => $box->id,
+            'box_value' => 300,
+            'checks' => [[
+                'check_value' => 200,
+                'check_currency' => 'شيكل',
+                'check_id' => 'UNIT-ATOMIC-1',
+                'bank_name' => 'Unit Bank',
+            ]],
+            'debts' => [['total' => 400, 'box_id' => $box->id, 'due_date' => '2026-09-06']],
+        ])->assertOk()->assertJsonPath('status', 'success');
+
+        $check = OutgoingCheck::query()->where('check_id', 'UNIT-ATOMIC-1')->firstOrFail();
+        $manual = DebtTransaction::query()->where('source', 'manual')->firstOrFail();
+        $projection = app(AccountingProjectionService::class);
+        $projection->syncOrFail($check->fresh());
+        $projection->syncOrFail($check->fresh());
+        $projection->syncOrFail($manual->fresh());
+        $projection->syncOrFail($manual->fresh());
+
+        $this->assertEqualsWithDelta(1300, (float) $box->fresh()->total, 0.0001);
+        $this->assertSame(2, BoxLog::query()->count());
+        $this->assertSame(2, DebtTransaction::query()->where('customer_id', $customer->id)->count());
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'outgoing_check')->where('source_id', $check->id)->count());
+        $this->assertSame(1, AccountingJournalEntry::query()
+            ->where('source_type', 'debt_transaction')->where('source_id', $manual->id)->count());
+    }
+
+    public function test_payment_receive_rolls_back_early_cash_when_later_component_throws(): void
+    {
+        $admin = User::query()->create(['name' => 'Atomic Failure Admin', 'type' => 'admin']);
+        $customer = Customer::query()->create(['name' => 'Atomic Failure Customer', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Atomic failure cash', 'total' => 1000, 'currency' => 'شيكل']);
+        $this->actingAs($admin);
+        $this->mock(DebtLedgerService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('createTransaction')
+                ->once()
+                ->andThrow(new RuntimeException('forced later component failure'));
+        });
+
+        $this->withoutMiddleware()->postJson('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'box_id' => $box->id,
+            'box_value' => 300,
+            'debts' => [['total' => 200, 'box_id' => $box->id]],
+        ])->assertOk()->assertJsonPath('status', 'error');
+
+        $this->assertEqualsWithDelta(1000, (float) $box->fresh()->total, 0.0001);
+        $this->assertSame(0, BoxLog::query()->count());
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertSame(0, AccountingJournalEntry::query()->count());
+    }
+
+    public function test_payment_receive_removes_new_check_image_when_database_transaction_rolls_back(): void
+    {
+        $admin = User::query()->create(['name' => 'Atomic File Admin', 'type' => 'admin']);
+        $customer = Customer::query()->create(['name' => 'Atomic File Customer', 'is_canceled' => false]);
+        $box = Box::query()->create(['name' => 'Atomic file cash', 'total' => 1000, 'currency' => 'شيكل']);
+        $this->actingAs($admin);
+        $this->mock(DebtLedgerService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('syncOutgoingCheckToLedger')
+                ->once()
+                ->andThrow(new RuntimeException('forced check sync failure'));
+        });
+        $directory = public_path('OutgoingChecksImages');
+        $before = File::isDirectory($directory) ? File::files($directory) : [];
+        $beforePaths = collect($before)->map(fn ($file) => $file->getPathname())->sort()->values()->all();
+
+        $this->withoutMiddleware()->post('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'box_id' => $box->id,
+            'box_value' => 100,
+            'checks' => [[
+                'check_value' => 200,
+                'check_currency' => 'شيكل',
+                'check_id' => 'UNIT-FILE-ROLLBACK',
+                'bank_name' => 'Unit Bank',
+                'img' => UploadedFile::fake()->image('rollback.png'),
+            ]],
+        ])->assertOk()->assertJsonPath('status', 'error');
+
+        $after = File::isDirectory($directory) ? File::files($directory) : [];
+        $afterPaths = collect($after)->map(fn ($file) => $file->getPathname())->sort()->values()->all();
+        $this->assertSame($beforePaths, $afterPaths);
+        $this->assertEqualsWithDelta(1000, (float) $box->fresh()->total, 0.0001);
+        $this->assertSame(0, BoxLog::query()->count());
+        $this->assertSame(0, OutgoingCheck::query()->count());
+        $this->assertSame(0, DebtTransaction::query()->count());
+    }
+
     public function test_clearing_warning_depends_on_open_balance_not_correction_history(): void
     {
         $box = Box::query()->create(['name' => 'Correction cash', 'total' => 100, 'currency' => 'شيكل']);
@@ -2224,6 +2640,24 @@ class AccountingLedgerIntegrationTest extends TestCase
             'name' => 'Test box',
             'total' => 1000,
             'currency' => 'شيكل',
+        ]);
+    }
+
+    private function insertReceivedBillItem(int $billId, float $price): void
+    {
+        DB::table('bill_items')->insert([
+            'bill_id' => $billId,
+            'quantity' => 1,
+            'ordered_quantity' => 1,
+            'received_owned_quantity' => 1,
+            'custody_quantity' => 0,
+            'damaged_quantity' => 0,
+            'mismatched_quantity' => 0,
+            'price' => $price,
+            'final_unit_price' => $price,
+            'status' => 'finished',
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
     }
 

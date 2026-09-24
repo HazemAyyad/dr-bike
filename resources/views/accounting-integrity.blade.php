@@ -43,6 +43,7 @@
         'cashboxes' => 'الصناديق', 'party_dimensions' => 'ربط الذمم بالأطراف',
         'debt_running_balance' => 'الرصيد المتسلسل للديون', 'source_debt_integrity' => 'سلامة مصادر الديون',
         'purchase_payment_source_identity' => 'هوية مصدر دفعات الشراء',
+        'purchase_initial_payment_pending_cash' => 'دفعات شراء أولية بانتظار حركة الصندوق',
         'manual_debt_box' => 'صندوق الحركة اليدوية', 'debt_box_currency' => 'عملة الدين والصندوق',
         'negative_boxes' => 'الصناديق السالبة', 'box_unclassified_adjustments' => 'تصنيف تعديلات الصندوق',
         'clearing_balance' => 'رصيد الحساب المعلّق حسب العملة',

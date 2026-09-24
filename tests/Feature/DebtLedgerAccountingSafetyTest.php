@@ -9,6 +9,7 @@ use App\Models\Customer;
 use App\Models\DebtTransaction;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeePermission;
+use App\Models\OutgoingCheck;
 use App\Models\Permission;
 use App\Models\Seller;
 use App\Models\User;
@@ -20,6 +21,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 class DebtLedgerAccountingSafetyTest extends TestCase
@@ -158,11 +160,16 @@ class DebtLedgerAccountingSafetyTest extends TestCase
         $this->assertEqualsWithDelta(500, (float) $boxB->fresh()->total, 0.001);
 
         $this->postJson('/api/add/transaction', [
-            'type' => 'payment',
+            'type' => 'receive',
             'customer_id' => $customer->id,
+            'box_id' => $boxA->id,
+            'box_value' => 300,
+            'box_log_note' => 'قبض يجب أن يرجع بالكامل',
             'debts' => [['total' => 25, 'box_id' => $boxB->id, 'due_date' => '2026-09-02']],
         ])->assertJsonPath('message', 'الصندوق غير متاح لك.');
         $this->assertSame(1, DebtTransaction::query()->count());
+        $this->assertSame($beforeLogs, BoxLog::query()->count());
+        $this->assertEqualsWithDelta(450, (float) $boxA->fresh()->total, 0.001);
         $this->assertEqualsWithDelta(500, (float) $boxB->fresh()->total, 0.001);
 
         Sanctum::actingAs($this->user);
@@ -171,6 +178,103 @@ class DebtLedgerAccountingSafetyTest extends TestCase
             'transaction_date' => '2026-09-03', 'box_id' => $boxB->id,
         ])->assertJsonPath('status', 'success');
         $this->assertEqualsWithDelta(475, (float) $boxB->fresh()->total, 0.001);
+    }
+
+    public function test_payment_receive_preflight_rejects_combined_cash_out_without_partial_writes(): void
+    {
+        $customer = $this->customer('Combined Cash Customer');
+        $box = $this->box(1000);
+
+        $response = $this->postJson('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'box_id' => $box->id,
+            'box_value' => 600,
+            'debts' => [[
+                'total' => 500,
+                'box_id' => $box->id,
+                'due_date' => '2026-09-05',
+            ]],
+        ]);
+
+        $response->assertOk()->assertJsonPath('status', 'error');
+        $this->assertEqualsWithDelta(1000, (float) $box->fresh()->total, 0.001);
+        $this->assertSame(0, BoxLog::query()->count());
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertSame(0, OutgoingCheck::query()->count());
+        $this->assertSame(0, DB::table('accounting_journal_entries')->count());
+    }
+
+    public function test_payment_receive_commits_valid_cash_check_and_debt_as_one_unit(): void
+    {
+        $customer = $this->customer('Atomic Success Customer');
+        $box = $this->box(2000);
+
+        $this->postJson('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'box_id' => $box->id,
+            'box_value' => 300,
+            'checks' => [[
+                'check_value' => 200,
+                'check_currency' => 'شيكل',
+                'check_id' => 'ATOMIC-1',
+                'bank_name' => 'Test Bank',
+                'due_date' => '2026-09-10',
+                'notes' => 'atomic check',
+            ]],
+            'debts' => [[
+                'total' => 400,
+                'box_id' => $box->id,
+                'due_date' => '2026-09-06',
+            ]],
+        ])->assertOk()->assertJsonPath('status', 'success');
+
+        $this->assertEqualsWithDelta(1300, (float) $box->fresh()->total, 0.001);
+        $this->assertSame(2, BoxLog::query()->count());
+        $this->assertSame(1, OutgoingCheck::query()->where('check_id', 'ATOMIC-1')->count());
+        $this->assertSame(2, DebtTransaction::query()->where('customer_id', $customer->id)->count());
+
+        $projection = app(AccountingProjectionService::class);
+        $check = OutgoingCheck::query()->where('check_id', 'ATOMIC-1')->firstOrFail();
+        $manual = DebtTransaction::query()->where('source', 'manual')->firstOrFail();
+        $projection->syncOrFail($check);
+        $projection->syncOrFail($check->fresh());
+        $projection->syncOrFail($manual);
+        $projection->syncOrFail($manual->fresh());
+        $this->assertSame(1, DB::table('accounting_journal_entries')
+            ->where('source_type', 'outgoing_check')->where('source_id', $check->id)->count());
+        $this->assertSame(1, DB::table('accounting_journal_entries')
+            ->where('source_type', 'debt_transaction')->where('source_id', $manual->id)->count());
+    }
+
+    public function test_payment_receive_rolls_back_early_cash_when_later_component_throws(): void
+    {
+        $customer = $this->customer('Late Failure Customer');
+        $box = $this->box(1000);
+        $this->mock(DebtLedgerService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('createTransaction')
+                ->once()
+                ->andThrow(new \RuntimeException('forced later component failure'));
+        });
+
+        $this->postJson('/api/add/transaction', [
+            'type' => 'payment',
+            'customer_id' => $customer->id,
+            'box_id' => $box->id,
+            'box_value' => 300,
+            'debts' => [[
+                'total' => 200,
+                'box_id' => $box->id,
+                'due_date' => '2026-09-07',
+            ]],
+        ])->assertOk()->assertJsonPath('status', 'error');
+
+        $this->assertEqualsWithDelta(1000, (float) $box->fresh()->total, 0.001);
+        $this->assertSame(0, BoxLog::query()->count());
+        $this->assertSame(0, DebtTransaction::query()->count());
+        $this->assertSame(0, OutgoingCheck::query()->count());
+        $this->assertSame(0, DB::table('accounting_journal_entries')->count());
     }
 
     public function test_backdated_insert_recalculates_only_the_affected_party_currency_in_date_and_id_order(): void

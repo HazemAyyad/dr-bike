@@ -54,6 +54,7 @@ class AccountingIntegrityService
         $checks[] = $this->checkDebtRunningBalances();
         $checks[] = $this->checkSourceDebtIntegrity();
         $checks[] = $this->checkPurchasePaymentSourceIdentity();
+        $checks[] = $this->checkPendingInitialPurchasePaymentCash();
         $checks[] = $this->checkManualDebtBoxes();
         $checks[] = $this->checkDebtBoxCurrencies();
         $checks[] = $this->checkNegativeBoxes();
@@ -765,6 +766,49 @@ class AccountingIntegrityService
             'Purchase payment debt rows must use the PurchasePayment ID as source_id.',
             $unsafe->map(fn (array $row) => 'payment:'.$row['purchase_payment_id'].':'.$row['status'])->all(),
             ['items' => $items->values()->all()],
+        );
+    }
+
+    /** @return array<string, mixed> */
+    private function checkPendingInitialPurchasePaymentCash(): array
+    {
+        if (! Schema::hasTable('purchase_payments') || ! Schema::hasTable('bills')) {
+            return $this->check(
+                'purchase_initial_payment_pending_cash',
+                'WARNING',
+                'Purchase payment tables are unavailable.',
+                [],
+            );
+        }
+
+        $items = PurchasePayment::query()
+            ->with('bill:id,workflow_status')
+            ->where('type', 'initial_payment')
+            ->whereNull('debt_transaction_id')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (PurchasePayment $payment) => [
+                'payment_id' => (int) $payment->id,
+                'bill_id' => $payment->bill_id ? (int) $payment->bill_id : null,
+                'box_id' => $payment->box_id ? (int) $payment->box_id : null,
+                'amount' => (float) $payment->amount,
+                'paid_at' => $payment->paid_at?->format('Y-m-d'),
+                'bill_workflow_status' => $payment->bill?->workflow_status,
+            ])
+            ->values();
+
+        $finalized = $items->where('bill_workflow_status', 'finalized');
+        $status = $items->isEmpty() ? 'PASS' : ($finalized->isNotEmpty() ? 'ERROR' : 'WARNING');
+
+        return $this->check(
+            'purchase_initial_payment_pending_cash',
+            $status,
+            'Initial purchase payments without debt_transaction_id are legacy cash movements requiring review; no automatic repair is performed.',
+            $items->map(fn (array $row) => 'payment:'.$row['payment_id'])->all(),
+            [
+                'items' => $items->all(),
+                'finalized_without_cash_link' => $finalized->pluck('payment_id')->all(),
+            ],
         );
     }
 
