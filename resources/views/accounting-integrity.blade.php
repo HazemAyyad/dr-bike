@@ -6,7 +6,7 @@
     <title>سلامة المحاسبة | Doctor Bike</title>
     <style>
         :root{--bg:#07111f;--panel:#101d2e;--line:#273a52;--text:#eaf1fa;--muted:#94a8c1;--green:#39d29b;--amber:#f7bf58;--red:#ff6f7d;--blue:#65a8ff}
-        *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Tahoma,Arial,sans-serif}button,input{font:inherit}.wrap{width:min(1480px,calc(100% - 28px));margin:auto;padding:24px 0 50px}.top,.actions,.panel-head,.status-row{display:flex;align-items:center;gap:12px}.top{justify-content:space-between;margin-bottom:20px}.top h1{margin:0;font-size:27px}.subtitle,.muted{color:var(--muted)}.subtitle{margin-top:7px}.actions{flex-wrap:wrap}.link,.button{border-radius:10px;padding:10px 14px;text-decoration:none;font-weight:bold}.link{color:#c9daee;border:1px solid var(--line)}.button{border:0;cursor:pointer}.primary{background:var(--green);color:#062218}.danger{background:#6b2733;color:#ffe4e8}.panel{background:var(--panel);border:1px solid var(--line);border-radius:17px;margin-bottom:17px;overflow:hidden}.panel-head{justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}.panel-head h2{margin:0;font-size:18px}.panel-body{padding:17px 18px}.notice,.error,.success,.warning{padding:13px 15px;border-radius:11px;margin-bottom:15px}.notice{background:#182a3f;border:1px solid #31506d;color:#c8ddf3}.error{background:#3b1720;border:1px solid #793242;color:#ffc0ca}.success{background:#123a31;border:1px solid #246f59;color:#aaf0d7}.warning{background:#463719;border:1px solid #82642b;color:#ffe3a5}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.step,.card{background:#0b1726;border:1px solid var(--line);border-radius:13px;padding:15px}.step strong,.card strong{display:block;margin-bottom:8px}.step span,.card span{color:var(--muted);font-size:13px;line-height:1.7}.step.safe{border-color:#286a58}.step.risk{border-color:#74404a}.status-row{justify-content:space-between}.badge{display:inline-block;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:bold}.pass,.repairable,.ready,.projected{background:#153c33;color:#9aebce}.warning-badge,.skipped,.blocked{background:#49391b;color:#ffe0a1}.error-badge,.still_failing,.failed{background:#4b222b;color:#ffc0c9}.already_valid_or_stale,.already_posted,.already_depreciated{background:#173a59;color:#b9dcff}.summary{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}.metric{background:#0b1726;border:1px solid var(--line);border-radius:12px;padding:13px}.metric .label{color:var(--muted);font-size:12px;min-height:31px}.metric .value{font-size:25px;font-weight:bold;margin-top:5px}.form-grid{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px}.repair-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px}.field{width:100%;background:#081321;border:1px solid #314861;color:white;border-radius:10px;padding:11px 12px;outline:none}.field:focus{border-color:var(--green)}label{display:block;color:#b9cce2;font-size:13px;margin-bottom:6px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:930px}th,td{text-align:right;padding:12px 14px;border-bottom:1px solid #203247;vertical-align:top;font-size:13px}th{background:#0c1827;color:#91a7c0;font-size:12px}.ltr{direction:ltr;text-align:left;display:inline-block}.code{font-family:Consolas,monospace}.ids{max-width:420px;word-break:break-word}.details{margin:5px 0 0;padding-right:18px;color:#c7d6e8}.migration-list{display:flex;flex-wrap:wrap;gap:8px}.migration-item{background:#0b1726;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12px}.migration-item.ok{border-color:#286a58;color:#aaf0d7}.migration-item.bad{border-color:#743541;color:#ffc0ca}.danger-zone{border-color:#743541}.help{line-height:1.85}.empty{text-align:center;color:var(--muted);padding:28px}.check-name{font-weight:bold}.small{font-size:12px}.nowrap{white-space:nowrap}
+        *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Tahoma,Arial,sans-serif}button,input,select{font:inherit}.wrap{width:min(1480px,calc(100% - 28px));margin:auto;padding:24px 0 50px}.top,.actions,.panel-head,.status-row{display:flex;align-items:center;gap:12px}.top{justify-content:space-between;margin-bottom:20px}.top h1{margin:0;font-size:27px}.subtitle,.muted{color:var(--muted)}.subtitle{margin-top:7px}.actions{flex-wrap:wrap}.link,.button{border-radius:10px;padding:10px 14px;text-decoration:none;font-weight:bold}.link{color:#c9daee;border:1px solid var(--line)}.button{border:0;cursor:pointer}.primary{background:var(--green);color:#062218}.danger{background:#6b2733;color:#ffe4e8}.panel{background:var(--panel);border:1px solid var(--line);border-radius:17px;margin-bottom:17px;overflow:hidden}.panel-head{justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}.panel-head h2{margin:0;font-size:18px}.panel-body{padding:17px 18px}.notice,.error,.success,.warning{padding:13px 15px;border-radius:11px;margin-bottom:15px}.notice{background:#182a3f;border:1px solid #31506d;color:#c8ddf3}.error{background:#3b1720;border:1px solid #793242;color:#ffc0ca}.success{background:#123a31;border:1px solid #246f59;color:#aaf0d7}.warning{background:#463719;border:1px solid #82642b;color:#ffe3a5}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.step,.card{background:#0b1726;border:1px solid var(--line);border-radius:13px;padding:15px}.step strong,.card strong{display:block;margin-bottom:8px}.step span,.card span{color:var(--muted);font-size:13px;line-height:1.7}.step.safe{border-color:#286a58}.step.risk{border-color:#74404a}.status-row{justify-content:space-between}.badge{display:inline-block;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:bold}.pass,.repairable,.ready,.projected{background:#153c33;color:#9aebce}.warning-badge,.skipped,.blocked{background:#49391b;color:#ffe0a1}.error-badge,.still_failing,.failed{background:#4b222b;color:#ffc0c9}.already_valid_or_stale,.already_posted,.already_depreciated{background:#173a59;color:#b9dcff}.summary{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}.metric{background:#0b1726;border:1px solid var(--line);border-radius:12px;padding:13px}.metric .label{color:var(--muted);font-size:12px;min-height:31px}.metric .value{font-size:25px;font-weight:bold;margin-top:5px}.form-grid{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:10px}.repair-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px}.field{width:100%;background:#081321;border:1px solid #314861;color:white;border-radius:10px;padding:11px 12px;outline:none}.field:focus{border-color:var(--green)}label{display:block;color:#b9cce2;font-size:13px;margin-bottom:6px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:930px}th,td{text-align:right;padding:12px 14px;border-bottom:1px solid #203247;vertical-align:top;font-size:13px}th{background:#0c1827;color:#91a7c0;font-size:12px}.ltr{direction:ltr;text-align:left;display:inline-block}.code{font-family:Consolas,monospace}.ids{max-width:420px;word-break:break-word}.details{margin:5px 0 0;padding-right:18px;color:#c7d6e8}.migration-list{display:flex;flex-wrap:wrap;gap:8px}.migration-item{background:#0b1726;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:12px}.migration-item.ok{border-color:#286a58;color:#aaf0d7}.migration-item.bad{border-color:#743541;color:#ffc0ca}.danger-zone{border-color:#743541}.help{line-height:1.85}.empty{text-align:center;color:var(--muted);padding:28px}.check-name{font-weight:bold}.small{font-size:12px}.nowrap{white-space:nowrap}.filter-row{display:flex;align-items:end;gap:12px;margin-top:15px}.filter-row>div{min-width:280px}.hidden-row{display:none}
         @media(max-width:960px){.grid,.steps{grid-template-columns:1fr}.summary{grid-template-columns:repeat(2,1fr)}.form-grid,.repair-grid{grid-template-columns:1fr}.top,.panel-head{align-items:stretch;flex-direction:column}}
     </style>
 </head>
@@ -34,6 +34,16 @@
         'total_issues' => 'الفروقات المكتشفة', 'affected_groups' => 'أشخاص/عملات متأثرة',
         'repaired_rows' => 'صفوف balance_after المصححة', 'remaining_issues' => 'الفروقات المتبقية',
         'accounting_mismatches' => 'فروقات GL المتبقية',
+    ];
+    $legacyCashSummaryLabels = [
+        'total_rows' => 'إجمالي حركات النقد القديمة', 'linked_and_accounted' => 'مرتبطة ومرحلة',
+        'linked_not_accounted' => 'مرتبطة بلا قيد مناسب', 'linked_but_reversed' => 'مرتبطة بقيد معكوس',
+        'duplicate_accounting_risk' => 'خطر تكرار محاسبي', 'unlinked_cash' => 'نقد بلا مصدر',
+        'ambiguous' => 'تحتاج مراجعة يدوية',
+    ];
+    $purchaseSourceStatusLabels = [
+        'total' => 'إجمالي دفعات الشراء المفحوصة', 'ALREADY_CORRECT' => 'الهوية صحيحة',
+        'SAFE_TO_REPAIR' => 'قابلة للإصلاح المؤكد', 'AMBIGUOUS' => 'غير محسومة', 'UNKNOWN' => 'حالة غير معروفة',
     ];
     $checkLabels = [
         'journal_balance' => 'توازن القيود', 'product_sales' => 'مبيعات المنتجات',
@@ -86,14 +96,15 @@
     @if($mode === 'debt_balance_repair')<div class="success">اكتمل تصحيح الحقل المشتق balance_after فقط. لم تتغير المبالغ أو الصناديق أو القيود المحاسبية.</div>@endif
 
     <section class="panel">
-        <div class="panel-head"><h2>المعاينة + فحص السلامة</h2><span class="muted">فلتر التاريخ يخص فحص السلامة فقط؛ أخطاء الترحيل تعرض كل السجلات المفتوحة.</span></div>
+        <div class="panel-head"><h2>الفحص المحاسبي الشامل — قراءة فقط</h2><span class="muted">فلتر التاريخ يخص فحص السلامة فقط؛ بقية الفحوص تعرض نطاقها الكامل.</span></div>
         <div class="panel-body">
+            <div class="notice help">هذا الفحص قراءة فقط ولا يغيّر الأرصدة أو الصناديق أو دفتر الديون أو القيود المحاسبية. ويشمل معاينة الترحيل والعربونات والإهلاك وأرصدة الديون وسلامة المحاسبة والنقد القديم وهوية دفعات الشراء.</div>
             <form class="form-grid" method="POST" action="{{ route('security-center.accounting.inspect') }}">
                 @csrf
                 <div><label>من تاريخ (اختياري)</label><input class="field ltr" type="date" name="from" value="{{ old('from', $from) }}"></div>
                 <div><label>إلى تاريخ (اختياري)</label><input class="field ltr" type="date" name="to" value="{{ old('to', $to) }}"></div>
                 <div><label>شهر الإهلاك للمعاينة</label><input class="field ltr" type="month" name="depreciation_period" value="{{ old('depreciation_period', $depreciationPeriod) }}"></div>
-                <div style="align-self:end"><button class="button primary" type="submit">معاينة آمنة</button></div>
+                <div style="align-self:end"><button class="button primary" type="submit">تشغيل الفحص الشامل الآمن</button></div>
             </form>
         </div>
     </section>
@@ -150,7 +161,7 @@
 
     @if($debtBalanceResult)
         <section class="panel">
-            <div class="panel-head"><h2>الرصيد المتسلسل لدفتر الديون</h2><span class="badge {{ $mode === 'debt_balance_repair' ? 'warning-badge' : 'pass' }}">{{ $mode === 'debt_balance_repair' ? 'بعد الإصلاح' : 'معاينة فقط' }}</span></div>
+            <div class="panel-head"><h2>فحص أرصدة دفتر الديون — قراءة فقط</h2><span class="badge {{ $mode === 'debt_balance_repair' ? 'warning-badge' : 'pass' }}">{{ $mode === 'debt_balance_repair' ? 'بعد الإصلاح' : 'معاينة فقط' }}</span></div>
             <div class="panel-body">
                 <div class="notice help">المعاينة تقارن <span class="ltr code">balance_after</span> المخزن بالرصيد المتوقع حسب <span class="ltr code">transaction_date ثم id</span> لكل شخص وعملة. الإصلاح لا يغيّر المبلغ أو النوع أو العملة أو الصندوق أو المصدر أو النقد أو القيود.</div>
                 <div class="summary">@foreach($debtBalanceSummaryLabels as $key => $label)<div class="metric"><div class="label">{{ $label }}</div><div class="value">{{ number_format($debtBalanceResult['summary'][$key] ?? 0) }}</div></div>@endforeach</div>
@@ -163,6 +174,53 @@
         </section>
     @endif
 
+    @if($legacyCashAuditResult)
+        <section class="panel">
+            <div class="panel-head"><h2>تدقيق حركات النقد القديمة</h2><span class="badge pass">قراءة فقط</span></div>
+            <div class="panel-body">
+                <div class="notice help">الملخص يشمل كل الصفوف المفحوصة. الجدول يعرض أول 200 صف فقط من الحالات التي تحتاج مراجعة، ولا يعرض <span class="ltr code">LINKED_AND_ACCOUNTED</span> لتجنب تحميل آلاف الصفوف في الصفحة.</div>
+                <div class="summary">@foreach($legacyCashSummaryLabels as $key => $label)<div class="metric"><div class="label">{{ $label }}</div><div class="value">{{ number_format($legacyCashAuditResult['summary'][$key] ?? 0) }}</div></div>@endforeach</div>
+                <div class="filter-row">
+                    <div><label for="legacy-cash-filter">تصفية الحالات المعروضة</label><select id="legacy-cash-filter" class="field"><option value="">كل الحالات التي تحتاج مراجعة</option><option value="LINKED_NOT_ACCOUNTED">LINKED_NOT_ACCOUNTED</option><option value="LINKED_BUT_REVERSED">LINKED_BUT_REVERSED</option><option value="DUPLICATE_ACCOUNTING_RISK">DUPLICATE_ACCOUNTING_RISK</option><option value="UNLINKED_CASH">UNLINKED_CASH</option><option value="AMBIGUOUS">AMBIGUOUS</option></select></div>
+                    <div class="muted small">عدد حالات المراجعة: {{ number_format($legacyCashAuditResult['review_total'] ?? 0) }}@if(($legacyCashAuditResult['hidden_review_rows'] ?? 0) > 0) — غير معروض بسبب الحد: {{ number_format($legacyCashAuditResult['hidden_review_rows']) }}@endif</div>
+                </div>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>BoxLog</th><th>التاريخ</th><th>الصندوق</th><th>العملة</th><th>النوع</th><th>المبلغ</th><th>الوصف</th><th>Reason Code</th><th>المصدر المطابق</th><th>Journal</th><th>التصنيف</th><th>السبب</th></tr></thead><tbody id="legacy-cash-rows">
+            @forelse($legacyCashAuditResult['display_rows'] as $row)
+                @php
+                    $classification = (string) ($row['classification'] ?? 'AMBIGUOUS');
+                    $classificationClass = match ($classification) {
+                        'DUPLICATE_ACCOUNTING_RISK', 'UNLINKED_CASH' => 'error-badge',
+                        'LINKED_AND_ACCOUNTED' => 'pass',
+                        default => 'warning-badge',
+                    };
+                @endphp
+                <tr data-classification="{{ $classification }}"><td>#{{ $row['box_log_id'] }}</td><td class="nowrap ltr">{{ $row['date'] ?? '—' }}</td><td>{{ isset($row['box_id']) ? '#'.$row['box_id'] : '—' }}</td><td>{{ $row['currency'] ?? '—' }}</td><td><span class="ltr code">{{ $row['type'] ?? '—' }}</span></td><td>{{ number_format((float) ($row['amount'] ?? 0), 2) }}</td><td>{{ $row['description'] ?: '—' }}</td><td><span class="ltr code">{{ $row['reason_code'] ?: '—' }}</span></td><td><span class="ltr code">{{ $row['matched_source_type'] ? $row['matched_source_type'].':'.($row['matched_source_id'] ?? '—') : '—' }}</span></td><td>{{ $row['journal_entry_id'] ? '#'.$row['journal_entry_id'] : '—' }}</td><td><span class="badge {{ $classificationClass }}">{{ $classification }}</span></td><td>{{ $row['reason'] ?? '—' }}</td></tr>
+            @empty<tr><td class="empty" colspan="12">لا توجد حالات نقد قديمة تحتاج مراجعة ضمن نتيجة الفحص.</td></tr>@endforelse
+            </tbody></table></div>
+        </section>
+    @endif
+
+    @if($purchasePaymentSourceResult)
+        <section class="panel">
+            <div class="panel-head"><h2>فحص هوية مصدر دفعات الشراء</h2><span class="badge pass">inspect() — قراءة فقط</span></div>
+            <div class="panel-body">
+                <div class="notice help">يعرض هوية المصدر الحالية والمتوقعة فقط كما ترجعها الخدمة. لا يستدعي <span class="ltr code">run()</span> ولا يغيّر <span class="ltr code">source_id</span>.</div>
+                <div class="summary">@foreach($purchasePaymentSourceResult['summary'] as $key => $value)<div class="metric"><div class="label">{{ $purchaseSourceStatusLabels[$key] ?? $key }}</div><div class="value">{{ number_format($value) }}</div></div>@endforeach</div>
+                @if(($purchasePaymentSourceResult['hidden_rows'] ?? 0) > 0)<div class="muted small" style="margin-top:12px">تم عرض أول 200 سجل، وعدد السجلات غير المعروضة: {{ number_format($purchasePaymentSourceResult['hidden_rows']) }}.</div>@endif
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>Purchase Payment</th><th>Bill</th><th>Debt Transaction</th><th>الهوية الحالية</th><th>الهوية المتوقعة</th><th>تعارض؟</th><th>الحالة</th></tr></thead><tbody>
+            @forelse($purchasePaymentSourceResult['items'] as $item)
+                @php
+                    $sourceStatus = (string) ($item['status'] ?? 'UNKNOWN');
+                    $sourceStatusClass = $sourceStatus === 'ALREADY_CORRECT' ? 'pass' : ($sourceStatus === 'AMBIGUOUS' ? 'warning-badge' : 'warning-badge');
+                @endphp
+                <tr><td>#{{ $item['purchase_payment_id'] }}</td><td>{{ $item['bill_id'] ? '#'.$item['bill_id'] : '—' }}</td><td>{{ $item['debt_transaction_id'] ? '#'.$item['debt_transaction_id'] : '—' }}</td><td><span class="ltr code">{{ $item['current_source'] ? $item['current_source'].':'.($item['current_source_id'] ?? '—') : '—' }}</span></td><td><span class="ltr code">{{ $item['expected_source'] }}:{{ $item['expected_source_id'] }}</span></td><td>{{ !empty($item['identity_conflict']) ? 'نعم' : 'لا' }}</td><td><span class="badge {{ $sourceStatusClass }}">{{ $sourceStatus }}</span></td></tr>
+            @empty<tr><td class="empty" colspan="7">لا توجد دفعات شراء مرتبطة بحركات دين لفحص هويتها.</td></tr>@endforelse
+            </tbody></table></div>
+        </section>
+    @endif
+
     @if($integrityResult)
         <section class="panel">
             <div class="panel-head"><h2>نتيجة فحص السلامة</h2><div class="actions"><span class="badge pass">PASS {{ $integrityResult['summary']['pass'] }}</span><span class="badge warning-badge">WARNING {{ $integrityResult['summary']['warning'] }}</span><span class="badge error-badge">ERROR {{ $integrityResult['summary']['error'] }}</span></div></div>
@@ -171,6 +229,8 @@
             </tbody></table></div>
         </section>
     @endif
+
+    <div class="warning help"><strong>تنبيه قبل عمليات الكتابة أدناه:</strong> قبل تنفيذ أي إصلاح فعلي على قاعدة الإنتاج، تأكد من وجود نسخة احتياطية حديثة لقاعدة البيانات.</div>
 
     <section class="panel danger-zone">
         <div class="panel-head"><h2>إصلاح الرصيد المتسلسل لدفتر الديون</h2><span class="badge error-badge">يعدل balance_after فقط</span></div>
@@ -229,5 +289,13 @@
         </div>
     </section>
 </main>
+<script>
+    document.getElementById('legacy-cash-filter')?.addEventListener('change', function () {
+        const selected = this.value;
+        document.querySelectorAll('#legacy-cash-rows tr[data-classification]').forEach(function (row) {
+            row.classList.toggle('hidden-row', selected !== '' && row.dataset.classification !== selected);
+        });
+    });
+</script>
 </body>
 </html>

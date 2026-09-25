@@ -6,7 +6,9 @@ use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AssetDepreciationWorkflowService;
 use App\Services\DebtLedgerBalanceRepairService;
+use App\Services\LegacyCashAuditService;
 use App\Services\MaintenancePrepaymentSyncService;
+use App\Services\PurchasePaymentSourceIdentityService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +31,8 @@ class AccountingIntegrityWebController extends Controller
         MaintenancePrepaymentSyncService $prepayments,
         AssetDepreciationWorkflowService $depreciation,
         DebtLedgerBalanceRepairService $debtBalances,
+        LegacyCashAuditService $legacyCashAudit,
+        PurchasePaymentSourceIdentityService $purchasePaymentSources,
     ): View {
         $data = $request->validate([
             'from' => ['nullable', 'date_format:Y-m-d'],
@@ -38,6 +42,8 @@ class AccountingIntegrityWebController extends Controller
         [$from, $to, $input] = $this->datesFromValidated($data);
         $this->ensureAccountingTablesReady();
         $period = (string) ($data['depreciation_period'] ?? now()->format('Y-m'));
+        $legacyCashAuditResult = $this->prepareLegacyCashAuditResult($legacyCashAudit->audit());
+        $purchasePaymentSourceResult = $this->preparePurchasePaymentSourceResult($purchasePaymentSources);
 
         return $this->page([
             'mode' => 'preview',
@@ -46,6 +52,8 @@ class AccountingIntegrityWebController extends Controller
             'depreciationResult' => $depreciation->preview($period),
             'debtBalanceResult' => $debtBalances->run(true),
             'integrityResult' => $integrity->run($from, $to),
+            'legacyCashAuditResult' => $legacyCashAuditResult,
+            'purchasePaymentSourceResult' => $purchasePaymentSourceResult,
             'from' => $input['from'],
             'to' => $input['to'],
             'depreciationPeriod' => $period,
@@ -235,6 +243,58 @@ class AccountingIntegrityWebController extends Controller
         ];
     }
 
+    /** @param array<string, mixed> $result @return array<string, mixed> */
+    private function prepareLegacyCashAuditResult(array $result): array
+    {
+        $reviewClassifications = [
+            'LINKED_NOT_ACCOUNTED',
+            'LINKED_BUT_REVERSED',
+            'DUPLICATE_ACCOUNTING_RISK',
+            'UNLINKED_CASH',
+            'AMBIGUOUS',
+        ];
+        $reviewRows = collect($result['rows'] ?? [])
+            ->filter(fn (array $row) => in_array((string) ($row['classification'] ?? ''), $reviewClassifications, true))
+            ->values();
+
+        $result['review_total'] = $reviewRows->count();
+        $result['display_rows'] = $reviewRows->take(200)->all();
+        $result['hidden_review_rows'] = max(0, $reviewRows->count() - count($result['display_rows']));
+
+        return $result;
+    }
+
+    /** @return array<string, mixed> */
+    private function preparePurchasePaymentSourceResult(PurchasePaymentSourceIdentityService $service): array
+    {
+        $items = $service->inspect()->values();
+        $statusCounts = $items
+            ->countBy(fn (array $item) => (string) ($item['status'] ?? 'UNKNOWN'))
+            ->sortKeys()
+            ->all();
+        $displayItems = $items
+            ->sortBy(fn (array $item) => match ((string) ($item['status'] ?? 'UNKNOWN')) {
+                'AMBIGUOUS' => 0,
+                'SAFE_TO_REPAIR' => 1,
+                'ALREADY_CORRECT' => 3,
+                default => 2,
+            })
+            ->take(200)
+            ->values()
+            ->all();
+
+        return [
+            'summary' => array_merge([
+                'total' => $items->count(),
+                'ALREADY_CORRECT' => 0,
+                'SAFE_TO_REPAIR' => 0,
+                'AMBIGUOUS' => 0,
+            ], $statusCounts),
+            'items' => $displayItems,
+            'hidden_rows' => max(0, $items->count() - count($displayItems)),
+        ];
+    }
+
     private function ensureAccountingTablesReady(): void
     {
         $status = $this->migrationStatus();
@@ -273,6 +333,8 @@ class AccountingIntegrityWebController extends Controller
             'depreciationExecution' => null,
             'debtBalanceResult' => null,
             'integrityResult' => null,
+            'legacyCashAuditResult' => null,
+            'purchasePaymentSourceResult' => null,
             'from' => null,
             'to' => null,
             'depreciationPeriod' => now()->format('Y-m'),

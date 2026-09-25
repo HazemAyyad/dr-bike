@@ -7,9 +7,12 @@ use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AssetDepreciationWorkflowService;
 use App\Services\DebtLedgerBalanceRepairService;
+use App\Services\LegacyCashAuditService;
 use App\Services\MaintenancePrepaymentSyncService;
+use App\Services\PurchasePaymentSourceIdentityService;
 use Carbon\Carbon;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Routing\Middleware\ThrottleRequests;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
@@ -106,11 +109,17 @@ class AccountingIntegrityWebTest extends TestCase
             ->get('/security-center/accounting')
             ->assertOk()
             ->assertSee('سلامة المحاسبة')
-            ->assertSee('الصفحة لا تشغّل Migration');
+            ->assertSee('الصفحة لا تشغّل Migration')
+            ->assertSee('تشغيل الفحص الشامل الآمن')
+            ->assertSee('قبل تنفيذ أي إصلاح فعلي على قاعدة الإنتاج');
     }
 
     public function test_preview_renders_projection_and_integrity_results(): void
     {
+        config(['accounting_integrity.web_repair_token' => '']);
+        DB::table('boxes')->insert(['id' => 9, 'total' => 1234, 'currency' => 'شيكل']);
+        $databaseBefore = $this->financialTableSnapshot();
+
         $repair = Mockery::mock(AccountingProjectionRepairService::class);
         $repair->shouldReceive('run')->once()->with(true)->andReturn($this->repairResult());
         $this->app->instance(AccountingProjectionRepairService::class, $repair);
@@ -133,6 +142,15 @@ class AccountingIntegrityWebTest extends TestCase
         $debtBalances->shouldReceive('run')->once()->with(true)->andReturn($this->debtBalanceResult());
         $this->app->instance(DebtLedgerBalanceRepairService::class, $debtBalances);
 
+        $legacyCashAudit = Mockery::mock(LegacyCashAuditService::class);
+        $legacyCashAudit->shouldReceive('audit')->once()->withNoArgs()->andReturn($this->legacyCashAuditResult());
+        $this->app->instance(LegacyCashAuditService::class, $legacyCashAudit);
+
+        $purchasePaymentSources = Mockery::mock(PurchasePaymentSourceIdentityService::class);
+        $purchasePaymentSources->shouldReceive('inspect')->once()->withNoArgs()->andReturn(collect($this->purchasePaymentSourceItems()));
+        $purchasePaymentSources->shouldNotReceive('run');
+        $this->app->instance(PurchasePaymentSourceIdentityService::class, $purchasePaymentSources);
+
         $this->withSession(['security_center_authenticated' => true])
             ->post('/security-center/accounting/inspect', [
                 'from' => '2026-09-21',
@@ -144,8 +162,41 @@ class AccountingIntegrityWebTest extends TestCase
             ->assertSee('instant_sale:12')
             ->assertSee('جاهزة للترحيل كعربون صيانة')
             ->assertSee('أصل تجريبي')
-            ->assertSee('الرصيد المتسلسل لدفتر الديون')
-            ->assertSee('PASS 1');
+            ->assertSee('فحص أرصدة دفتر الديون — قراءة فقط')
+            ->assertSee('PASS 1')
+            ->assertSee('تدقيق حركات النقد القديمة')
+            ->assertSee('UNLINKED_CASH')
+            ->assertSee('AMBIGUOUS')
+            ->assertSee('DUPLICATE_ACCOUNTING_RISK')
+            ->assertSee('#501')
+            ->assertSee('#502')
+            ->assertSee('#503')
+            ->assertDontSee('#504')
+            ->assertSee('فحص هوية مصدر دفعات الشراء')
+            ->assertSee('ALREADY_CORRECT')
+            ->assertSee('SAFE_TO_REPAIR')
+            ->assertSee('#701')
+            ->assertSee('#702');
+
+        $this->assertSame($databaseBefore, $this->financialTableSnapshot());
+    }
+
+    public function test_every_existing_write_action_still_requires_token_and_confirmation(): void
+    {
+        $this->withoutMiddleware(ThrottleRequests::class);
+
+        foreach ([
+            '/security-center/accounting/repair',
+            '/security-center/accounting/maintenance-prepayments/sync',
+            '/security-center/accounting/assets/depreciation/run',
+            '/security-center/accounting/debt-ledger/balances/repair',
+        ] as $uri) {
+            $this->withSession(['security_center_authenticated' => true])
+                ->from('/security-center/accounting')
+                ->post($uri)
+                ->assertRedirect('/security-center/accounting')
+                ->assertSessionHasErrors(['access_token', 'confirmation']);
+        }
     }
 
     public function test_confirmed_debt_balance_repair_updates_only_through_the_safe_workflow(): void
@@ -418,5 +469,99 @@ class AccountingIntegrityWebTest extends TestCase
             'remaining_items' => [],
             'reconciliation' => null,
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function legacyCashAuditResult(): array
+    {
+        $rows = [
+            $this->legacyCashRow(501, 'UNLINKED_CASH', 'لا يوجد مصدر مالي معروف.'),
+            $this->legacyCashRow(502, 'AMBIGUOUS', 'وجد أكثر من مصدر محتمل.'),
+            $this->legacyCashRow(503, 'DUPLICATE_ACCOUNTING_RISK', 'النقد مرحل من مصدر آخر.'),
+            $this->legacyCashRow(504, 'LINKED_AND_ACCOUNTED', 'المصدر والقيد متطابقان.'),
+        ];
+
+        return [
+            'summary' => [
+                'total_rows' => 4,
+                'linked_and_accounted' => 1,
+                'linked_not_accounted' => 0,
+                'linked_but_reversed' => 0,
+                'duplicate_accounting_risk' => 1,
+                'unlinked_cash' => 1,
+                'ambiguous' => 1,
+            ],
+            'rows' => $rows,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function legacyCashRow(int $id, string $classification, string $reason): array
+    {
+        return [
+            'box_log_id' => $id,
+            'date' => '2026-09-20 10:00:00',
+            'box_id' => 9,
+            'currency' => 'شيكل',
+            'type' => 'out',
+            'amount' => 100,
+            'description' => 'حركة نقد تجريبية',
+            'reason_code' => null,
+            'matched_source_type' => $classification === 'UNLINKED_CASH' ? null : 'debt_transaction',
+            'matched_source_id' => $classification === 'UNLINKED_CASH' ? null : 88,
+            'journal_entry_id' => $classification === 'DUPLICATE_ACCOUNTING_RISK' ? 40 : null,
+            'classification' => $classification,
+            'reason' => $reason,
+        ];
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function purchasePaymentSourceItems(): array
+    {
+        return [
+            [
+                'purchase_payment_id' => 701,
+                'bill_id' => 100,
+                'debt_transaction_id' => 801,
+                'current_source' => 'purchase_payment',
+                'current_source_id' => 701,
+                'expected_source' => 'purchase_payment',
+                'expected_source_id' => 701,
+                'identity_conflict' => false,
+                'status' => 'ALREADY_CORRECT',
+            ],
+            [
+                'purchase_payment_id' => 702,
+                'bill_id' => 100,
+                'debt_transaction_id' => 802,
+                'current_source' => 'purchase_payment',
+                'current_source_id' => 100,
+                'expected_source' => 'purchase_payment',
+                'expected_source_id' => 702,
+                'identity_conflict' => false,
+                'status' => 'SAFE_TO_REPAIR',
+            ],
+            [
+                'purchase_payment_id' => 703,
+                'bill_id' => 101,
+                'debt_transaction_id' => 803,
+                'current_source' => 'purchase_initial_payment',
+                'current_source_id' => 101,
+                'expected_source' => 'purchase_initial_payment',
+                'expected_source_id' => 703,
+                'identity_conflict' => true,
+                'status' => 'AMBIGUOUS',
+            ],
+        ];
+    }
+
+    /** @return array<string, array<int, array<string, mixed>>> */
+    private function financialTableSnapshot(): array
+    {
+        return collect(['boxes', 'box_logs', 'debt_transactions', 'accounting_journal_entries'])
+            ->mapWithKeys(fn (string $table) => [
+                $table => DB::table($table)->orderBy('id')->get()->map(fn (object $row) => (array) $row)->all(),
+            ])
+            ->all();
     }
 }
