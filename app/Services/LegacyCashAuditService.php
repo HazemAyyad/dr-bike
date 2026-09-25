@@ -8,9 +8,13 @@ use Illuminate\Support\Facades\Schema;
 
 class LegacyCashAuditService
 {
+    private const STRONG_TIME_WINDOW_SECONDS = 300;
+
     public const LINKED_AND_ACCOUNTED = 'LINKED_AND_ACCOUNTED';
 
     public const LINKED_NOT_ACCOUNTED = 'LINKED_NOT_ACCOUNTED';
+
+    public const LINKED_BUT_REVERSED = 'LINKED_BUT_REVERSED';
 
     public const DUPLICATE_ACCOUNTING_RISK = 'DUPLICATE_ACCOUNTING_RISK';
 
@@ -28,6 +32,7 @@ class LegacyCashAuditService
             'total_rows' => 0,
             'linked_and_accounted' => 0,
             'linked_not_accounted' => 0,
+            'linked_but_reversed' => 0,
             'duplicate_accounting_risk' => 0,
             'unlinked_cash' => 0,
             'ambiguous' => 0,
@@ -86,16 +91,18 @@ class LegacyCashAuditService
         $reasonCode = isset($columns['reason_code']) ? trim((string) ($log->reason_code ?? '')) : '';
         $amount = $this->logAmount($log, $columns);
         $date = $this->date($log->created_at ?? null);
+        $timestamp = $this->timestamp($log->created_at ?? null);
+        $displayDate = $this->dateTime($log->created_at ?? null) ?: $date;
         $isTransfer = $type === 'transfer' || (($log->from_box_id ?? null) && ($log->to_box_id ?? null));
 
         if ($isTransfer) {
-            return $this->inspectTransfer($log, $boxes, $journals, $description, $note, $type, $reasonCode, $amount, $date);
+            return $this->inspectTransfer($log, $boxes, $journals, $description, $note, $type, $reasonCode, $amount, $date, $displayDate);
         }
 
         $boxId = (int) ($log->box_id ?? 0);
         $direction = $this->logDirection($type, (float) ($log->value ?? 0), $description);
         $currency = (string) ($boxes->get($boxId)->currency ?? '');
-        $base = $this->baseRow($log, $date, $boxId ?: null, $currency, $type, $amount, $description, $reasonCode);
+        $base = $this->baseRow($log, $displayDate, $boxId ?: null, $currency, $type, $amount, $description, $reasonCode);
 
         if ($amount <= 0.0001 || ! $boxId || ! $date || ! $direction) {
             return array_merge($base, [
@@ -107,9 +114,12 @@ class LegacyCashAuditService
             ]);
         }
 
-        $effectKey = $this->effectKey($boxId, $date, $amount, $direction);
-        $journalMatches = $journals['by_effect'][$effectKey] ?? [];
-        $sourceMatches = $sources[$effectKey] ?? [];
+        $effectDayKey = $this->effectDayKey($boxId, $date, $amount, $direction);
+        $effectBaseKey = $this->effectBaseKey($boxId, $amount, $direction);
+        $strongSources = $this->sourceTimeMatches($sources, $effectBaseKey, $timestamp, 'active');
+        $inactiveStrongSources = $this->sourceTimeMatches($sources, $effectBaseKey, $timestamp, 'inactive');
+        $weakSources = $sources['active']['by_day'][$effectDayKey] ?? [];
+        $inactiveWeakSources = $sources['inactive']['by_day'][$effectDayKey] ?? [];
         $direct = $directLinks[(int) $log->id] ?? [];
 
         if ($this->isDirectBoxAccounting($description, $reasonCode)) {
@@ -130,23 +140,80 @@ class LegacyCashAuditService
                 ]);
             }
 
-            return $this->classifyConfirmedSource($base, $direct[0], $effectKey, $journals, 'ربط مباشر محفوظ في قاعدة البيانات.');
+            return $this->classifyConfirmedSource($base, $direct[0], $effectDayKey, $journals, 'ربط مباشر محفوظ في قاعدة البيانات.');
         }
 
-        $hinted = $this->hintedSources($description.' '.$note, $sourceMatches);
+        $hint = $this->sourceHint($description.' '.$note);
+        if ($hint && $hint['id']) {
+            $hintIdentityMatches = [];
+            foreach ($hint['types'] as $hintType) {
+                $identityKey = $this->sourceKey($hintType, $hint['id']);
+                foreach (['active', 'inactive'] as $state) {
+                    if (isset($sources[$state]['by_identity'][$identityKey])) {
+                        $hintIdentityMatches[] = $sources[$state]['by_identity'][$identityKey];
+                    }
+                }
+            }
+            $hintIdentityMatches = $this->uniqueSources($hintIdentityMatches);
+            if ($hintIdentityMatches === []) {
+                return $this->ambiguous($base, 'الوصف يذكر مصدرًا محددًا، لكن المصدر غير موجود ضمن البيانات المتاحة.');
+            }
+            $validHintMatches = array_values(array_filter($hintIdentityMatches, function (array $source) use ($effectBaseKey, $timestamp) {
+                return $source['base_key'] === $effectBaseKey
+                    && $timestamp !== null
+                    && $this->sourceWithinWindow($source, $timestamp);
+            }));
+            if (count($validHintMatches) !== 1) {
+                return $this->ambiguous($base, 'معرّف المصدر مذكور في الوصف، لكن الصندوق أو المبلغ أو الاتجاه أو التوقيت لا يطابقه بصورة موثوقة.');
+            }
+            if ($validHintMatches[0]['state'] === 'inactive') {
+                return $this->inactiveSourceResult($base, $validHintMatches);
+            }
+
+            return $this->classifyConfirmedSource(
+                $base,
+                $validHintMatches[0],
+                $effectDayKey,
+                $journals,
+                'معرّف المصدر مذكور صراحة وتأكد تطابق الصندوق والمبلغ والاتجاه ضمن نافذة الزمن.'
+            );
+        }
+
+        $hinted = $hint
+            ? $this->filterSourcesByTypes($strongSources, $hint['types'])
+            : [];
         if (count($hinted) === 1) {
             return $this->classifyConfirmedSource(
                 $base,
                 $hinted[0],
-                $effectKey,
+                $effectDayKey,
                 $journals,
-                'تطابق نوع المصدر مع الوصف/الملاحظة، إضافة إلى الصندوق والمبلغ والاتجاه والتاريخ.'
+                'تطابق نوع المصدر مع الوصف/الملاحظة، إضافة إلى الصندوق والمبلغ والاتجاه ونافذة ±5 دقائق.'
             );
         }
         if (count($hinted) > 1) {
-            return $this->ambiguous($base, 'أكثر من مصدر يطابق الأدلة التشغيلية: '.$this->sourceList($hinted));
+            return $this->ambiguous($base, 'أكثر من مصدر يطابق الأدلة التشغيلية ضمن نافذة ±5 دقائق: '.$this->sourceList($hinted));
+        }
+        if ($hint) {
+            $hintedInactive = $this->filterSourcesByTypes($inactiveStrongSources, $hint['types']);
+            if ($hintedInactive !== []) {
+                return $this->inactiveSourceResult($base, $hintedInactive);
+            }
+            $hintedWeak = $this->filterSourcesByTypes(array_merge($weakSources, $inactiveWeakSources), $hint['types']);
+            if ($hintedWeak !== []) {
+                return $this->ambiguous($base, 'يوجد مصدر من النوع المشار إليه في اليوم نفسه، لكن لا يوجد تطابق زمني موثوق ضمن ±5 دقائق.');
+            }
         }
 
+        $allStrongSources = $this->uniqueSources(array_merge($strongSources, $inactiveStrongSources));
+        if (count($allStrongSources) > 1) {
+            return $this->ambiguous($base, 'توجد عدة مصادر تشغيلية ضمن نافذة ±5 دقائق: '.$this->sourceList($allStrongSources));
+        }
+        if ($inactiveStrongSources !== []) {
+            return $this->inactiveSourceResult($base, $inactiveStrongSources);
+        }
+
+        $journalMatches = $this->journalTimeMatches($journals, $effectBaseKey, $timestamp);
         $journalMatches = $this->uniqueJournals($journalMatches);
         if (count($journalMatches) === 1) {
             $match = $journalMatches[0];
@@ -156,16 +223,24 @@ class LegacyCashAuditService
                 'matched_source_id' => $match['source_id'],
                 'journal_entry_id' => $match['journal_entry_id'],
                 'classification' => self::DUPLICATE_ACCOUNTING_RISK,
-                'reason' => 'يوجد قيد Cash مطابق تمامًا من مصدر آخر، لكن لا يوجد ربط مباشر يثبت أن BoxLog له؛ إنشاء قيد مستقل سيكرر النقدية على الأرجح.',
+                'reason' => 'يوجد قيد Cash فعّال مطابق ضمن نافذة ±5 دقائق من مصدر آخر، لكن لا يوجد ربط مباشر يثبت أن BoxLog له؛ إنشاء قيد مستقل سيكرر النقدية على الأرجح.',
             ]);
         }
         if (count($journalMatches) > 1) {
             return $this->ambiguous($base, 'توجد عدة قيود Cash مطابقة ولا يمكن تعيين مصدر واحد بأمان: '.$this->journalList($journalMatches));
         }
 
-        $sourceMatches = $this->uniqueSources($sourceMatches);
-        if ($sourceMatches !== []) {
-            return $this->ambiguous($base, 'توجد مصادر تشغيلية محتملة بنفس الصندوق والمبلغ والاتجاه والتاريخ دون دليل ربط كافٍ: '.$this->sourceList($sourceMatches));
+        if (count($strongSources) === 1) {
+            return $this->ambiguous($base, 'يوجد مصدر تشغيلي واحد ضمن نافذة ±5 دقائق، لكن لا يوجد ربط مباشر أو قيد Cash فعّال يكفي للحكم النهائي: '.$this->sourceList($strongSources));
+        }
+
+        $weakEvidence = $this->uniqueSources(array_merge($weakSources, $inactiveWeakSources));
+        $weakJournals = $this->uniqueJournals(array_merge(
+            $journals['active_by_effect_day'][$effectDayKey] ?? [],
+            $journals['reversed_by_effect_day'][$effectDayKey] ?? [],
+        ));
+        if ($weakEvidence !== [] || $weakJournals !== []) {
+            return $this->ambiguous($base, 'توجد مطابقة ضعيفة في اليوم نفسه فقط، ولا يجوز اعتمادها كمصدر مؤكد.');
         }
 
         return array_merge($base, [
@@ -177,62 +252,118 @@ class LegacyCashAuditService
         ]);
     }
 
-    private function inspectTransfer(object $log, $boxes, array $journals, string $description, string $note, string $type, string $reasonCode, float $amount, ?string $date): array
+    private function inspectTransfer(object $log, $boxes, array $journals, string $description, string $note, string $type, string $reasonCode, float $amount, ?string $date, ?string $displayDate): array
     {
         $from = (int) ($log->from_box_id ?? 0);
         $to = (int) ($log->to_box_id ?? 0);
         $currency = (string) ($boxes->get($from)->currency ?? $boxes->get($to)->currency ?? '');
-        $base = $this->baseRow($log, $date, $from && $to ? $from.'->'.$to : null, $currency, $type ?: 'transfer', $amount, $description, $reasonCode);
+        $base = $this->baseRow($log, $displayDate, $from && $to ? $from.'->'.$to : null, $currency, $type ?: 'transfer', $amount, $description, $reasonCode);
         if (! $from || ! $to || ! $date || $amount <= 0.0001) {
             return $this->ambiguous($base, 'حركة التحويل لا تحتوي صندوقي المصدر والوجهة أو المبلغ أو التاريخ بصورة كاملة.');
         }
 
         $source = ['source_type' => 'box_transfer', 'source_id' => (int) $log->id];
-        $sourceJournals = $journals['by_source'][$this->sourceKey('box_transfer', (int) $log->id)] ?? [];
-        $fromKey = $this->effectKey($from, $date, $amount, -1);
-        $toKey = $this->effectKey($to, $date, $amount, 1);
+        $sourceKey = $this->sourceKey('box_transfer', (int) $log->id);
+        $sourceJournals = $journals['active_by_source'][$sourceKey] ?? [];
+        $fromKey = $this->effectDayKey($from, $date, $amount, -1);
+        $toKey = $this->effectDayKey($to, $date, $amount, 1);
         $matchingIds = array_values(array_intersect(
-            array_column($journals['by_effect'][$fromKey] ?? [], 'journal_entry_id'),
-            array_column($journals['by_effect'][$toKey] ?? [], 'journal_entry_id'),
+            array_column($journals['active_by_effect_day'][$fromKey] ?? [], 'journal_entry_id'),
+            array_column($journals['active_by_effect_day'][$toKey] ?? [], 'journal_entry_id'),
             array_column($sourceJournals, 'journal_entry_id'),
         ));
+        $reversedSourceJournals = $journals['reversed_by_source'][$sourceKey] ?? [];
+        $reversedIds = array_values(array_intersect(
+            array_column($journals['reversed_by_effect_day'][$fromKey] ?? [], 'journal_entry_id'),
+            array_column($journals['reversed_by_effect_day'][$toKey] ?? [], 'journal_entry_id'),
+            array_column($reversedSourceJournals, 'journal_entry_id'),
+        ));
+
+        $classification = $matchingIds
+            ? self::LINKED_AND_ACCOUNTED
+            : ($reversedIds ? self::LINKED_BUT_REVERSED : self::LINKED_NOT_ACCOUNTED);
 
         return array_merge($base, [
             'matched_source_type' => $source['source_type'],
             'matched_source_id' => $source['source_id'],
-            'journal_entry_id' => $matchingIds[0] ?? null,
-            'classification' => $matchingIds ? self::LINKED_AND_ACCOUNTED : self::LINKED_NOT_ACCOUNTED,
-            'reason' => $matchingIds
-                ? 'التحويل مرتبط مباشرة بقيد يغطي خروج النقدية ودخولها بين الصندوقين.'
-                : 'التحويل مصدر مؤكد، لكن لا يوجد قيد واحد يغطي طرفي Cash بالمبلغ والتاريخ نفسيهما.',
+            'journal_entry_id' => $matchingIds[0] ?? ($reversedIds[0] ?? null),
+            'classification' => $classification,
+            'reason' => match ($classification) {
+                self::LINKED_AND_ACCOUNTED => 'التحويل مرتبط مباشرة بقيد فعّال يغطي خروج النقدية ودخولها بين الصندوقين.',
+                self::LINKED_BUT_REVERSED => 'التحويل مرتبط مباشرة بقيد كان يغطي طرفي Cash ثم أصبح معكوسًا.',
+                default => 'التحويل مصدر مؤكد، لكن لا يوجد قيد فعّال واحد يغطي طرفي Cash بالمبلغ والتاريخ نفسيهما.',
+            },
         ]);
     }
 
-    private function classifyConfirmedSource(array $base, array $source, string $effectKey, array $journals, string $evidence): array
+    private function classifyConfirmedSource(array $base, array $source, string $effectDayKey, array $journals, string $evidence): array
     {
         $sourceKey = $this->sourceKey($source['source_type'], (int) $source['source_id']);
-        $sourceJournals = $journals['by_source'][$sourceKey] ?? [];
-        $effectJournalIds = array_column($journals['by_effect'][$effectKey] ?? [], 'journal_entry_id');
+        $sourceJournals = $journals['active_by_source'][$sourceKey] ?? [];
+        $effectJournalIds = array_column($journals['active_by_effect_day'][$effectDayKey] ?? [], 'journal_entry_id');
         $matching = array_values(array_filter($sourceJournals, fn (array $journal) => in_array($journal['journal_entry_id'], $effectJournalIds, true)));
+        $reversedSourceJournals = $journals['reversed_by_source'][$sourceKey] ?? [];
+        $reversedEffectIds = array_column($journals['reversed_by_effect_day'][$effectDayKey] ?? [], 'journal_entry_id');
+        $reversedMatching = array_values(array_filter($reversedSourceJournals, fn (array $journal) => in_array($journal['journal_entry_id'], $reversedEffectIds, true)));
+
+        $classification = $matching
+            ? self::LINKED_AND_ACCOUNTED
+            : ($reversedMatching
+                ? self::LINKED_BUT_REVERSED
+                : self::LINKED_NOT_ACCOUNTED);
 
         return array_merge($base, [
             'matched_source_type' => $source['source_type'],
             'matched_source_id' => $source['source_id'],
-            'journal_entry_id' => $matching[0]['journal_entry_id'] ?? ($sourceJournals[0]['journal_entry_id'] ?? null),
-            'classification' => $matching ? self::LINKED_AND_ACCOUNTED : self::LINKED_NOT_ACCOUNTED,
-            'reason' => $matching
-                ? $evidence.' يوجد قيد Cash مطابق.'
-                : $evidence.' لا يوجد قيد Cash مطابق للصندوق والمبلغ والاتجاه والتاريخ.',
+            'journal_entry_id' => $matching[0]['journal_entry_id']
+                ?? ($reversedMatching[0]['journal_entry_id'] ?? ($sourceJournals[0]['journal_entry_id'] ?? ($reversedSourceJournals[0]['journal_entry_id'] ?? null))),
+            'classification' => $classification,
+            'reason' => match ($classification) {
+                self::LINKED_AND_ACCOUNTED => $evidence.' يوجد قيد Cash فعّال مطابق.',
+                self::LINKED_BUT_REVERSED => $evidence.' قيد المصدر الأصلي معكوس أو له قيد عكس منشور، لذلك لا يعد أثرًا محاسبيًا فعالًا.',
+                default => $evidence.' لا يوجد قيد Cash فعّال مطابق للصندوق والمبلغ والاتجاه والتاريخ.',
+            },
         ]);
     }
 
     private function cashJournalIndex(): array
     {
-        $index = ['by_effect' => [], 'by_source' => []];
+        $index = [
+            'active_by_effect_day' => [],
+            'active_by_effect_base' => [],
+            'active_by_source' => [],
+            'reversed_by_effect_day' => [],
+            'reversed_by_source' => [],
+        ];
         if (! $this->hasColumns('accounting_accounts', ['id', 'system_key'])
             || ! $this->hasColumns('accounting_journal_entries', ['id', 'source_type', 'source_id', 'entry_date', 'currency', 'status'])
             || ! $this->hasColumns('accounting_journal_lines', ['journal_entry_id', 'account_id', 'box_id', 'debit', 'credit'])) {
             return $index;
+        }
+
+        $hasReversalColumn = Schema::hasColumn('accounting_journal_entries', 'reverses_entry_id');
+        $postedReversedIds = $hasReversalColumn
+            ? DB::table('accounting_journal_entries')
+                ->where('status', 'posted')
+                ->whereNotNull('reverses_entry_id')
+                ->pluck('reverses_entry_id')
+                ->map(fn ($id) => (int) $id)
+                ->flip()
+                ->all()
+            : [];
+        $optionalColumns = array_values(array_filter(
+            ['reverses_entry_id', 'created_at', 'posted_at'],
+            fn (string $column) => Schema::hasColumn('accounting_journal_entries', $column)
+        ));
+        $select = [
+            'entries.id as journal_entry_id', 'entries.source_type', 'entries.source_id',
+            'entries.entry_date', 'entries.currency', 'entries.status', 'lines.box_id',
+            DB::raw('SUM(lines.debit - lines.credit) as cash_effect'),
+        ];
+        $groupBy = ['entries.id', 'entries.source_type', 'entries.source_id', 'entries.entry_date', 'entries.currency', 'entries.status', 'lines.box_id'];
+        foreach ($optionalColumns as $column) {
+            $select[] = 'entries.'.$column;
+            $groupBy[] = 'entries.'.$column;
         }
 
         $rows = DB::table('accounting_journal_lines as lines')
@@ -241,27 +372,38 @@ class LegacyCashAuditService
             ->where('accounts.system_key', 'cash')
             ->whereIn('entries.status', ['posted', 'reversed'])
             ->whereNotNull('lines.box_id')
-            ->groupBy('entries.id', 'entries.source_type', 'entries.source_id', 'entries.entry_date', 'entries.currency', 'lines.box_id')
-            ->get([
-                'entries.id as journal_entry_id', 'entries.source_type', 'entries.source_id',
-                'entries.entry_date', 'entries.currency', 'lines.box_id',
-                DB::raw('SUM(lines.debit - lines.credit) as cash_effect'),
-            ]);
+            ->groupBy($groupBy)
+            ->get($select);
 
         foreach ($rows as $row) {
             $effect = round((float) $row->cash_effect, 4);
             if (abs($effect) <= 0.0001) {
                 continue;
             }
+            if ($hasReversalColumn && ($row->reverses_entry_id ?? null)) {
+                continue;
+            }
+            $isActive = $row->status === 'posted' && ! isset($postedReversedIds[(int) $row->journal_entry_id]);
             $item = [
                 'journal_entry_id' => (int) $row->journal_entry_id,
                 'source_type' => (string) $row->source_type,
                 'source_id' => (int) $row->source_id,
                 'currency' => (string) $row->currency,
+                'timestamps' => array_values(array_filter([
+                    $this->timestamp($row->created_at ?? null),
+                    $this->timestamp($row->posted_at ?? null),
+                ], fn ($value) => $value !== null)),
             ];
-            $effectKey = $this->effectKey((int) $row->box_id, $this->date($row->entry_date), abs($effect), $effect > 0 ? 1 : -1);
-            $index['by_effect'][$effectKey][] = $item;
-            $index['by_source'][$this->sourceKey($item['source_type'], $item['source_id'])][] = $item;
+            $effectDayKey = $this->effectDayKey((int) $row->box_id, $this->date($row->entry_date), abs($effect), $effect > 0 ? 1 : -1);
+            $sourceKey = $this->sourceKey($item['source_type'], $item['source_id']);
+            if ($isActive) {
+                $index['active_by_effect_day'][$effectDayKey][] = $item;
+                $index['active_by_effect_base'][$this->effectBaseKey((int) $row->box_id, abs($effect), $effect > 0 ? 1 : -1)][] = $item;
+                $index['active_by_source'][$sourceKey][] = $item;
+            } else {
+                $index['reversed_by_effect_day'][$effectDayKey][] = $item;
+                $index['reversed_by_source'][$sourceKey][] = $item;
+            }
         }
 
         return $index;
@@ -269,34 +411,50 @@ class LegacyCashAuditService
 
     private function operationalSourceIndex(): array
     {
-        $index = [];
+        $index = $this->emptySourceIndex();
         $specs = [
-            ['instant_sales', 'instant_sale', 'payment_box_id', 'payment_box_value', ['created_at'], 1],
-            ['profit_sales', 'profit_sale', 'payment_box_id', 'payment_box_value', ['created_at'], 1],
-            ['purchase_payments', 'purchase_payment', 'box_id', 'amount', ['paid_at', 'created_at'], -1],
-            ['maintenance_payments', 'maintenance_payment', 'box_id', 'amount', ['created_at'], 1],
-            ['expenses', 'expense', 'box_id', 'price', ['expense_date', 'created_at'], -1],
-            ['sales_order_settlements', 'sales_order_settlement', 'box_id', 'cash_amount', ['created_at'], 1],
-            ['sales_orders', 'sales_order', 'payment_box_id', 'payment_amount', ['financial_posted_at', 'created_at'], 1],
-            ['outgoing_checks', 'outgoing_check', 'box_id', 'total', ['updated_at', 'created_at'], -1],
-            ['project_expenses', 'project_expense', 'box_id', 'expenses', ['expense_date', 'created_at'], -1],
-            ['assets', 'asset', 'box_id', 'price', ['acquired_at', 'created_at'], -1],
+            ['table' => 'instant_sales', 'type' => 'instant_sale', 'box' => 'payment_box_id', 'amount' => 'payment_box_value', 'timestamps' => ['created_at'], 'days' => [], 'direction' => 1],
+            ['table' => 'profit_sales', 'type' => 'profit_sale', 'box' => 'payment_box_id', 'amount' => 'payment_box_value', 'timestamps' => ['created_at'], 'days' => [], 'direction' => 1],
+            ['table' => 'purchase_payments', 'type' => 'purchase_payment', 'box' => 'box_id', 'amount' => 'amount', 'timestamps' => ['created_at'], 'days' => ['paid_at'], 'direction' => -1],
+            ['table' => 'maintenance_payments', 'type' => 'maintenance_payment', 'box' => 'box_id', 'amount' => 'amount', 'timestamps' => ['created_at'], 'days' => [], 'direction' => 1],
+            ['table' => 'expenses', 'type' => 'expense', 'box' => 'box_id', 'amount' => 'price', 'timestamps' => ['created_at'], 'days' => ['expense_date'], 'direction' => -1],
+            ['table' => 'sales_order_settlements', 'type' => 'sales_order_settlement', 'box' => 'box_id', 'amount' => 'cash_amount', 'timestamps' => ['created_at'], 'days' => [], 'direction' => 1],
+            ['table' => 'sales_orders', 'type' => 'sales_order', 'box' => 'payment_box_id', 'amount' => 'payment_amount', 'timestamps' => ['financial_posted_at', 'created_at'], 'days' => [], 'direction' => 1],
+            ['table' => 'outgoing_checks', 'type' => 'outgoing_check', 'box' => 'box_id', 'amount' => 'total', 'timestamps' => ['updated_at', 'created_at'], 'days' => [], 'direction' => -1],
+            ['table' => 'project_expenses', 'type' => 'project_expense', 'box' => 'box_id', 'amount' => 'expenses', 'timestamps' => ['created_at'], 'days' => ['expense_date'], 'direction' => -1],
+            ['table' => 'assets', 'type' => 'asset', 'box' => 'box_id', 'amount' => 'price', 'timestamps' => ['created_at'], 'days' => ['acquired_at'], 'direction' => -1],
         ];
 
-        foreach ($specs as [$table, $sourceType, $boxColumn, $amountColumn, $dateColumns, $direction]) {
+        foreach ($specs as $spec) {
+            $table = $spec['table'];
+            $sourceType = $spec['type'];
+            $boxColumn = $spec['box'];
+            $amountColumn = $spec['amount'];
             if (! $this->hasColumns($table, ['id', $boxColumn, $amountColumn])) {
                 continue;
             }
-            $availableDates = array_values(array_filter($dateColumns, fn (string $column) => Schema::hasColumn($table, $column)));
-            if ($availableDates === []) {
+            $timestampColumns = array_values(array_filter($spec['timestamps'], fn (string $column) => Schema::hasColumn($table, $column)));
+            $dayColumns = array_values(array_filter($spec['days'], fn (string $column) => Schema::hasColumn($table, $column)));
+            if ($timestampColumns === [] && $dayColumns === []) {
                 continue;
             }
-            $select = array_values(array_unique(array_merge(['id', $boxColumn, $amountColumn], $availableDates)));
-            DB::table($table)->select($select)->whereNotNull($boxColumn)->orderBy('id')->chunkById(1000, function ($rows) use (&$index, $sourceType, $boxColumn, $amountColumn, $availableDates, $direction) {
+            $stateColumns = array_values(array_filter(['status', 'cancelled_at'], fn (string $column) => Schema::hasColumn($table, $column)));
+            $select = array_values(array_unique(array_merge(['id', $boxColumn, $amountColumn], $timestampColumns, $dayColumns, $stateColumns)));
+            DB::table($table)->select($select)->whereNotNull($boxColumn)->orderBy('id')->chunkById(1000, function ($rows) use (&$index, $table, $sourceType, $boxColumn, $amountColumn, $timestampColumns, $dayColumns, $spec) {
                 foreach ($rows as $row) {
-                    foreach ($availableDates as $dateColumn) {
-                        $this->indexSource($index, $row, $sourceType, (int) $row->{$boxColumn}, (float) $row->{$amountColumn}, $row->{$dateColumn} ?? null, $direction);
-                    }
+                    [$active, $inactiveReason] = $this->sourceState($table, $row);
+                    $this->indexSource(
+                        $index,
+                        $sourceType,
+                        (int) $row->id,
+                        (int) $row->{$boxColumn},
+                        (float) $row->{$amountColumn},
+                        (int) $spec['direction'],
+                        array_map(fn (string $column) => $row->{$column} ?? null, $timestampColumns),
+                        array_map(fn (string $column) => $row->{$column} ?? null, $dayColumns),
+                        $active,
+                        $inactiveReason,
+                    );
                 }
             });
         }
@@ -313,7 +471,7 @@ class LegacyCashAuditService
             return;
         }
         $select = array_values(array_filter(
-            ['id', 'box_id', 'amount', 'type', 'transaction_date', 'created_at', 'source', 'source_id'],
+            ['id', 'box_id', 'amount', 'type', 'transaction_date', 'created_at', 'source', 'source_id', 'archived_at', 'deleted_at'],
             fn (string $column) => Schema::hasColumn('debt_transactions', $column)
         ));
         DB::table('debt_transactions')->select($select)->whereNotNull('box_id')->orderBy('id')->chunkById(1000, function ($rows) use (&$index) {
@@ -327,10 +485,25 @@ class LegacyCashAuditService
                     $sourceId = (int) $row->id;
                 }
                 $direction = $row->type === 'taken' ? 1 : -1;
-                $this->indexSource($index, $row, $sourceType, (int) $row->box_id, (float) $row->amount, $row->transaction_date, $direction, $sourceId);
-                if (isset($row->created_at)) {
-                    $this->indexSource($index, $row, $sourceType, (int) $row->box_id, (float) $row->amount, $row->created_at, $direction, $sourceId);
+                $inactiveReasons = [];
+                if ($row->archived_at ?? null) {
+                    $inactiveReasons[] = 'مؤرشف';
                 }
+                if ($row->deleted_at ?? null) {
+                    $inactiveReasons[] = 'محذوف';
+                }
+                $this->indexSource(
+                    $index,
+                    $sourceType,
+                    $sourceId,
+                    (int) $row->box_id,
+                    (float) $row->amount,
+                    $direction,
+                    [$row->created_at ?? null],
+                    [$row->transaction_date ?? null],
+                    $inactiveReasons === [],
+                    $inactiveReasons ? 'حركة دين '.implode(' و', $inactiveReasons) : null,
+                );
             }
         });
     }
@@ -354,10 +527,102 @@ class LegacyCashAuditService
             ->orderBy('links.id')
             ->get($select)
             ->each(function ($row) use (&$index, $dateColumns) {
-                foreach ($dateColumns as $column) {
-                    $this->indexSource($index, $row, 'incoming_check', (int) $row->box_id, (float) $row->total, $row->{'link_'.$column} ?? null, 1);
-                }
+                $this->indexSource(
+                    $index,
+                    'incoming_check',
+                    (int) $row->id,
+                    (int) $row->box_id,
+                    (float) $row->total,
+                    1,
+                    array_map(fn (string $column) => $row->{'link_'.$column} ?? null, $dateColumns),
+                    [],
+                    true,
+                    null,
+                );
             });
+    }
+
+    private function emptySourceIndex(): array
+    {
+        return [
+            'active' => ['by_base' => [], 'by_day' => [], 'by_identity' => []],
+            'inactive' => ['by_base' => [], 'by_day' => [], 'by_identity' => []],
+        ];
+    }
+
+    private function sourceState(string $table, object $row): array
+    {
+        if (in_array($table, ['instant_sales', 'profit_sales'], true)) {
+            if (($row->cancelled_at ?? null) !== null || in_array(mb_strtolower((string) ($row->status ?? '')), ['cancelled', 'canceled'], true)) {
+                return [false, 'المصدر ملغي'];
+            }
+        }
+        if ($table === 'sales_orders' && in_array(mb_strtolower((string) ($row->status ?? '')), ['cancelled', 'canceled'], true)) {
+            return [false, 'طلب البيع ملغي'];
+        }
+
+        return [true, null];
+    }
+
+    private function sourceTimeMatches(array $sources, string $baseKey, ?int $timestamp, string $state): array
+    {
+        if ($timestamp === null) {
+            return [];
+        }
+
+        return $this->uniqueSources(array_values(array_filter(
+            $sources[$state]['by_base'][$baseKey] ?? [],
+            fn (array $source) => $this->sourceWithinWindow($source, $timestamp)
+        )));
+    }
+
+    private function sourceWithinWindow(array $source, int $timestamp): bool
+    {
+        foreach ($source['timestamps'] ?? [] as $sourceTimestamp) {
+            if (abs((int) $sourceTimestamp - $timestamp) <= self::STRONG_TIME_WINDOW_SECONDS) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function journalTimeMatches(array $journals, string $baseKey, ?int $timestamp): array
+    {
+        if ($timestamp === null) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $journals['active_by_effect_base'][$baseKey] ?? [],
+            function (array $journal) use ($timestamp) {
+                foreach ($journal['timestamps'] ?? [] as $journalTimestamp) {
+                    if (abs((int) $journalTimestamp - $timestamp) <= self::STRONG_TIME_WINDOW_SECONDS) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        ));
+    }
+
+    private function inactiveSourceResult(array $base, array $sources): array
+    {
+        $sources = $this->uniqueSources($sources);
+        $reason = collect($sources)
+            ->pluck('inactive_reason')
+            ->filter()
+            ->unique()
+            ->implode('، ');
+
+        return array_merge($base, [
+            'matched_source_type' => count($sources) === 1 ? $sources[0]['source_type'] : null,
+            'matched_source_id' => count($sources) === 1 ? $sources[0]['source_id'] : null,
+            'journal_entry_id' => null,
+            'classification' => self::AMBIGUOUS,
+            'reason' => 'الحركة تطابق مصدرًا غير فعال'.($reason ? ' ('.$reason.')' : '').' ولا يمكن اعتباره مصدرًا ماليًا فعالًا.',
+        ]);
     }
 
     private function directLinkIndex(): array
@@ -384,21 +649,53 @@ class LegacyCashAuditService
         return $index;
     }
 
-    private function indexSource(array &$index, object $row, string $sourceType, int $boxId, float $amount, mixed $date, int $direction, ?int $sourceId = null): void
-    {
-        $date = $this->date($date);
-        if (! $boxId || abs($amount) <= 0.0001 || ! $date) {
+    private function indexSource(
+        array &$index,
+        string $sourceType,
+        int $sourceId,
+        int $boxId,
+        float $amount,
+        int $direction,
+        array $timestampValues,
+        array $dayValues,
+        bool $active,
+        ?string $inactiveReason,
+    ): void {
+        if (! $boxId || ! $sourceId || abs($amount) <= 0.0001) {
             return;
         }
-        $key = $this->effectKey($boxId, $date, abs($amount), $direction);
-        $index[$key][] = [
+
+        $timestamps = array_values(array_unique(array_filter(
+            array_map(fn ($value) => $this->timestamp($value), $timestampValues),
+            fn ($value) => $value !== null
+        )));
+        $days = array_values(array_unique(array_filter(array_merge(
+            array_map(fn ($value) => $this->date($value), $timestampValues),
+            array_map(fn ($value) => $this->date($value), $dayValues),
+        ))));
+        if ($timestamps === [] && $days === []) {
+            return;
+        }
+
+        $state = $active ? 'active' : 'inactive';
+        $baseKey = $this->effectBaseKey($boxId, abs($amount), $direction);
+        $item = [
             'source_type' => $sourceType,
-            'source_id' => $sourceId ?: (int) $row->id,
-            'evidence' => 'operational_fields',
+            'source_id' => $sourceId,
+            'base_key' => $baseKey,
+            'timestamps' => $timestamps,
+            'days' => $days,
+            'state' => $state,
+            'inactive_reason' => $inactiveReason,
         ];
+        $index[$state]['by_base'][$baseKey][] = $item;
+        $index[$state]['by_identity'][$this->sourceKey($sourceType, $sourceId)] = $item;
+        foreach ($days as $day) {
+            $index[$state]['by_day'][$this->effectDayKey($boxId, $day, abs($amount), $direction)][] = $item;
+        }
     }
 
-    private function hintedSources(string $text, array $sources): array
+    private function sourceHint(string $text): ?array
     {
         $hints = match (true) {
             str_contains($text, 'بيع فوري') => ['instant_sale'],
@@ -415,19 +712,20 @@ class LegacyCashAuditService
             default => [],
         };
         if ($hints === []) {
-            return [];
+            return null;
         }
 
-        $matches = array_values(array_filter($sources, fn (array $source) => in_array($source['source_type'], $hints, true)));
-        if (preg_match('/#\s*(\d+)/u', $text, $idMatch)) {
-            $id = (int) $idMatch[1];
-            $byId = array_values(array_filter($matches, fn (array $source) => (int) $source['source_id'] === $id));
-            if ($byId !== []) {
-                $matches = $byId;
-            }
-        }
+        preg_match('/#\s*(\d+)/u', $text, $idMatch);
 
-        return $this->uniqueSources($matches);
+        return ['types' => $hints, 'id' => isset($idMatch[1]) ? (int) $idMatch[1] : null];
+    }
+
+    private function filterSourcesByTypes(array $sources, array $types): array
+    {
+        return $this->uniqueSources(array_values(array_filter(
+            $sources,
+            fn (array $source) => in_array($source['source_type'], $types, true)
+        )));
     }
 
     private function isDirectBoxAccounting(string $description, string $reasonCode): bool
@@ -514,9 +812,14 @@ class LegacyCashAuditService
         return array_values($unique);
     }
 
-    private function effectKey(int $boxId, ?string $date, float $amount, int $direction): string
+    private function effectBaseKey(int $boxId, float $amount, int $direction): string
     {
-        return implode('|', [$boxId, $date ?: '?', number_format(round(abs($amount), 4), 4, '.', ''), $direction]);
+        return implode('|', [$boxId, number_format(round(abs($amount), 4), 4, '.', ''), $direction]);
+    }
+
+    private function effectDayKey(int $boxId, ?string $date, float $amount, int $direction): string
+    {
+        return $this->effectBaseKey($boxId, $amount, $direction).'|'.($date ?: '?');
     }
 
     private function sourceKey(string $type, int $id): string
@@ -531,6 +834,33 @@ class LegacyCashAuditService
         }
         try {
             return Carbon::parse($value)->toDateString();
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function timestamp(mixed $value): ?int
+    {
+        if (! $value) {
+            return null;
+        }
+        if (is_string($value) && ! preg_match('/[T\s]\d{2}:\d{2}/', $value)) {
+            return null;
+        }
+        try {
+            return Carbon::parse($value)->timestamp;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function dateTime(mixed $value): ?string
+    {
+        if (! $value) {
+            return null;
+        }
+        try {
+            return Carbon::parse($value)->format('Y-m-d H:i:s');
         } catch (\Throwable) {
             return null;
         }
@@ -565,6 +895,7 @@ class LegacyCashAuditService
         return match ($classification) {
             self::LINKED_AND_ACCOUNTED => 'linked_and_accounted',
             self::LINKED_NOT_ACCOUNTED => 'linked_not_accounted',
+            self::LINKED_BUT_REVERSED => 'linked_but_reversed',
             self::DUPLICATE_ACCOUNTING_RISK => 'duplicate_accounting_risk',
             self::UNLINKED_CASH => 'unlinked_cash',
             default => 'ambiguous',

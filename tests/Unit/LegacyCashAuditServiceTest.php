@@ -50,6 +50,28 @@ class LegacyCashAuditServiceTest extends TestCase
             $table->id();
             $table->unsignedBigInteger('payment_box_id')->nullable();
             $table->decimal('payment_box_value', 14, 4)->default(0);
+            $table->string('status')->nullable();
+            $table->timestamp('cancelled_at')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('purchase_payments', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('box_id')->nullable();
+            $table->unsignedBigInteger('box_log_id')->nullable();
+            $table->decimal('amount', 14, 4)->default(0);
+            $table->date('paid_at')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('debt_transactions', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('box_id')->nullable();
+            $table->decimal('amount', 14, 4)->default(0);
+            $table->string('type');
+            $table->date('transaction_date');
+            $table->string('source')->nullable();
+            $table->unsignedBigInteger('source_id')->nullable();
+            $table->timestamp('archived_at')->nullable();
+            $table->timestamp('deleted_at')->nullable();
             $table->timestamps();
         });
         Schema::create('accounting_accounts', function (Blueprint $table) {
@@ -63,6 +85,9 @@ class LegacyCashAuditServiceTest extends TestCase
             $table->date('entry_date');
             $table->string('currency');
             $table->string('status');
+            $table->unsignedBigInteger('reverses_entry_id')->nullable();
+            $table->timestamp('posted_at')->nullable();
+            $table->timestamps();
         });
         Schema::create('accounting_journal_lines', function (Blueprint $table) {
             $table->id();
@@ -105,9 +130,9 @@ class LegacyCashAuditServiceTest extends TestCase
         $this->cashJournal(3, 'instant_sale', 30, 500, 0);
         $this->cashJournal(4, 'debt_transaction', 40, 500, 0);
 
-        $before = $this->tableCounts();
+        $before = $this->databaseSnapshot();
         $result = app(LegacyCashAuditService::class)->audit();
-        $after = $this->tableCounts();
+        $after = $this->databaseSnapshot();
 
         $this->assertSame($before, $after);
         $this->assertSame(LegacyCashAuditService::LINKED_AND_ACCOUNTED, $this->classification($result, 1));
@@ -119,6 +144,7 @@ class LegacyCashAuditServiceTest extends TestCase
             'total_rows' => 5,
             'linked_and_accounted' => 1,
             'linked_not_accounted' => 1,
+            'linked_but_reversed' => 0,
             'duplicate_accounting_risk' => 1,
             'unlinked_cash' => 1,
             'ambiguous' => 1,
@@ -159,8 +185,164 @@ class LegacyCashAuditServiceTest extends TestCase
         $this->assertSame(LegacyCashAuditService::UNLINKED_CASH, $result['rows'][0]['classification']);
     }
 
-    private function boxLog(int $id, float $value, string $type, string $description, ?string $reasonCode = null): void
+    public function test_timestamp_window_selects_only_the_near_source_on_the_same_day(): void
     {
+        $this->boxLog(1, 100, 'add', 'قبض — بيع فوري', null, '2026-09-01 10:02:00');
+        $this->instantSale(10, 100, '2026-09-01 10:00:00');
+        $this->instantSale(20, 100, '2026-09-01 15:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::LINKED_NOT_ACCOUNTED, $row['classification']);
+        $this->assertSame('instant_sale', $row['matched_source_type']);
+        $this->assertSame(10, $row['matched_source_id']);
+    }
+
+    public function test_same_day_without_a_reliable_near_timestamp_is_ambiguous(): void
+    {
+        $this->boxLog(1, 100, 'add', 'قبض — بيع فوري', null, '2026-09-01');
+        $this->instantSale(10, 100, '2026-09-01 10:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $row['classification']);
+        $this->assertStringContainsString('اليوم نفسه', $row['reason']);
+    }
+
+    public function test_same_day_source_outside_the_window_is_only_weak_evidence(): void
+    {
+        $this->boxLog(1, 100, 'add', 'قبض — بيع فوري', null, '2026-09-01 10:00:00');
+        $this->instantSale(10, 100, '2026-09-01 15:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $row['classification']);
+        $this->assertStringContainsString('اليوم نفسه', $row['reason']);
+    }
+
+    public function test_same_day_journal_outside_the_window_is_not_duplicate_risk(): void
+    {
+        $this->boxLog(1, -100, 'minus', 'سحب — دفع من الصندوق', null, '2026-09-01 10:00:00');
+        $this->cashJournal(1, 'expense', 99, 0, 100, createdAt: '2026-09-01 15:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $row['classification']);
+        $this->assertNotSame(LegacyCashAuditService::DUPLICATE_ACCOUNTING_RISK, $row['classification']);
+    }
+
+    public function test_two_sources_inside_five_minute_window_are_ambiguous(): void
+    {
+        $this->boxLog(1, 100, 'add', 'قبض — بيع فوري', null, '2026-09-01 10:02:00');
+        $this->instantSale(10, 100, '2026-09-01 10:00:00');
+        $this->instantSale(20, 100, '2026-09-01 10:04:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $row['classification']);
+        $this->assertStringContainsString('أكثر من مصدر', $row['reason']);
+    }
+
+    public function test_direct_foreign_key_wins_even_when_timestamps_are_far_apart(): void
+    {
+        $this->boxLog(1, -100, 'minus', 'سحب — دفع من الصندوق', null, '2026-09-01 10:00:00');
+        DB::table('purchase_payments')->insert([
+            'id' => 50,
+            'box_id' => 1,
+            'box_log_id' => 1,
+            'amount' => 100,
+            'paid_at' => '2026-09-01',
+            'created_at' => '2026-09-01 18:00:00',
+            'updated_at' => '2026-09-01 18:00:00',
+        ]);
+        $this->cashJournal(1, 'purchase_payment', 50, 0, 100, createdAt: '2026-09-01 18:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::LINKED_AND_ACCOUNTED, $row['classification']);
+        $this->assertSame('purchase_payment', $row['matched_source_type']);
+        $this->assertSame(50, $row['matched_source_id']);
+    }
+
+    public function test_reversed_original_journal_is_reported_as_linked_but_reversed(): void
+    {
+        $this->boxLog(1, 100, 'add', 'تم اضافة رصيد للصندوق', 'owner_contribution');
+        $this->cashJournal(1, 'box_adjustment', 1, 100, 0, status: 'reversed');
+
+        $result = app(LegacyCashAuditService::class)->audit();
+
+        $this->assertSame(LegacyCashAuditService::LINKED_BUT_REVERSED, $this->row($result, 1)['classification']);
+        $this->assertSame(1, $result['summary']['linked_but_reversed']);
+    }
+
+    public function test_posted_reversal_makes_the_original_non_active(): void
+    {
+        $this->boxLog(1, 100, 'add', 'تم اضافة رصيد للصندوق', 'owner_contribution');
+        $this->cashJournal(1, 'box_adjustment', 1, 100, 0);
+        $this->cashJournal(2, 'box_adjustment', 1, 0, 100, reversesEntryId: 1, createdAt: '2026-09-02 10:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::LINKED_BUT_REVERSED, $row['classification']);
+        $this->assertSame(1, $row['journal_entry_id']);
+    }
+
+    public function test_active_posted_original_without_reversal_is_accounted(): void
+    {
+        $this->boxLog(1, 100, 'add', 'تم اضافة رصيد للصندوق', 'owner_contribution');
+        $this->cashJournal(1, 'box_adjustment', 1, 100, 0);
+
+        $this->assertSame(
+            LegacyCashAuditService::LINKED_AND_ACCOUNTED,
+            $this->row(app(LegacyCashAuditService::class)->audit(), 1)['classification']
+        );
+    }
+
+    public function test_archived_and_deleted_debt_sources_are_only_inactive_evidence(): void
+    {
+        $this->boxLog(1, 90, 'add', 'دفتر الديون - أخذت من شخص', null, '2026-09-01 10:01:00');
+        $this->boxLog(2, 80, 'add', 'دفتر الديون - أخذت من شخص', null, '2026-09-01 11:01:00');
+        $this->debtTransaction(10, 90, '2026-09-01 10:00:00', archivedAt: '2026-09-02 00:00:00');
+        $this->debtTransaction(20, 80, '2026-09-01 11:00:00', deletedAt: '2026-09-02 00:00:00');
+
+        $result = app(LegacyCashAuditService::class)->audit();
+
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $this->row($result, 1)['classification']);
+        $this->assertStringContainsString('مؤرشف', $this->row($result, 1)['reason']);
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $this->row($result, 2)['classification']);
+        $this->assertStringContainsString('محذوف', $this->row($result, 2)['reason']);
+    }
+
+    public function test_cancelled_instant_sale_is_not_treated_as_an_active_source(): void
+    {
+        $this->boxLog(1, 100, 'add', 'قبض — بيع فوري #10', null, '2026-09-01 10:01:00');
+        $this->instantSale(10, 100, '2026-09-01 10:00:00', 'cancelled', '2026-09-01 12:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $row['classification']);
+        $this->assertStringContainsString('ملغي', $row['reason']);
+    }
+
+    public function test_description_source_id_does_not_confirm_mismatched_amount(): void
+    {
+        $this->boxLog(1, 100, 'add', 'قبض — بيع فوري #123', null, '2026-09-01 10:01:00');
+        $this->instantSale(123, 120, '2026-09-01 10:00:00');
+
+        $row = $this->row(app(LegacyCashAuditService::class)->audit(), 1);
+
+        $this->assertSame(LegacyCashAuditService::AMBIGUOUS, $row['classification']);
+        $this->assertStringContainsString('لا يطابقه', $row['reason']);
+    }
+
+    private function boxLog(
+        int $id,
+        float $value,
+        ?string $type,
+        string $description,
+        ?string $reasonCode = null,
+        string $createdAt = '2026-09-01 10:00:00',
+    ): void {
         DB::table('box_logs')->insert([
             'id' => $id,
             'box_id' => 1,
@@ -169,20 +351,72 @@ class LegacyCashAuditServiceTest extends TestCase
             'type' => $type,
             'description' => $description,
             'reason_code' => $reasonCode,
-            'created_at' => '2026-09-01 10:00:00',
-            'updated_at' => '2026-09-01 10:00:00',
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
         ]);
     }
 
-    private function cashJournal(int $id, string $sourceType, int $sourceId, float $debit, float $credit): void
-    {
+    private function instantSale(
+        int $id,
+        float $amount,
+        string $createdAt,
+        ?string $status = null,
+        ?string $cancelledAt = null,
+    ): void {
+        DB::table('instant_sales')->insert([
+            'id' => $id,
+            'payment_box_id' => 1,
+            'payment_box_value' => $amount,
+            'status' => $status,
+            'cancelled_at' => $cancelledAt,
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ]);
+    }
+
+    private function debtTransaction(
+        int $id,
+        float $amount,
+        string $createdAt,
+        ?string $archivedAt = null,
+        ?string $deletedAt = null,
+    ): void {
+        DB::table('debt_transactions')->insert([
+            'id' => $id,
+            'box_id' => 1,
+            'amount' => $amount,
+            'type' => 'taken',
+            'transaction_date' => '2026-09-01',
+            'source' => 'manual',
+            'source_id' => null,
+            'archived_at' => $archivedAt,
+            'deleted_at' => $deletedAt,
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ]);
+    }
+
+    private function cashJournal(
+        int $id,
+        string $sourceType,
+        int $sourceId,
+        float $debit,
+        float $credit,
+        string $status = 'posted',
+        ?int $reversesEntryId = null,
+        string $createdAt = '2026-09-01 10:00:00',
+    ): void {
         DB::table('accounting_journal_entries')->insert([
             'id' => $id,
             'source_type' => $sourceType,
             'source_id' => $sourceId,
             'entry_date' => '2026-09-01',
             'currency' => 'شيكل',
-            'status' => 'posted',
+            'status' => $status,
+            'reverses_entry_id' => $reversesEntryId,
+            'posted_at' => $createdAt,
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
         ]);
         DB::table('accounting_journal_lines')->insert([
             'journal_entry_id' => $id,
@@ -198,11 +432,34 @@ class LegacyCashAuditServiceTest extends TestCase
         return collect($result['rows'])->firstWhere('box_log_id', $boxLogId)['classification'];
     }
 
+    private function row(array $result, int $boxLogId): array
+    {
+        return collect($result['rows'])->firstWhere('box_log_id', $boxLogId);
+    }
+
+    private function databaseSnapshot(): array
+    {
+        return collect([
+            'boxes',
+            'box_logs',
+            'instant_sales',
+            'purchase_payments',
+            'debt_transactions',
+            'accounting_accounts',
+            'accounting_journal_entries',
+            'accounting_journal_lines',
+        ])->mapWithKeys(fn (string $table) => [
+            $table => DB::table($table)->orderBy('id')->get()->map(fn ($row) => (array) $row)->all(),
+        ])->all();
+    }
+
     private function tableCounts(): array
     {
         return [
             'box_logs' => DB::table('box_logs')->count(),
             'instant_sales' => DB::table('instant_sales')->count(),
+            'purchase_payments' => DB::table('purchase_payments')->count(),
+            'debt_transactions' => DB::table('debt_transactions')->count(),
             'journal_entries' => DB::table('accounting_journal_entries')->count(),
             'journal_lines' => DB::table('accounting_journal_lines')->count(),
         ];
