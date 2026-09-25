@@ -62,6 +62,20 @@ class LegacyCashAuditServiceTest extends TestCase
             $table->date('paid_at')->nullable();
             $table->timestamps();
         });
+        Schema::create('maintenance_payments', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('box_id')->nullable();
+            $table->decimal('amount', 14, 4)->default(0);
+            $table->string('method')->nullable();
+            $table->timestamps();
+        });
+        Schema::create('sales_order_settlements', function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('box_id')->nullable();
+            $table->decimal('cash_amount', 14, 4)->default(0);
+            $table->string('source')->nullable();
+            $table->timestamps();
+        });
         Schema::create('debt_transactions', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('box_id')->nullable();
@@ -324,6 +338,86 @@ class LegacyCashAuditServiceTest extends TestCase
         $this->assertStringContainsString('ملغي', $row['reason']);
     }
 
+    public function test_negative_maintenance_payment_reverses_direction_to_cash_out(): void
+    {
+        $this->boxLog(1, -100, 'minus', 'سحب — عكس دفعة صيانة', null, '2026-09-01 10:01:00');
+        DB::table('maintenance_payments')->insert([
+            'id' => 10,
+            'box_id' => 1,
+            'amount' => -100,
+            'method' => 'cancellation_reversal',
+            'created_at' => '2026-09-01 10:00:00',
+            'updated_at' => '2026-09-01 10:00:00',
+        ]);
+        $this->cashJournal(1, 'maintenance_payment', 10, 0, 100);
+        $before = $this->databaseSnapshot();
+
+        $result = app(LegacyCashAuditService::class)->audit();
+
+        $this->assertSame(LegacyCashAuditService::LINKED_AND_ACCOUNTED, $this->row($result, 1)['classification']);
+        $this->assertSame(10, $this->row($result, 1)['matched_source_id']);
+        $this->assertSame($before, $this->databaseSnapshot());
+    }
+
+    public function test_negative_sales_order_settlement_reverses_direction_to_cash_out(): void
+    {
+        $this->boxLog(1, -100, 'minus', 'سحب — عكس تحصيل طلبية', null, '2026-09-01 10:01:00');
+        DB::table('sales_order_settlements')->insert([
+            'id' => 20,
+            'box_id' => 1,
+            'cash_amount' => -100,
+            'source' => 'cancellation_reversal',
+            'created_at' => '2026-09-01 10:00:00',
+            'updated_at' => '2026-09-01 10:00:00',
+        ]);
+        $this->cashJournal(1, 'sales_order_settlement', 20, 0, 100);
+        $before = $this->databaseSnapshot();
+
+        $result = app(LegacyCashAuditService::class)->audit();
+
+        $this->assertSame(LegacyCashAuditService::LINKED_AND_ACCOUNTED, $this->row($result, 1)['classification']);
+        $this->assertSame(20, $this->row($result, 1)['matched_source_id']);
+        $this->assertSame($before, $this->databaseSnapshot());
+    }
+
+    public function test_positive_maintenance_payment_keeps_cash_in_direction(): void
+    {
+        $this->boxLog(1, 100, 'add', 'قبض دفعة صيانة', null, '2026-09-01 10:01:00');
+        DB::table('maintenance_payments')->insert([
+            'id' => 10,
+            'box_id' => 1,
+            'amount' => 100,
+            'method' => 'cash',
+            'created_at' => '2026-09-01 10:00:00',
+            'updated_at' => '2026-09-01 10:00:00',
+        ]);
+        $this->cashJournal(1, 'maintenance_payment', 10, 100, 0);
+
+        $this->assertSame(
+            LegacyCashAuditService::LINKED_AND_ACCOUNTED,
+            $this->row(app(LegacyCashAuditService::class)->audit(), 1)['classification']
+        );
+    }
+
+    public function test_positive_sales_order_settlement_keeps_cash_in_direction(): void
+    {
+        $this->boxLog(1, 100, 'add', 'قبض تحصيل طلبية', null, '2026-09-01 10:01:00');
+        DB::table('sales_order_settlements')->insert([
+            'id' => 20,
+            'box_id' => 1,
+            'cash_amount' => 100,
+            'source' => 'carrier',
+            'created_at' => '2026-09-01 10:00:00',
+            'updated_at' => '2026-09-01 10:00:00',
+        ]);
+        $this->cashJournal(1, 'sales_order_settlement', 20, 100, 0);
+
+        $this->assertSame(
+            LegacyCashAuditService::LINKED_AND_ACCOUNTED,
+            $this->row(app(LegacyCashAuditService::class)->audit(), 1)['classification']
+        );
+    }
+
     public function test_description_source_id_does_not_confirm_mismatched_amount(): void
     {
         $this->boxLog(1, 100, 'add', 'قبض — بيع فوري #123', null, '2026-09-01 10:01:00');
@@ -444,6 +538,8 @@ class LegacyCashAuditServiceTest extends TestCase
             'box_logs',
             'instant_sales',
             'purchase_payments',
+            'maintenance_payments',
+            'sales_order_settlements',
             'debt_transactions',
             'accounting_accounts',
             'accounting_journal_entries',
@@ -459,6 +555,8 @@ class LegacyCashAuditServiceTest extends TestCase
             'box_logs' => DB::table('box_logs')->count(),
             'instant_sales' => DB::table('instant_sales')->count(),
             'purchase_payments' => DB::table('purchase_payments')->count(),
+            'maintenance_payments' => DB::table('maintenance_payments')->count(),
+            'sales_order_settlements' => DB::table('sales_order_settlements')->count(),
             'debt_transactions' => DB::table('debt_transactions')->count(),
             'journal_entries' => DB::table('accounting_journal_entries')->count(),
             'journal_lines' => DB::table('accounting_journal_lines')->count(),

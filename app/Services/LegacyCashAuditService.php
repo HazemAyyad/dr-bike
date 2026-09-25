@@ -665,6 +665,9 @@ class LegacyCashAuditService
             return;
         }
 
+        $absoluteAmount = abs($amount);
+        $effectiveDirection = $amount < 0 ? -$direction : $direction;
+
         $timestamps = array_values(array_unique(array_filter(
             array_map(fn ($value) => $this->timestamp($value), $timestampValues),
             fn ($value) => $value !== null
@@ -678,7 +681,7 @@ class LegacyCashAuditService
         }
 
         $state = $active ? 'active' : 'inactive';
-        $baseKey = $this->effectBaseKey($boxId, abs($amount), $direction);
+        $baseKey = $this->effectBaseKey($boxId, $absoluteAmount, $effectiveDirection);
         $item = [
             'source_type' => $sourceType,
             'source_id' => $sourceId,
@@ -691,7 +694,7 @@ class LegacyCashAuditService
         $index[$state]['by_base'][$baseKey][] = $item;
         $index[$state]['by_identity'][$this->sourceKey($sourceType, $sourceId)] = $item;
         foreach ($days as $day) {
-            $index[$state]['by_day'][$this->effectDayKey($boxId, $day, abs($amount), $direction)][] = $item;
+            $index[$state]['by_day'][$this->effectDayKey($boxId, $day, $absoluteAmount, $effectiveDirection)][] = $item;
         }
     }
 
