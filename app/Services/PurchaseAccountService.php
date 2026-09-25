@@ -316,6 +316,7 @@ class PurchaseAccountService
                 'created_by' => $userId,
             ]);
 
+            $this->ledger->syncPurchaseInvoiceToLedger($bill->fresh('items'), $userId);
             $this->activity->log($bill, 'purchase_issue_resolved', 'تسوية مشكلة استلام', 'تم تسجيل قرار تسوية لمشكلة '.$issueType, null, $issue->toArray(), null, 'purchase_issue_resolution', $issue->id, $userId);
 
             return $issue->fresh();

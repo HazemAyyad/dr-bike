@@ -851,7 +851,7 @@ private function getBills($statuses, ?array $workflowStatuses = null)
                 'receipts',
                 'seller',
                 'customer',
-                'payments',
+                'payments.box:id,name,currency',
                 'activityLogs' => fn ($q) => $q->latest('id'),
             ])->findOrFail($request->bill_id);
             $items = $bill->items;
@@ -969,7 +969,9 @@ private function getBills($statuses, ?array $workflowStatuses = null)
                     'amount' => (float) $payment->amount,
                     'currency' => $payment->currency,
                     'type' => $payment->type,
+                    'payment_type' => $payment->type,
                     'paid_at' => $payment->paid_at?->format('Y-m-d'),
+                    'box_name' => $payment->box?->name ?? '',
                     'note' => $payment->note,
                 ])->values(),
                 'returns' => $returns,

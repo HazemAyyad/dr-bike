@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Exceptions\SourceLinkedDebtTransactionException;
 use App\Http\Controllers\API\BoxLogs;
+use App\Models\Bill;
 use App\Models\Box;
 use App\Models\ContactCategoryAssignment;
 use App\Models\Customer;
@@ -13,6 +14,8 @@ use App\Models\InstantSale;
 use App\Models\Log;
 use App\Models\OutgoingCheck;
 use App\Models\ProfitSale;
+use App\Models\PurchasePayment;
+use App\Models\PurchaseReceipt;
 use App\Models\SalesOrder;
 use App\Models\Seller;
 use App\Models\User;
@@ -485,6 +488,44 @@ class DebtLedgerService
     }
 
     /**
+     * Keep the supplier/customer debt ledger aligned with the value of goods
+     * actually received for one purchase invoice. The invoice source is
+     * upserted so repeated or partial receipts can never duplicate the debt.
+     */
+    public function syncPurchaseInvoiceToLedger(
+        Bill $bill,
+        ?int $userId = null,
+        ?float $recognizedTotal = null,
+    ): ?DebtTransaction {
+        if ($recognizedTotal === null) {
+            $bill->loadMissing('items');
+            $recognizedTotal = (float) $bill->items->sum(
+                fn ($item) => (float) $item->received_owned_quantity
+                    * (float) ($item->final_unit_price ?? $item->price)
+            );
+        }
+
+        $receivedAt = PurchaseReceipt::query()
+            ->where('bill_id', $bill->id)
+            ->orderBy('received_at')
+            ->orderBy('id')
+            ->value('received_at');
+
+        return $this->upsertSourceLedgerEntry(
+            'purchase_invoice',
+            (int) $bill->id,
+            $bill->customer_id ? (int) $bill->customer_id : null,
+            $bill->seller_id ? (int) $bill->seller_id : null,
+            'taken',
+            (float) $recognizedTotal,
+            'بضاعة مستلمة على فاتورة شراء #'.$bill->id,
+            $receivedAt ? Carbon::parse($receivedAt)->format('Y-m-d') : now()->format('Y-m-d'),
+            $bill->currency ?: 'شيكل',
+            $userId,
+        );
+    }
+
+    /**
      * @return array<string, float>
      */
     public function calculateBalancesByCurrency(?int $customerId, ?int $sellerId, ?string $startDate = null, ?string $endDate = null): array
@@ -666,7 +707,13 @@ class DebtLedgerService
             in_array($source, ['purchase_payment', 'purchase_initial_payment'], true)
             && $transaction->source_id
         ) {
-            $sourceLabel .= ' - فاتورة شراء #'.$transaction->source_id;
+            $payment = PurchasePayment::query()
+                ->where('debt_transaction_id', $transaction->id)
+                ->first()
+                ?: PurchasePayment::query()->find($transaction->source_id);
+            $sourceLabel .= $payment?->bill_id
+                ? ' - فاتورة شراء #'.$payment->bill_id
+                : ' - دفعة #'.$transaction->source_id;
         } elseif ($source === 'purchase_invoice' && $transaction->source_id) {
             $sourceLabel .= ' #'.$transaction->source_id;
         }
@@ -1103,7 +1150,8 @@ class DebtLedgerService
         float $amount,
         string $note,
         string $transactionDate,
-        string $currency = 'شيكل'
+        string $currency = 'شيكل',
+        ?int $userId = null,
     ): ?DebtTransaction {
         $amount = round(max(0, $amount), 2);
 
@@ -1157,7 +1205,12 @@ class DebtLedgerService
             return $updated;
         }
 
-        $created = $this->createTransaction($payload, auth()->id(), applyBox: false, logActivity: false);
+        $created = $this->createTransaction(
+            $payload,
+            $userId ?? auth()->id(),
+            applyBox: false,
+            logActivity: false,
+        );
         $this->activity()->logForTransaction(
             $created,
             'auto_created',

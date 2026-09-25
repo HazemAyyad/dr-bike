@@ -73,6 +73,61 @@ class PurchasingInventoryV2Test extends TestCase
         ]);
     }
 
+    public function test_partial_receipts_upsert_one_invoice_debt_without_duplicate_on_finalize(): void
+    {
+        Carbon::setTestNow('2026-09-25 09:00:00');
+        $seller = Seller::create(['name' => 'Receipt Debt Supplier', 'phone' => '0591002']);
+        $product = $this->product(1003, 0);
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 2, 'purchase_price' => 100],
+            ],
+        ], $this->user->id);
+
+        $itemId = (int) $bill->items()->firstOrFail()->id;
+        app(PurchasingService::class)->receive($bill, [
+            'received_at' => '2026-09-25',
+            'items' => [[
+                'bill_item_id' => $itemId,
+                'accepted_quantity' => 1,
+                'unit_price' => 100,
+            ]],
+        ], $this->user->id);
+
+        $invoiceDebt = DebtTransaction::query()
+            ->where('source', 'purchase_invoice')
+            ->where('source_id', $bill->id)
+            ->sole();
+        $this->assertEqualsWithDelta(100, (float) $invoiceDebt->amount, 0.001);
+        $this->assertEqualsWithDelta(100, (float) $invoiceDebt->balance_after, 0.001);
+
+        Carbon::setTestNow('2026-09-26 09:00:00');
+        app(PurchasingService::class)->receive($bill->fresh(), [
+            'received_at' => '2026-09-26',
+            'items' => [[
+                'bill_item_id' => $itemId,
+                'accepted_quantity' => 1,
+                'unit_price' => 100,
+            ]],
+        ], $this->user->id);
+
+        $this->assertSame(1, DebtTransaction::query()
+            ->where('source', 'purchase_invoice')
+            ->where('source_id', $bill->id)
+            ->count());
+        $invoiceDebt = $invoiceDebt->fresh();
+        $this->assertEqualsWithDelta(200, (float) $invoiceDebt->amount, 0.001);
+        $this->assertEqualsWithDelta(200, (float) $invoiceDebt->balance_after, 0.001);
+
+        app(PurchasingService::class)->finalize($bill->fresh(), 0, null, $this->user->id);
+        $this->assertSame(1, DebtTransaction::query()
+            ->where('source', 'purchase_invoice')
+            ->where('source_id', $bill->id)
+            ->count());
+        Carbon::setTestNow();
+    }
+
     public function test_product_stock_history_exposes_purchase_document_and_requires_adjustment_reason(): void
     {
         $seller = Seller::create(['name' => 'History Supplier', 'phone' => '059100']);

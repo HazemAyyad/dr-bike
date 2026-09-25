@@ -191,6 +191,7 @@ class PurchasingService
             }
 
             $this->refreshWorkflowStatus($bill);
+            $this->ledger->syncPurchaseInvoiceToLedger($bill->fresh(), $userId);
             $this->activity->log($bill, 'receipt_created', 'تسجيل استلام شراء', 'تم تسجيل استلام على الفاتورة #'.$bill->id, null, $receipt->load('items')->toArray(), null, 'purchase_receipt', $receipt->id, $userId);
 
             return $receipt->fresh('items');
@@ -376,6 +377,7 @@ class PurchasingService
             ]);
 
             $this->recordPurchasePrice($bill, $billItem, $unitPrice, $quantity, $bill->currency, true, $userId);
+            $this->ledger->syncPurchaseInvoiceToLedger($bill->fresh('items'), $userId);
             $this->activity->log($bill, 'extra_purchased', 'شراء كمية أمانات', 'تم شراء كمية أمانات بسعر متفاوض عليه', null, $amanat->fresh()->toArray(), null, 'purchase_amanat_stock', $amanat->id, $userId);
 
             return $amanat->fresh();
@@ -403,19 +405,7 @@ class PurchasingService
                 'approved_by' => $userId,
             ]);
 
-            if ($finalTotal > 0 && ! DebtTransaction::query()->where('source', 'purchase_invoice')->where('source_id', $bill->id)->exists()) {
-                $this->ledger->createTransaction([
-                    'customer_id' => $bill->customer_id,
-                    'seller_id' => $bill->seller_id,
-                    'type' => 'taken',
-                    'amount' => $finalTotal,
-                    'currency' => $bill->currency,
-                    'transaction_date' => now()->toDateString(),
-                    'source' => 'purchase_invoice',
-                    'source_id' => $bill->id,
-                    'note' => 'فاتورة شراء #'.$bill->id,
-                ], $userId, false);
-            }
+            $this->ledger->syncPurchaseInvoiceToLedger($bill->fresh(), $userId, $finalTotal);
 
             $this->syncPendingInitialPaymentsToLedger($bill->fresh(), $userId);
 
