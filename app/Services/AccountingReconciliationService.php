@@ -208,13 +208,17 @@ class AccountingReconciliationService
         $currencySql = Schema::hasColumn('assets', 'currency')
             ? "COALESCE(NULLIF(currency, ''), 'شيكل')"
             : "'شيكل'";
-        $cost = DB::table('assets')
-            ->selectRaw("NULL as dimension_id, {$currencySql} as currency, SUM(price) as amount")
-            ->groupByRaw($currencySql)
+        $normalizedAssets = DB::table('assets')
+            ->selectRaw("{$currencySql} as normalized_currency, price, depreciation_price");
+        $cost = DB::query()
+            ->fromSub(clone $normalizedAssets, 'normalized_assets')
+            ->selectRaw('NULL as dimension_id, normalized_currency as currency, SUM(price) as amount')
+            ->groupBy('normalized_currency')
             ->get();
-        $depreciation = DB::table('assets')
-            ->selectRaw("NULL as dimension_id, {$currencySql} as currency, SUM(CASE WHEN price > depreciation_price THEN price - depreciation_price ELSE 0 END) as amount")
-            ->groupByRaw($currencySql)
+        $depreciation = DB::query()
+            ->fromSub(clone $normalizedAssets, 'normalized_assets')
+            ->selectRaw('NULL as dimension_id, normalized_currency as currency, SUM(CASE WHEN price > depreciation_price THEN price - depreciation_price ELSE 0 END) as amount')
+            ->groupBy('normalized_currency')
             ->get();
         $this->merge($comparisons, 'fixed_assets', $cost, $this->ledgerBalances('fixed_assets'));
         $this->merge($comparisons, 'accumulated_depreciation', $depreciation, $this->ledgerBalances('accumulated_depreciation', null, true));

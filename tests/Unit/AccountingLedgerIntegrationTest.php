@@ -1970,6 +1970,35 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertNotNull($comparisons->first(fn ($row) => $row['scope'] === 'carrier_receivable' && $row['dimension_id'] === 40));
     }
 
+    public function test_asset_reconciliation_groups_normalized_currency_through_a_strict_safe_subquery(): void
+    {
+        DB::table('assets')->insert([
+            ['name' => 'Legacy blank currency', 'price' => 100, 'depreciation_price' => 80, 'currency' => '', 'created_at' => now(), 'updated_at' => now()],
+            ['name' => 'NIS asset', 'price' => 200, 'depreciation_price' => 150, 'currency' => 'شيكل', 'created_at' => now(), 'updated_at' => now()],
+            ['name' => 'USD asset', 'price' => 50, 'depreciation_price' => 40, 'currency' => 'دولار', 'created_at' => now(), 'updated_at' => now()],
+        ]);
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+
+        $comparisons = collect(app(AccountingReconciliationService::class)->reconcile()['comparisons']);
+
+        $fixedAssets = $comparisons->where('scope', 'fixed_assets')->keyBy('currency');
+        $depreciation = $comparisons->where('scope', 'accumulated_depreciation')->keyBy('currency');
+        $this->assertEqualsWithDelta(300, $fixedAssets->get('شيكل')['operational_balance'], 0.0001);
+        $this->assertEqualsWithDelta(50, $fixedAssets->get('دولار')['operational_balance'], 0.0001);
+        $this->assertEqualsWithDelta(70, $depreciation->get('شيكل')['operational_balance'], 0.0001);
+        $this->assertEqualsWithDelta(10, $depreciation->get('دولار')['operational_balance'], 0.0001);
+
+        $assetQueries = collect(DB::getQueryLog())
+            ->pluck('query')
+            ->filter(fn (string $sql) => str_contains(strtolower($sql), 'normalized_assets'));
+        $this->assertCount(2, $assetQueries);
+        $this->assertTrue($assetQueries->every(
+            fn (string $sql) => str_contains(strtolower($sql), 'group by "normalized_currency"')
+                && ! str_contains(strtolower($sql), 'group by coalesce(nullif(currency')
+        ));
+    }
+
     public function test_debt_balance_repair_preview_is_read_only_and_repair_only_changes_derived_balance(): void
     {
         $firstId = DB::table('debt_transactions')->insertGetId([
