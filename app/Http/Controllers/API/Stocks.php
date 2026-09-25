@@ -2832,6 +2832,23 @@ class Stocks extends Controller
     }
 
     /**
+     * Create complete product master data from the purchasing flow.
+     * Purchasing may define media and variants, but inventory is received only
+     * through the purchase receipt workflow.
+     */
+    public function createPurchaseProduct(Request $request, ProductFormService $productFormService)
+    {
+        $request->merge([
+            'opening_stock' => false,
+            'opening_quantity' => null,
+            'opening_unit_cost' => null,
+            'save_scope' => 'local_only',
+        ]);
+
+        return $this->createProduct($request, $productFormService);
+    }
+
+    /**
      * تعديل منتج بالحقول الكاملة + وسائط (مثل صفحة الاختبار): product_id مطلوب، save_scope = full|local_only.
      */
     public function updateProductFull(Request $request, ProductFormService $productFormService)

@@ -1281,6 +1281,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Manage Purchases,P
     Route::post('/add/bill' , [Bills::class,'createBill']);
     Route::get('/purchase/products/quick-create-options' , [Bills::class,'purchaseProductOptions']);
     Route::post('/purchase/products/quick-create' , [Bills::class,'quickCreateProduct']);
+    Route::post('/purchase/products/create-full' , [Stocks::class,'createPurchaseProduct']);
     Route::post('/purchase/receive' , [Bills::class,'receivePurchase']);
     Route::post('/purchase/update-draft' , [Bills::class,'updateDraftPurchase']);
     Route::post('/purchase/delete-draft' , [Bills::class,'deleteDraftPurchase']);
