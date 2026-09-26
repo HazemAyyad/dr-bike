@@ -177,11 +177,21 @@ class PaymentAndRecieve extends Controller
 
         $boxes = [];
         foreach ($boxIds as $boxId) {
-            $boxes[$boxId] = $this->boxAccess->findAccessible(
-                $request->user(),
-                $boxId,
-                lockForUpdate: true,
-            );
+            $isSaleReceiptBox = $type === 'receive'
+                && $request->filled('box_id')
+                && (int) $request->box_id === $boxId;
+
+            $boxes[$boxId] = $isSaleReceiptBox
+                ? $this->boxAccess->findAccessibleForSaleReceipt(
+                    $request->user(),
+                    $boxId,
+                    lockForUpdate: true,
+                )
+                : $this->boxAccess->findAccessible(
+                    $request->user(),
+                    $boxId,
+                    lockForUpdate: true,
+                );
         }
 
         if ($request->filled('box_id') && $type === 'receive') {

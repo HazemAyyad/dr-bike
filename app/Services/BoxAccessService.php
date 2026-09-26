@@ -59,6 +59,40 @@ class BoxAccessService
         return $box;
     }
 
+    /**
+     * Resolve a box used to collect an instant sale.
+     *
+     * Employees may collect into the globally open daily-sales drawer even
+     * though that hidden system box is not part of employee_visible_boxes.
+     * The daily-session service still verifies that the box belongs to the
+     * currently open session; all other boxes keep the normal access rules.
+     */
+    public function findAccessibleForSaleReceipt(User $user, int $boxId, bool $lockForUpdate = false): Box
+    {
+        $query = Box::query()->whereKey($boxId);
+        if ($lockForUpdate) {
+            $query->lockForUpdate();
+        }
+
+        $box = $query->first();
+        if (! $box) {
+            throw new BoxAccessDeniedException;
+        }
+
+        $visibleIds = $this->visibleBoxIds($user);
+        if ($visibleIds === null || in_array($boxId, $visibleIds, true)) {
+            return $box;
+        }
+
+        if (! $box->isDailySalesBox()) {
+            throw new BoxAccessDeniedException;
+        }
+
+        app(SalesDailySessionService::class)->assertSessionAllowsPayment($user, $box);
+
+        return $box;
+    }
+
     public function scopeAccessible(Builder $query, ?User $user): Builder
     {
         $visibleIds = $this->visibleBoxIds($user);
