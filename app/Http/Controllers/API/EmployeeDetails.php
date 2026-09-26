@@ -305,6 +305,12 @@ class EmployeeDetails extends Controller
         });
     }
 
+    private function scopeAssignableBoxes($query)
+    {
+        return $this->scopeRegularBoxes($query)
+            ->where('is_shown', 1);
+    }
+
     /**
      * @return array<int, array<string, mixed>>
      */
@@ -314,7 +320,7 @@ class EmployeeDetails extends Controller
             return [];
         }
 
-        return $this->scopeRegularBoxes(Box::query())
+        return $this->scopeAssignableBoxes(Box::query())
             ->orderBy('name')
             ->get(['id', 'name', 'total', 'is_shown', 'currency', 'type'])
             ->map(fn (Box $box) => [
@@ -347,7 +353,7 @@ class EmployeeDetails extends Controller
             ->map(fn ($id) => (int) $id)
             ->all();
 
-        $boxIds = $this->scopeRegularBoxes(Box::query())
+        $boxIds = $this->scopeAssignableBoxes(Box::query())
             ->whereIn('id', $boxIds)
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
@@ -371,7 +377,7 @@ class EmployeeDetails extends Controller
             return [];
         }
 
-        return $this->scopeRegularBoxes($employee->visibleBoxes())
+        return $this->scopeAssignableBoxes($employee->visibleBoxes())
             ->orderBy('name')
             ->get(['boxes.id', 'name', 'total', 'is_shown', 'currency', 'type'])
             ->map(fn (Box $box) => [
