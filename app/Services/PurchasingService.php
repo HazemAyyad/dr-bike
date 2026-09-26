@@ -126,11 +126,12 @@ class PurchasingService
                 $unitPrice = (float) ($row['unit_price'] ?? $billItem->final_unit_price ?? $billItem->price);
 
                 $remainingOrdered = max(0, (float) $billItem->ordered_quantity - (float) $billItem->received_owned_quantity);
-                if ($accepted > $remainingOrdered + 0.0001) {
+                $orderedOutcome = $accepted + $missing + $damaged + $mismatched;
+                if ($orderedOutcome > $remainingOrdered + 0.0001) {
                     throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
                 }
-                if ($accepted + $missing > $remainingOrdered + 0.0001) {
-                    throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
+                if ($orderedOutcome <= 0.0001 && $extra <= 0.0001) {
+                    throw new \RuntimeException('يجب تسجيل كمية مستلمة أو حالة واحدة على الأقل.');
                 }
 
                 $receiptItem = $receipt->items()->create([

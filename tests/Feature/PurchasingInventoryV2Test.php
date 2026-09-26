@@ -232,7 +232,7 @@ class PurchasingInventoryV2Test extends TestCase
             'items' => [
                 [
                     'bill_item_id' => $item->id,
-                    'accepted_quantity' => 3,
+                    'accepted_quantity' => 2,
                     'missing_quantity' => 1,
                     'extra_quantity' => 2,
                     'damaged_quantity' => 1,
@@ -244,18 +244,69 @@ class PurchasingInventoryV2Test extends TestCase
         ], $this->user->id);
 
         $item = $item->fresh();
-        $this->assertEquals(8, (float) $item->received_owned_quantity);
+        $this->assertEquals(7, (float) $item->received_owned_quantity);
         $this->assertEquals(1, (float) $item->missing_amount);
         $this->assertEquals(1, (float) $item->damaged_quantity);
         $this->assertEquals(1, (float) $item->mismatched_quantity);
         $this->assertEquals(2, (float) $item->custody_quantity);
-        $this->assertSame(8, (int) $product->fresh()->stock);
+        $this->assertSame(7, (int) $product->fresh()->stock);
         $this->assertDatabaseHas('purchase_amanat_stocks', [
             'bill_id' => $bill->id,
             'bill_item_id' => $item->id,
             'quantity' => 2,
             'remaining_quantity' => 2,
         ]);
+    }
+
+    public function test_good_and_damaged_quantities_share_the_remaining_order_limit(): void
+    {
+        $seller = Seller::create(['name' => 'Supplier Split', 'phone' => '059251']);
+        $product = $this->product(10251, 0);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 6, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+        $item = $bill->items()->first();
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                [
+                    'bill_item_id' => $item->id,
+                    'accepted_quantity' => 5,
+                    'damaged_quantity' => 1,
+                    'unit_price' => 5,
+                    'reason' => 'one damaged item',
+                ],
+            ],
+        ], $this->user->id);
+
+        $this->assertEquals(5, (float) $item->fresh()->received_owned_quantity);
+        $this->assertEquals(1, (float) $item->fresh()->damaged_quantity);
+        $this->assertSame(5, (int) $product->fresh()->stock);
+
+        $failed = false;
+        try {
+            app(PurchasingService::class)->receive($bill->fresh(), [
+                'items' => [
+                    [
+                        'bill_item_id' => $item->id,
+                        'accepted_quantity' => 1,
+                        'damaged_quantity' => 1,
+                        'unit_price' => 5,
+                    ],
+                ],
+            ], $this->user->id);
+        } catch (\RuntimeException) {
+            $failed = true;
+        }
+
+        $this->assertTrue($failed);
+        $this->assertEquals(5, (float) $item->fresh()->received_owned_quantity);
+        $this->assertEquals(1, (float) $item->fresh()->damaged_quantity);
+        $this->assertSame(5, (int) $product->fresh()->stock);
     }
 
     public function test_damaged_issue_requires_resolution_and_can_be_accepted_at_negotiated_price(): void
