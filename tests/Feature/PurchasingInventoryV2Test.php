@@ -454,6 +454,68 @@ class PurchasingInventoryV2Test extends TestCase
         $this->assertSame('PASS', $sourceIntegrity['status']);
     }
 
+    public function test_received_purchase_payment_before_approval_stays_linked_to_invoice_and_actor(): void
+    {
+        $seller = Seller::create(['name' => 'Pre Approval Supplier', 'phone' => '0593000']);
+        $product = $this->product(1300, 0);
+        $box = Box::create(['name' => 'Pre approval cash', 'total' => 100, 'currency' => 'شيكل']);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 1, 'purchase_price' => 9],
+            ],
+        ], $this->user->id);
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [[
+                'bill_item_id' => $bill->items()->first()->id,
+                'accepted_quantity' => 1,
+                'unit_price' => 9,
+            ]],
+        ], $this->user->id);
+
+        $payment = app(PurchasingService::class)->recordPayment(
+            $bill->fresh(),
+            8,
+            $box->id,
+            'payment',
+            null,
+            $this->user->id,
+        );
+
+        $bill = $bill->fresh();
+        $transaction = DebtTransaction::query()->findOrFail($payment->debt_transaction_id);
+        $this->assertSame('received', $bill->workflow_status);
+        $this->assertEqualsWithDelta(8, (float) $bill->paid_amount, 0.001);
+        $this->assertSame('partially_paid', $bill->payment_status);
+        $this->assertSame('دفعة لفاتورة شراء #'.$bill->id, $payment->note);
+        $this->assertSame($payment->note, $transaction->note);
+
+        Sanctum::actingAs($this->user);
+        $response = $this->postJson('/api/get/bill/details', [
+            'bill_id' => $bill->id,
+        ]);
+
+        $response->assertOk();
+        $this->assertEqualsWithDelta(8, (float) $response->json('bill_details.paid_amount'), 0.001);
+        $this->assertEqualsWithDelta(1, (float) $response->json('bill_details.remaining_amount'), 0.001);
+        $paymentActivity = collect($response->json('bill_details.timeline'))
+            ->firstWhere('event', 'supplier_payment_created');
+        $this->assertNotNull($paymentActivity);
+        $this->assertSame($this->user->name, $paymentActivity['actor_name']);
+        $this->assertSame($this->user->id, $paymentActivity['actor_id']);
+
+        $finalized = app(PurchasingService::class)->finalize(
+            $bill,
+            0,
+            null,
+            $this->user->id,
+        );
+        $this->assertEqualsWithDelta(8, (float) $finalized->paid_amount, 0.001);
+        $this->assertSame('partially_paid', $finalized->payment_status);
+    }
+
     public function test_initial_purchase_payment_moves_cash_now_and_finalize_does_not_deduct_it_again(): void
     {
         Carbon::setTestNow('2026-09-01 10:00:00');
@@ -480,6 +542,8 @@ class PurchasingInventoryV2Test extends TestCase
         $this->assertSame((int) $payment->id, (int) $transaction->source_id);
         $this->assertSame($box->id, $transaction->box_id);
         $this->assertEqualsWithDelta(3000, (float) $transaction->amount, 0.001);
+        $this->assertSame('دفعة أولية لفاتورة شراء #'.$bill->id, $payment->note);
+        $this->assertSame($payment->note, $transaction->note);
 
         $entry = app(AccountingProjectionService::class)->syncOrFail($payment->fresh());
         $this->assertNotNull($entry);

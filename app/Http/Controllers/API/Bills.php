@@ -15,6 +15,7 @@ use App\Models\SizeColor;
 use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\PurchaseAmanatStock;
+use App\Models\PurchaseActivityLog;
 use App\Models\PurchaseAttachment;
 use App\Models\PurchaseProduct;
 use App\Models\PurchaseReceiptItem;
@@ -559,11 +560,17 @@ class Bills extends Controller
                 'bill_id' => ['required', 'integer', 'exists:bills,id'],
             ]);
 
-            $bill = Bill::with(['activityLogs' => fn ($q) => $q->latest('id')])->findOrFail($data['bill_id']);
+            $bill = Bill::with([
+                'activityLogs' => fn ($q) => $q
+                    ->with('createdBy:id,name,type')
+                    ->latest('id'),
+            ])->findOrFail($data['bill_id']);
 
             return response()->json([
                 'status' => 'success',
-                'timeline' => $bill->activityLogs,
+                'timeline' => $bill->activityLogs
+                    ->map(fn (PurchaseActivityLog $log) => $this->formatPurchaseActivity($log))
+                    ->values(),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
@@ -852,7 +859,9 @@ private function getBills($statuses, ?array $workflowStatuses = null)
                 'seller',
                 'customer',
                 'payments.box:id,name,currency',
-                'activityLogs' => fn ($q) => $q->latest('id'),
+                'activityLogs' => fn ($q) => $q
+                    ->with('createdBy:id,name,type')
+                    ->latest('id'),
             ])->findOrFail($request->bill_id);
             $items = $bill->items;
             $attachmentService = app(PurchaseAttachmentService::class);
@@ -976,15 +985,9 @@ private function getBills($statuses, ?array $workflowStatuses = null)
                 ])->values(),
                 'returns' => $returns,
                 'attachments' => $attachments,
-                'timeline' => $bill->activityLogs->map(fn ($log) => [
-                    'id' => (int) $log->id,
-                    'event' => $log->event,
-                    'title' => $log->title,
-                    'description' => $log->description,
-                    'source_type' => $log->source_type,
-                    'source_id' => $log->source_id ? (int) $log->source_id : null,
-                    'created_at' => $log->created_at?->format('Y-m-d H:i:s'),
-                ])->values(),
+                'timeline' => $bill->activityLogs
+                    ->map(fn (PurchaseActivityLog $log) => $this->formatPurchaseActivity($log))
+                    ->values(),
             ];
 
             return response()->json([
@@ -1704,6 +1707,23 @@ private function getBills($statuses, ?array $workflowStatuses = null)
     //         }
     // }
 
+
+    private function formatPurchaseActivity(PurchaseActivityLog $log): array
+    {
+        return [
+            'id' => (int) $log->id,
+            'event' => $log->event,
+            'action' => $log->event,
+            'title' => $log->title,
+            'description' => $log->description,
+            'source_type' => $log->source_type,
+            'source_id' => $log->source_id ? (int) $log->source_id : null,
+            'actor_id' => $log->created_by ? (int) $log->created_by : null,
+            'actor_name' => $log->createdBy?->name,
+            'actor_type' => $log->createdBy?->type,
+            'created_at' => $log->created_at?->format('Y-m-d H:i:s'),
+        ];
+    }
 
     // download bill as pdf
     public function downloadBill(Request $request){

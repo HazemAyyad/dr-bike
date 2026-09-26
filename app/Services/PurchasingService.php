@@ -396,6 +396,9 @@ class PurchasingService
             }
 
             $finalTotal = $bill->items->sum(fn (BillItem $item) => (float) $item->received_owned_quantity * (float) ($item->final_unit_price ?? $item->price));
+            if ((float) $bill->paid_amount > $finalTotal + 0.0001) {
+                throw new \RuntimeException('لا يمكن اعتماد الفاتورة لأن المدفوع عليها أكبر من إجماليها النهائي. راجع الدفعات أولاً.');
+            }
             $bill->update([
                 'final_total' => $finalTotal,
                 'total' => $finalTotal,
@@ -425,7 +428,10 @@ class PurchasingService
     {
         return DB::transaction(function () use ($bill, $amount, $boxId, $type, $note, $userId, $receiptImages) {
             $bill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
-            $remaining = max(0, (float) $bill->final_total - (float) $bill->paid_amount);
+            if ($bill->workflow_status === 'cancelled') {
+                throw new \RuntimeException('لا يمكن تسجيل دفعة على فاتورة ملغاة.');
+            }
+            $remaining = max(0, $this->effectivePaymentTotal($bill) - (float) $bill->paid_amount);
             if ($amount <= 0 || $amount > $remaining + 0.0001) {
                 throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
             }
@@ -441,6 +447,11 @@ class PurchasingService
                 throw new \RuntimeException('رصيد الصندوق غير كافٍ لتنفيذ الحركة.');
             }
 
+            $customNote = trim((string) $note);
+            $paymentNote = ($type === 'initial_payment' ? 'دفعة أولية' : 'دفعة')
+                .' لفاتورة شراء #'.$bill->id
+                .($customNote !== '' ? ' — '.$customNote : '');
+
             $payment = PurchasePayment::create([
                 'bill_id' => $bill->id,
                 'seller_id' => $bill->seller_id,
@@ -450,7 +461,7 @@ class PurchasingService
                 'currency' => $bill->currency,
                 'type' => $type,
                 'paid_at' => now()->toDateString(),
-                'note' => $note,
+                'note' => $paymentNote,
                 'debt_transaction_id' => null,
                 'created_by' => $userId,
             ]);
@@ -465,7 +476,7 @@ class PurchasingService
                 'box_id' => $boxId,
                 'source' => $type === 'initial_payment' ? 'purchase_initial_payment' : 'purchase_payment',
                 'source_id' => $payment->id,
-                'note' => $note ?? 'دفعة لفاتورة شراء #'.$bill->id,
+                'note' => $paymentNote,
                 'receipt_images' => ! empty($receiptImages) ? $receiptImages : null,
             ], $userId, true);
 
@@ -473,7 +484,18 @@ class PurchasingService
 
             $bill->update(['paid_amount' => (float) $bill->paid_amount + $amount]);
             $this->refreshPaymentStatus($bill->fresh());
-            $this->activity->log($bill, $type === 'initial_payment' ? 'initial_payment_created' : 'supplier_payment_created', 'تسجيل دفعة مورد', 'تم تسجيل دفعة مرتبطة بالصندوق والدفتر', null, $payment->toArray(), null, 'purchase_payment', $payment->id, $userId);
+            $this->activity->log(
+                $bill,
+                $type === 'initial_payment' ? 'initial_payment_created' : 'supplier_payment_created',
+                $type === 'initial_payment' ? 'تسجيل دفعة أولية' : 'تسجيل دفعة فاتورة شراء',
+                'تم تسجيل دفعة بقيمة '.$amount.' على فاتورة الشراء #'.$bill->id,
+                null,
+                $payment->toArray(),
+                null,
+                'purchase_payment',
+                $payment->id,
+                $userId,
+            );
 
             return $payment;
         });
@@ -506,7 +528,7 @@ class PurchasingService
             'currency' => $bill->currency,
             'type' => 'initial_payment',
             'paid_at' => now()->toDateString(),
-            'note' => 'دفعة أولية عند إنشاء الفاتورة',
+            'note' => 'دفعة أولية لفاتورة شراء #'.$bill->id,
             'debt_transaction_id' => null,
             'created_by' => $userId,
         ]);
@@ -527,7 +549,7 @@ class PurchasingService
         $payment->update(['debt_transaction_id' => $ledgerTx->id]);
         $bill->update(['paid_amount' => (float) $bill->paid_amount + $amount]);
         $this->refreshPaymentStatus($bill->fresh());
-        $this->activity->log($bill, 'initial_payment_created', 'تسجيل دفعة أولية', 'تم تسجيل دفعة أولية عند إنشاء فاتورة شراء', null, $payment->toArray(), null, 'purchase_payment', $payment->id, $userId);
+        $this->activity->log($bill, 'initial_payment_created', 'تسجيل دفعة أولية', 'تم تسجيل دفعة أولية على فاتورة الشراء #'.$bill->id, null, $payment->toArray(), null, 'purchase_payment', $payment->id, $userId);
 
         return $payment;
     }
@@ -804,9 +826,16 @@ class PurchasingService
     private function refreshPaymentStatus(Bill $bill): void
     {
         $paid = (float) $bill->paid_amount;
-        $total = (float) ($bill->final_total ?: $bill->total);
+        $total = $this->effectivePaymentTotal($bill);
         $status = $paid <= 0.0001 ? 'unpaid' : ($paid + 0.0001 >= $total ? 'paid' : 'partially_paid');
         $bill->update(['payment_status' => $status]);
+    }
+
+    private function effectivePaymentTotal(Bill $bill): float
+    {
+        return $bill->workflow_status === 'finalized'
+            ? (float) $bill->final_total
+            : (float) $bill->total;
     }
 
     private function itemStatusAfterReceiving(BillItem $item, float $accepted, float $missing, float $extra, float $damaged, float $mismatched): string
