@@ -930,6 +930,7 @@ private function getBills($statuses, ?array $workflowStatuses = null)
                         'bill_item_id' => $item->id,
                         'product_id' => $item->product->id,
                         'product_name'=> $item->product->nameAr,
+                        'product_code' => $item->product->product_code,
                         'size_id' => $item->size_id,
                         'size_color_id' => $item->size_color_id,
                         'size_label' => $item->size?->size,
