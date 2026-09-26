@@ -45,11 +45,12 @@ class CheckDebtLedgerBalances extends Command
         if ($this->option('repair')) {
             $this->info('Repaired balance_after rows: '.$result['summary']['repaired_rows']);
             $this->line('Remaining running-balance issues: '.$result['summary']['remaining_issues']);
-            $this->line('Accounting reconciliation mismatches: '.$result['summary']['accounting_mismatches']);
         } else {
             $this->warn('READ ONLY: no debt, box, cash, or journal data was changed.');
         }
 
+        $mismatches = $result['summary']['accounting_mismatches'];
+        $this->line('Accounting reconciliation mismatches: '.($mismatches === null ? 'NOT_CHECKED' : $mismatches));
         $this->line('Running-balance issues: '.$issues->count());
 
         return self::SUCCESS;

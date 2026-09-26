@@ -91,22 +91,10 @@ class PurchasePaymentSourceIdentityService
             ->where('source_id', $payment->id)
             ->when($transaction, fn ($query) => $query->where('id', '!=', $transaction->id))
             ->exists();
-        $matches = $transaction
-            && ! $identityConflict
-            && (int) $transaction->id === (int) $payment->debt_transaction_id
-            && (string) $transaction->source === $expectedSource
-            && abs((float) $transaction->amount - (float) $payment->amount) <= 0.0001
-            && (int) ($transaction->customer_id ?? 0) === (int) ($payment->customer_id ?? 0)
-            && (int) ($transaction->seller_id ?? 0) === (int) ($payment->seller_id ?? 0)
-            && (int) ($transaction->box_id ?? 0) === (int) ($payment->box_id ?? 0)
-            && $this->normalizeCurrency($transaction->currency) === $this->normalizeCurrency($payment->currency)
-            && $payment->paid_at
-            && $transaction->transaction_date
-            && $payment->paid_at->toDateString() === $transaction->transaction_date->toDateString();
-
-        $status = $matches && (int) $transaction->source_id === (int) $payment->id
+        $mismatchReasons = $this->mismatchReasons($payment, $transaction, $expectedSource, $identityConflict);
+        $status = $mismatchReasons === []
             ? 'ALREADY_CORRECT'
-            : ($matches ? 'SAFE_TO_REPAIR' : 'AMBIGUOUS');
+            : ($mismatchReasons === ['source_id_mismatch'] ? 'SAFE_TO_REPAIR' : 'AMBIGUOUS');
 
         return [
             'purchase_payment_id' => (int) $payment->id,
@@ -118,7 +106,59 @@ class PurchasePaymentSourceIdentityService
             'expected_source_id' => (int) $payment->id,
             'identity_conflict' => $identityConflict,
             'status' => $status,
+            'mismatch_reasons' => $mismatchReasons,
         ];
+    }
+
+    /** @return array<int, string> */
+    private function mismatchReasons(
+        PurchasePayment $payment,
+        ?DebtTransaction $transaction,
+        string $expectedSource,
+        bool $identityConflict,
+    ): array {
+        if (! $transaction) {
+            return array_values(array_filter([
+                'missing_debt_transaction',
+                $identityConflict ? 'identity_conflict' : null,
+            ]));
+        }
+
+        $reasons = [];
+        if ((string) $transaction->source !== $expectedSource) {
+            $reasons[] = 'source_type_mismatch';
+        }
+        if ((int) ($transaction->source_id ?? 0) !== (int) $payment->id) {
+            $reasons[] = 'source_id_mismatch';
+        }
+        if ($identityConflict) {
+            $reasons[] = 'identity_conflict';
+        }
+        if (abs((float) $transaction->amount - (float) $payment->amount) > 0.0001) {
+            $reasons[] = 'amount_mismatch';
+        }
+        if ((int) ($transaction->customer_id ?? 0) !== (int) ($payment->customer_id ?? 0)) {
+            $reasons[] = 'customer_mismatch';
+        }
+        if ((int) ($transaction->seller_id ?? 0) !== (int) ($payment->seller_id ?? 0)) {
+            $reasons[] = 'seller_mismatch';
+        }
+        if ((int) ($transaction->box_id ?? 0) !== (int) ($payment->box_id ?? 0)) {
+            $reasons[] = 'box_mismatch';
+        }
+        if ($this->normalizeCurrency($transaction->currency) !== $this->normalizeCurrency($payment->currency)) {
+            $reasons[] = 'currency_mismatch';
+        }
+        if (! $payment->paid_at
+            || ! $transaction->transaction_date
+            || $payment->paid_at->toDateString() !== $transaction->transaction_date->toDateString()) {
+            $reasons[] = 'payment_date_mismatch';
+        }
+        if ($transaction->archived_at || $transaction->deleted_at) {
+            $reasons[] = 'transaction_inactive';
+        }
+
+        return $reasons;
     }
 
     private function expectedSource(PurchasePayment $payment): string

@@ -3,13 +3,14 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class DebtLedgerBalanceRepairService
 {
     public function __construct(
         private DebtLedgerBalanceService $balances,
         private AccountingReconciliationService $reconciliation,
-        private PartyAccountingTimelineService $timeline,
     ) {}
 
     /** @return array<string, mixed> */
@@ -28,18 +29,16 @@ class DebtLedgerBalanceRepairService
                         $issue['currency'],
                         quiet: true,
                     );
-                    $this->timeline->schedule(
-                        $issue['customer_id'],
-                        $issue['seller_id'],
-                        $issue['currency'],
-                        $issue['transaction_date'],
-                    );
                 }
             }, 3);
         }
 
         $remaining = $dryRun ? $issues : $this->balances->inspect();
-        $reconciliation = $dryRun ? null : $this->reconciliation->reconcile();
+        $reconciliation = $this->readOnlyReconciliation();
+        $accountingMismatches = array_key_exists('mismatch_count', $reconciliation)
+            && $reconciliation['mismatch_count'] !== null
+                ? (int) $reconciliation['mismatch_count']
+                : null;
 
         return [
             'dry_run' => $dryRun,
@@ -49,10 +48,31 @@ class DebtLedgerBalanceRepairService
                 'affected_groups' => $groups->count(),
                 'repaired_rows' => $repaired,
                 'remaining_issues' => $remaining->count(),
-                'accounting_mismatches' => (int) ($reconciliation['mismatch_count'] ?? 0),
+                'accounting_mismatches' => $accountingMismatches,
             ],
             'remaining_items' => $remaining->values()->all(),
             'reconciliation' => $reconciliation,
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function readOnlyReconciliation(): array
+    {
+        try {
+            return $this->reconciliation->reconcile();
+        } catch (Throwable $exception) {
+            Log::error('debt_ledger_balance_reconciliation_failed', [
+                'message' => $exception->getMessage(),
+            ]);
+            report($exception);
+
+            return [
+                'complete' => false,
+                'mismatch_count' => null,
+                'comparisons' => [],
+                'mismatches' => [],
+                'message' => 'تعذر تنفيذ المطابقة المحاسبية؛ لم يتم افتراض أن عدد الفروقات يساوي صفرًا.',
+            ];
+        }
     }
 }

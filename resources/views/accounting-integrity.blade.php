@@ -163,8 +163,15 @@
         <section class="panel">
             <div class="panel-head"><h2>فحص أرصدة دفتر الديون — قراءة فقط</h2><span class="badge {{ $mode === 'debt_balance_repair' ? 'warning-badge' : 'pass' }}">{{ $mode === 'debt_balance_repair' ? 'بعد الإصلاح' : 'معاينة فقط' }}</span></div>
             <div class="panel-body">
-                <div class="notice help">المعاينة تقارن <span class="ltr code">balance_after</span> المخزن بالرصيد المتوقع حسب <span class="ltr code">transaction_date ثم id</span> لكل شخص وعملة. الإصلاح لا يغيّر المبلغ أو النوع أو العملة أو الصندوق أو المصدر أو النقد أو القيود.</div>
-                <div class="summary">@foreach($debtBalanceSummaryLabels as $key => $label)<div class="metric"><div class="label">{{ $label }}</div><div class="value">{{ number_format($debtBalanceResult['summary'][$key] ?? 0) }}</div></div>@endforeach</div>
+                <div class="notice help">المعاينة تقارن <span class="ltr code">balance_after</span> المخزن بالرصيد المتوقع حسب <span class="ltr code">transaction_date ثم id</span> لكل شخص وعملة. الإصلاح لا يغيّر المبلغ أو النوع أو العملة أو الصندوق أو المصدر أو النقد أو القيود، ولا يعيد ترحيل Timeline.</div>
+                <div class="summary">
+                    @foreach($debtBalanceSummaryLabels as $key => $label)
+                        @php
+                            $metricValue = $debtBalanceResult['summary'][$key] ?? null;
+                        @endphp
+                        <div class="metric"><div class="label">{{ $label }}</div><div class="value">{{ $metricValue === null ? 'NOT_CHECKED' : number_format($metricValue) }}</div></div>
+                    @endforeach
+                </div>
             </div>
             <div class="table-wrap"><table><thead><tr><th>الطرف</th><th>العملة</th><th>الحركة</th><th>المخزن</th><th>المتوقع</th><th>الفرق</th></tr></thead><tbody>
             @forelse($debtBalanceResult['items'] as $item)
@@ -209,14 +216,14 @@
                 <div class="summary">@foreach($purchasePaymentSourceResult['summary'] as $key => $value)<div class="metric"><div class="label">{{ $purchaseSourceStatusLabels[$key] ?? $key }}</div><div class="value">{{ number_format($value) }}</div></div>@endforeach</div>
                 @if(($purchasePaymentSourceResult['hidden_rows'] ?? 0) > 0)<div class="muted small" style="margin-top:12px">تم عرض أول 200 سجل، وعدد السجلات غير المعروضة: {{ number_format($purchasePaymentSourceResult['hidden_rows']) }}.</div>@endif
             </div>
-            <div class="table-wrap"><table><thead><tr><th>Purchase Payment</th><th>Bill</th><th>Debt Transaction</th><th>الهوية الحالية</th><th>الهوية المتوقعة</th><th>تعارض؟</th><th>الحالة</th></tr></thead><tbody>
+            <div class="table-wrap"><table><thead><tr><th>Purchase Payment</th><th>Bill</th><th>Debt Transaction</th><th>الهوية الحالية</th><th>الهوية المتوقعة</th><th>تعارض؟</th><th>الحالة</th><th>سبب عدم الحسم</th></tr></thead><tbody>
             @forelse($purchasePaymentSourceResult['items'] as $item)
                 @php
                     $sourceStatus = (string) ($item['status'] ?? 'UNKNOWN');
                     $sourceStatusClass = $sourceStatus === 'ALREADY_CORRECT' ? 'pass' : ($sourceStatus === 'AMBIGUOUS' ? 'warning-badge' : 'warning-badge');
                 @endphp
-                <tr><td>#{{ $item['purchase_payment_id'] }}</td><td>{{ $item['bill_id'] ? '#'.$item['bill_id'] : '—' }}</td><td>{{ $item['debt_transaction_id'] ? '#'.$item['debt_transaction_id'] : '—' }}</td><td><span class="ltr code">{{ $item['current_source'] ? $item['current_source'].':'.($item['current_source_id'] ?? '—') : '—' }}</span></td><td><span class="ltr code">{{ $item['expected_source'] }}:{{ $item['expected_source_id'] }}</span></td><td>{{ !empty($item['identity_conflict']) ? 'نعم' : 'لا' }}</td><td><span class="badge {{ $sourceStatusClass }}">{{ $sourceStatus }}</span></td></tr>
-            @empty<tr><td class="empty" colspan="7">لا توجد دفعات شراء مرتبطة بحركات دين لفحص هويتها.</td></tr>@endforelse
+                <tr><td>#{{ $item['purchase_payment_id'] }}</td><td>{{ $item['bill_id'] ? '#'.$item['bill_id'] : '—' }}</td><td>{{ $item['debt_transaction_id'] ? '#'.$item['debt_transaction_id'] : '—' }}</td><td><span class="ltr code">{{ $item['current_source'] ? $item['current_source'].':'.($item['current_source_id'] ?? '—') : '—' }}</span></td><td><span class="ltr code">{{ $item['expected_source'] }}:{{ $item['expected_source_id'] }}</span></td><td>{{ !empty($item['identity_conflict']) ? 'نعم' : 'لا' }}</td><td><span class="badge {{ $sourceStatusClass }}">{{ $sourceStatus }}</span></td><td class="ids ltr">{{ empty($item['mismatch_reasons']) ? '—' : implode(', ', $item['mismatch_reasons']) }}</td></tr>
+            @empty<tr><td class="empty" colspan="8">لا توجد دفعات شراء مرتبطة بحركات دين لفحص هويتها.</td></tr>@endforelse
             </tbody></table></div>
         </section>
     @endif
@@ -235,7 +242,7 @@
     <section class="panel danger-zone">
         <div class="panel-head"><h2>إصلاح الرصيد المتسلسل لدفتر الديون</h2><span class="badge error-badge">يعدل balance_after فقط</span></div>
         <div class="panel-body">
-            <div class="warning help"><strong>ما الذي سيتغير؟</strong> يعيد حساب الحقل المشتق <span class="ltr code">debt_transactions.balance_after</span> حسب التاريخ وID للشخص والعملة المتأثرة فقط. لا يغيّر المبالغ أو الصناديق أو النقد أو القيود، ثم يعرض نتيجة المطابقة المحاسبية بدون اختراع أي قيد.</div>
+            <div class="warning help"><strong>هذا الإجراء يعدل balance_after فقط ولا يعيد ترحيل القيود.</strong> يعيد حساب الحقل المشتق <span class="ltr code">debt_transactions.balance_after</span> حسب التاريخ وID للشخص والعملة المتأثرة فقط. لا يغيّر المبالغ أو الصناديق أو النقد أو القيود، ثم يعرض نتيجة المطابقة المحاسبية بدون اختراع أي قيد.</div>
             <form class="repair-grid" method="POST" action="{{ route('security-center.accounting.debt-ledger.balances.repair') }}" onsubmit="return confirm('هل راجعت معاينة فروقات دفتر الديون والنسخة الاحتياطية وتريد تصحيح balance_after فقط؟')">
                 @csrf
                 <input type="hidden" name="from" value="{{ $from }}"><input type="hidden" name="to" value="{{ $to }}">

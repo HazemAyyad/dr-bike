@@ -34,6 +34,7 @@ use App\Services\BoxAccessService;
 use App\Services\DebtLedgerBalanceRepairService;
 use App\Services\DebtLedgerService;
 use App\Services\MonthlyAssetDepreciationService;
+use App\Services\PartyAccountingTimelineService;
 use App\Services\PurchasePaymentSourceIdentityService;
 use App\Services\PurchasingService;
 use Carbon\Carbon;
@@ -2001,19 +2002,35 @@ class AccountingLedgerIntegrationTest extends TestCase
 
     public function test_debt_balance_repair_preview_is_read_only_and_repair_only_changes_derived_balance(): void
     {
+        DB::table('boxes')->insert(['id' => 99, 'name' => 'Repair safety box', 'total' => 500, 'currency' => 'شيكل']);
+        app(AccountingService::class)->post('repair-safety:1', 'repair_safety', 1, '2026-09-01', 'شيكل', 'Repair safety baseline', [
+            ['account_key' => 'cash', 'debit' => 25, 'credit' => 0, 'box_id' => 99],
+            ['account_key' => 'opening_balance', 'debit' => 0, 'credit' => 25],
+        ]);
         $firstId = DB::table('debt_transactions')->insertGetId([
             'customer_id' => 10, 'type' => 'taken', 'amount' => 100, 'currency' => 'شيكل', 'balance_after' => 999,
-            'transaction_date' => '2026-09-01', 'source' => 'legacy_test', 'source_id' => 1, 'created_at' => now(), 'updated_at' => '2026-09-01 10:00:00',
+            'transaction_date' => '2026-09-01', 'box_id' => 99, 'source' => 'legacy_test', 'source_id' => 1, 'created_at' => now(), 'updated_at' => '2026-09-01 10:00:00',
         ]);
         $secondId = DB::table('debt_transactions')->insertGetId([
             'customer_id' => 10, 'type' => 'given', 'amount' => 40, 'currency' => 'شيكل', 'balance_after' => 888,
-            'transaction_date' => '2026-09-10', 'source' => 'legacy_test', 'source_id' => 2, 'created_at' => now(), 'updated_at' => '2026-09-01 11:00:00',
+            'transaction_date' => '2026-09-10', 'box_id' => 99, 'source' => 'legacy_test', 'source_id' => 2, 'created_at' => now(), 'updated_at' => '2026-09-01 11:00:00',
         ]);
-        $before = DB::table('debt_transactions')->where('id', $secondId)->first();
+        $protectedFields = ['id', 'customer_id', 'seller_id', 'amount', 'type', 'transaction_date', 'box_id', 'source', 'source_id', 'currency', 'created_at', 'updated_at'];
+        $debtBefore = DB::table('debt_transactions')->whereIn('id', [$firstId, $secondId])->orderBy('id')->get($protectedFields)->map(fn (object $row) => (array) $row)->all();
+        $boxBefore = (array) DB::table('boxes')->where('id', 99)->first();
+        $journalBefore = [
+            'entries' => DB::table('accounting_journal_entries')->orderBy('id')->get()->map(fn (object $row) => (array) $row)->all(),
+            'lines' => DB::table('accounting_journal_lines')->orderBy('id')->get()->map(fn (object $row) => (array) $row)->all(),
+        ];
+        $this->mock(PartyAccountingTimelineService::class, fn (MockInterface $mock) => $mock->shouldNotReceive('schedule'));
+        $this->mock(AccountingProjectionService::class, fn (MockInterface $mock) => $mock->shouldNotReceive('syncOrFail'));
         $repair = app(DebtLedgerBalanceRepairService::class);
 
         $preview = $repair->run(true);
         $this->assertSame(2, $preview['summary']['total_issues']);
+        $this->assertNotNull($preview['reconciliation']);
+        $this->assertGreaterThan(0, $preview['summary']['accounting_mismatches']);
+        $this->assertSame($preview['reconciliation']['mismatch_count'], $preview['summary']['accounting_mismatches']);
         $this->assertEqualsWithDelta(999, (float) DB::table('debt_transactions')->where('id', $firstId)->value('balance_after'), 0.0001);
 
         $result = $repair->run(false);
@@ -2021,10 +2038,14 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertSame(0, $result['summary']['remaining_issues']);
         $this->assertEqualsWithDelta(100, (float) DB::table('debt_transactions')->where('id', $firstId)->value('balance_after'), 0.0001);
         $this->assertEqualsWithDelta(60, (float) DB::table('debt_transactions')->where('id', $secondId)->value('balance_after'), 0.0001);
-        $after = DB::table('debt_transactions')->where('id', $secondId)->first();
-        $this->assertSame($before->amount, $after->amount);
-        $this->assertSame($before->source, $after->source);
-        $this->assertSame($before->updated_at, $after->updated_at);
+        $debtAfter = DB::table('debt_transactions')->whereIn('id', [$firstId, $secondId])->orderBy('id')->get($protectedFields)->map(fn (object $row) => (array) $row)->all();
+        $journalAfter = [
+            'entries' => DB::table('accounting_journal_entries')->orderBy('id')->get()->map(fn (object $row) => (array) $row)->all(),
+            'lines' => DB::table('accounting_journal_lines')->orderBy('id')->get()->map(fn (object $row) => (array) $row)->all(),
+        ];
+        $this->assertSame($debtBefore, $debtAfter);
+        $this->assertSame($boxBefore, (array) DB::table('boxes')->where('id', 99)->first());
+        $this->assertSame($journalBefore, $journalAfter);
     }
 
     public function test_backdated_customer_transaction_reprojects_later_party_journal_without_duplicates(): void

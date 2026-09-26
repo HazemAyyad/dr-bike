@@ -111,7 +111,8 @@ class AccountingIntegrityWebTest extends TestCase
             ->assertSee('سلامة المحاسبة')
             ->assertSee('الصفحة لا تشغّل Migration')
             ->assertSee('تشغيل الفحص الشامل الآمن')
-            ->assertSee('قبل تنفيذ أي إصلاح فعلي على قاعدة الإنتاج');
+            ->assertSee('قبل تنفيذ أي إصلاح فعلي على قاعدة الإنتاج')
+            ->assertSee('هذا الإجراء يعدل balance_after فقط ولا يعيد ترحيل القيود');
     }
 
     public function test_preview_renders_projection_and_integrity_results(): void
@@ -176,7 +177,10 @@ class AccountingIntegrityWebTest extends TestCase
             ->assertSee('ALREADY_CORRECT')
             ->assertSee('SAFE_TO_REPAIR')
             ->assertSee('#701')
-            ->assertSee('#702');
+            ->assertSee('#702')
+            ->assertSee('سبب عدم الحسم')
+            ->assertSee('source_id_mismatch')
+            ->assertSee('amount_mismatch');
 
         $this->assertSame($databaseBefore, $this->financialTableSnapshot());
     }
@@ -529,6 +533,7 @@ class AccountingIntegrityWebTest extends TestCase
                 'expected_source_id' => 701,
                 'identity_conflict' => false,
                 'status' => 'ALREADY_CORRECT',
+                'mismatch_reasons' => [],
             ],
             [
                 'purchase_payment_id' => 702,
@@ -540,6 +545,7 @@ class AccountingIntegrityWebTest extends TestCase
                 'expected_source_id' => 702,
                 'identity_conflict' => false,
                 'status' => 'SAFE_TO_REPAIR',
+                'mismatch_reasons' => ['source_id_mismatch'],
             ],
             [
                 'purchase_payment_id' => 703,
@@ -551,6 +557,7 @@ class AccountingIntegrityWebTest extends TestCase
                 'expected_source_id' => 703,
                 'identity_conflict' => true,
                 'status' => 'AMBIGUOUS',
+                'mismatch_reasons' => ['source_id_mismatch', 'identity_conflict', 'amount_mismatch'],
             ],
         ];
     }
