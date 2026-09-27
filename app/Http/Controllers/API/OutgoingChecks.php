@@ -10,10 +10,12 @@ use App\Models\Seller;
 use App\Services\CheckSmsNotificationService;
 use App\Services\DebtLedgerService;
 use App\Services\ExpenseBoxAccessService;
+use App\Services\OutgoingCheckSettlementService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class OutgoingChecks extends Controller
@@ -89,12 +91,90 @@ class OutgoingChecks extends Controller
         }
     }
 
+    public function storeBatch(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'customer_id' => 'nullable|exists:customers,id',
+                'seller_id' => 'nullable|exists:sellers,id',
+                'checks' => 'required|array|min:1|max:100',
+                'checks.*.total' => 'required|numeric|min:1',
+                'checks.*.due_date' => 'required|date',
+                'checks.*.currency' => 'required|string',
+                'checks.*.check_id' => 'required|string',
+                'checks.*.bank_name' => 'required|string',
+                'checks.*.notes' => 'nullable|string',
+                'checks.*.front_image' => 'nullable|image',
+                'checks.*.back_image' => 'nullable|image',
+            ]);
+
+            if (! $request->filled('customer_id') && ! $request->filled('seller_id')) {
+                throw ValidationException::withMessages([
+                    'customer_id' => [__('messages.must_select_customer_or_seller')],
+                ]);
+            }
+            if ($request->filled('customer_id') && $request->filled('seller_id')) {
+                throw ValidationException::withMessages([
+                    'customer_id' => [__('messages.must_select_either_customer_or_seller')],
+                ]);
+            }
+
+            $batchNumber = 'OB'.now()->format('ymd').Str::upper(Str::random(2));
+            $created = DB::transaction(function () use ($request, $data, $batchNumber) {
+                $created = [];
+                foreach ($data['checks'] as $index => $checkData) {
+                    $row = [
+                        'customer_id' => $data['customer_id'] ?? null,
+                        'seller_id' => $data['seller_id'] ?? null,
+                        'total' => $checkData['total'],
+                        'due_date' => $checkData['due_date'],
+                        'currency' => $checkData['currency'],
+                        'check_id' => $checkData['check_id'],
+                        'bank_name' => $checkData['bank_name'],
+                        'notes' => $checkData['notes'] ?? null,
+                        'batch_number' => $batchNumber,
+                    ];
+                    foreach (['front_image' => ['img', 'OutgoingChecksImages'], 'back_image' => ['back_image', 'OutgoingChecksImages/back']] as $field => [$column, $path]) {
+                        $file = $request->file("checks.$index.$field");
+                        if ($file) {
+                            $name = Str::uuid().'.'.($file->getClientOriginalExtension() ?: 'jpg');
+                            $file->move(public_path($path), $name);
+                            $row[$column] = $name;
+                        }
+                    }
+                    $check = OutgoingCheck::create($row);
+                    app(DebtLedgerService::class)->syncOutgoingCheckToLedger($check->fresh());
+                    $created[] = $check;
+                }
+                return $created;
+            });
+
+            Logs::createLog('إضافة دفعة شيكات صادرة', 'تمت إضافة دفعة شيكات صادرة رقم '.$batchNumber.' بعدد '.count($created), 'outgoing_checks');
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تمت إضافة الشيكات الصادرة بنجاح',
+                'batch_number' => $batchNumber,
+                'created_count' => count($created),
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'errors' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['status' => 'error', 'message' => __('messages.create_data_error')], 200);
+        }
+    }
+
     private function commonData($status)
     {
         try {
-            $checks = OutgoingCheck::where('status', $status)
+            $statuses = $status === 'not_cashed'
+                ? ['not_cashed', 'partially_settled', 'restructured']
+                : [$status];
+            $checks = OutgoingCheck::whereIn('status', $statuses)
                 ->with('customer:id,name')
                 ->with('seller:id,name')
+                ->with(['settlements', 'installments' => fn ($q) => $q->orderBy('due_date')])
                 ->get();
 
             return response()->json([
@@ -105,13 +185,10 @@ class OutgoingChecks extends Controller
                 'back_checks_images_path' => 'public/OutgoingChecksImages/back',
                 $status.'_'.'checks' => $checks,
 
-                'checks_count' => OutgoingCheck::where('status', $status)->count(),
-                'checks_total_dollar' => OutgoingCheck::where('status', $status)
-                    ->where('currency', 'دولار')->sum('total'),
-                'checks_total_shekel' => OutgoingCheck::where('status', $status)
-                    ->where('currency', 'شيكل')->sum('total'),
-                'checks_total_dinar' => OutgoingCheck::where('status', $status)
-                    ->where('currency', 'دينار')->sum('total'),
+                'checks_count' => $checks->count(),
+                'checks_total_dollar' => $checks->where('currency', 'دولار')->sum('remaining_amount'),
+                'checks_total_shekel' => $checks->where('currency', 'شيكل')->sum('remaining_amount'),
+                'checks_total_dinar' => $checks->where('currency', 'دينار')->sum('remaining_amount'),
 
                 'boxes_total_dollar' => Box::totalDollar(),
                 'boxes_total_shekel' => Box::totalShekel(),
@@ -163,22 +240,26 @@ class OutgoingChecks extends Controller
                 'cancelled',
                 'returned',
                 'cashed_from_box',
+                'settled',
             ])
                 ->with('customer:id,name')
                 ->with('seller:id,name')
+                ->orderByDesc('created_at')
+                ->orderByDesc('id')
                 ->get();
 
             // for coverage percentage
+            $archivedStatuses = ['cancelled', 'returned', 'cashed_from_box', 'settled'];
             $totalArchivedDollar = OutgoingCheck::where('currency', 'دولار')
-                ->whereIn('status', ['cancelled', 'returned', 'cashed_from_box'])
+                ->whereIn('status', $archivedStatuses)
                 ->sum('total');
 
             $totalArchivedDinar = OutgoingCheck::where('currency', 'دينار')
-                ->whereIn('status', ['cancelled', 'returned', 'cashed_from_box'])
+                ->whereIn('status', $archivedStatuses)
                 ->sum('total');
 
             $totalArchivedShekel = OutgoingCheck::where('currency', 'شيكل')
-                ->whereIn('status', ['cancelled', 'returned', 'cashed_from_box'])
+                ->whereIn('status', $archivedStatuses)
                 ->sum('total');
 
             $coverPercentage = [
@@ -198,23 +279,27 @@ class OutgoingChecks extends Controller
                     'cancelled',
                     'returned',
                     'cashed_from_box',
+                    'settled',
                 ])->count(),
                 'checks_total_dollar' => OutgoingCheck::whereIn('status', [
                     'cancelled',
                     'returned',
                     'cashed_from_box',
+                    'settled',
                 ])->where('currency', 'دولار')->sum('total'),
 
                 'checks_total_shekel' => OutgoingCheck::whereIn('status', [
                     'cancelled',
                     'returned',
                     'cashed_from_box',
+                    'settled',
                 ])->where('currency', 'شيكل')->sum('total'),
 
                 'checks_total_dinar' => OutgoingCheck::whereIn('status', [
                     'cancelled',
                     'returned',
                     'cashed_from_box',
+                    'settled',
                 ])->where('currency', 'دينار')->sum('total'),
 
                 'boxes_total_dollar' => Box::totalDollar(),
@@ -243,6 +328,11 @@ class OutgoingChecks extends Controller
         try {
             $request->validate(['outgoing_check_id' => 'required|exists:outgoing_checks,id']);
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
+            if ($check->settlements()->exists()) {
+                throw ValidationException::withMessages([
+                    'outgoing_check_id' => ['لا يمكن إلغاء أو إرجاع شيك بعد بدء تسديده. يلزم إجراء عكس محاسبي مخصص.'],
+                ]);
+            }
 
             $check->update(['status' => $status]);
             $check = $check->fresh();
@@ -337,6 +427,11 @@ class OutgoingChecks extends Controller
                 ], 200);
             }
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
+            if ($check->settlements()->exists()) {
+                throw ValidationException::withMessages([
+                    'outgoing_check_id' => ['لا يمكن تغيير مستفيد شيك بعد بدء تسديده.'],
+                ]);
+            }
 
             $personName = 'غير معروف';
 
@@ -456,9 +551,10 @@ class OutgoingChecks extends Controller
 
     private function calculateCoverage(string $currency, float $totalBoxes): array
     {
-        $totalNotCashed = OutgoingCheck::where('currency', $currency)
-            ->where('status', 'not_cashed')
-            ->sum('total');
+        $totalNotCashed = OutgoingCheck::openChecks()
+            ->where('currency', $currency)
+            ->get()
+            ->sum('remaining_amount');
 
         $totalCashed = OutgoingCheck::where('currency', $currency)
             ->where('status', 'cashed_to_person')
@@ -606,6 +702,11 @@ class OutgoingChecks extends Controller
             }
 
             $outgoingCheck = OutgoingCheck::findOrFail($request->outgoing_check_id);
+            if ($outgoingCheck->settlements()->exists()) {
+                throw ValidationException::withMessages([
+                    'outgoing_check_id' => ['هذا الشيك عليه تسويات جزئية؛ استخدم شاشة التسديد الجزئي لإكماله.'],
+                ]);
+            }
 
             $data['customer_id'] = $request->filled('customer_id')
                 ? (int) $request->customer_id
@@ -675,6 +776,11 @@ class OutgoingChecks extends Controller
 
             [$outgoingCheck, $box] = DB::transaction(function () use ($data) {
                 $outgoingCheck = OutgoingCheck::query()->lockForUpdate()->findOrFail($data['outgoing_check_id']);
+                if ($outgoingCheck->settlements()->exists()) {
+                    throw ValidationException::withMessages([
+                        'outgoing_check_id' => ['هذا الشيك عليه تسويات جزئية؛ استخدم شاشة التسديد الجزئي لإكماله.'],
+                    ]);
+                }
                 $box = Box::query()->lockForUpdate()->findOrFail($data['box_id']);
 
                 if ($outgoingCheck->currency !== $box->currency) {
@@ -740,6 +846,49 @@ class OutgoingChecks extends Controller
                 'status' => 'error',
                 'message' => __('messages.something_wrong'),
             ], 200);
+        }
+    }
+
+    public function partialSettlement(Request $request, ExpenseBoxAccessService $access, OutgoingCheckSettlementService $service)
+    {
+        try {
+            $data = $request->validate([
+                'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
+                'box_id' => 'required|integer|exists:boxes,id',
+                'amount' => 'required|numeric|min:0.0001',
+                'paid_at' => 'required|date',
+                'idempotency_key' => 'required|string|max:100',
+                'notes' => 'nullable|string',
+                'installments' => 'nullable|array',
+                'installments.*.amount' => 'required|numeric|min:0.0001',
+                'installments.*.due_date' => 'required|date',
+                'installments.*.instrument_type' => 'required|in:same_check,replacement_check',
+                'installments.*.check_id' => 'nullable|string|max:100',
+                'installments.*.bank_name' => 'nullable|string|max:150',
+                'installments.*.notes' => 'nullable|string',
+            ]);
+
+            if (! $access->canUse($request->user(), (int) $data['box_id'])) {
+                throw ValidationException::withMessages(['box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.']]);
+            }
+            foreach ($data['installments'] ?? [] as $index => $row) {
+                if ($row['instrument_type'] === 'replacement_check'
+                    && (blank($row['check_id'] ?? null) || blank($row['bank_name'] ?? null))) {
+                    throw ValidationException::withMessages([
+                        "installments.$index.check_id" => ['رقم الشيك والبنك مطلوبان للشيك البديل.'],
+                    ]);
+                }
+            }
+
+            $check = $service->settle($data, $request->user()?->id);
+            Logs::createLog('تسديد جزئي لشيك صادر', 'تم دفع '.$data['amount'].' '.$check->currency.' من الشيك رقم '.($check->check_id ?: $check->id).' والمتبقي '.$check->remaining_amount, 'outgoing_checks');
+
+            return response()->json(['status' => 'success', 'message' => 'تم حفظ التسديد وإعادة الجدولة بنجاح', 'check' => $check]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => 'تعذر تنفيذ التسديد', 'errors' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
         }
     }
 }

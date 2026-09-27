@@ -332,7 +332,7 @@ public function getEmployeesLogs()
 
         $upcomingIncomingChecks = IncomingCheck::query()
             ->with(['fromCustomer:id,name', 'fromSeller:id,name'])
-            ->where('status', 'not_cashed')
+            ->whereIn('status', ['not_cashed', 'partially_settled'])
             ->whereDate('due_date', '>=', now()->toDateString())
             ->orderBy('due_date')
             ->orderBy('id')
@@ -343,7 +343,7 @@ public function getEmployeesLogs()
                 'check_id' => $check->check_id,
                 'bank_name' => $check->bank_name,
                 'person_name' => $check->fromCustomer?->name ?? $check->fromSeller?->name,
-                'total' => $check->total,
+                'total' => $check->remaining_amount,
                 'currency' => $check->currency,
                 'due_date' => $check->due_date,
                 'notes' => $check->notes,

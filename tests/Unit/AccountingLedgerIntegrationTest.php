@@ -14,6 +14,7 @@ use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenancePayment;
 use App\Models\OutgoingCheck;
+use App\Models\OutgoingCheckSettlement;
 use App\Models\ProfitSale;
 use App\Models\PurchasePayment;
 use App\Models\PurchaseReceipt;
@@ -526,6 +527,8 @@ class AccountingLedgerIntegrationTest extends TestCase
         (require database_path('migrations/2026_09_19_201000_create_accounting_cutovers_table.php'))->up();
         (require database_path('migrations/2026_09_19_202000_add_accounting_sources_to_assets_and_project_expenses.php'))->up();
         (require database_path('migrations/2026_09_19_203000_add_box_id_to_outgoing_checks_table.php'))->up();
+        (require database_path('migrations/2026_09_27_120000_add_partial_settlements_to_outgoing_checks.php'))->up();
+        (require database_path('migrations/2026_09_27_130000_add_batch_number_to_outgoing_checks.php'))->up();
         (require database_path('migrations/2026_09_19_204000_add_carrier_credit_to_sales_returns.php'))->up();
         (require database_path('migrations/2026_09_23_100000_add_service_revenue_account.php'))->up();
         (require database_path('migrations/2026_09_24_100000_add_payment_stage_to_maintenance_payments.php'))->up();
@@ -586,6 +589,82 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertEqualsWithDelta(0, DB::table('accounting_journal_lines')->sum(DB::raw('debit - credit')), 0.0001);
         $this->assertEqualsWithDelta(240, DB::table('accounting_journal_lines')->sum('debit'), 0.0001);
         $this->assertEqualsWithDelta(240, DB::table('accounting_journal_lines')->sum('credit'), 0.0001);
+    }
+
+    public function test_outgoing_check_partial_settlement_reduces_cash_and_checks_payable_without_party_effect(): void
+    {
+        $box = Box::query()->create(['name' => 'Partial check box', 'total' => 60000, 'currency' => 'شيكل']);
+        $check = OutgoingCheck::query()->create([
+            'seller_id' => 44, 'status' => 'restructured', 'settlement_status' => 'partially_paid_restructured',
+            'total' => 70000, 'currency' => 'شيكل', 'check_id' => 'PARTIAL-70', 'bank_name' => 'فلسطين',
+        ]);
+        $settlement = OutgoingCheckSettlement::query()->create([
+            'outgoing_check_id' => $check->id, 'box_id' => $box->id, 'amount' => 40000,
+            'paid_at' => '2026-09-27', 'idempotency_key' => 'accounting-partial-70-40',
+        ]);
+
+        app(AccountingProjectionService::class)->syncOrFail($settlement->fresh());
+        $entry = AccountingJournalEntry::query()
+            ->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)
+            ->with('lines.account')->firstOrFail();
+
+        $this->assertEqualsWithDelta(40000, $entry->lines->where('account.system_key', 'checks_payable')->sum('debit'), 0.0001);
+        $this->assertEqualsWithDelta(40000, $entry->lines->where('account.system_key', 'cash')->sum('credit'), 0.0001);
+        $this->assertEqualsWithDelta(40000, $entry->lines->sum('debit'), 0.0001);
+        $this->assertEqualsWithDelta(40000, $entry->lines->sum('credit'), 0.0001);
+        $this->assertSame(0, DebtTransaction::query()->count());
+    }
+
+    public function test_outgoing_checks_can_be_created_as_one_sequenced_batch(): void
+    {
+        $seller = Seller::query()->create(['name' => 'Batch Seller', 'is_canceled' => false]);
+        $this->mock(DebtLedgerService::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('syncOutgoingCheckToLedger')->twice();
+        });
+
+        $response = $this->withoutMiddleware()->postJson('/api/add/outgoing/checks/batch', [
+            'seller_id' => $seller->id,
+            'checks' => [
+                ['total' => 1000, 'due_date' => '2026-10-01', 'currency' => 'شيكل', 'check_id' => 'OUT-100', 'bank_name' => 'فلسطين'],
+                ['total' => 1200, 'due_date' => '2026-11-01', 'currency' => 'شيكل', 'check_id' => 'OUT-101', 'bank_name' => 'فلسطين'],
+            ],
+        ]);
+
+        $response->assertOk()->assertJsonPath('status', 'success')->assertJsonPath('created_count', 2);
+        $checks = OutgoingCheck::query()->orderBy('id')->get();
+        $this->assertCount(2, $checks);
+        $this->assertNotNull($checks->first()->batch_number);
+        $this->assertSame($checks->first()->batch_number, $checks->last()->batch_number);
+        $this->assertSame(['OUT-100', 'OUT-101'], $checks->pluck('check_id')->all());
+    }
+
+    public function test_incoming_and_outgoing_archives_are_newest_first(): void
+    {
+        foreach ([
+            ['check_id' => 'OUT-OLD', 'created_at' => '2026-09-20 10:00:00'],
+            ['check_id' => 'OUT-NEW', 'created_at' => '2026-09-27 10:00:00'],
+        ] as $row) {
+            DB::table('outgoing_checks')->insert(array_merge($row, [
+                'status' => 'cancelled', 'settlement_status' => 'unpaid', 'total' => 100,
+                'currency' => 'شيكل', 'updated_at' => $row['created_at'],
+            ]));
+        }
+        foreach ([
+            ['check_id' => 'IN-OLD', 'created_at' => '2026-09-20 10:00:00'],
+            ['check_id' => 'IN-NEW', 'created_at' => '2026-09-27 10:00:00'],
+        ] as $row) {
+            DB::table('incoming_checks')->insert(array_merge($row, [
+                'status' => 'cancelled', 'total' => 100, 'currency' => 'شيكل',
+                'updated_at' => $row['created_at'],
+            ]));
+        }
+
+        $this->withoutMiddleware()->getJson('/api/archived/outgoing/checks')
+            ->assertOk()->assertJsonPath('archived_checks.0.check_id', 'OUT-NEW')
+            ->assertJsonPath('archived_checks.1.check_id', 'OUT-OLD');
+        $this->withoutMiddleware()->getJson('/api/archived/incoming/checks')
+            ->assertOk()->assertJsonPath('archived_checks.0.check_id', 'IN-NEW')
+            ->assertJsonPath('archived_checks.1.check_id', 'IN-OLD');
     }
 
     public function test_accounting_source_and_cutover_migrations_are_additive(): void

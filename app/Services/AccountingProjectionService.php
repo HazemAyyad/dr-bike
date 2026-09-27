@@ -15,6 +15,7 @@ use App\Models\InstantSale;
 use App\Models\InventoryAdjustment;
 use App\Models\MaintenancePayment;
 use App\Models\OutgoingCheck;
+use App\Models\OutgoingCheckSettlement;
 use App\Models\ProfitSale;
 use App\Models\ProjectExpense;
 use App\Models\PurchasePayment;
@@ -95,6 +96,7 @@ class AccountingProjectionService
             $model instanceof ProjectExpense => $this->syncProjectExpense($model),
             $model instanceof IncomingCheck => $this->syncIncomingCheck($model),
             $model instanceof OutgoingCheck => $this->syncOutgoingCheck($model),
+            $model instanceof OutgoingCheckSettlement => $this->syncOutgoingCheckSettlement($model),
             $model instanceof BoxLog => $this->syncBoxLog($model),
             $model instanceof SalesOrder => $this->syncSalesOrder($model),
             $model instanceof DebtTransaction => $this->syncDebtCashMovement($model),
@@ -1034,6 +1036,35 @@ class AccountingProjectionService
         );
     }
 
+    private function syncOutgoingCheckSettlement(OutgoingCheckSettlement $settlement): ?AccountingJournalEntry
+    {
+        $settlement->loadMissing(['check', 'box']);
+        $check = $settlement->check;
+        $amount = round(max(0, (float) $settlement->amount), 4);
+        if (! $check || ! $settlement->box || $amount <= 0) {
+            return null;
+        }
+
+        return $this->accounting->post(
+            'outgoing_check_settlement:'.$settlement->id,
+            'outgoing_check_settlement',
+            (int) $settlement->id,
+            $settlement->paid_at ?: $settlement->created_at ?: now(),
+            $check->currency ?: 'شيكل',
+            'تسديد شيك صادر '.($check->check_id ?: '#'.$check->id),
+            [
+                $this->line('checks_payable', $amount, 0, $check, [
+                    'customer_id' => $check->customer_id,
+                    'seller_id' => $check->seller_id,
+                    'due_date' => $check->due_date,
+                ]),
+                $this->line('cash', 0, $amount, $settlement, ['box_id' => $settlement->box_id]),
+            ],
+            ['outgoing_check_id' => $check->id, 'stage' => 'partial_settlement'],
+            $settlement->created_by ?: auth()->id(),
+        );
+    }
+
     private function syncInventoryAdjustment(InventoryAdjustment $adjustment): ?AccountingJournalEntry
     {
         $difference = round((float) $adjustment->value_difference, 4);
@@ -1807,6 +1838,7 @@ class AccountingProjectionService
             $model instanceof ProjectExpense => ['type' => 'project_expense', 'id' => (int) $model->id],
             $model instanceof IncomingCheck => ['type' => 'incoming_check', 'id' => (int) $model->id],
             $model instanceof OutgoingCheck => ['type' => 'outgoing_check', 'id' => (int) $model->id],
+            $model instanceof OutgoingCheckSettlement => ['type' => 'outgoing_check_settlement', 'id' => (int) $model->id],
             $model instanceof BoxLog => ['type' => $model->type === 'transfer' ? 'box_transfer' : 'box_adjustment', 'id' => (int) $model->id],
             $model instanceof SalesOrderSettlement => ['type' => 'sales_order_settlement', 'id' => (int) $model->id],
             $model instanceof SalesOrder => ['type' => 'sales_order', 'id' => (int) $model->id],

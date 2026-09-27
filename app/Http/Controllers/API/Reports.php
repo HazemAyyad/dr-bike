@@ -451,11 +451,11 @@ class Reports extends Controller
             ]);
         }
         $openIncomingChecks = IncomingCheck::query()->where('status', 'not_cashed')->get(['total', 'currency']);
-        $openOutgoingChecks = OutgoingCheck::query()->where('status', 'not_cashed')->get(['total', 'currency']);
+        $openOutgoingChecks = OutgoingCheck::openChecks()->get();
         $checks = collect(DebtLedgerService::CURRENCIES)->flatMap(function (string $currency) use ($openIncomingChecks, $openOutgoingChecks) {
             $incoming = $openIncomingChecks
                 ->filter(fn (IncomingCheck $check) => $this->reportCurrency($check->currency) === $currency)
-                ->sum('total');
+                ->sum('remaining_amount');
             $outgoing = $openOutgoingChecks
                 ->filter(fn (OutgoingCheck $check) => $this->reportCurrency($check->currency) === $currency)
                 ->sum('total');
@@ -1484,7 +1484,7 @@ class Reports extends Controller
 
         if ($direction !== 'incoming') {
             $outgoing = OutgoingCheck::query()
-                ->with(['customer:id,name,phone', 'seller:id,name,phone'])
+                ->with(['customer:id,name,phone', 'seller:id,name,phone', 'settlements', 'installments'])
                 ->whereBetween('created_at', [$from->copy()->startOfDay(), $to->copy()->endOfDay()])
                 ->orderByDesc('created_at')
                 ->get()
@@ -1495,6 +1495,8 @@ class Reports extends Controller
                         'bank_name' => $check->bank_name,
                         'person' => optional($check->customer ?: $check->seller)->name ?: '-',
                         'total' => (float) $check->total,
+                        'settled_amount' => $check->settled_amount,
+                        'remaining_amount' => $check->remaining_amount,
                         'currency' => $this->reportCurrency($check->currency),
                         'due_date' => $this->reportDateString($check->due_date),
                         'status' => $this->checkStatusLabel($check->status),
@@ -1930,6 +1932,9 @@ class Reports extends Controller
             'not_cashed' => 'غير مصروف',
             'cashed_to_person' => 'مصروف للشخص',
             'cashed_to_box' => 'مصروف للصندوق',
+            'partially_settled' => 'مدفوع جزئياً',
+            'restructured' => 'مدفوع جزئياً ومعاد جدولته',
+            'settled' => 'مدفوع بالكامل',
             default => $status ?: '-',
         };
     }

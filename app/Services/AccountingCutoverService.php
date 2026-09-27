@@ -74,7 +74,7 @@ class AccountingCutoverService
                     ? DB::table('sales_order_settlements')->where('source', 'order_payment')->where('cash_amount', '>', 0)->count()
                     : 0,
                 'open_incoming_checks' => IncomingCheck::query()->where('status', 'not_cashed')->count(),
-                'open_outgoing_checks' => OutgoingCheck::query()->whereIn('status', ['not_cashed', 'cashed_to_person'])->count(),
+                'open_outgoing_checks' => OutgoingCheck::query()->whereIn('status', ['not_cashed', 'cashed_to_person', 'partially_settled', 'restructured'])->count(),
                 'employee_advances' => Schema::hasTable('employee_orders') ? EmployeeOrder::query()->where('type', 'loan')->whereIn('status', ['approved', 'paid'])->count() : 0,
                 'salary_periods_outstanding' => Schema::hasTable('employee_salary_periods') ? EmployeeSalaryPeriod::query()->where('remaining', '>', 0)->count() : 0,
             ],
@@ -221,8 +221,8 @@ class AccountingCutoverService
                 'metadata' => ['incoming_check_id' => $check->id],
             ]));
         }
-        foreach (OutgoingCheck::query()->whereIn('status', ['not_cashed', 'cashed_to_person'])->get() as $check) {
-            $lines->push($this->signedLine('checks_payable', -(float) $check->total, $check->currency, [
+        foreach (OutgoingCheck::query()->whereIn('status', ['not_cashed', 'cashed_to_person', 'partially_settled', 'restructured'])->with('settlements')->get() as $check) {
+            $lines->push($this->signedLine('checks_payable', -(float) $check->remaining_amount, $check->currency, [
                 'customer_id' => $check->customer_id, 'seller_id' => $check->seller_id,
                 'due_date' => $check->due_date, 'description' => 'شيك صادر افتتاحي '.$check->check_id,
                 'metadata' => ['outgoing_check_id' => $check->id],

@@ -873,6 +873,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
       //outgoing checks
       Route::post('/add/outgoing/check' , [OutgoingChecks::class,'store'])
           ->middleware('check.permission:Checks Outgoing Create');
+      Route::post('/add/outgoing/checks/batch' , [OutgoingChecks::class,'storeBatch'])
+          ->middleware('check.permission:Checks Outgoing Create');
       Route::post('/cancel/an/outgoing/check' , [OutgoingChecks::class,'cancelCheck'])
           ->middleware('check.permission:Checks Outgoing View');
       Route::post('/return/an/outgoing/check' , [OutgoingChecks::class,'returnCheck'])
@@ -904,6 +906,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
       Route::post('/delete/outgoing/check' , [OutgoingChecks::class,'deleteCheck'])
           ->middleware('check.permission:Checks Outgoing View');
       Route::post('/cash/outgoing/check/from/box' , [OutgoingChecks::class,'cashFromBox'])
+          ->middleware('check.permission:Checks Outgoing View');
+      Route::post('/outgoing/checks/partial-settlement' , [OutgoingChecks::class,'partialSettlement'])
           ->middleware('check.permission:Checks Outgoing View');
 
 

@@ -14,6 +14,8 @@ class OutgoingCheck extends Model
     protected $fillable = [
         'customer_id',
         'status',
+        'settlement_status',
+        'restructured_at',
         'total',
         'due_date',
         'currency',
@@ -24,7 +26,27 @@ class OutgoingCheck extends Model
         'seller_id',
         'box_id',
         'notes',
+        'batch_number',
     ];
+
+    protected $casts = ['restructured_at' => 'datetime'];
+
+    protected $appends = ['settled_amount', 'remaining_amount'];
+
+    public function settlements(){ return $this->hasMany(OutgoingCheckSettlement::class); }
+    public function installments(){ return $this->hasMany(OutgoingCheckInstallment::class); }
+
+    public function getSettledAmountAttribute(): float
+    {
+        return round((float) ($this->relationLoaded('settlements')
+            ? $this->settlements->sum('amount')
+            : $this->settlements()->sum('amount')), 4);
+    }
+
+    public function getRemainingAmountAttribute(): float
+    {
+        return max(0, round((float) $this->total - $this->settled_amount, 4));
+    }
 
     /**
      * Get the customer that owns the check.
@@ -45,13 +67,21 @@ class OutgoingCheck extends Model
 
     //total checks values
     public static function totalAmount(){
-        return OutgoingCheck::where('status','not_cashed')->sum('total');
+        return static::openChecks()->get()->sum('remaining_amount');
+    }
+
+    public static function openChecks()
+    {
+        return static::query()
+            ->whereIn('status', ['not_cashed', 'partially_settled', 'restructured'])
+            ->with('settlements');
     }
 
     // data for first page for both incoming and outgoing checks
     public static function generalChecksData(){
         $totalOutgoingChecksNotCashedCount = OutgoingCheck::
-        where('status','not_cashed')->count();
+        whereIn('status',['not_cashed', 'partially_settled'])->count()
+            + OutgoingCheckInstallment::where('status', 'pending')->count();
 
         $totalOutgoingChecksCashedCount = OutgoingCheck::
         where('status','cashed_to_person')->count();
@@ -65,14 +95,10 @@ class OutgoingCheck extends Model
         $totalIncomingChecksCashedToBoxCount = IncomingCheck::
         where('status','cashed_to_box')->count();
 
-        $totalOutgoingChecksDollar = OutgoingCheck::where('currency','دولار')
-        ->where('status','not_cashed')->sum('total');
-
-        $totalOutgoingChecksDinar = OutgoingCheck::where('currency','دينار')
-        ->where('status','not_cashed')->sum('total');
-
-        $totalOutgoingChecksShekel = OutgoingCheck::where('currency','شيكل')
-        ->where('status','not_cashed')->sum('total');
+        $openOutgoing = static::openChecks()->get();
+        $totalOutgoingChecksDollar = $openOutgoing->where('currency','دولار')->sum('remaining_amount');
+        $totalOutgoingChecksDinar = $openOutgoing->where('currency','دينار')->sum('remaining_amount');
+        $totalOutgoingChecksShekel = $openOutgoing->where('currency','شيكل')->sum('remaining_amount');
 
         $totalIncomingChecksDollar = IncomingCheck::where('currency','دولار')
         ->where('status','not_cashed')->sum('total');
@@ -96,6 +122,15 @@ class OutgoingCheck extends Model
             'total_outgoing_checks_dollar' => $totalOutgoingChecksDollar,
             'total_outgoing_checks_dinar' => $totalOutgoingChecksDinar,
             'total_outgoing_checks_shekel' => $totalOutgoingChecksShekel,
+            'partially_settled_outgoing_checks_count' => OutgoingCheck::where('status', 'partially_settled')->count(),
+            'restructured_outgoing_checks_count' => OutgoingCheck::where('status', 'restructured')->count(),
+            'pending_outgoing_installments_count' => OutgoingCheckInstallment::where('status', 'pending')->count(),
+            'settled_outgoing_checks_shekel' => (float) OutgoingCheckSettlement::query()
+                ->whereHas('check', fn ($query) => $query->where('currency', 'شيكل'))->sum('amount'),
+            'settled_outgoing_checks_dollar' => (float) OutgoingCheckSettlement::query()
+                ->whereHas('check', fn ($query) => $query->where('currency', 'دولار'))->sum('amount'),
+            'settled_outgoing_checks_dinar' => (float) OutgoingCheckSettlement::query()
+                ->whereHas('check', fn ($query) => $query->where('currency', 'دينار'))->sum('amount'),
 
             'total_incoming_checks_dollar' => $totalIncomingChecksDollar,
             'total_incoming_checks_dinar' => $totalIncomingChecksDinar,

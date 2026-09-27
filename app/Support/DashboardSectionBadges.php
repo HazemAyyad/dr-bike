@@ -11,6 +11,7 @@ use App\Models\IncomingCheck;
 use App\Models\Maintenance;
 use App\Models\MaintenanceDailyClosingRequest;
 use App\Models\OutgoingCheck;
+use App\Models\OutgoingCheckInstallment;
 use App\Models\SpecialTask;
 use App\Models\SalesDailyClosingRequest;
 use App\Models\SupportConversation;
@@ -87,8 +88,8 @@ class DashboardSectionBadges
             'suggestions' => (int) $suggestionsQuery->count(),
             'checks_incoming_red' => self::urgentChecksCount(IncomingCheck::class, 'red'),
             'checks_incoming_yellow' => self::urgentChecksCount(IncomingCheck::class, 'yellow'),
-            'checks_outgoing_red' => self::urgentChecksCount(OutgoingCheck::class, 'red', ['not_cashed', 'cashed_to_person']),
-            'checks_outgoing_yellow' => self::urgentChecksCount(OutgoingCheck::class, 'yellow', ['not_cashed', 'cashed_to_person']),
+            'checks_outgoing_red' => self::urgentChecksCount(OutgoingCheck::class, 'red', ['not_cashed', 'cashed_to_person', 'partially_settled', 'restructured']),
+            'checks_outgoing_yellow' => self::urgentChecksCount(OutgoingCheck::class, 'yellow', ['not_cashed', 'cashed_to_person', 'partially_settled', 'restructured']),
         ];
     }
 
@@ -279,7 +280,20 @@ class DashboardSectionBadges
                 ->whereDate('due_date', '<=', $yellowEnd->toDateString());
         }
 
-        return (int) $query->count();
+        $count = (int) $query->when($model === OutgoingCheck::class, fn ($q) => $q->where('status', '!=', 'restructured'))->count();
+        if ($model !== OutgoingCheck::class) {
+            return $count;
+        }
+
+        $installments = OutgoingCheckInstallment::query()->where('status', 'pending');
+        if ($level === 'red') {
+            $installments->whereDate('due_date', '<=', $redEnd->toDateString());
+        } else {
+            $installments->whereDate('due_date', '>', $redEnd->toDateString())
+                ->whereDate('due_date', '<=', $yellowEnd->toDateString());
+        }
+
+        return $count + (int) $installments->count();
     }
 
     private static function canManageSupport(User $user): bool

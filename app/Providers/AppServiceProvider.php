@@ -17,6 +17,7 @@ use App\Models\InventoryAdjustment;
 use App\Models\MaintenancePayment;
 use App\Models\NormalImageProduct;
 use App\Models\OutgoingCheck;
+use App\Models\OutgoingCheckSettlement;
 use App\Models\Product;
 use App\Models\ProfitSale;
 use App\Models\ProjectExpense;
@@ -85,6 +86,7 @@ class AppServiceProvider extends ServiceProvider
             ProjectExpense::class,
             IncomingCheck::class,
             OutgoingCheck::class,
+            OutgoingCheckSettlement::class,
             BoxLog::class,
             SalesOrder::class,
             SalesOrderSettlement::class,

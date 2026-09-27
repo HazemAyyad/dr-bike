@@ -137,10 +137,14 @@ class AccountingReconciliationService
             $this->merge($comparisons, 'checks_receivable', $incoming, $this->ledgerBalances('checks_receivable'));
         }
         if (Schema::hasTable('outgoing_checks')) {
-            $outgoing = DB::table('outgoing_checks')
-                ->whereIn('status', ['not_cashed', 'cashed_to_person'])
-                ->selectRaw("NULL as dimension_id, COALESCE(NULLIF(currency, ''), 'شيكل') as currency, SUM(total) as amount")
-                ->groupBy('currency')
+            $settlements = DB::table('outgoing_check_settlements')
+                ->selectRaw('outgoing_check_id, SUM(amount) as settled_amount')
+                ->groupBy('outgoing_check_id');
+            $outgoing = DB::table('outgoing_checks as checks')
+                ->leftJoinSub($settlements, 'settlements', fn ($join) => $join->on('settlements.outgoing_check_id', '=', 'checks.id'))
+                ->whereIn('checks.status', ['not_cashed', 'cashed_to_person', 'partially_settled', 'restructured'])
+                ->selectRaw("NULL as dimension_id, COALESCE(NULLIF(checks.currency, ''), 'شيكل') as currency, SUM(CASE WHEN checks.total - COALESCE(settlements.settled_amount, 0) > 0 THEN checks.total - COALESCE(settlements.settled_amount, 0) ELSE 0 END) as amount")
+                ->groupBy('checks.currency')
                 ->get();
             $this->merge($comparisons, 'checks_payable', $outgoing, $this->ledgerBalances('checks_payable', null, true));
         }

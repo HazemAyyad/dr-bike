@@ -326,6 +326,8 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
                         'toCustomer:id,name',
                         'toSeller:id,name',
                     ])
+                    ->orderByDesc('created_at')
+                    ->orderByDesc('id')
                     ->get();
 
             return response()->json([
