@@ -30,6 +30,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class Bills extends Controller
@@ -327,25 +328,27 @@ class Bills extends Controller
         try {
             $data = $request->validate([
                 'bill_id' => ['required', 'integer', 'exists:bills,id'],
-                'confirmation' => ['required', 'string'],
+                'password' => ['required', 'string'],
                 'reason' => ['required', 'string', 'min:3', 'max:1000'],
             ]);
-            $expectedConfirmation = 'PUR-'.$data['bill_id'];
-            if (trim($data['confirmation']) !== $expectedConfirmation) {
-                throw ValidationException::withMessages([
-                    'confirmation' => ['اكتب '.$expectedConfirmation.' لتأكيد الحذف النهائي.'],
-                ]);
+            $user = $request->user();
+            if (! $user || ! Hash::check($data['password'], $user->password)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'كلمة مرور الحساب غير صحيحة',
+                ], 200);
             }
 
             $result = $purgeService->purge(
                 Bill::findOrFail($data['bill_id']),
-                $request->user(),
+                $user,
                 trim($data['reason']),
             );
 
+            $billReference = 'PUR-'.$data['bill_id'];
             Logs::createLog(
                 'حذف نهائي لفاتورة شراء',
-                'تم حذف '.$expectedConfirmation.' وعكس آثار المخزون والديون والدفعات. نسخة التدقيق: '.$result['backup_reference'],
+                'تم حذف '.$billReference.' وعكس آثار المخزون والديون والدفعات. نسخة التدقيق: '.$result['backup_reference'],
                 'bills',
             );
 

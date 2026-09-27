@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Http\Controllers\API\Bills as BillsController;
 use App\Models\Bill;
 use App\Models\Product;
 use App\Models\ProductStockMovement;
@@ -11,7 +12,9 @@ use App\Services\DebtLedgerService;
 use App\Services\InventoryCostingService;
 use App\Services\PurchaseInvoicePurgeService;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Tests\TestCase;
@@ -31,6 +34,7 @@ class PurchaseInvoicePurgeServiceTest extends TestCase
             $table->id();
             $table->string('name');
             $table->string('type')->nullable();
+            $table->string('password')->nullable();
             $table->softDeletes();
             $table->timestamps();
         });
@@ -144,6 +148,36 @@ class PurchaseInvoicePurgeServiceTest extends TestCase
             $table->unsignedBigInteger('created_by')->nullable();
             $table->timestamps();
         });
+    }
+
+    public function test_purge_controller_rejects_a_wrong_current_account_password(): void
+    {
+        $user = User::query()->create(['name' => 'Admin', 'type' => 'admin']);
+        $user->forceFill(['password' => Hash::make('correct-password')])->save();
+        $bill = Bill::query()->create([
+            'total' => 5,
+            'final_total' => 5,
+            'paid_amount' => 0,
+            'status' => 'unfinished',
+            'workflow_status' => 'awaiting_receiving',
+            'payment_status' => 'unpaid',
+            'currency' => 'شيكل',
+        ]);
+        $request = Request::create('/api/purchase/purge', 'POST', [
+            'bill_id' => $bill->id,
+            'password' => 'wrong-password',
+            'reason' => 'اختبار حماية الحذف',
+        ]);
+        $request->setUserResolver(fn () => $user);
+        $purgeService = Mockery::mock(PurchaseInvoicePurgeService::class);
+        $purgeService->shouldNotReceive('purge');
+
+        $response = (new BillsController)->purgePurchaseInvoice($request, $purgeService);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame('error', $response->getData(true)['status']);
+        $this->assertSame('كلمة مرور الحساب غير صحيحة', $response->getData(true)['message']);
+        $this->assertDatabaseHas('bills', ['id' => $bill->id]);
     }
 
     public function test_purge_backs_up_invoice_and_removes_its_net_received_stock(): void
