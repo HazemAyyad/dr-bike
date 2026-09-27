@@ -21,6 +21,7 @@ use App\Models\PurchaseProduct;
 use App\Models\PurchaseReceiptItem;
 use App\Services\PurchaseAccountService;
 use App\Services\PurchaseAttachmentService;
+use App\Services\PurchaseInvoicePurgeService;
 use App\Services\PurchasingService;
 use App\Services\StoreManageItemService;
 use ArPHP\I18N\Arabic;
@@ -318,6 +319,54 @@ class Bills extends Controller
             return response()->json(['status' => 'error', 'message' => __('messages.validation_failed'), 'error' => $e->errors()], 200);
         } catch (\Throwable $e) {
             return response()->json(['status' => 'error', 'message' => $e->getMessage() ?: __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function purgePurchaseInvoice(Request $request, PurchaseInvoicePurgeService $purgeService)
+    {
+        try {
+            $data = $request->validate([
+                'bill_id' => ['required', 'integer', 'exists:bills,id'],
+                'confirmation' => ['required', 'string'],
+                'reason' => ['required', 'string', 'min:3', 'max:1000'],
+            ]);
+            $expectedConfirmation = 'PUR-'.$data['bill_id'];
+            if (trim($data['confirmation']) !== $expectedConfirmation) {
+                throw ValidationException::withMessages([
+                    'confirmation' => ['اكتب '.$expectedConfirmation.' لتأكيد الحذف النهائي.'],
+                ]);
+            }
+
+            $result = $purgeService->purge(
+                Bill::findOrFail($data['bill_id']),
+                $request->user(),
+                trim($data['reason']),
+            );
+
+            Logs::createLog(
+                'حذف نهائي لفاتورة شراء',
+                'تم حذف '.$expectedConfirmation.' وعكس آثار المخزون والديون والدفعات. نسخة التدقيق: '.$result['backup_reference'],
+                'bills',
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم حذف الفاتورة وعكس آثار المخزون والديون والدفعات بنجاح.',
+                'data' => $result,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+                'error' => $e->errors(),
+            ], 200);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage() ?: __('messages.something_wrong'),
+            ], 200);
         }
     }
 

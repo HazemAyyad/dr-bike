@@ -426,12 +426,13 @@ class ProductStockService
         ?float $totalCost = null,
         ?string $costingMethod = null,
         ?string $reason = null,
+        bool $allowNegative = false,
     ): void {
         if ($quantityDelta === 0) {
             return;
         }
 
-        DB::transaction(function () use ($product, $quantityDelta, $type, $sizeColorId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost, $costingMethod, $reason) {
+        DB::transaction(function () use ($product, $quantityDelta, $type, $sizeColorId, $referenceType, $referenceId, $note, $userId, $unitCost, $totalCost, $costingMethod, $reason, $allowNegative) {
             $productQuery = $product->trashed()
                 ? Product::withTrashed()
                 : Product::query();
@@ -445,7 +446,7 @@ class ProductStockService
                     ->firstOrFail();
                 $before = (int) $variant->stock;
                 $after = $before + $quantityDelta;
-                if ($after < 0) {
+                if (! $allowNegative && $after < 0) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'actual_quantity' => [__('messages.cant_sale')],
                     ]);
@@ -474,7 +475,7 @@ class ProductStockService
             } else {
                 $before = (int) $lockedProduct->stock;
                 $after = $before + $quantityDelta;
-                if ($after < 0) {
+                if (! $allowNegative && $after < 0) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'actual_quantity' => [__('messages.cant_sale')],
                     ]);

@@ -254,7 +254,7 @@ class EmployeePermissionDelegationService
             'Employees Permissions Manage' => 'employees',
             'Sales', 'Sales Settings', 'Delivery Company Accounts' => 'sales',
             'Stock', 'Purchasing Section', 'Cost Price', 'View Inventory Cost', 'Adjust Stock',
-            'Adjust Inventory Cost', 'Manage Purchases' => 'stock',
+            'Adjust Inventory Cost', 'Manage Purchases', 'Delete Purchase Invoices' => 'stock',
             default => 'general',
         };
     }

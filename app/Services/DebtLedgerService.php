@@ -1891,7 +1891,8 @@ class DebtLedgerService
         DebtTransaction $transaction,
         int $boxId,
         string $type,
-        float $amount
+        float $amount,
+        bool $allowNegative = false,
     ): void {
         $box = Box::query()->lockForUpdate()->findOrFail($boxId);
 
@@ -1905,7 +1906,7 @@ class DebtLedgerService
             : $transaction->seller?->name;
 
         if ($type === 'taken') {
-            if ((float) $box->total + 0.0001 < $amount) {
+            if (! $allowNegative && (float) $box->total + 0.0001 < $amount) {
                 throw new \RuntimeException('رصيد الصندوق غير كافٍ لتنفيذ الحركة.');
             }
             $box->update(['total' => $box->total - $amount]);

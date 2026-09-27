@@ -213,6 +213,7 @@ class InventoryCostingService
         ?int $sizeColorId = null,
         ?int $sizeId = null,
         bool $allowNegative = false,
+        array $preferredLayerIds = [],
     ): array {
         if ($quantity <= 0) {
             return ['method' => $this->currentMethod(), 'total_cost' => 0.0, 'unit_cost' => 0.0, 'allocations' => []];
@@ -220,13 +221,14 @@ class InventoryCostingService
 
         $this->wholeStockQuantity($quantity);
 
-        return DB::transaction(function () use ($product, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId, $allowNegative) {
+        return DB::transaction(function () use ($product, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId, $allowNegative, $preferredLayerIds) {
             $lockedProduct = Product::withTrashed()->lockForUpdate()->findOrFail($product->id);
             $sizeId = $this->validateAndResolveSizeId($lockedProduct, $sizeColorId, $sizeId);
             $method = $this->currentMethod();
             $balance = $this->lockedBalance($lockedProduct, $sizeColorId, $sizeId);
 
             $layers = $this->layerIdentityQuery((int) $lockedProduct->id, $sizeColorId)
+                ->when($preferredLayerIds !== [], fn ($query) => $query->whereIn('id', $preferredLayerIds))
                 ->where('remaining_quantity', '>', 0)
                 ->orderBy('effective_at')
                 ->orderBy('id')
@@ -347,11 +349,13 @@ class InventoryCostingService
         ?int $userId = null,
         ?string $note = null,
         ?string $reason = null,
+        bool $allowNegative = false,
+        array $preferredLayerIds = [],
     ): array {
         $stockQuantity = $this->wholeStockQuantity($quantity);
 
-        return DB::transaction(function () use ($product, $quantity, $stockQuantity, $movementType, $referenceType, $referenceId, $sizeColorId, $sizeId, $userId, $note, $reason) {
-            $cost = $this->consumeCost($product, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId);
+        return DB::transaction(function () use ($product, $quantity, $stockQuantity, $movementType, $referenceType, $referenceId, $sizeColorId, $sizeId, $userId, $note, $reason, $allowNegative, $preferredLayerIds) {
+            $cost = $this->consumeCost($product, $quantity, $referenceType, $referenceId, $sizeColorId, $sizeId, $allowNegative, $preferredLayerIds);
 
             $this->stockService->adjustStock(
                 product: $product,
@@ -366,9 +370,133 @@ class InventoryCostingService
                 totalCost: $cost['total_cost'],
                 costingMethod: $cost['method'],
                 reason: $reason,
+                allowNegative: $allowNegative,
             );
 
             return $cost;
+        });
+    }
+
+    /**
+     * Restore the exact FIFO allocations of an outbound stock event before
+     * deleting that event. This is used by destructive document cleanup so
+     * unrelated cost layers are not substituted for the original ones.
+     *
+     * @return array{quantity: float, total_cost: float, method: string}
+     */
+    public function reverseOwnedStockConsumption(
+        Product $product,
+        float $quantity,
+        string $originalReferenceType,
+        int $originalReferenceId,
+        string $movementType,
+        string $reversalReferenceType,
+        ?int $reversalReferenceId,
+        ?int $sizeColorId = null,
+        ?int $sizeId = null,
+        ?int $userId = null,
+        ?string $note = null,
+    ): array {
+        $stockQuantity = $this->wholeStockQuantity($quantity);
+
+        return DB::transaction(function () use ($product, $quantity, $stockQuantity, $originalReferenceType, $originalReferenceId, $movementType, $reversalReferenceType, $reversalReferenceId, $sizeColorId, $sizeId, $userId, $note) {
+            $lockedProduct = Product::withTrashed()->lockForUpdate()->findOrFail($product->id);
+            $sizeId = $this->validateAndResolveSizeId($lockedProduct, $sizeColorId, $sizeId);
+            $balance = $this->lockedBalance($lockedProduct, $sizeColorId, $sizeId);
+            $allocations = InventoryCostAllocation::query()
+                ->where('product_id', $lockedProduct->id)
+                ->where('reference_type', $originalReferenceType)
+                ->where('reference_id', $originalReferenceId)
+                ->when($sizeColorId !== null && $sizeColorId > 0,
+                    fn ($query) => $query->where('size_color_id', $sizeColorId),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->orderByDesc('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ((float) $allocations->sum('quantity') + self::EPSILON < $quantity) {
+                throw ValidationException::withMessages([
+                    'inventory' => ['تعذر عكس تكلفة مرتجع الشراء بالكامل؛ تخصيصات التكلفة الأصلية ناقصة.'],
+                ]);
+            }
+
+            $remaining = $quantity;
+            $restoredQuantity = 0.0;
+            $restoredCost = 0.0;
+            $missingLayerCoverage = false;
+            $method = (string) ($allocations->first()?->method ?: $this->currentMethod());
+            foreach ($allocations as $allocation) {
+                if ($remaining <= self::EPSILON) {
+                    break;
+                }
+
+                $take = min((float) $allocation->quantity, $remaining);
+                $takeCost = round($take * (float) $allocation->unit_cost, 6);
+                if ($allocation->inventory_cost_layer_id) {
+                    $layer = InventoryCostLayer::query()->lockForUpdate()->find($allocation->inventory_cost_layer_id);
+                    if ($layer) {
+                        $layer->update([
+                            'remaining_quantity' => round((float) $layer->remaining_quantity + $take, 4),
+                        ]);
+                    } else {
+                        $missingLayerCoverage = true;
+                    }
+                } else {
+                    $missingLayerCoverage = true;
+                }
+
+                if ($take + self::EPSILON >= (float) $allocation->quantity) {
+                    $allocation->delete();
+                } else {
+                    $left = round((float) $allocation->quantity - $take, 4);
+                    $allocation->update([
+                        'quantity' => $left,
+                        'total_cost' => round($left * (float) $allocation->unit_cost, 6),
+                    ]);
+                }
+
+                $remaining -= $take;
+                $restoredQuantity += $take;
+                $restoredCost += $takeCost;
+            }
+
+            $newQuantity = round((float) $balance->quantity + $restoredQuantity, 4);
+            $newValue = round((float) $balance->inventory_value + $restoredCost, 6);
+            $hasPending = $missingLayerCoverage || InventoryCostAllocation::query()
+                ->where('product_id', $lockedProduct->id)
+                ->whereNull('inventory_cost_layer_id')
+                ->when($sizeColorId !== null && $sizeColorId > 0,
+                    fn ($query) => $query->where('size_color_id', $sizeColorId),
+                    fn ($query) => $query->whereNull('size_color_id'))
+                ->exists();
+            $balance->update([
+                'quantity' => $newQuantity,
+                'inventory_value' => abs($newQuantity) > self::EPSILON ? $newValue : 0,
+                'moving_average_unit_cost' => abs($newQuantity) > self::EPSILON ? abs($newValue / $newQuantity) : 0,
+                'needs_review' => $hasPending,
+                'review_reason' => $hasPending ? 'negative_stock_cost_pending' : null,
+            ]);
+
+            $this->stockService->adjustStock(
+                product: $lockedProduct,
+                quantityDelta: $stockQuantity,
+                type: $movementType,
+                sizeColorId: $sizeColorId,
+                referenceType: $reversalReferenceType,
+                referenceId: $reversalReferenceId,
+                note: $note,
+                userId: $userId,
+                unitCost: $restoredQuantity > self::EPSILON ? $restoredCost / $restoredQuantity : 0,
+                totalCost: $restoredCost,
+                costingMethod: $method,
+                reason: $note,
+            );
+
+            return [
+                'quantity' => round($restoredQuantity, 4),
+                'total_cost' => round($restoredCost, 6),
+                'method' => $method,
+            ];
         });
     }
 

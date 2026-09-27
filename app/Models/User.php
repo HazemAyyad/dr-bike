@@ -27,6 +27,8 @@ class User extends Authenticatable
 
     public const MANAGE_PURCHASES_PERMISSION = 'Manage Purchases';
 
+    public const DELETE_PURCHASE_INVOICES_PERMISSION = 'Delete Purchase Invoices';
+
     /**
      * The attributes that are mass assignable.
      *
@@ -152,6 +154,11 @@ class User extends Authenticatable
     public function canManagePurchases(): bool
     {
         return $this->hasEmployeePermission(self::MANAGE_PURCHASES_PERMISSION, 'Purchasing Section');
+    }
+
+    public function canDeletePurchaseInvoices(): bool
+    {
+        return $this->hasEmployeePermission(self::DELETE_PURCHASE_INVOICES_PERMISSION);
     }
 
     public function adminDeviceTokens()

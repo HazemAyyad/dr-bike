@@ -115,6 +115,7 @@ class EmployeeDetails extends Controller
             'Boxes Section',
             'Special Tasks',
             'Checks',
+            'Delete Purchase Invoices',
         ];
     }
 
@@ -172,7 +173,8 @@ class EmployeeDetails extends Controller
             'Sales', 'Sales Daily Close Review', 'Sales Cancel Closed Review',
             'Sales Settings', 'Delivery Company Accounts' => 'sales',
             'Stock', 'Purchasing Section', 'Cost Price', 'Stock Inventory Settings', 'Product Quick Edit',
-            'View Inventory Cost', 'Adjust Stock', 'Adjust Inventory Cost', 'Manage Purchases' => 'stock',
+            'View Inventory Cost', 'Adjust Stock', 'Adjust Inventory Cost', 'Manage Purchases',
+            'Delete Purchase Invoices' => 'stock',
             'Employees Section', 'Employee Impersonation',
             'Employees View', 'Employees Create', 'Employees Edit Basic', 'Employees Delete',
             'Employees Password Manage',

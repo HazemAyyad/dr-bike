@@ -1285,6 +1285,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Manage Purchases,P
     Route::post('/purchase/receive' , [Bills::class,'receivePurchase']);
     Route::post('/purchase/update-draft' , [Bills::class,'updateDraftPurchase']);
     Route::post('/purchase/delete-draft' , [Bills::class,'deleteDraftPurchase']);
+    Route::post('/purchase/purge' , [Bills::class,'purgePurchaseInvoice'])
+        ->middleware('check.permission:Delete Purchase Invoices');
     Route::post('/purchase/finalize' , [Bills::class,'finalizePurchase']);
     Route::post('/purchase/payment' , [Bills::class,'payPurchase']);
     Route::post('/purchase/account/payment' , [Bills::class,'paySupplierAccount']);

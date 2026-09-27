@@ -15,6 +15,10 @@ class ProductStockMovement extends Model
 
     public const TYPE_PURCHASE_RETURN_CANCEL = 'purchase_return_cancel';
 
+    public const TYPE_PURCHASE_INVOICE_DELETE = 'purchase_invoice_delete';
+
+    public const TYPE_PURCHASE_INVOICE_DELETE_RETURN_RESTORE = 'purchase_invoice_delete_return_restore';
+
     public const TYPE_MAINTENANCE = 'maintenance';
 
     public const TYPE_BILL_QUANTITY = 'bill_quantity';
