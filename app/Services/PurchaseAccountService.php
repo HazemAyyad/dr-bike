@@ -25,6 +25,7 @@ class PurchaseAccountService
         private DebtLedgerService $ledger,
         private ProductStockService $stockService,
         private PurchaseActivityService $activity,
+        private PurchaseWorkflowStateService $workflowState,
     ) {
     }
 
@@ -50,6 +51,8 @@ class PurchaseAccountService
             $item->update([
                 'custody_quantity' => max(0, (float) $item->custody_quantity - $quantity),
             ]);
+
+            $this->workflowState->refresh($bill);
 
             $this->activity->log($bill, 'amanat_returned', 'إرجاع أمانات للمورد', 'تم إرجاع كمية أمانات بدون إدخالها كمخزون مملوك', null, $amanat->fresh()->toArray(), null, 'purchase_amanat_stock', $amanat->id, $userId);
 
@@ -291,11 +294,12 @@ class PurchaseAccountService
                     'damaged' => 'damaged_quantity',
                     default => 'mismatched_quantity',
                 } => $remainingIssueQuantity,
-                'status' => $remainingIssueQuantity <= 0.0001 ? 'reviewed' : $item->status,
             ];
-            if ($issueType === 'missing') {
+            $acceptedIssue = $issueType !== 'missing'
+                && in_array($resolution, ['accept_with_discount', 'accept_negotiated_price'], true);
+            if (! $acceptedIssue && $resolution !== 'replacement_expected') {
                 $updates['ordered_quantity'] = max(
-                    (float) $item->received_owned_quantity,
+                    $this->workflowState->orderedReceivedQuantity($item),
                     (float) ($item->ordered_quantity ?? $item->quantity) - $quantity
                 );
             }
@@ -316,6 +320,7 @@ class PurchaseAccountService
                 'created_by' => $userId,
             ]);
 
+            $this->workflowState->refresh($bill);
             $this->ledger->syncPurchaseInvoiceToLedger($bill->fresh('items'), $userId);
             $this->activity->log($bill, 'purchase_issue_resolved', 'تسوية مشكلة استلام', 'تم تسجيل قرار تسوية لمشكلة '.$issueType, null, $issue->toArray(), null, 'purchase_issue_resolution', $issue->id, $userId);
 

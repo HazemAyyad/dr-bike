@@ -26,6 +26,7 @@ class PurchasingService
         private DebtLedgerService $ledger,
         private PurchaseActivityService $activity,
         private BoxAccessService $boxAccess,
+        private PurchaseWorkflowStateService $workflowState,
     ) {}
 
     public function createPurchase(array $data, ?int $userId = null): Bill
@@ -125,7 +126,7 @@ class PurchasingService
                 $mismatched = (float) ($row['mismatched_quantity'] ?? 0);
                 $unitPrice = (float) ($row['unit_price'] ?? $billItem->final_unit_price ?? $billItem->price);
 
-                $remainingOrdered = max(0, (float) $billItem->ordered_quantity - (float) $billItem->received_owned_quantity);
+                $remainingOrdered = $this->workflowState->remainingToReceive($billItem);
                 $orderedOutcome = $accepted + $missing + $damaged + $mismatched;
                 if ($orderedOutcome > $remainingOrdered + 0.0001) {
                     throw new \RuntimeException(__('messages.entered_amount_bigger_than_quantity'));
@@ -187,11 +188,10 @@ class PurchasingService
                     'damaged_quantity' => (float) $billItem->damaged_quantity + $damaged,
                     'mismatched_quantity' => (float) $billItem->mismatched_quantity + $mismatched,
                     'missing_amount' => (float) ($billItem->missing_amount ?? 0) + $missing,
-                    'status' => $this->itemStatusAfterReceiving($billItem, $accepted, $missing, $extra, $damaged, $mismatched),
                 ]);
             }
 
-            $this->refreshWorkflowStatus($bill);
+            $this->workflowState->refresh($bill);
             $this->ledger->syncPurchaseInvoiceToLedger($bill->fresh(), $userId);
             $this->activity->log($bill, 'receipt_created', 'تسجيل استلام شراء', 'تم تسجيل استلام على الفاتورة #'.$bill->id, null, $receipt->load('items')->toArray(), null, 'purchase_receipt', $receipt->id, $userId);
 
@@ -377,6 +377,8 @@ class PurchasingService
                 'resolved_at' => ((float) $amanat->remaining_quantity - $quantity) <= 0.0001 ? now() : null,
             ]);
 
+            $this->workflowState->refresh($bill);
+
             $this->recordPurchasePrice($bill, $billItem, $unitPrice, $quantity, $bill->currency, true, $userId);
             $this->ledger->syncPurchaseInvoiceToLedger($bill->fresh('items'), $userId);
             $this->activity->log($bill, 'extra_purchased', 'شراء كمية أمانات', 'تم شراء كمية أمانات بسعر متفاوض عليه', null, $amanat->fresh()->toArray(), null, 'purchase_amanat_stock', $amanat->id, $userId);
@@ -392,11 +394,12 @@ class PurchasingService
             if ($bill->workflow_status === 'finalized') {
                 return $bill;
             }
-            if ($bill->items->contains(fn (BillItem $item) => (float) ($item->missing_amount ?? 0) > 0 || (float) $item->damaged_quantity > 0 || (float) $item->mismatched_quantity > 0)) {
-                throw new \RuntimeException(__('messages.validation_failed'));
+            if ($bill->workflow_status === 'cancelled') {
+                throw new \RuntimeException(__('messages.something_wrong'));
             }
+            $bill = $this->workflowState->assertReadyForFinalization($bill);
 
-            $finalTotal = $bill->items->sum(fn (BillItem $item) => (float) $item->received_owned_quantity * (float) ($item->final_unit_price ?? $item->price));
+            $finalTotal = $this->workflowState->recognizedTotal($bill);
             if ((float) $bill->paid_amount > $finalTotal + 0.0001) {
                 throw new \RuntimeException('لا يمكن اعتماد الفاتورة لأن المدفوع عليها أكبر من إجماليها النهائي. راجع الدفعات أولاً.');
             }
@@ -431,6 +434,9 @@ class PurchasingService
             $bill = Bill::query()->lockForUpdate()->findOrFail($bill->id);
             if ($bill->workflow_status === 'cancelled') {
                 throw new \RuntimeException('لا يمكن تسجيل دفعة على فاتورة ملغاة.');
+            }
+            if ($type === 'payment' && $bill->workflow_status !== 'finalized') {
+                throw new \RuntimeException('يجب اعتماد فاتورة الشراء قبل تسجيل دفعة عليها.');
             }
             $remaining = max(0, $this->effectivePaymentTotal($bill) - (float) $bill->paid_amount);
             if ($amount <= 0 || $amount > $remaining + 0.0001) {
@@ -813,17 +819,6 @@ class PurchasingService
             ->delete();
     }
 
-    private function refreshWorkflowStatus(Bill $bill): void
-    {
-        $bill = $bill->fresh('items');
-        $hasRemaining = $bill->items->contains(fn (BillItem $item) => (float) $item->received_owned_quantity + (float) ($item->missing_amount ?? 0) < (float) $item->ordered_quantity);
-        $hasCustody = $bill->items->contains(fn (BillItem $item) => (float) $item->custody_quantity > 0);
-
-        $bill->update([
-            'workflow_status' => $hasRemaining || $hasCustody ? 'partially_received' : 'received',
-        ]);
-    }
-
     private function refreshPaymentStatus(Bill $bill): void
     {
         $paid = (float) $bill->paid_amount;
@@ -837,26 +832,6 @@ class PurchasingService
         return $bill->workflow_status === 'finalized'
             ? (float) $bill->final_total
             : (float) $bill->total;
-    }
-
-    private function itemStatusAfterReceiving(BillItem $item, float $accepted, float $missing, float $extra, float $damaged, float $mismatched): string
-    {
-        if ($extra > 0) {
-            return 'extra';
-        }
-        if ($damaged > 0) {
-            return 'damaged';
-        }
-        if ($mismatched > 0) {
-            return 'not_compatible';
-        }
-        if ($missing > 0) {
-            return 'missing';
-        }
-
-        return ((float) $item->received_owned_quantity + $accepted) >= (float) $item->ordered_quantity
-            ? 'finished'
-            : 'unfinished';
     }
 
     private function normalizeCurrency(?string $currency): string

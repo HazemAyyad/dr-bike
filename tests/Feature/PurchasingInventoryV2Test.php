@@ -22,6 +22,7 @@ use App\Services\InventoryCostingService;
 use App\Services\ProductStockService;
 use App\Services\PurchaseAccountService;
 use App\Services\PurchaseAttachmentService;
+use App\Services\PurchaseWorkflowStateService;
 use App\Services\PurchasingService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -309,6 +310,136 @@ class PurchasingInventoryV2Test extends TestCase
         $this->assertSame(5, (int) $product->fresh()->stock);
     }
 
+    public function test_mixed_receiving_can_buy_extra_return_damage_and_then_finalize(): void
+    {
+        $seller = Seller::create(['name' => 'Mixed Final Supplier', 'phone' => '059252']);
+        $male = $this->product(10252, 0);
+        $female = $this->product(10253, 0);
+
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $male->id, 'quantity' => 10, 'purchase_price' => 5],
+                ['product_id' => $female->id, 'quantity' => 10, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+        $maleItem = $bill->items()->where('product_id', $male->id)->firstOrFail();
+        $femaleItem = $bill->items()->where('product_id', $female->id)->firstOrFail();
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [
+                ['bill_item_id' => $maleItem->id, 'accepted_quantity' => 10, 'unit_price' => 5],
+                [
+                    'bill_item_id' => $femaleItem->id,
+                    'accepted_quantity' => 5,
+                    'damaged_quantity' => 5,
+                    'extra_quantity' => 1,
+                    'unit_price' => 5,
+                    'reason' => 'five damaged and one extra',
+                ],
+            ],
+        ], $this->user->id);
+
+        $this->assertSame('receiving_issues', $bill->fresh()->workflow_status);
+        $this->assertSame(10, (int) $male->fresh()->stock);
+        $this->assertSame(5, (int) $female->fresh()->stock);
+        $this->assertEqualsWithDelta(0, app(PurchaseWorkflowStateService::class)->remainingToReceive($femaleItem->fresh()), 0.0001);
+
+        $amanat = PurchaseAmanatStock::query()->where('bill_item_id', $femaleItem->id)->sole();
+        app(PurchasingService::class)->purchaseAmanat($amanat, 1, 5, $this->user->id);
+        $this->assertSame(6, (int) $female->fresh()->stock);
+        $this->assertSame('receiving_issues', $bill->fresh()->workflow_status);
+
+        app(PurchaseAccountService::class)->resolvePurchaseIssue([
+            'bill_id' => $bill->id,
+            'bill_item_id' => $femaleItem->id,
+            'issue_type' => 'damaged',
+            'resolution' => 'return_to_supplier',
+            'quantity' => 5,
+            'reason' => 'returned damaged units',
+        ], $this->user->id);
+
+        $femaleItem = $femaleItem->fresh();
+        $this->assertEqualsWithDelta(5, (float) $femaleItem->ordered_quantity, 0.0001);
+        $this->assertEqualsWithDelta(6, (float) $femaleItem->received_owned_quantity, 0.0001);
+        $this->assertEqualsWithDelta(0, app(PurchaseWorkflowStateService::class)->remainingToReceive($femaleItem), 0.0001);
+        $this->assertSame('received', $bill->fresh()->workflow_status);
+
+        $finalized = app(PurchasingService::class)->finalize($bill->fresh(), 0, null, $this->user->id);
+        $this->assertSame('finalized', $finalized->workflow_status);
+        $this->assertEqualsWithDelta(80, (float) $finalized->final_total, 0.0001);
+    }
+
+    public function test_extra_purchase_does_not_replace_units_expected_from_supplier(): void
+    {
+        $seller = Seller::create(['name' => 'Replacement Supplier', 'phone' => '059253']);
+        $product = $this->product(10254, 0);
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 10, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+        $item = $bill->items()->firstOrFail();
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [[
+                'bill_item_id' => $item->id,
+                'accepted_quantity' => 5,
+                'damaged_quantity' => 5,
+                'extra_quantity' => 1,
+                'unit_price' => 5,
+            ]],
+        ], $this->user->id);
+        app(PurchasingService::class)->purchaseAmanat(PurchaseAmanatStock::firstOrFail(), 1, 5, $this->user->id);
+        app(PurchaseAccountService::class)->resolvePurchaseIssue([
+            'bill_id' => $bill->id,
+            'bill_item_id' => $item->id,
+            'issue_type' => 'damaged',
+            'resolution' => 'replacement_expected',
+            'quantity' => 5,
+        ], $this->user->id);
+
+        $this->assertEqualsWithDelta(5, app(PurchaseWorkflowStateService::class)->remainingToReceive($item->fresh()), 0.0001);
+        $this->assertSame('partially_received', $bill->fresh()->workflow_status);
+
+        app(PurchasingService::class)->receive($bill->fresh(), [
+            'items' => [[
+                'bill_item_id' => $item->id,
+                'accepted_quantity' => 5,
+                'unit_price' => 5,
+            ]],
+        ], $this->user->id);
+
+        $this->assertSame(11, (int) $product->fresh()->stock);
+        $this->assertEqualsWithDelta(11, (float) $item->fresh()->received_owned_quantity, 0.0001);
+        $this->assertSame('received', $bill->fresh()->workflow_status);
+    }
+
+    public function test_partial_purchase_cannot_be_finalized_from_backend(): void
+    {
+        $seller = Seller::create(['name' => 'Partial Guard Supplier', 'phone' => '059254']);
+        $product = $this->product(10255, 0);
+        $bill = app(PurchasingService::class)->createPurchase([
+            'seller_id' => $seller->id,
+            'products' => [
+                ['product_id' => $product->id, 'quantity' => 10, 'purchase_price' => 5],
+            ],
+        ], $this->user->id);
+
+        app(PurchasingService::class)->receive($bill, [
+            'items' => [[
+                'bill_item_id' => $bill->items()->firstOrFail()->id,
+                'accepted_quantity' => 5,
+                'unit_price' => 5,
+            ]],
+        ], $this->user->id);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('لا يمكن اعتماد الفاتورة قبل اكتمال الاستلام.');
+        app(PurchasingService::class)->finalize($bill->fresh(), 0, null, $this->user->id);
+    }
+
     public function test_damaged_issue_requires_resolution_and_can_be_accepted_at_negotiated_price(): void
     {
         $seller = Seller::create(['name' => 'Supplier Damaged', 'phone' => '05926']);
@@ -505,7 +636,7 @@ class PurchasingInventoryV2Test extends TestCase
         $this->assertSame('PASS', $sourceIntegrity['status']);
     }
 
-    public function test_received_purchase_payment_before_approval_stays_linked_to_invoice_and_actor(): void
+    public function test_normal_invoice_payment_requires_finalization_while_initial_payment_remains_supported(): void
     {
         $seller = Seller::create(['name' => 'Pre Approval Supplier', 'phone' => '0593000']);
         $product = $this->product(1300, 0);
@@ -526,7 +657,10 @@ class PurchasingInventoryV2Test extends TestCase
             ]],
         ], $this->user->id);
 
-        $payment = app(PurchasingService::class)->recordPayment(
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('يجب اعتماد فاتورة الشراء قبل تسجيل دفعة عليها.');
+
+        app(PurchasingService::class)->recordPayment(
             $bill->fresh(),
             8,
             $box->id,
@@ -534,37 +668,6 @@ class PurchasingInventoryV2Test extends TestCase
             null,
             $this->user->id,
         );
-
-        $bill = $bill->fresh();
-        $transaction = DebtTransaction::query()->findOrFail($payment->debt_transaction_id);
-        $this->assertSame('received', $bill->workflow_status);
-        $this->assertEqualsWithDelta(8, (float) $bill->paid_amount, 0.001);
-        $this->assertSame('partially_paid', $bill->payment_status);
-        $this->assertSame('دفعة لفاتورة شراء #'.$bill->id, $payment->note);
-        $this->assertSame($payment->note, $transaction->note);
-
-        Sanctum::actingAs($this->user);
-        $response = $this->postJson('/api/get/bill/details', [
-            'bill_id' => $bill->id,
-        ]);
-
-        $response->assertOk();
-        $this->assertEqualsWithDelta(8, (float) $response->json('bill_details.paid_amount'), 0.001);
-        $this->assertEqualsWithDelta(1, (float) $response->json('bill_details.remaining_amount'), 0.001);
-        $paymentActivity = collect($response->json('bill_details.timeline'))
-            ->firstWhere('event', 'supplier_payment_created');
-        $this->assertNotNull($paymentActivity);
-        $this->assertSame($this->user->name, $paymentActivity['actor_name']);
-        $this->assertSame($this->user->id, $paymentActivity['actor_id']);
-
-        $finalized = app(PurchasingService::class)->finalize(
-            $bill,
-            0,
-            null,
-            $this->user->id,
-        );
-        $this->assertEqualsWithDelta(8, (float) $finalized->paid_amount, 0.001);
-        $this->assertSame('partially_paid', $finalized->payment_status);
     }
 
     public function test_initial_purchase_payment_moves_cash_now_and_finalize_does_not_deduct_it_again(): void

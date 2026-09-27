@@ -939,7 +939,7 @@ private function getBills($statuses, ?array $workflowStatuses = null)
                         'quantity' => $item->quantity,
                         'ordered_quantity' => $item->ordered_quantity ?? $item->quantity,
                         'received_owned_quantity' => $item->received_owned_quantity ?? 0,
-                        'remaining_quantity' => max(0, (float) ($item->ordered_quantity ?? $item->quantity) - (float) ($item->received_owned_quantity ?? 0) - (float) ($item->missing_amount ?? 0)),
+                        'remaining_quantity' => app(\App\Services\PurchaseWorkflowStateService::class)->remainingToReceive($item),
                         'custody_quantity' => $item->custody_quantity ?? 0,
                         'price' => $item->price,
                         'product_status' => $item->status,
@@ -1053,9 +1053,14 @@ private function getBills($statuses, ?array $workflowStatuses = null)
     public function getUnfinishedBills(){
        // return $this->getBills('unfinished');
        try{
-        $bills = Bill::whereHas('items', function ($q) {
-                    $q->where('status', 'unfinished');
-                })        
+        $bills = Bill::where(function ($query) {
+                $query->whereIn('workflow_status', ['awaiting_receiving', 'partially_received'])
+                    ->orWhere(function ($legacy) {
+                        $legacy->whereNull('workflow_status')
+                            ->whereHas('items', fn ($q) => $q->where('status', 'unfinished'));
+                    });
+            })
+            ->whereNotIn('workflow_status', ['finalized', 'cancelled'])
             ->with(['seller:id,name', 'customer:id,name'])
             ->withCount([
                 'items as items_count',
@@ -1119,11 +1124,7 @@ private function getBills($statuses, ?array $workflowStatuses = null)
                             ->orWhere('not_compatible_amount', '>', 0);
                     });
                 })
-        ->whereDoesntHave('items', function ($q) {
-                        // exclude bills with any unfinished items
-                        $q->where('status', 'unfinished');
-                    })      
-           ->where('status','!=','finished')
+            ->whereNotIn('workflow_status', ['finalized', 'cancelled'])
             ->with(['seller:id,name', 'customer:id,name'])
             ->withCount([
                 'items as items_count',
@@ -1170,14 +1171,9 @@ private function getBills($statuses, ?array $workflowStatuses = null)
     public function getSecuritiesBills(){
    try{
         $bills = Bill::whereHas('items', function ($q) {
-                    $q->whereIn('status', ['extra', 'not_compatible']);
-
-                })  
-        ->whereDoesntHave('items', function ($q) {
-                        // exclude bills with any unfinished items
-                        $q->where('status', 'unfinished');
-                    })      
-           ->where('status','!=','finished')
+                    $q->where('custody_quantity', '>', 0);
+                })
+            ->whereNotIn('workflow_status', ['finalized', 'cancelled'])
             ->with(['seller:id,name', 'customer:id,name'])
             ->withCount([
                 'items as items_count',

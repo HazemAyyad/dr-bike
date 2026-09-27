@@ -498,11 +498,7 @@ class DebtLedgerService
         ?float $recognizedTotal = null,
     ): ?DebtTransaction {
         if ($recognizedTotal === null) {
-            $bill->loadMissing('items');
-            $recognizedTotal = (float) $bill->items->sum(
-                fn ($item) => (float) $item->received_owned_quantity
-                    * (float) ($item->final_unit_price ?? $item->price)
-            );
+            $recognizedTotal = app(PurchaseWorkflowStateService::class)->recognizedTotal($bill);
         }
 
         $receivedAt = PurchaseReceipt::query()

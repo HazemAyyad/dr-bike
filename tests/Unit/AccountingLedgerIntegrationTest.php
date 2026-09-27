@@ -2130,6 +2130,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         $bill = \App\Models\Bill::query()->create([
             'seller_id' => $seller->id, 'currency' => 'شيكل', 'total' => 10000,
             'final_total' => 10000, 'paid_amount' => 0, 'payment_status' => 'unpaid',
+            'workflow_status' => 'finalized',
         ]);
         app(DebtLedgerService::class)->createTransaction([
             'seller_id' => $seller->id, 'type' => 'taken', 'amount' => 10000, 'currency' => 'شيكل',
