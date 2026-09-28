@@ -24,16 +24,22 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class Logs extends Controller
 {
-    public static function createLog($name,$description,$type){
-        Log::create([
+    public static function createLog($name,$description,$type, ?string $sourceType = null, ?int $sourceId = null){
+        $payload = [
             'name'=>$name,
             'description' =>$description,
-            'type'=>$type
-        ]);
+            'type'=>$type,
+        ];
+        if (Schema::hasColumn('logs', 'source_type')) {
+            $payload['source_type'] = $sourceType;
+            $payload['source_id'] = $sourceId;
+        }
+        Log::create($payload);
 
     }
 

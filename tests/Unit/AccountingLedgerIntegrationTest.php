@@ -13,6 +13,7 @@ use App\Models\EmployeeDetail;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenancePayment;
+use App\Models\Log;
 use App\Models\OutgoingCheck;
 use App\Models\OutgoingCheckSettlement;
 use App\Models\ProfitSale;
@@ -532,6 +533,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         (require database_path('migrations/2026_09_28_010000_make_outgoing_check_settlement_box_optional.php'))->up();
         (require database_path('migrations/2026_09_28_020000_link_scheduled_outgoing_checks.php'))->up();
         (require database_path('migrations/2026_09_28_030000_add_source_identity_to_box_logs.php'))->up();
+        (require database_path('migrations/2026_09_28_040000_add_source_identity_to_logs.php'))->up();
         (require database_path('migrations/2026_09_27_130000_add_batch_number_to_outgoing_checks.php'))->up();
         (require database_path('migrations/2026_09_19_204000_add_carrier_credit_to_sales_returns.php'))->up();
         (require database_path('migrations/2026_09_23_100000_add_service_revenue_account.php'))->up();
@@ -666,6 +668,11 @@ class AccountingLedgerIntegrationTest extends TestCase
             'box_id' => $box->id, 'value' => 40000, 'type' => 'minus',
             'source_type' => 'outgoing_check_settlement', 'source_id' => $settlement->id,
         ]);
+        Log::query()->create([
+            'name' => 'تسديد جزئي لشيك صادر', 'description' => 'linked purge log',
+            'type' => 'outgoing_checks', 'source_type' => 'outgoing_check_settlement',
+            'source_id' => $settlement->id,
+        ]);
         app(AccountingProjectionService::class)->syncOrFail($settlement->fresh());
 
         app(OutgoingCheckPurgeService::class)->purge($parent);
@@ -674,6 +681,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertFalse(OutgoingCheckSettlement::query()->whereKey($settlement->id)->exists());
         $this->assertFalse(AccountingJournalEntry::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
         $this->assertFalse(BoxLog::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
+        $this->assertFalse(Log::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
         $this->assertEqualsWithDelta(100000, $box->fresh()->total, 0.0001);
     }
 

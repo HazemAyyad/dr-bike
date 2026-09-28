@@ -64,7 +64,9 @@ class OutgoingChecks extends Controller
             Logs::createLog(
                 'اضافة شيك جديد',
                 'تمت إضافة شيك جديد برقم '.$request->check_id,
-                'outgoing_checks'
+                'outgoing_checks',
+                'outgoing_check',
+                $check->id,
             );
 
             return response()->json([
@@ -928,7 +930,8 @@ class OutgoingChecks extends Controller
 
             $check = $service->settle($data, $request->user()?->id);
             $paymentSource = isset($data['box_id']) ? 'من صندوق رقم '.$data['box_id'] : 'بدون حركة صندوق';
-            Logs::createLog('تسديد جزئي لشيك صادر', 'تم دفع '.$data['amount'].' '.$check->currency.' '.$paymentSource.' من الشيك رقم '.($check->check_id ?: $check->id).' والمتبقي '.$check->remaining_amount, 'outgoing_checks');
+            $settlementId = $check->settlements->sortByDesc('id')->first()?->id;
+            Logs::createLog('تسديد جزئي لشيك صادر', 'تم دفع '.$data['amount'].' '.$check->currency.' '.$paymentSource.' من الشيك رقم '.($check->check_id ?: $check->id).' والمتبقي '.$check->remaining_amount, 'outgoing_checks', 'outgoing_check_settlement', $settlementId);
 
             return response()->json(['status' => 'success', 'message' => 'تم حفظ التسديد وإعادة الجدولة بنجاح', 'check' => $check]);
         } catch (ValidationException $e) {

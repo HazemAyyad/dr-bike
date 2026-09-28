@@ -6,6 +6,7 @@ use App\Models\AccountingJournalEntry;
 use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\OutgoingCheck;
+use App\Models\Log;
 use Illuminate\Support\Facades\DB;
 
 class OutgoingCheckPurgeService
@@ -34,6 +35,20 @@ class OutgoingCheckPurgeService
                 BoxLog::query()->where('source_type', 'outgoing_check_settlement')
                     ->whereIn('source_id', $settlementIds)->delete();
             }
+            Log::query()->where(function ($query) use ($checkIds, $settlementIds, $checks) {
+                $query->where(fn ($q) => $q->where('source_type', 'outgoing_check')->whereIn('source_id', $checkIds));
+                if ($settlementIds->isNotEmpty()) {
+                    $query->orWhere(fn ($q) => $q->where('source_type', 'outgoing_check_settlement')->whereIn('source_id', $settlementIds));
+                }
+                foreach ($checks->pluck('check_id')->filter()->unique() as $number) {
+                    $query->orWhere(fn ($q) => $q
+                        ->where('type', 'outgoing_checks')
+                        ->where(function ($legacy) use ($number) {
+                            $legacy->where('description', 'تمت إضافة شيك جديد برقم '.$number)
+                                ->orWhere('description', 'like', '% من الشيك رقم '.$number.' والمتبقي %');
+                        }));
+                }
+            })->delete();
 
             $journalIds = AccountingJournalEntry::query()
                 ->where(function ($query) use ($checkIds, $settlementIds) {
