@@ -28,6 +28,7 @@ use App\Services\AccountingIntegrityService;
 use App\Services\AccountingProjectionRepairService;
 use App\Services\AccountingProjectionService;
 use App\Services\AccountingReconciliationService;
+use App\Services\OutgoingCheckPurgeService;
 use App\Services\AccountingReportService;
 use App\Services\AccountingService;
 use App\Services\AssetDepreciationCalculator;
@@ -530,6 +531,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         (require database_path('migrations/2026_09_27_120000_add_partial_settlements_to_outgoing_checks.php'))->up();
         (require database_path('migrations/2026_09_28_010000_make_outgoing_check_settlement_box_optional.php'))->up();
         (require database_path('migrations/2026_09_28_020000_link_scheduled_outgoing_checks.php'))->up();
+        (require database_path('migrations/2026_09_28_030000_add_source_identity_to_box_logs.php'))->up();
         (require database_path('migrations/2026_09_27_130000_add_batch_number_to_outgoing_checks.php'))->up();
         (require database_path('migrations/2026_09_19_204000_add_carrier_credit_to_sales_returns.php'))->up();
         (require database_path('migrations/2026_09_23_100000_add_service_revenue_account.php'))->up();
@@ -642,6 +644,37 @@ class AccountingLedgerIntegrationTest extends TestCase
 
         $this->assertEqualsWithDelta(15000, $entry->lines->where('account.system_key', 'checks_payable')->sum('debit'), 0.0001);
         $this->assertEqualsWithDelta(15000, $entry->lines->where('account.system_key', 'cash')->sum('credit'), 0.0001);
+    }
+
+    public function test_purging_restructured_parent_removes_children_and_entries_and_restores_box(): void
+    {
+        $box = Box::query()->create(['name' => 'Purge box', 'total' => 60000, 'currency' => 'شيكل']);
+        $parent = OutgoingCheck::query()->create([
+            'seller_id' => 44, 'status' => 'restructured_parent', 'settlement_status' => 'partially_paid_restructured',
+            'total' => 70000, 'currency' => 'شيكل', 'check_id' => 'PURGE-70',
+        ]);
+        $child = OutgoingCheck::query()->create([
+            'parent_outgoing_check_id' => $parent->id, 'seller_id' => 44,
+            'status' => 'not_cashed', 'settlement_status' => 'unpaid',
+            'total' => 30000, 'currency' => 'شيكل', 'check_id' => 'PURGE-30',
+        ]);
+        $settlement = OutgoingCheckSettlement::query()->create([
+            'outgoing_check_id' => $parent->id, 'box_id' => $box->id, 'amount' => 40000,
+            'paid_at' => '2026-09-28', 'idempotency_key' => 'purge-settlement',
+        ]);
+        BoxLog::query()->create([
+            'box_id' => $box->id, 'value' => 40000, 'type' => 'minus',
+            'source_type' => 'outgoing_check_settlement', 'source_id' => $settlement->id,
+        ]);
+        app(AccountingProjectionService::class)->syncOrFail($settlement->fresh());
+
+        app(OutgoingCheckPurgeService::class)->purge($parent);
+
+        $this->assertFalse(OutgoingCheck::query()->whereKey([$parent->id, $child->id])->exists());
+        $this->assertFalse(OutgoingCheckSettlement::query()->whereKey($settlement->id)->exists());
+        $this->assertFalse(AccountingJournalEntry::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
+        $this->assertFalse(BoxLog::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
+        $this->assertEqualsWithDelta(100000, $box->fresh()->total, 0.0001);
     }
 
     public function test_outgoing_checks_can_be_created_as_one_sequenced_batch(): void

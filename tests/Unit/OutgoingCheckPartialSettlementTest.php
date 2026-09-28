@@ -5,6 +5,7 @@ namespace Tests\Unit;
 use App\Models\Box;
 use App\Models\OutgoingCheck;
 use App\Services\OutgoingCheckSettlementService;
+use App\Services\OutgoingCheckScheduleService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -212,5 +213,30 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame('restructured', $check->status);
         $this->assertSame(0, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->count());
         $this->assertSame(2, $check->installments()->where('status', 'pending')->count());
+    }
+
+    public function test_replacement_schedule_can_be_edited_from_the_parent(): void
+    {
+        $checkId = DB::table('outgoing_checks')->insertGetId([
+            'seller_id' => 9, 'status' => 'restructured_parent',
+            'settlement_status' => 'partially_paid_restructured', 'total' => 70000,
+            'currency' => 'شيكل', 'check_id' => 'EDIT-PARENT', 'img' => 'parent.jpg',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('outgoing_check_settlements')->insert([
+            'outgoing_check_id' => $checkId, 'amount' => 40000, 'paid_at' => '2026-09-28',
+            'idempotency_key' => 'edit-parent-payment', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $parent = OutgoingCheck::query()->findOrFail($checkId);
+
+        $updated = app(OutgoingCheckScheduleService::class)->replace($parent, [
+            ['amount' => 10000, 'due_date' => '2026-10-01', 'instrument_type' => 'replacement_check', 'check_id' => 'EDIT-1', 'bank_name' => 'A', 'img' => 'one.jpg'],
+            ['amount' => 20000, 'due_date' => '2026-11-01', 'instrument_type' => 'replacement_check', 'check_id' => 'EDIT-2', 'bank_name' => 'B'],
+        ]);
+
+        $this->assertSame('restructured_parent', $updated->status);
+        $this->assertSame(['EDIT-1', 'EDIT-2'], $updated->scheduledChecks()->orderBy('due_date')->pluck('check_id')->all());
+        $this->assertSame(['one.jpg', 'parent.jpg'], $updated->scheduledChecks()->orderBy('due_date')->pluck('img')->all());
+        $this->assertEqualsWithDelta(30000, $updated->scheduledChecks()->sum('total'), 0.0001);
     }
 }

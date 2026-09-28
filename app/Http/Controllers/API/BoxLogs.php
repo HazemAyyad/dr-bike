@@ -81,6 +81,8 @@ class BoxLogs extends Controller
         ?string $note = null,
         ?string $reasonCode = null,
         ?int $createdBy = null,
+        ?string $sourceType = null,
+        ?int $sourceId = null,
     )
     {
         $payload = [
@@ -103,6 +105,10 @@ class BoxLogs extends Controller
         }
         if (Schema::hasColumn('box_logs', 'created_by')) {
             $payload['created_by'] = $createdBy;
+        }
+        if (Schema::hasColumn('box_logs', 'source_type')) {
+            $payload['source_type'] = $sourceType;
+            $payload['source_id'] = $sourceId;
         }
 
         // Legacy column from original migration

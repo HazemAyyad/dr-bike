@@ -22,6 +22,9 @@ class OutgoingCheckSettlementService
             }
 
             $check = OutgoingCheck::query()->lockForUpdate()->findOrFail($data['outgoing_check_id']);
+            if ($check->status === 'restructured_parent') {
+                throw ValidationException::withMessages(['outgoing_check_id' => ['استخدم إدارة الجدولة لتعديل الشيكات البديلة المرتبطة بهذا الشيك.']]);
+            }
             $box = isset($data['box_id'])
                 ? Box::query()->lockForUpdate()->findOrFail($data['box_id'])
                 : null;
@@ -73,7 +76,14 @@ class OutgoingCheckSettlementService
 
             if ($box) {
                 $box->decrement('total', $amount);
-                BoxLogs::createBoxLog($box->fresh(), 'تسديد جزئي للشيك الصادر رقم '.($check->check_id ?: $check->id), 'minus', $amount);
+                BoxLogs::createBoxLog(
+                    $box->fresh(),
+                    'تسديد جزئي للشيك الصادر رقم '.($check->check_id ?: $check->id),
+                    'minus',
+                    $amount,
+                    sourceType: 'outgoing_check_settlement',
+                    sourceId: $settlement->id,
+                );
             }
 
             if ($installments->isNotEmpty()) {

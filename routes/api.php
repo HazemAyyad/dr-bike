@@ -911,6 +911,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
           ->middleware('check.permission:Checks Outgoing View');
       Route::post('/outgoing/checks/partial-settlement' , [OutgoingChecks::class,'partialSettlement'])
           ->middleware('check.permission:Checks Outgoing View');
+      Route::post('/outgoing/checks/update-schedule' , [OutgoingChecks::class,'updateSchedule'])
+          ->middleware('check.permission:Checks Outgoing View');
 
 
     //incoming checks

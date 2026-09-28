@@ -11,6 +11,8 @@ use App\Services\CheckSmsNotificationService;
 use App\Services\DebtLedgerService;
 use App\Services\ExpenseBoxAccessService;
 use App\Services\OutgoingCheckSettlementService;
+use App\Services\OutgoingCheckPurgeService;
+use App\Services\OutgoingCheckScheduleService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -169,12 +171,12 @@ class OutgoingChecks extends Controller
     {
         try {
             $statuses = $status === 'partially_paid'
-                ? ['partially_settled', 'restructured']
+                ? ['partially_settled', 'restructured', 'restructured_parent']
                 : [$status];
             $checks = OutgoingCheck::whereIn('status', $statuses)
                 ->with('customer:id,name')
                 ->with('seller:id,name')
-                ->with(['settlements', 'installments' => fn ($q) => $q->orderBy('due_date')])
+                ->with(['settlements', 'installments' => fn ($q) => $q->with('replacementCheck')->orderBy('due_date')])
                 ->get();
 
             return response()->json([
@@ -510,7 +512,7 @@ class OutgoingChecks extends Controller
     }
 
     // delete check
-    public function deleteCheck(Request $request)
+    public function deleteCheck(Request $request, OutgoingCheckPurgeService $purgeService)
     {
         try {
 
@@ -521,6 +523,25 @@ class OutgoingChecks extends Controller
                 throw ValidationException::withMessages([
                     'outgoing_check_id' => ['لا يمكن حذف شيك مجدول مرتبط بشيك أصلي.'],
                 ]);
+            }
+
+            if ($check->settlements()->exists() || $check->installments()->exists() || $check->scheduledChecks()->exists()) {
+                $files = $purgeService->purge($check);
+                foreach ($files['front'] as $file) {
+                    if (! OutgoingCheck::query()->where('img', $file)->exists()) {
+                        @unlink(public_path('OutgoingChecksImages/'.$file));
+                    }
+                }
+                foreach ($files['back'] as $file) {
+                    if (! OutgoingCheck::query()->where('back_image', $file)->exists()) {
+                        @unlink(public_path('OutgoingChecksImages/back/'.$file));
+                    }
+                }
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'تم حذف الشيك الأساسي وجميع التسويات والجدولة والشيكات التابعة وإعادة أرصدة الصناديق.',
+                ], 200);
             }
 
             $deletableStatuses = ['not_cashed', 'cancelled', 'returned'];
@@ -913,6 +934,54 @@ class OutgoingChecks extends Controller
         } catch (ValidationException $e) {
             return response()->json(['status' => 'error', 'message' => 'تعذر تنفيذ التسديد', 'errors' => $e->errors()], 200);
         } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
+        }
+    }
+
+    public function updateSchedule(Request $request, OutgoingCheckScheduleService $service)
+    {
+        $uploaded = [];
+        try {
+            $data = $request->validate([
+                'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
+                'installments' => 'required|array|min:1',
+                'installments.*.amount' => 'required|numeric|min:0.0001',
+                'installments.*.due_date' => 'required|date',
+                'installments.*.instrument_type' => 'required|in:same_check,replacement_check',
+                'installments.*.check_id' => 'nullable|string|max:100',
+                'installments.*.bank_name' => 'nullable|string|max:150',
+                'installments.*.notes' => 'nullable|string',
+                'installments.*.front_image' => 'nullable|image|max:10240',
+                'installments.*.back_image' => 'nullable|image|max:10240',
+            ]);
+            foreach ($data['installments'] as $index => &$row) {
+                if ($row['instrument_type'] === 'replacement_check'
+                    && (blank($row['check_id'] ?? null) || blank($row['bank_name'] ?? null))) {
+                    throw ValidationException::withMessages(["installments.$index.check_id" => ['رقم الشيك والبنك مطلوبان.']]);
+                }
+                foreach (['front_image' => ['img', 'OutgoingChecksImages'], 'back_image' => ['back_image', 'OutgoingChecksImages/back']] as $field => [$column, $path]) {
+                    if ($request->hasFile("installments.$index.$field")) {
+                        $file = $request->file("installments.$index.$field");
+                        $name = Str::uuid().'.'.$file->getClientOriginalExtension();
+                        $file->move(public_path($path), $name);
+                        $row[$column] = $name;
+                        $uploaded[] = public_path($path.'/'.$name);
+                    }
+                }
+            }
+            unset($row);
+            $check = $service->replace(OutgoingCheck::findOrFail($data['outgoing_check_id']), $data['installments']);
+            return response()->json(['status' => 'success', 'message' => 'تم تحديث الجدولة والشيكات التابعة بنجاح', 'check' => $check]);
+        } catch (ValidationException $e) {
+            foreach ($uploaded as $path) {
+                @unlink($path);
+            }
+            return response()->json(['status' => 'error', 'message' => 'تعذر تحديث الجدولة', 'errors' => $e->errors()], 200);
+        } catch (\Throwable $e) {
+            foreach ($uploaded as $path) {
+                @unlink($path);
+            }
             report($e);
             return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
         }

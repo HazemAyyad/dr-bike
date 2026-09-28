@@ -19,6 +19,8 @@ class BoxLog extends Model
         'type',
         'reason_code',
         'created_by',
+        'source_type',
+        'source_id',
 
     ];
 
