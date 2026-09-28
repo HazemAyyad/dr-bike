@@ -36,7 +36,16 @@ class OutgoingCheckPartialSettlementTest extends TestCase
             $t->string('name')->nullable();
             $t->decimal('total', 14, 4);
             $t->string('currency');
+            $t->boolean('is_shown')->default(true);
             $t->timestamps();
+        });
+        Schema::create('customers', function (Blueprint $t) {
+            $t->id();
+            $t->string('name');
+        });
+        Schema::create('sellers', function (Blueprint $t) {
+            $t->id();
+            $t->string('name');
         });
         Schema::create('outgoing_checks', function (Blueprint $t) {
             $t->id();
@@ -98,6 +107,12 @@ class OutgoingCheckPartialSettlementTest extends TestCase
             $t->unsignedBigInteger('source_id')->nullable();
             $t->decimal('amount', 14, 4);
         });
+        Schema::create('incoming_checks', function (Blueprint $t) {
+            $t->id();
+            $t->string('status')->default('not_cashed');
+            $t->decimal('total', 14, 4)->default(0);
+            $t->string('currency')->default('شيكل');
+        });
     }
 
     protected function tearDown(): void
@@ -138,6 +153,18 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame(['old-front.jpg'], OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->pluck('img')->unique()->values()->all());
         $this->assertSame(['old-back.jpg'], OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->pluck('back_image')->unique()->values()->all());
         $this->assertSame(1, DB::table('debt_transactions')->count());
+
+        $this->withoutMiddleware()->getJson('/api/not-cashed/outgoing/checks')
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('checks_count', 2);
+
+        $statistics = OutgoingCheck::generalChecksData();
+        $this->assertSame(0, $statistics['not_cashed_outgoing_checks_count']);
+        $this->assertEqualsWithDelta(0, $statistics['total_outgoing_checks_shekel'], 0.0001);
+        $this->assertSame(2, $statistics['scheduled_outgoing_checks_count']);
+        $this->assertSame(1, $statistics['partially_paid_outgoing_checks_count']);
+        $this->assertEqualsWithDelta(30000, $statistics['scheduled_outgoing_checks_shekel'], 0.0001);
 
         app(OutgoingCheckSettlementService::class)->settle($payload, null);
         $this->assertSame(1, DB::table('outgoing_check_settlements')->count());
@@ -213,6 +240,20 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame('restructured', $check->status);
         $this->assertSame(0, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->count());
         $this->assertSame(2, $check->installments()->where('status', 'pending')->count());
+
+        $this->withoutMiddleware()->getJson('/api/partially-paid/outgoing/checks')
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('checks_count', 1)
+            ->assertJsonPath('partially_paid_checks.0.id', $checkId)
+            ->assertJsonPath('partially_paid_checks.0.remaining_amount', 30000);
+
+        $statistics = OutgoingCheck::generalChecksData();
+        $this->assertSame(0, $statistics['not_cashed_outgoing_checks_count']);
+        $this->assertEqualsWithDelta(0, $statistics['total_outgoing_checks_shekel'], 0.0001);
+        $this->assertSame(2, $statistics['scheduled_outgoing_checks_count']);
+        $this->assertSame(1, $statistics['partially_paid_outgoing_checks_count']);
+        $this->assertEqualsWithDelta(30000, $statistics['scheduled_outgoing_checks_shekel'], 0.0001);
     }
 
     public function test_replacement_schedule_can_be_edited_from_the_parent(): void

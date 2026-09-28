@@ -84,7 +84,10 @@ class OutgoingCheck extends Model
 
     // data for first page for both incoming and outgoing checks
     public static function generalChecksData(){
-        $totalOutgoingChecksNotCashedCount = OutgoingCheck::where('status', 'not_cashed')->count();
+        $ordinaryOpenOutgoing = OutgoingCheck::query()
+            ->where('status', 'not_cashed')
+            ->whereNull('parent_outgoing_check_id');
+        $totalOutgoingChecksNotCashedCount = (clone $ordinaryOpenOutgoing)->count();
 
         $totalOutgoingChecksCashedCount = OutgoingCheck::
         where('status','cashed_to_person')->count();
@@ -98,7 +101,9 @@ class OutgoingCheck extends Model
         $totalIncomingChecksCashedToBoxCount = IncomingCheck::
         where('status','cashed_to_box')->count();
 
-        $openOutgoing = static::openChecks()->get();
+        // The headline "not cashed" totals contain ordinary checks only.
+        // Partial parents and scheduled instruments are reported separately.
+        $openOutgoing = $ordinaryOpenOutgoing->get();
         $totalOutgoingChecksDollar = $openOutgoing->where('currency','دولار')->sum('remaining_amount');
         $totalOutgoingChecksDinar = $openOutgoing->where('currency','دينار')->sum('remaining_amount');
         $totalOutgoingChecksShekel = $openOutgoing->where('currency','شيكل')->sum('remaining_amount');
@@ -126,13 +131,14 @@ class OutgoingCheck extends Model
             'total_outgoing_checks_dinar' => $totalOutgoingChecksDinar,
             'total_outgoing_checks_shekel' => $totalOutgoingChecksShekel,
             'partially_settled_outgoing_checks_count' => OutgoingCheck::where('status', 'partially_settled')->count(),
-            'restructured_outgoing_checks_count' => OutgoingCheck::where('status', 'restructured')->count(),
+            'restructured_outgoing_checks_count' => OutgoingCheck::whereIn('status', ['restructured', 'restructured_parent'])->count(),
             'pending_outgoing_installments_count' => OutgoingCheckInstallment::where('status', 'pending')->count(),
-            'scheduled_outgoing_checks_count' => OutgoingCheck::whereNotNull('parent_outgoing_check_id')->count(),
-            'scheduled_outgoing_checks_shekel' => (float) OutgoingCheck::whereNotNull('parent_outgoing_check_id')->where('currency', 'شيكل')->sum('total'),
-            'scheduled_outgoing_checks_dollar' => (float) OutgoingCheck::whereNotNull('parent_outgoing_check_id')->where('currency', 'دولار')->sum('total'),
-            'scheduled_outgoing_checks_dinar' => (float) OutgoingCheck::whereNotNull('parent_outgoing_check_id')->where('currency', 'دينار')->sum('total'),
-            'partially_paid_outgoing_checks_count' => OutgoingCheck::whereIn('status', ['partially_settled', 'restructured'])->count(),
+            'scheduled_outgoing_checks_count' => OutgoingCheckInstallment::whereIn('status', ['pending', 'materialized'])->count(),
+            'scheduled_outgoing_checks_shekel' => self::scheduledInstallmentsTotal('شيكل'),
+            'scheduled_outgoing_checks_dollar' => self::scheduledInstallmentsTotal('دولار'),
+            'scheduled_outgoing_checks_dinar' => self::scheduledInstallmentsTotal('دينار'),
+            'partially_paid_outgoing_checks_count' => OutgoingCheck::whereNull('parent_outgoing_check_id')
+                ->whereIn('status', ['partially_settled', 'restructured', 'restructured_parent'])->count(),
             'settled_outgoing_checks_shekel' => (float) OutgoingCheckSettlement::query()
                 ->whereHas('check', fn ($query) => $query->where('currency', 'شيكل'))->sum('amount'),
             'settled_outgoing_checks_dollar' => (float) OutgoingCheckSettlement::query()
@@ -145,5 +151,13 @@ class OutgoingCheck extends Model
             'total_incoming_checks_shekel' => $totalIncomingChecksShekel,
 
         ];
+    }
+
+    private static function scheduledInstallmentsTotal(string $currency): float
+    {
+        return (float) OutgoingCheckInstallment::query()
+            ->whereIn('status', ['pending', 'materialized'])
+            ->whereHas('check', fn ($query) => $query->where('currency', $currency))
+            ->sum('amount');
     }
 }

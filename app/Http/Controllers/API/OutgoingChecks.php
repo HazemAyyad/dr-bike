@@ -175,11 +175,26 @@ class OutgoingChecks extends Controller
             $statuses = $status === 'partially_paid'
                 ? ['partially_settled', 'restructured', 'restructured_parent']
                 : [$status];
-            $checks = OutgoingCheck::whereIn('status', $statuses)
+            $checksQuery = OutgoingCheck::whereIn('status', $statuses);
+
+            // The partial tab contains parent checks only. Replacement children
+            // remain actionable in the ordinary list, but have separate headline
+            // statistics so they are not counted twice there.
+            if ($status === 'partially_paid') {
+                $checksQuery->whereNull('parent_outgoing_check_id');
+            }
+
+            $checks = $checksQuery
                 ->with('customer:id,name')
                 ->with('seller:id,name')
                 ->with(['settlements', 'installments' => fn ($q) => $q->with('replacementCheck')->orderBy('due_date')])
+                ->orderBy('due_date')
+                ->orderBy('id')
                 ->get();
+
+            $coverPercentage = in_array($status, ['not_cashed', 'cashed_to_person'], true)
+                ? $this->coverPercentage($status)
+                : null;
 
             return response()->json([
                 'status' => 'success',
@@ -198,7 +213,7 @@ class OutgoingChecks extends Controller
                 'boxes_total_shekel' => Box::totalShekel(),
                 'boxes_total_dinar' => Box::totalDinar(),
 
-                'cover_percentage' => $this->coverPercentage($status),
+                'cover_percentage' => $coverPercentage,
 
             ], 200);
         } catch (QueryException $e) {
@@ -594,10 +609,11 @@ class OutgoingChecks extends Controller
 
     private function calculateCoverage(string $currency, float $totalBoxes): array
     {
-        $totalNotCashed = OutgoingCheck::openChecks()
+        $totalNotCashed = OutgoingCheck::query()
+            ->where('status', 'not_cashed')
+            ->whereNull('parent_outgoing_check_id')
             ->where('currency', $currency)
-            ->get()
-            ->sum('remaining_amount');
+            ->sum('total');
 
         $totalCashed = OutgoingCheck::where('currency', $currency)
             ->where('status', 'cashed_to_person')
@@ -679,6 +695,8 @@ class OutgoingChecks extends Controller
             if (! $canViewOutgoing) {
                 $data['not_cashed_outgoing_checks_count'] = 0;
                 $data['cashed_outgoing_checks_count'] = 0;
+                $data['scheduled_outgoing_checks_count'] = 0;
+                $data['partially_paid_outgoing_checks_count'] = 0;
                 $data['total_outgoing_checks_dollar'] = 0;
                 $data['total_outgoing_checks_dinar'] = 0;
                 $data['total_outgoing_checks_shekel'] = 0;
