@@ -114,8 +114,12 @@ class OutgoingCheckSettlementService
                         'bank_name' => $row['instrument_type'] === 'same_check'
                             ? $check->bank_name
                             : $row['bank_name'],
-                        'img' => $check->img,
-                        'back_image' => $check->back_image,
+                        'img' => $row['instrument_type'] === 'same_check'
+                            ? $check->img
+                            : ($row['img'] ?? $check->img),
+                        'back_image' => $row['instrument_type'] === 'same_check'
+                            ? $check->back_image
+                            : ($row['back_image'] ?? $check->back_image),
                         'notes' => $row['notes'] ?? $check->notes,
                         'batch_number' => $check->batch_number,
                     ]);

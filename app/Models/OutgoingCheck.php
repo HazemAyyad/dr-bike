@@ -101,6 +101,11 @@ class OutgoingCheck extends Model
         $totalIncomingChecksCashedToBoxCount = IncomingCheck::
         where('status','cashed_to_box')->count();
 
+        // Checks that were actually paid/cashed. Keep this separate from
+        // "cashed_to_person", which only means the check was handed over.
+        $paidOutgoingChecks = OutgoingCheck::query()
+            ->whereIn('status', ['cashed_from_box', 'settled']);
+
         // The headline "not cashed" totals contain ordinary checks only.
         // Partial parents and scheduled instruments are reported separately.
         $openOutgoing = $ordinaryOpenOutgoing->get();
@@ -139,6 +144,13 @@ class OutgoingCheck extends Model
             'scheduled_outgoing_checks_dinar' => self::scheduledInstallmentsTotal('دينار'),
             'partially_paid_outgoing_checks_count' => OutgoingCheck::whereNull('parent_outgoing_check_id')
                 ->whereIn('status', ['partially_settled', 'restructured', 'restructured_parent'])->count(),
+            'paid_outgoing_checks_count' => (clone $paidOutgoingChecks)->count(),
+            'paid_outgoing_checks_shekel' => (float) (clone $paidOutgoingChecks)
+                ->where('currency', 'شيكل')->sum('total'),
+            'paid_outgoing_checks_dollar' => (float) (clone $paidOutgoingChecks)
+                ->where('currency', 'دولار')->sum('total'),
+            'paid_outgoing_checks_dinar' => (float) (clone $paidOutgoingChecks)
+                ->where('currency', 'دينار')->sum('total'),
             'settled_outgoing_checks_shekel' => (float) OutgoingCheckSettlement::query()
                 ->whereHas('check', fn ($query) => $query->where('currency', 'شيكل'))->sum('amount'),
             'settled_outgoing_checks_dollar' => (float) OutgoingCheckSettlement::query()

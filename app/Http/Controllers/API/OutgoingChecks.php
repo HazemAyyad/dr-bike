@@ -699,9 +699,13 @@ class OutgoingChecks extends Controller
                 $data['cashed_outgoing_checks_count'] = 0;
                 $data['scheduled_outgoing_checks_count'] = 0;
                 $data['partially_paid_outgoing_checks_count'] = 0;
+                $data['paid_outgoing_checks_count'] = 0;
                 $data['total_outgoing_checks_dollar'] = 0;
                 $data['total_outgoing_checks_dinar'] = 0;
                 $data['total_outgoing_checks_shekel'] = 0;
+                $data['paid_outgoing_checks_dollar'] = 0;
+                $data['paid_outgoing_checks_dinar'] = 0;
+                $data['paid_outgoing_checks_shekel'] = 0;
             }
 
             return response()->json([
@@ -928,6 +932,8 @@ class OutgoingChecks extends Controller
 
     public function partialSettlement(Request $request, ExpenseBoxAccessService $access, OutgoingCheckSettlementService $service)
     {
+        $uploaded = [];
+        $imagesPersisted = false;
         try {
             $data = $request->validate([
                 'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
@@ -943,29 +949,57 @@ class OutgoingChecks extends Controller
                 'installments.*.check_id' => 'nullable|string|max:100',
                 'installments.*.bank_name' => 'nullable|string|max:150',
                 'installments.*.notes' => 'nullable|string',
+                'installments.*.front_image' => 'nullable|image|max:10240',
+                'installments.*.back_image' => 'nullable|image|max:10240',
             ]);
 
             if (isset($data['box_id']) && ! $access->canUse($request->user(), (int) $data['box_id'])) {
                 throw ValidationException::withMessages(['box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.']]);
             }
-            foreach ($data['installments'] ?? [] as $index => $row) {
+            foreach ($data['installments'] ?? [] as $index => &$row) {
                 if ($row['instrument_type'] === 'replacement_check'
                     && (blank($row['check_id'] ?? null) || blank($row['bank_name'] ?? null))) {
                     throw ValidationException::withMessages([
                         "installments.$index.check_id" => ['رقم الشيك والبنك مطلوبان للشيك البديل.'],
                     ]);
                 }
+                if ($row['instrument_type'] !== 'replacement_check') {
+                    unset($row['front_image'], $row['back_image']);
+                    continue;
+                }
+                foreach (['front_image' => ['img', 'OutgoingChecksImages'], 'back_image' => ['back_image', 'OutgoingChecksImages/back']] as $field => [$column, $path]) {
+                    if ($request->hasFile("installments.$index.$field")) {
+                        $file = $request->file("installments.$index.$field");
+                        $name = Str::uuid().'.'.($file->getClientOriginalExtension() ?: 'jpg');
+                        $file->move(public_path($path), $name);
+                        $row[$column] = $name;
+                        $uploaded[] = public_path($path.'/'.$name);
+                    }
+                    unset($row[$field]);
+                }
             }
+            unset($row);
 
             $check = $service->settle($data, $request->user()?->id);
+            $imagesPersisted = true;
             $paymentSource = isset($data['box_id']) ? 'من صندوق رقم '.$data['box_id'] : 'بدون حركة صندوق';
             $settlementId = $check->settlements->sortByDesc('id')->first()?->id;
             Logs::createLog('تسديد جزئي لشيك صادر', 'تم دفع '.$data['amount'].' '.$check->currency.' '.$paymentSource.' من الشيك رقم '.($check->check_id ?: $check->id).' والمتبقي '.$check->remaining_amount, 'outgoing_checks', 'outgoing_check_settlement', $settlementId);
 
             return response()->json(['status' => 'success', 'message' => 'تم حفظ التسديد وإعادة الجدولة بنجاح', 'check' => $check]);
         } catch (ValidationException $e) {
+            if (! $imagesPersisted) {
+                foreach ($uploaded as $path) {
+                    @unlink($path);
+                }
+            }
             return response()->json(['status' => 'error', 'message' => 'تعذر تنفيذ التسديد', 'errors' => $e->errors()], 200);
         } catch (\Throwable $e) {
+            if (! $imagesPersisted) {
+                foreach ($uploaded as $path) {
+                    @unlink($path);
+                }
+            }
             report($e);
             return response()->json(['status' => 'error', 'message' => __('messages.something_wrong')], 200);
         }
@@ -991,6 +1025,10 @@ class OutgoingChecks extends Controller
                 if ($row['instrument_type'] === 'replacement_check'
                     && (blank($row['check_id'] ?? null) || blank($row['bank_name'] ?? null))) {
                     throw ValidationException::withMessages(["installments.$index.check_id" => ['رقم الشيك والبنك مطلوبان.']]);
+                }
+                if ($row['instrument_type'] !== 'replacement_check') {
+                    unset($row['front_image'], $row['back_image']);
+                    continue;
                 }
                 foreach (['front_image' => ['img', 'OutgoingChecksImages'], 'back_image' => ['back_image', 'OutgoingChecksImages/back']] as $field => [$column, $path]) {
                     if ($request->hasFile("installments.$index.$field")) {

@@ -137,7 +137,7 @@ class OutgoingCheckPartialSettlementTest extends TestCase
             'outgoing_check_id' => $checkId, 'box_id' => $boxId, 'amount' => 40000,
             'paid_at' => '2026-09-27', 'idempotency_key' => 'partial-70-40',
             'installments' => [
-                ['amount' => 15000, 'due_date' => '2026-10-27', 'instrument_type' => 'replacement_check', 'check_id' => 'NEW-1', 'bank_name' => 'فلسطين'],
+                ['amount' => 15000, 'due_date' => '2026-10-27', 'instrument_type' => 'replacement_check', 'check_id' => 'NEW-1', 'bank_name' => 'فلسطين', 'img' => 'new-front.jpg'],
                 ['amount' => 15000, 'due_date' => '2026-11-27', 'instrument_type' => 'replacement_check', 'check_id' => 'NEW-2', 'bank_name' => 'فلسطين'],
             ],
         ];
@@ -150,7 +150,7 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame(2, $check->installments()->count());
         $this->assertSame(2, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->count());
         $this->assertEqualsWithDelta(30000, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->sum('total'), 0.0001);
-        $this->assertSame(['old-front.jpg'], OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->pluck('img')->unique()->values()->all());
+        $this->assertSame(['new-front.jpg', 'old-front.jpg'], OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->orderBy('due_date')->pluck('img')->all());
         $this->assertSame(['old-back.jpg'], OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->pluck('back_image')->unique()->values()->all());
         $this->assertSame(1, DB::table('debt_transactions')->count());
 
@@ -313,5 +313,31 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame(['EDIT-1', 'EDIT-2'], $updated->scheduledChecks()->orderBy('due_date')->pluck('check_id')->all());
         $this->assertSame(['one.jpg', 'parent.jpg'], $updated->scheduledChecks()->orderBy('due_date')->pluck('img')->all());
         $this->assertEqualsWithDelta(30000, $updated->scheduledChecks()->sum('total'), 0.0001);
+    }
+
+    public function test_general_statistics_report_paid_check_count_and_values_separately(): void
+    {
+        foreach ([
+            ['status' => 'cashed_from_box', 'total' => 1000, 'currency' => 'شيكل'],
+            ['status' => 'cashed_from_box', 'total' => 2500, 'currency' => 'شيكل'],
+            ['status' => 'settled', 'total' => 30, 'currency' => 'دولار'],
+            ['status' => 'returned', 'total' => 999, 'currency' => 'شيكل'],
+            ['status' => 'cashed_to_person', 'total' => 500, 'currency' => 'دينار'],
+        ] as $index => $row) {
+            DB::table('outgoing_checks')->insert([
+                ...$row,
+                'settlement_status' => 'unpaid',
+                'check_id' => 'PAID-'.$index,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $statistics = OutgoingCheck::generalChecksData();
+
+        $this->assertSame(3, $statistics['paid_outgoing_checks_count']);
+        $this->assertEqualsWithDelta(3500, $statistics['paid_outgoing_checks_shekel'], 0.0001);
+        $this->assertEqualsWithDelta(30, $statistics['paid_outgoing_checks_dollar'], 0.0001);
+        $this->assertEqualsWithDelta(0, $statistics['paid_outgoing_checks_dinar'], 0.0001);
     }
 }
