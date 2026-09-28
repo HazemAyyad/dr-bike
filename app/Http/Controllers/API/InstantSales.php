@@ -308,7 +308,11 @@ class InstantSales extends Controller
   /**
      * Restore stock for one invoice line only once (exact line quantity).
      */
-    private function restoreStockForSaleLine(InstantSale $line, bool $force = false): void
+    private function restoreStockForSaleLine(
+        InstantSale $line,
+        bool $force = false,
+        ?float $administrativeUnitCost = null,
+    ): void
     {
         if (! $force && $this->saleLineStockAlreadyRestored($line)) {
             return;
@@ -348,7 +352,15 @@ class InstantSales extends Controller
             sizeId: $line->size_id ? (int) $line->size_id : null,
             referenceType: 'instant_sale',
             referenceId: (int) $line->id,
+            note: $administrativeUnitCost !== null
+                ? 'استعادة مخزون بتكلفة بيع أدخلها المستخدم أثناء التصحيح الإداري'
+                : null,
             userId: auth()->id() ? (int) auth()->id() : null,
+            unitCost: $administrativeUnitCost,
+            costSourceType: $administrativeUnitCost !== null
+                ? 'administrative_sale_cost_review'
+                : null,
+            costSourceId: $administrativeUnitCost !== null ? (int) $line->id : null,
         );
 
         $this->markSaleLineStockRestored($line);
@@ -683,7 +695,11 @@ class InstantSales extends Controller
     /**
      * Reverse stock/box for an existing instant sale before replacing its lines.
      */
-    private function prepareInstantSaleReplacement(int $mainSaleId, bool $reverseBox = true): void
+    private function prepareInstantSaleReplacement(
+        int $mainSaleId,
+        bool $reverseBox = true,
+        array $restorationUnitCosts = [],
+    ): void
     {
         $existing = InstantSale::query()
             ->whereNull('parent_id')
@@ -702,7 +718,54 @@ class InstantSales extends Controller
         }
 
         foreach ($this->stockLinesForSale($existing) as $line) {
-            $this->restoreStockForSaleLine($line, force: true);
+            $lineId = (int) $line->id;
+            $providedCost = array_key_exists((string) $lineId, $restorationUnitCosts)
+                ? (float) $restorationUnitCosts[(string) $lineId]
+                : (array_key_exists($lineId, $restorationUnitCosts)
+                    ? (float) $restorationUnitCosts[$lineId]
+                    : null);
+
+            try {
+                $this->restoreStockForSaleLine(
+                    $line,
+                    force: true,
+                    administrativeUnitCost: $providedCost,
+                );
+            } catch (ValidationException $exception) {
+                if (! isset($exception->errors()['inventory'])) {
+                    throw $exception;
+                }
+
+                $costErrors = [];
+                $stockService = app(ProductStockService::class);
+                foreach ($this->stockLinesForSale($existing) as $costLine) {
+                    $costLineId = (int) $costLine->id;
+                    if (array_key_exists((string) $costLineId, $restorationUnitCosts)
+                        || array_key_exists($costLineId, $restorationUnitCosts)) {
+                        continue;
+                    }
+                    $resolvedCost = $stockService->resolveRestorationUnitCost(
+                        (int) $costLine->product_id,
+                        $costLine->size_color_id ? (int) $costLine->size_color_id : null,
+                        'instant_sale',
+                        $costLineId,
+                    );
+                    if ($resolvedCost !== null) {
+                        continue;
+                    }
+                    $productName = Product::withTrashed()->find($costLine->product_id)?->nameAr
+                        ?? 'منتج غير معروف';
+                    $costErrors["restoration_unit_costs.$costLineId"] = [
+                        "أدخل تكلفة الوحدة وقت البيع للصنف {$productName} (الكمية {$costLine->quantity}).",
+                    ];
+                }
+
+                throw ValidationException::withMessages($costErrors ?: [
+                    "restoration_unit_costs.$lineId" => [
+                        'أدخل تكلفة الوحدة وقت البيع لهذا الصنف.',
+                    ],
+                ]);
+            }
         }
 
         if ($existing->offer_package_id) {
@@ -1172,12 +1235,21 @@ public function store(Request $request)
         'seller_id' => 'nullable|integer|exists:sellers,id',
         'closed_day_edit_mode' => 'nullable|string|in:administrative_correction,today_financial_settlement',
         'closed_day_edit_reason' => 'nullable|string|max:500',
+        'restoration_unit_costs' => 'nullable|array',
+        'restoration_unit_costs.*' => 'nullable|numeric|min:0',
 
     ]);
 
         $closedDayEditMode = $this->closedDayEditMode($request, $existingReplaceSale);
         $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
         $isClosedDayFinancialSettlement = $closedDayEditMode === 'today_financial_settlement';
+        if (! empty($data['restoration_unit_costs']) && ! $isClosedDayAdministrativeCorrection) {
+            throw ValidationException::withMessages([
+                'restoration_unit_costs' => [
+                    'إدخال تكلفة البيع الأصلية متاح فقط ضمن التصحيح الإداري لفاتورة يوم مغلق.',
+                ],
+            ]);
+        }
 
         $otherNames = [];
 
@@ -1321,7 +1393,8 @@ public function store(Request $request)
             $beforeHistorySnapshot = app(InstantSaleHistoryService::class)->snapshot($replaceId);
             $this->prepareInstantSaleReplacement(
                 $replaceId,
-                reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement)
+                reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement),
+                restorationUnitCosts: $data['restoration_unit_costs'] ?? [],
             );
             $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
         }
@@ -1628,7 +1701,8 @@ public function store(Request $request)
                 $beforeHistorySnapshot = app(InstantSaleHistoryService::class)->snapshot($replaceId);
                 $this->prepareInstantSaleReplacement(
                     $replaceId,
-                    reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement)
+                    reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement),
+                    restorationUnitCosts: $data['restoration_unit_costs'] ?? [],
                 );
             }
 

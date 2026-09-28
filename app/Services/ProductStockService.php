@@ -737,7 +737,7 @@ class ProductStockService
         }
     }
 
-    private function resolveRestorationUnitCost(
+    public function resolveRestorationUnitCost(
         int $productId,
         ?int $sizeColorId,
         ?string $referenceType,
