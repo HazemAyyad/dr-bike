@@ -764,11 +764,11 @@ class OutgoingChecks extends Controller
 
             $data = $request->validate([
                 'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
-                'box_id' => 'nullable|integer|exists:boxes,id',
+                'box_id' => 'required|integer|exists:boxes,id',
 
             ]);
 
-            if (isset($data['box_id']) && ! $access->canUse($request->user(), (int) $data['box_id'])) {
+            if (! $access->canUse($request->user(), (int) $data['box_id'])) {
                 throw ValidationException::withMessages([
                     'box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.'],
                 ]);
@@ -854,7 +854,7 @@ class OutgoingChecks extends Controller
         try {
             $data = $request->validate([
                 'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
-                'box_id' => 'required|integer|exists:boxes,id',
+                'box_id' => 'nullable|integer|exists:boxes,id',
                 'amount' => 'required|numeric|min:0.0001',
                 'paid_at' => 'required|date',
                 'idempotency_key' => 'required|string|max:100',
@@ -868,7 +868,7 @@ class OutgoingChecks extends Controller
                 'installments.*.notes' => 'nullable|string',
             ]);
 
-            if (! $access->canUse($request->user(), (int) $data['box_id'])) {
+            if (isset($data['box_id']) && ! $access->canUse($request->user(), (int) $data['box_id'])) {
                 throw ValidationException::withMessages(['box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.']]);
             }
             foreach ($data['installments'] ?? [] as $index => $row) {
