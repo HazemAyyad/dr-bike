@@ -22,7 +22,9 @@ class OutgoingCheckSettlementService
             }
 
             $check = OutgoingCheck::query()->lockForUpdate()->findOrFail($data['outgoing_check_id']);
-            $box = Box::query()->lockForUpdate()->findOrFail($data['box_id']);
+            $box = isset($data['box_id'])
+                ? Box::query()->lockForUpdate()->findOrFail($data['box_id'])
+                : null;
             $settledBefore = (float) $check->settlements()->sum('amount');
             $remainingBefore = round((float) $check->total - $settledBefore, 4);
             $amount = round((float) $data['amount'], 4);
@@ -30,13 +32,13 @@ class OutgoingCheckSettlementService
             if (! in_array($check->status, ['not_cashed', 'cashed_to_person', 'partially_settled', 'restructured'], true) || $remainingBefore <= 0) {
                 throw ValidationException::withMessages(['outgoing_check_id' => ['الشيك غير متاح للتسديد.']]);
             }
-            if ($check->currency !== $box->currency) {
+            if ($box && $check->currency !== $box->currency) {
                 throw ValidationException::withMessages(['box_id' => [__('messages.must_be_same_currency_check')]]);
             }
             if ($amount <= 0 || $amount > $remainingBefore) {
                 throw ValidationException::withMessages(['amount' => ['المبلغ المدفوع يجب أن يكون أكبر من صفر ولا يتجاوز المتبقي.']]);
             }
-            if ($amount > (float) $box->total) {
+            if ($box && $amount > (float) $box->total) {
                 throw ValidationException::withMessages(['box_id' => [__('messages.box_out_of_money')]]);
             }
 
@@ -57,7 +59,7 @@ class OutgoingCheckSettlementService
 
             $settlement = OutgoingCheckSettlement::query()->create([
                 'outgoing_check_id' => $check->id,
-                'box_id' => $box->id,
+                'box_id' => $box?->id,
                 'amount' => $amount,
                 'paid_at' => $data['paid_at'],
                 'idempotency_key' => $data['idempotency_key'],
@@ -65,8 +67,10 @@ class OutgoingCheckSettlementService
                 'created_by' => $userId,
             ]);
 
-            $box->decrement('total', $amount);
-            BoxLogs::createBoxLog($box->fresh(), 'تسديد جزئي للشيك الصادر رقم '.($check->check_id ?: $check->id), 'minus', $amount);
+            if ($box) {
+                $box->decrement('total', $amount);
+                BoxLogs::createBoxLog($box->fresh(), 'تسديد جزئي للشيك الصادر رقم '.($check->check_id ?: $check->id), 'minus', $amount);
+            }
 
             if ($installments->isNotEmpty()) {
                 $check->installments()->where('status', 'pending')->delete();
@@ -87,7 +91,7 @@ class OutgoingCheckSettlementService
                 'status' => $remainingAfter <= 0 ? 'settled' : ($installments->isNotEmpty() ? 'restructured' : 'partially_settled'),
                 'settlement_status' => $remainingAfter <= 0 ? 'fully_paid' : ($installments->isNotEmpty() ? 'partially_paid_restructured' : 'partially_paid'),
                 'restructured_at' => $installments->isNotEmpty() ? now() : $check->restructured_at,
-                'box_id' => $box->id,
+                ...($box ? ['box_id' => $box->id] : []),
             ]);
 
             return $check->fresh()->load(['settlements', 'installments']);

@@ -1041,7 +1041,7 @@ class AccountingProjectionService
         $settlement->loadMissing(['check', 'box']);
         $check = $settlement->check;
         $amount = round(max(0, (float) $settlement->amount), 4);
-        if (! $check || ! $settlement->box || $amount <= 0) {
+        if (! $check || $amount <= 0) {
             return null;
         }
 
@@ -1058,7 +1058,9 @@ class AccountingProjectionService
                     'seller_id' => $check->seller_id,
                     'due_date' => $check->due_date,
                 ]),
-                $this->line('cash', 0, $amount, $settlement, ['box_id' => $settlement->box_id]),
+                $settlement->box
+                    ? $this->line('cash', 0, $amount, $settlement, ['box_id' => $settlement->box_id])
+                    : $this->line('clearing', 0, $amount, $settlement, ['payment_source' => 'unassigned']),
             ],
             ['outgoing_check_id' => $check->id, 'stage' => 'partial_settlement'],
             $settlement->created_by ?: auth()->id(),

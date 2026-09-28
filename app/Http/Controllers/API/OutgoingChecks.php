@@ -764,11 +764,11 @@ class OutgoingChecks extends Controller
 
             $data = $request->validate([
                 'outgoing_check_id' => 'required|integer|exists:outgoing_checks,id',
-                'box_id' => 'required|integer|exists:boxes,id',
+                'box_id' => 'nullable|integer|exists:boxes,id',
 
             ]);
 
-            if (! $access->canUse($request->user(), (int) $data['box_id'])) {
+            if (isset($data['box_id']) && ! $access->canUse($request->user(), (int) $data['box_id'])) {
                 throw ValidationException::withMessages([
                     'box_id' => ['الصندوق غير مسموح للموظف أو أن جلسته اليومية مغلقة.'],
                 ]);
@@ -881,7 +881,8 @@ class OutgoingChecks extends Controller
             }
 
             $check = $service->settle($data, $request->user()?->id);
-            Logs::createLog('تسديد جزئي لشيك صادر', 'تم دفع '.$data['amount'].' '.$check->currency.' من الشيك رقم '.($check->check_id ?: $check->id).' والمتبقي '.$check->remaining_amount, 'outgoing_checks');
+            $paymentSource = isset($data['box_id']) ? 'من صندوق رقم '.$data['box_id'] : 'بدون حركة صندوق';
+            Logs::createLog('تسديد جزئي لشيك صادر', 'تم دفع '.$data['amount'].' '.$check->currency.' '.$paymentSource.' من الشيك رقم '.($check->check_id ?: $check->id).' والمتبقي '.$check->remaining_amount, 'outgoing_checks');
 
             return response()->json(['status' => 'success', 'message' => 'تم حفظ التسديد وإعادة الجدولة بنجاح', 'check' => $check]);
         } catch (ValidationException $e) {

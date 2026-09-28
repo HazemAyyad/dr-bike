@@ -55,7 +55,7 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         Schema::create('outgoing_check_settlements', function (Blueprint $t) {
             $t->id();
             $t->foreignId('outgoing_check_id');
-            $t->foreignId('box_id');
+            $t->foreignId('box_id')->nullable();
             $t->decimal('amount', 14, 4);
             $t->date('paid_at');
             $t->string('idempotency_key')->unique();
@@ -155,5 +155,27 @@ class OutgoingCheckPartialSettlementTest extends TestCase
 
         $this->assertEqualsWithDelta(100000, Box::query()->findOrFail($boxId)->total, 0.0001);
         $this->assertSame(0, DB::table('outgoing_check_settlements')->count());
+    }
+
+    public function test_partial_payment_can_be_recorded_without_a_box_movement(): void
+    {
+        $boxId = DB::table('boxes')->insertGetId(['name' => 'الرئيسي', 'total' => 100000, 'currency' => 'شيكل']);
+        $checkId = DB::table('outgoing_checks')->insertGetId([
+            'seller_id' => 9, 'status' => 'not_cashed', 'settlement_status' => 'unpaid', 'total' => 70000,
+            'currency' => 'شيكل', 'check_id' => 'NO-BOX-70', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $check = app(OutgoingCheckSettlementService::class)->settle([
+            'outgoing_check_id' => $checkId,
+            'amount' => 40000,
+            'paid_at' => '2026-09-28',
+            'idempotency_key' => 'partial-without-box',
+        ], null);
+
+        $this->assertSame('partially_settled', $check->status);
+        $this->assertEqualsWithDelta(30000, $check->remaining_amount, 0.0001);
+        $this->assertNull($check->settlements()->firstOrFail()->box_id);
+        $this->assertEqualsWithDelta(100000, Box::query()->findOrFail($boxId)->total, 0.0001);
+        $this->assertSame(0, DB::table('box_logs')->count());
     }
 }
