@@ -887,6 +887,8 @@ Route::group(['middleware'=>['auth:sanctum','refresh.token.expiry']] , function(
 
       Route::get('/not-cashed/outgoing/checks' , [OutgoingChecks::class,'notCashedChecks'])
           ->middleware('check.permission:Checks Outgoing View');
+      Route::get('/partially-paid/outgoing/checks' , [OutgoingChecks::class,'partiallyPaidChecks'])
+          ->middleware('check.permission:Checks Outgoing View');
       Route::get('/cashed/to/person/outgoing/checks' , [OutgoingChecks::class,'cashedToPersonChecks'])
           ->middleware('check.permission:Checks Outgoing View');
       Route::get('/cancelled/outgoing/checks' , [OutgoingChecks::class,'cancelledChecks'])

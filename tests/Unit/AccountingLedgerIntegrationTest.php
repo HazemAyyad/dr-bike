@@ -528,6 +528,8 @@ class AccountingLedgerIntegrationTest extends TestCase
         (require database_path('migrations/2026_09_19_202000_add_accounting_sources_to_assets_and_project_expenses.php'))->up();
         (require database_path('migrations/2026_09_19_203000_add_box_id_to_outgoing_checks_table.php'))->up();
         (require database_path('migrations/2026_09_27_120000_add_partial_settlements_to_outgoing_checks.php'))->up();
+        (require database_path('migrations/2026_09_28_010000_make_outgoing_check_settlement_box_optional.php'))->up();
+        (require database_path('migrations/2026_09_28_020000_link_scheduled_outgoing_checks.php'))->up();
         (require database_path('migrations/2026_09_27_130000_add_batch_number_to_outgoing_checks.php'))->up();
         (require database_path('migrations/2026_09_19_204000_add_carrier_credit_to_sales_returns.php'))->up();
         (require database_path('migrations/2026_09_23_100000_add_service_revenue_account.php'))->up();
@@ -613,6 +615,33 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertEqualsWithDelta(40000, $entry->lines->sum('debit'), 0.0001);
         $this->assertEqualsWithDelta(40000, $entry->lines->sum('credit'), 0.0001);
         $this->assertSame(0, DebtTransaction::query()->count());
+    }
+
+    public function test_scheduled_replacement_check_posts_only_when_it_is_paid(): void
+    {
+        $box = Box::query()->create(['name' => 'Scheduled box', 'total' => 50000, 'currency' => 'شيكل']);
+        $parent = OutgoingCheck::query()->create([
+            'seller_id' => 44, 'status' => 'restructured_parent', 'settlement_status' => 'partially_paid_restructured',
+            'total' => 70000, 'currency' => 'شيكل', 'check_id' => 'PARENT-70',
+        ]);
+        $child = OutgoingCheck::query()->create([
+            'parent_outgoing_check_id' => $parent->id,
+            'seller_id' => 44, 'status' => 'not_cashed', 'settlement_status' => 'unpaid',
+            'total' => 15000, 'currency' => 'شيكل', 'check_id' => 'SCHEDULED-15',
+        ]);
+
+        app(AccountingProjectionService::class)->syncOrFail($child->fresh());
+        $this->assertFalse(AccountingJournalEntry::query()
+            ->where('source_type', 'outgoing_check')->where('source_id', $child->id)->exists());
+
+        $child->update(['status' => 'cashed_from_box', 'box_id' => $box->id]);
+        app(AccountingProjectionService::class)->syncOrFail($child->fresh());
+        $entry = AccountingJournalEntry::query()
+            ->where('source_type', 'outgoing_check')->where('source_id', $child->id)
+            ->with('lines.account')->firstOrFail();
+
+        $this->assertEqualsWithDelta(15000, $entry->lines->where('account.system_key', 'checks_payable')->sum('debit'), 0.0001);
+        $this->assertEqualsWithDelta(15000, $entry->lines->where('account.system_key', 'cash')->sum('credit'), 0.0001);
     }
 
     public function test_outgoing_checks_can_be_created_as_one_sequenced_batch(): void

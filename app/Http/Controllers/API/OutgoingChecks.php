@@ -168,8 +168,8 @@ class OutgoingChecks extends Controller
     private function commonData($status)
     {
         try {
-            $statuses = $status === 'not_cashed'
-                ? ['not_cashed', 'partially_settled', 'restructured']
+            $statuses = $status === 'partially_paid'
+                ? ['partially_settled', 'restructured']
                 : [$status];
             $checks = OutgoingCheck::whereIn('status', $statuses)
                 ->with('customer:id,name')
@@ -214,6 +214,11 @@ class OutgoingChecks extends Controller
     public function notCashedChecks()
     {
         return $this->commonData('not_cashed');
+    }
+
+    public function partiallyPaidChecks()
+    {
+        return $this->commonData('partially_paid');
     }
 
     public function cashedToPersonChecks()
@@ -328,6 +333,11 @@ class OutgoingChecks extends Controller
         try {
             $request->validate(['outgoing_check_id' => 'required|exists:outgoing_checks,id']);
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
+            if ($check->parent_outgoing_check_id) {
+                throw ValidationException::withMessages([
+                    'outgoing_check_id' => ['الشيك المجدول يُغلق بالدفع أو الصرف فقط ولا يمكن إلغاؤه أو إرجاعه مباشرة.'],
+                ]);
+            }
             if ($check->settlements()->exists()) {
                 throw ValidationException::withMessages([
                     'outgoing_check_id' => ['لا يمكن إلغاء أو إرجاع شيك بعد بدء تسديده. يلزم إجراء عكس محاسبي مخصص.'],
@@ -427,6 +437,11 @@ class OutgoingChecks extends Controller
                 ], 200);
             }
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
+            if ($check->parent_outgoing_check_id) {
+                throw ValidationException::withMessages([
+                    'outgoing_check_id' => ['لا يمكن تغيير مستفيد الشيك المجدول لأنه مرتبط بالشيك الأصلي.'],
+                ]);
+            }
             if ($check->settlements()->exists()) {
                 throw ValidationException::withMessages([
                     'outgoing_check_id' => ['لا يمكن تغيير مستفيد شيك بعد بدء تسديده.'],
@@ -502,6 +517,11 @@ class OutgoingChecks extends Controller
             $request->validate(['outgoing_check_id' => 'required|exists:outgoing_checks,id']);
 
             $check = OutgoingCheck::findOrFail($request->outgoing_check_id);
+            if ($check->parent_outgoing_check_id) {
+                throw ValidationException::withMessages([
+                    'outgoing_check_id' => ['لا يمكن حذف شيك مجدول مرتبط بشيك أصلي.'],
+                ]);
+            }
 
             $deletableStatuses = ['not_cashed', 'cancelled', 'returned'];
 
@@ -702,6 +722,11 @@ class OutgoingChecks extends Controller
             }
 
             $outgoingCheck = OutgoingCheck::findOrFail($request->outgoing_check_id);
+            if ($outgoingCheck->parent_outgoing_check_id) {
+                throw ValidationException::withMessages([
+                    'outgoing_check_id' => ['لا يمكن تعديل الشيك المجدول مباشرة لأنه مرتبط بالشيك الأصلي.'],
+                ]);
+            }
             if ($outgoingCheck->settlements()->exists()) {
                 throw ValidationException::withMessages([
                     'outgoing_check_id' => ['هذا الشيك عليه تسويات جزئية؛ استخدم شاشة التسديد الجزئي لإكماله.'],

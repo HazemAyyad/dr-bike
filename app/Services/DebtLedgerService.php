@@ -1081,6 +1081,11 @@ class DebtLedgerService
      */
     public function syncOutgoingCheckToLedger(OutgoingCheck $check): ?DebtTransaction
     {
+        if ($check->parent_outgoing_check_id) {
+            $this->deleteSourceLedger('outgoing_check', (int) $check->id);
+
+            return null;
+        }
         if (in_array($check->status, ['returned', 'cancelled'], true)) {
             $this->deleteSourceLedger('outgoing_check', (int) $check->id);
 

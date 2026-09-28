@@ -13,6 +13,8 @@ class OutgoingCheck extends Model
 
     protected $fillable = [
         'customer_id',
+        'parent_outgoing_check_id',
+        'origin_installment_id',
         'status',
         'settlement_status',
         'restructured_at',
@@ -35,6 +37,9 @@ class OutgoingCheck extends Model
 
     public function settlements(){ return $this->hasMany(OutgoingCheckSettlement::class); }
     public function installments(){ return $this->hasMany(OutgoingCheckInstallment::class); }
+    public function parentCheck(){ return $this->belongsTo(self::class, 'parent_outgoing_check_id'); }
+    public function scheduledChecks(){ return $this->hasMany(self::class, 'parent_outgoing_check_id'); }
+    public function originInstallment(){ return $this->belongsTo(OutgoingCheckInstallment::class, 'origin_installment_id'); }
 
     public function getSettledAmountAttribute(): float
     {
@@ -79,9 +84,7 @@ class OutgoingCheck extends Model
 
     // data for first page for both incoming and outgoing checks
     public static function generalChecksData(){
-        $totalOutgoingChecksNotCashedCount = OutgoingCheck::
-        whereIn('status',['not_cashed', 'partially_settled'])->count()
-            + OutgoingCheckInstallment::where('status', 'pending')->count();
+        $totalOutgoingChecksNotCashedCount = OutgoingCheck::where('status', 'not_cashed')->count();
 
         $totalOutgoingChecksCashedCount = OutgoingCheck::
         where('status','cashed_to_person')->count();
@@ -125,6 +128,11 @@ class OutgoingCheck extends Model
             'partially_settled_outgoing_checks_count' => OutgoingCheck::where('status', 'partially_settled')->count(),
             'restructured_outgoing_checks_count' => OutgoingCheck::where('status', 'restructured')->count(),
             'pending_outgoing_installments_count' => OutgoingCheckInstallment::where('status', 'pending')->count(),
+            'scheduled_outgoing_checks_count' => OutgoingCheck::whereNotNull('parent_outgoing_check_id')->count(),
+            'scheduled_outgoing_checks_shekel' => (float) OutgoingCheck::whereNotNull('parent_outgoing_check_id')->where('currency', 'شيكل')->sum('total'),
+            'scheduled_outgoing_checks_dollar' => (float) OutgoingCheck::whereNotNull('parent_outgoing_check_id')->where('currency', 'دولار')->sum('total'),
+            'scheduled_outgoing_checks_dinar' => (float) OutgoingCheck::whereNotNull('parent_outgoing_check_id')->where('currency', 'دينار')->sum('total'),
+            'partially_paid_outgoing_checks_count' => OutgoingCheck::whereIn('status', ['partially_settled', 'restructured'])->count(),
             'settled_outgoing_checks_shekel' => (float) OutgoingCheckSettlement::query()
                 ->whereHas('check', fn ($query) => $query->where('currency', 'شيكل'))->sum('amount'),
             'settled_outgoing_checks_dollar' => (float) OutgoingCheckSettlement::query()

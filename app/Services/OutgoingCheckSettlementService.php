@@ -44,6 +44,10 @@ class OutgoingCheckSettlementService
 
             $remainingAfter = round($remainingBefore - $amount, 4);
             $installments = collect($data['installments'] ?? []);
+            $instrumentTypes = $installments->pluck('instrument_type')->unique();
+            if ($instrumentTypes->count() > 1) {
+                throw ValidationException::withMessages(['installments' => ['اختر إما جدولة على نفس الشيك أو شيكات بديلة فعلية لجميع الدفعات.']]);
+            }
             $hasPendingSchedule = $check->installments()->where('status', 'pending')->exists();
             if ($hasPendingSchedule && $remainingAfter > 0 && $installments->isEmpty()) {
                 throw ValidationException::withMessages(['installments' => ['يجب تحديث جدول الدفعات ليطابق المتبقي الجديد.']]);
@@ -75,7 +79,7 @@ class OutgoingCheckSettlementService
             if ($installments->isNotEmpty()) {
                 $check->installments()->where('status', 'pending')->delete();
                 foreach ($installments as $row) {
-                    OutgoingCheckInstallment::query()->create([
+                    $installment = OutgoingCheckInstallment::query()->create([
                         'outgoing_check_id' => $check->id,
                         'amount' => $row['amount'],
                         'due_date' => $row['due_date'],
@@ -84,11 +88,36 @@ class OutgoingCheckSettlementService
                         'bank_name' => $row['bank_name'] ?? null,
                         'notes' => $row['notes'] ?? null,
                     ]);
+                    if ($row['instrument_type'] === 'replacement_check') {
+                        $replacement = OutgoingCheck::query()->create([
+                            'parent_outgoing_check_id' => $check->id,
+                            'origin_installment_id' => $installment->id,
+                            'customer_id' => $check->customer_id,
+                            'seller_id' => $check->seller_id,
+                            'status' => 'not_cashed',
+                            'settlement_status' => 'unpaid',
+                            'total' => $row['amount'],
+                            'due_date' => $row['due_date'],
+                            'currency' => $check->currency,
+                            'check_id' => $row['check_id'],
+                            'bank_name' => $row['bank_name'],
+                            'img' => $check->img,
+                            'back_image' => $check->back_image,
+                            'notes' => $row['notes'] ?? $check->notes,
+                            'batch_number' => $check->batch_number,
+                        ]);
+                        $installment->update([
+                            'replacement_outgoing_check_id' => $replacement->id,
+                            'status' => 'materialized',
+                        ]);
+                    }
                 }
             }
 
             $check->update([
-                'status' => $remainingAfter <= 0 ? 'settled' : ($installments->isNotEmpty() ? 'restructured' : 'partially_settled'),
+                'status' => $remainingAfter <= 0
+                    ? 'settled'
+                    : ($instrumentTypes->contains('replacement_check') ? 'restructured_parent' : ($installments->isNotEmpty() ? 'restructured' : 'partially_settled')),
                 'settlement_status' => $remainingAfter <= 0 ? 'fully_paid' : ($installments->isNotEmpty() ? 'partially_paid_restructured' : 'partially_paid'),
                 'restructured_at' => $installments->isNotEmpty() ? now() : $check->restructured_at,
                 ...($box ? ['box_id' => $box->id] : []),

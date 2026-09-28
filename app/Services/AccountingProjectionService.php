@@ -976,6 +976,27 @@ class AccountingProjectionService
         if ($amount <= 0) {
             return null;
         }
+        if ($check->parent_outgoing_check_id) {
+            if (! in_array($check->status, ['cashed_from_box', 'cashed'], true)) {
+                return null;
+            }
+
+            $entity = ['customer_id' => $check->customer_id, 'seller_id' => $check->seller_id];
+            return $this->accounting->post(
+                'outgoing_check:'.$check->id.':scheduled_settlement:'.$check->status,
+                'outgoing_check',
+                (int) $check->id,
+                $check->updated_at ?: now(),
+                $check->currency ?: 'شيكل',
+                'صرف شيك مجدول '.($check->check_id ?: '#'.$check->id),
+                [
+                    $this->line('checks_payable', $amount, 0, $check, array_merge($entity, ['due_date' => $check->due_date])),
+                    $this->line('cash', 0, $amount, $check, array_merge($entity, ['box_id' => $check->box_id])),
+                ],
+                ['status' => $check->status, 'stage' => 'scheduled_settlement', 'parent_outgoing_check_id' => $check->parent_outgoing_check_id],
+                auth()->id(),
+            );
+        }
         if ($this->createdBeforeCutover($check)) {
             return $this->syncLegacyOutgoingCheckEvent($check, $amount);
         }

@@ -39,6 +39,8 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         });
         Schema::create('outgoing_checks', function (Blueprint $t) {
             $t->id();
+            $t->unsignedBigInteger('parent_outgoing_check_id')->nullable();
+            $t->unsignedBigInteger('origin_installment_id')->nullable();
             $t->unsignedBigInteger('customer_id')->nullable();
             $t->unsignedBigInteger('seller_id')->nullable();
             $t->string('status')->default('not_cashed');
@@ -48,6 +50,10 @@ class OutgoingCheckPartialSettlementTest extends TestCase
             $t->string('currency');
             $t->string('check_id')->nullable();
             $t->string('bank_name')->nullable();
+            $t->string('img')->nullable();
+            $t->string('back_image')->nullable();
+            $t->text('notes')->nullable();
+            $t->string('batch_number')->nullable();
             $t->unsignedBigInteger('box_id')->nullable();
             $t->timestamp('restructured_at')->nullable();
             $t->timestamps();
@@ -66,6 +72,7 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         Schema::create('outgoing_check_installments', function (Blueprint $t) {
             $t->id();
             $t->foreignId('outgoing_check_id');
+            $t->unsignedBigInteger('replacement_outgoing_check_id')->nullable();
             $t->decimal('amount', 14, 4);
             $t->date('due_date');
             $t->string('instrument_type');
@@ -105,7 +112,8 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $boxId = DB::table('boxes')->insertGetId(['name' => 'الرئيسي', 'total' => 100000, 'currency' => 'شيكل']);
         $checkId = DB::table('outgoing_checks')->insertGetId([
             'seller_id' => 9, 'status' => 'not_cashed', 'settlement_status' => 'unpaid', 'total' => 70000,
-            'currency' => 'شيكل', 'check_id' => 'OLD-70', 'bank_name' => 'فلسطين', 'created_at' => now(), 'updated_at' => now(),
+            'currency' => 'شيكل', 'check_id' => 'OLD-70', 'bank_name' => 'فلسطين',
+            'img' => 'old-front.jpg', 'back_image' => 'old-back.jpg', 'created_at' => now(), 'updated_at' => now(),
         ]);
         DB::table('debt_transactions')->insert(['source' => 'outgoing_check', 'source_id' => $checkId, 'amount' => 70000]);
 
@@ -119,11 +127,15 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         ];
 
         $check = app(OutgoingCheckSettlementService::class)->settle($payload, null);
-        $this->assertSame('restructured', $check->status);
+        $this->assertSame('restructured_parent', $check->status);
         $this->assertEqualsWithDelta(40000, $check->settled_amount, 0.0001);
         $this->assertEqualsWithDelta(30000, $check->remaining_amount, 0.0001);
         $this->assertEqualsWithDelta(60000, Box::query()->findOrFail($boxId)->total, 0.0001);
         $this->assertSame(2, $check->installments()->count());
+        $this->assertSame(2, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->count());
+        $this->assertEqualsWithDelta(30000, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->sum('total'), 0.0001);
+        $this->assertSame(['old-front.jpg'], OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->pluck('img')->unique()->values()->all());
+        $this->assertSame(['old-back.jpg'], OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->pluck('back_image')->unique()->values()->all());
         $this->assertSame(1, DB::table('debt_transactions')->count());
 
         app(OutgoingCheckSettlementService::class)->settle($payload, null);
@@ -177,5 +189,28 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertNull($check->settlements()->firstOrFail()->box_id);
         $this->assertEqualsWithDelta(100000, Box::query()->findOrFail($boxId)->total, 0.0001);
         $this->assertSame(0, DB::table('box_logs')->count());
+    }
+
+    public function test_same_check_schedule_stays_internal_without_creating_replacement_checks(): void
+    {
+        $checkId = DB::table('outgoing_checks')->insertGetId([
+            'seller_id' => 9, 'status' => 'not_cashed', 'settlement_status' => 'unpaid', 'total' => 70000,
+            'currency' => 'شيكل', 'check_id' => 'SAME-70', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $check = app(OutgoingCheckSettlementService::class)->settle([
+            'outgoing_check_id' => $checkId,
+            'amount' => 40000,
+            'paid_at' => '2026-09-28',
+            'idempotency_key' => 'same-check-schedule',
+            'installments' => [
+                ['amount' => 15000, 'due_date' => '2026-09-29', 'instrument_type' => 'same_check'],
+                ['amount' => 15000, 'due_date' => '2026-09-30', 'instrument_type' => 'same_check'],
+            ],
+        ], null);
+
+        $this->assertSame('restructured', $check->status);
+        $this->assertSame(0, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->count());
+        $this->assertSame(2, $check->installments()->where('status', 'pending')->count());
     }
 }
