@@ -187,6 +187,7 @@ class OutgoingChecks extends Controller
             $checks = $checksQuery
                 ->with('customer:id,name')
                 ->with('seller:id,name')
+                ->with('originInstallment:id,instrument_type')
                 ->with(['settlements', 'installments' => fn ($q) => $q->with('replacementCheck')->orderBy('due_date')])
                 ->orderBy('due_date')
                 ->orderBy('id')
@@ -268,6 +269,7 @@ class OutgoingChecks extends Controller
             ])
                 ->with('customer:id,name')
                 ->with('seller:id,name')
+                ->with('originInstallment:id,instrument_type')
                 ->orderByDesc('created_at')
                 ->orderByDesc('id')
                 ->get();
@@ -842,6 +844,11 @@ class OutgoingChecks extends Controller
 
             [$outgoingCheck, $box] = DB::transaction(function () use ($data) {
                 $outgoingCheck = OutgoingCheck::query()->lockForUpdate()->findOrFail($data['outgoing_check_id']);
+                if (! in_array($outgoingCheck->status, ['not_cashed', 'cashed_to_person'], true)) {
+                    throw ValidationException::withMessages([
+                        'outgoing_check_id' => ['هذا الشيك غير متاح للصرف من الصندوق.'],
+                    ]);
+                }
                 if ($outgoingCheck->settlements()->exists()) {
                     throw ValidationException::withMessages([
                         'outgoing_check_id' => ['هذا الشيك عليه تسويات جزئية؛ استخدم شاشة التسديد الجزئي لإكماله.'],
@@ -872,12 +879,16 @@ class OutgoingChecks extends Controller
                     $box,
                     'تم صرف شيك صادر برقم '.($outgoingCheck->check_id ?? 'غير معروف').' من الصندوق',
                     'minus',
-                    $outgoingCheck->total
+                    $outgoingCheck->total,
+                    sourceType: 'outgoing_check',
+                    sourceId: $outgoingCheck->id,
                 );
                 Logs::createLog(
                     'صرف شيك صادر من صندوق',
                     'تم صرف الشيك الصادر بقيمة '.$outgoingCheck->total.' '.$outgoingCheck->currency.' من الصندوق '.$box->name,
-                    'outgoing_checks'
+                    'outgoing_checks',
+                    'outgoing_check',
+                    $outgoingCheck->id,
                 );
 
                 return [$outgoingCheck, $box->fresh()];

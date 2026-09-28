@@ -219,7 +219,7 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame(0, DB::table('box_logs')->count());
     }
 
-    public function test_same_check_schedule_stays_internal_without_creating_replacement_checks(): void
+    public function test_same_check_schedule_creates_actionable_internal_scheduled_checks(): void
     {
         $checkId = DB::table('outgoing_checks')->insertGetId([
             'seller_id' => 9, 'status' => 'not_cashed', 'settlement_status' => 'unpaid', 'total' => 70000,
@@ -238,8 +238,16 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         ], null);
 
         $this->assertSame('restructured', $check->status);
-        $this->assertSame(0, OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->count());
-        $this->assertSame(2, $check->installments()->where('status', 'pending')->count());
+        $children = OutgoingCheck::query()->where('parent_outgoing_check_id', $checkId)->orderBy('due_date')->get();
+        $this->assertSame(2, $children->count());
+        $this->assertSame(['SAME-70', 'SAME-70'], $children->pluck('check_id')->all());
+        $this->assertSame(['2026-09-29', '2026-09-30'], $children->pluck('due_date')->all());
+        $this->assertSame(2, $check->installments()->where('status', 'materialized')->count());
+
+        $this->withoutMiddleware()->getJson('/api/not-cashed/outgoing/checks')
+            ->assertOk()
+            ->assertJsonPath('checks_count', 2)
+            ->assertJsonPath('not_cashed_checks.0.origin_installment.instrument_type', 'same_check');
 
         $this->withoutMiddleware()->getJson('/api/partially-paid/outgoing/checks')
             ->assertOk()
@@ -254,6 +262,32 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame(2, $statistics['scheduled_outgoing_checks_count']);
         $this->assertSame(1, $statistics['partially_paid_outgoing_checks_count']);
         $this->assertEqualsWithDelta(30000, $statistics['scheduled_outgoing_checks_shekel'], 0.0001);
+    }
+
+    public function test_existing_internal_schedule_is_materialized_safely_by_migration(): void
+    {
+        $checkId = DB::table('outgoing_checks')->insertGetId([
+            'seller_id' => 9, 'status' => 'restructured',
+            'settlement_status' => 'partially_paid_restructured', 'total' => 70000,
+            'currency' => 'شيكل', 'check_id' => 'LEGACY-INTERNAL', 'bank_name' => 'فلسطين',
+            'img' => 'legacy-front.jpg', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $installmentId = DB::table('outgoing_check_installments')->insertGetId([
+            'outgoing_check_id' => $checkId, 'amount' => 15000,
+            'due_date' => '2026-09-29', 'instrument_type' => 'same_check',
+            'status' => 'pending', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        (require database_path('migrations/2026_09_28_050000_materialize_internal_outgoing_check_installments.php'))->up();
+
+        $installment = DB::table('outgoing_check_installments')->where('id', $installmentId)->first();
+        $child = OutgoingCheck::query()->findOrFail($installment->replacement_outgoing_check_id);
+        $this->assertSame('materialized', $installment->status);
+        $this->assertSame($checkId, (int) $child->parent_outgoing_check_id);
+        $this->assertSame('LEGACY-INTERNAL', $child->check_id);
+        $this->assertSame('not_cashed', $child->status);
+        $this->assertEqualsWithDelta(15000, $child->total, 0.0001);
+        $this->assertSame(0, DB::table('debt_transactions')->where('source_id', $child->id)->count());
     }
 
     public function test_replacement_schedule_can_be_edited_from_the_parent(): void

@@ -18,12 +18,12 @@ class OutgoingCheckSettlementService
             $existing = OutgoingCheckSettlement::query()
                 ->where('idempotency_key', $data['idempotency_key'])->first();
             if ($existing) {
-                return $existing->check()->with(['settlements', 'installments'])->firstOrFail();
+                return $existing->check()->with(['settlements', 'installments.replacementCheck'])->firstOrFail();
             }
 
             $check = OutgoingCheck::query()->lockForUpdate()->findOrFail($data['outgoing_check_id']);
-            if ($check->status === 'restructured_parent') {
-                throw ValidationException::withMessages(['outgoing_check_id' => ['استخدم إدارة الجدولة لتعديل الشيكات البديلة المرتبطة بهذا الشيك.']]);
+            if (in_array($check->status, ['restructured', 'restructured_parent'], true)) {
+                throw ValidationException::withMessages(['outgoing_check_id' => ['استخدم إدارة الجدولة لتعديل الدفعات المجدولة المرتبطة بهذا الشيك.']]);
             }
             $box = isset($data['box_id'])
                 ? Box::query()->lockForUpdate()->findOrFail($data['box_id'])
@@ -51,7 +51,7 @@ class OutgoingCheckSettlementService
             if ($instrumentTypes->count() > 1) {
                 throw ValidationException::withMessages(['installments' => ['اختر إما جدولة على نفس الشيك أو شيكات بديلة فعلية لجميع الدفعات.']]);
             }
-            $hasPendingSchedule = $check->installments()->where('status', 'pending')->exists();
+            $hasPendingSchedule = $check->installments()->whereIn('status', ['pending', 'materialized'])->exists();
             if ($hasPendingSchedule && $remainingAfter > 0 && $installments->isEmpty()) {
                 throw ValidationException::withMessages(['installments' => ['يجب تحديث جدول الدفعات ليطابق المتبقي الجديد.']]);
             }
@@ -87,7 +87,7 @@ class OutgoingCheckSettlementService
             }
 
             if ($installments->isNotEmpty()) {
-                $check->installments()->where('status', 'pending')->delete();
+                $check->installments()->whereIn('status', ['pending', 'materialized'])->delete();
                 foreach ($installments as $row) {
                     $installment = OutgoingCheckInstallment::query()->create([
                         'outgoing_check_id' => $check->id,
@@ -98,29 +98,31 @@ class OutgoingCheckSettlementService
                         'bank_name' => $row['bank_name'] ?? null,
                         'notes' => $row['notes'] ?? null,
                     ]);
-                    if ($row['instrument_type'] === 'replacement_check') {
-                        $replacement = OutgoingCheck::query()->create([
-                            'parent_outgoing_check_id' => $check->id,
-                            'origin_installment_id' => $installment->id,
-                            'customer_id' => $check->customer_id,
-                            'seller_id' => $check->seller_id,
-                            'status' => 'not_cashed',
-                            'settlement_status' => 'unpaid',
-                            'total' => $row['amount'],
-                            'due_date' => $row['due_date'],
-                            'currency' => $check->currency,
-                            'check_id' => $row['check_id'],
-                            'bank_name' => $row['bank_name'],
-                            'img' => $check->img,
-                            'back_image' => $check->back_image,
-                            'notes' => $row['notes'] ?? $check->notes,
-                            'batch_number' => $check->batch_number,
-                        ]);
-                        $installment->update([
-                            'replacement_outgoing_check_id' => $replacement->id,
-                            'status' => 'materialized',
-                        ]);
-                    }
+                    $scheduledCheck = OutgoingCheck::query()->create([
+                        'parent_outgoing_check_id' => $check->id,
+                        'origin_installment_id' => $installment->id,
+                        'customer_id' => $check->customer_id,
+                        'seller_id' => $check->seller_id,
+                        'status' => 'not_cashed',
+                        'settlement_status' => 'unpaid',
+                        'total' => $row['amount'],
+                        'due_date' => $row['due_date'],
+                        'currency' => $check->currency,
+                        'check_id' => $row['instrument_type'] === 'same_check'
+                            ? $check->check_id
+                            : $row['check_id'],
+                        'bank_name' => $row['instrument_type'] === 'same_check'
+                            ? $check->bank_name
+                            : $row['bank_name'],
+                        'img' => $check->img,
+                        'back_image' => $check->back_image,
+                        'notes' => $row['notes'] ?? $check->notes,
+                        'batch_number' => $check->batch_number,
+                    ]);
+                    $installment->update([
+                        'replacement_outgoing_check_id' => $scheduledCheck->id,
+                        'status' => 'materialized',
+                    ]);
                 }
             }
 
@@ -133,7 +135,7 @@ class OutgoingCheckSettlementService
                 ...($box ? ['box_id' => $box->id] : []),
             ]);
 
-            return $check->fresh()->load(['settlements', 'installments']);
+            return $check->fresh()->load(['settlements', 'installments.replacementCheck']);
         }, 3);
     }
 }

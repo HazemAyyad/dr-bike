@@ -29,12 +29,18 @@ class OutgoingCheckPurgeService
                 Box::query()->lockForUpdate()->findOrFail($boxId)
                     ->increment('total', round((float) $rows->sum('amount'), 4));
             }
+            foreach ($checks->where('status', 'cashed_from_box')->whereNotNull('box_id')->groupBy('box_id') as $boxId => $rows) {
+                Box::query()->lockForUpdate()->findOrFail($boxId)
+                    ->increment('total', round((float) $rows->sum('total'), 4));
+            }
 
             $settlementIds = $settlements->pluck('id')->map(fn ($id) => (int) $id);
             if ($settlementIds->isNotEmpty()) {
                 BoxLog::query()->where('source_type', 'outgoing_check_settlement')
                     ->whereIn('source_id', $settlementIds)->delete();
             }
+            BoxLog::query()->where('source_type', 'outgoing_check')
+                ->whereIn('source_id', $checkIds)->delete();
             Log::query()->where(function ($query) use ($checkIds, $settlementIds, $checks) {
                 $query->where(fn ($q) => $q->where('source_type', 'outgoing_check')->whereIn('source_id', $checkIds));
                 if ($settlementIds->isNotEmpty()) {

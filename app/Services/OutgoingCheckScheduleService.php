@@ -43,18 +43,18 @@ class OutgoingCheckScheduleService
                     'check_id' => $row['check_id'] ?? null, 'bank_name' => $row['bank_name'] ?? null,
                     'notes' => $row['notes'] ?? null,
                 ]);
-                if ($row['instrument_type'] === 'replacement_check') {
-                    $child = OutgoingCheck::query()->create([
-                        'parent_outgoing_check_id' => $parent->id, 'origin_installment_id' => $installment->id,
-                        'customer_id' => $parent->customer_id, 'seller_id' => $parent->seller_id,
-                        'status' => 'not_cashed', 'settlement_status' => 'unpaid',
-                        'total' => $row['amount'], 'due_date' => $row['due_date'], 'currency' => $parent->currency,
-                        'check_id' => $row['check_id'], 'bank_name' => $row['bank_name'],
-                        'img' => $row['img'] ?? $parent->img, 'back_image' => $row['back_image'] ?? $parent->back_image,
-                        'notes' => $row['notes'] ?? $parent->notes, 'batch_number' => $parent->batch_number,
-                    ]);
-                    $installment->update(['replacement_outgoing_check_id' => $child->id, 'status' => 'materialized']);
-                }
+                $child = OutgoingCheck::query()->create([
+                    'parent_outgoing_check_id' => $parent->id, 'origin_installment_id' => $installment->id,
+                    'customer_id' => $parent->customer_id, 'seller_id' => $parent->seller_id,
+                    'status' => 'not_cashed', 'settlement_status' => 'unpaid',
+                    'total' => $row['amount'], 'due_date' => $row['due_date'], 'currency' => $parent->currency,
+                    'check_id' => $row['instrument_type'] === 'same_check' ? $parent->check_id : $row['check_id'],
+                    'bank_name' => $row['instrument_type'] === 'same_check' ? $parent->bank_name : $row['bank_name'],
+                    'img' => $row['instrument_type'] === 'same_check' ? $parent->img : ($row['img'] ?? $parent->img),
+                    'back_image' => $row['instrument_type'] === 'same_check' ? $parent->back_image : ($row['back_image'] ?? $parent->back_image),
+                    'notes' => $row['notes'] ?? $parent->notes, 'batch_number' => $parent->batch_number,
+                ]);
+                $installment->update(['replacement_outgoing_check_id' => $child->id, 'status' => 'materialized']);
             }
             $parent->update(['status' => $types->first() === 'replacement_check' ? 'restructured_parent' : 'restructured']);
             DB::afterCommit(function () use ($oldFrontImages, $oldBackImages) {

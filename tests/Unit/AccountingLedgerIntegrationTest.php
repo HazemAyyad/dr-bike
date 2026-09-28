@@ -15,6 +15,7 @@ use App\Models\Maintenance;
 use App\Models\MaintenancePayment;
 use App\Models\Log;
 use App\Models\OutgoingCheck;
+use App\Models\OutgoingCheckInstallment;
 use App\Models\OutgoingCheckSettlement;
 use App\Models\ProfitSale;
 use App\Models\PurchasePayment;
@@ -621,18 +622,24 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertSame(0, DebtTransaction::query()->count());
     }
 
-    public function test_scheduled_replacement_check_posts_only_when_it_is_paid(): void
+    public function test_scheduled_internal_check_posts_only_when_it_is_paid(): void
     {
         $box = Box::query()->create(['name' => 'Scheduled box', 'total' => 50000, 'currency' => 'شيكل']);
         $parent = OutgoingCheck::query()->create([
-            'seller_id' => 44, 'status' => 'restructured_parent', 'settlement_status' => 'partially_paid_restructured',
+            'seller_id' => 44, 'status' => 'restructured', 'settlement_status' => 'partially_paid_restructured',
             'total' => 70000, 'currency' => 'شيكل', 'check_id' => 'PARENT-70',
         ]);
-        $child = OutgoingCheck::query()->create([
-            'parent_outgoing_check_id' => $parent->id,
-            'seller_id' => 44, 'status' => 'not_cashed', 'settlement_status' => 'unpaid',
-            'total' => 15000, 'currency' => 'شيكل', 'check_id' => 'SCHEDULED-15',
+        $installment = OutgoingCheckInstallment::query()->create([
+            'outgoing_check_id' => $parent->id, 'amount' => 15000,
+            'due_date' => '2026-09-29', 'instrument_type' => 'same_check',
+            'status' => 'materialized',
         ]);
+        $child = OutgoingCheck::query()->create([
+            'parent_outgoing_check_id' => $parent->id, 'origin_installment_id' => $installment->id,
+            'seller_id' => 44, 'status' => 'not_cashed', 'settlement_status' => 'unpaid',
+            'total' => 15000, 'currency' => 'شيكل', 'check_id' => 'PARENT-70',
+        ]);
+        $installment->update(['replacement_outgoing_check_id' => $child->id]);
 
         app(AccountingProjectionService::class)->syncOrFail($child->fresh());
         $this->assertFalse(AccountingJournalEntry::query()
@@ -650,14 +657,14 @@ class AccountingLedgerIntegrationTest extends TestCase
 
     public function test_purging_restructured_parent_removes_children_and_entries_and_restores_box(): void
     {
-        $box = Box::query()->create(['name' => 'Purge box', 'total' => 60000, 'currency' => 'شيكل']);
+        $box = Box::query()->create(['name' => 'Purge box', 'total' => 30000, 'currency' => 'شيكل']);
         $parent = OutgoingCheck::query()->create([
             'seller_id' => 44, 'status' => 'restructured_parent', 'settlement_status' => 'partially_paid_restructured',
             'total' => 70000, 'currency' => 'شيكل', 'check_id' => 'PURGE-70',
         ]);
         $child = OutgoingCheck::query()->create([
             'parent_outgoing_check_id' => $parent->id, 'seller_id' => 44,
-            'status' => 'not_cashed', 'settlement_status' => 'unpaid',
+            'status' => 'cashed_from_box', 'settlement_status' => 'unpaid', 'box_id' => $box->id,
             'total' => 30000, 'currency' => 'شيكل', 'check_id' => 'PURGE-30',
         ]);
         $settlement = OutgoingCheckSettlement::query()->create([
@@ -668,19 +675,26 @@ class AccountingLedgerIntegrationTest extends TestCase
             'box_id' => $box->id, 'value' => 40000, 'type' => 'minus',
             'source_type' => 'outgoing_check_settlement', 'source_id' => $settlement->id,
         ]);
+        BoxLog::query()->create([
+            'box_id' => $box->id, 'value' => 30000, 'type' => 'minus',
+            'source_type' => 'outgoing_check', 'source_id' => $child->id,
+        ]);
         Log::query()->create([
             'name' => 'تسديد جزئي لشيك صادر', 'description' => 'linked purge log',
             'type' => 'outgoing_checks', 'source_type' => 'outgoing_check_settlement',
             'source_id' => $settlement->id,
         ]);
         app(AccountingProjectionService::class)->syncOrFail($settlement->fresh());
+        app(AccountingProjectionService::class)->syncOrFail($child->fresh());
 
         app(OutgoingCheckPurgeService::class)->purge($parent);
 
         $this->assertFalse(OutgoingCheck::query()->whereKey([$parent->id, $child->id])->exists());
         $this->assertFalse(OutgoingCheckSettlement::query()->whereKey($settlement->id)->exists());
         $this->assertFalse(AccountingJournalEntry::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
+        $this->assertFalse(AccountingJournalEntry::query()->where('source_type', 'outgoing_check')->where('source_id', $child->id)->exists());
         $this->assertFalse(BoxLog::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
+        $this->assertFalse(BoxLog::query()->where('source_type', 'outgoing_check')->where('source_id', $child->id)->exists());
         $this->assertFalse(Log::query()->where('source_type', 'outgoing_check_settlement')->where('source_id', $settlement->id)->exists());
         $this->assertEqualsWithDelta(100000, $box->fresh()->total, 0.0001);
     }
