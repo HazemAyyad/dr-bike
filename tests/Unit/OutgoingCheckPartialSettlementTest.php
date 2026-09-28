@@ -264,6 +264,41 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertEqualsWithDelta(30000, $statistics['scheduled_outgoing_checks_shekel'], 0.0001);
     }
 
+    public function test_partial_payment_can_mix_internal_and_replacement_checks(): void
+    {
+        $checkId = DB::table('outgoing_checks')->insertGetId([
+            'seller_id' => 9, 'status' => 'not_cashed', 'settlement_status' => 'unpaid', 'total' => 70000,
+            'currency' => 'شيكل', 'check_id' => 'MIXED-70', 'bank_name' => 'بنك الأصل',
+            'img' => 'mixed-parent.jpg', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $check = app(OutgoingCheckSettlementService::class)->settle([
+            'outgoing_check_id' => $checkId,
+            'amount' => 40000,
+            'paid_at' => '2026-09-28',
+            'idempotency_key' => 'mixed-schedule',
+            'installments' => [
+                ['amount' => 10000, 'due_date' => '2026-10-01', 'instrument_type' => 'same_check'],
+                ['amount' => 20000, 'due_date' => '2026-11-01', 'instrument_type' => 'replacement_check', 'check_id' => 'MIXED-NEW', 'bank_name' => 'بنك البديل', 'img' => 'mixed-new.jpg'],
+            ],
+        ], null);
+
+        $this->assertSame('restructured_parent', $check->status);
+        $this->assertSame(['same_check', 'replacement_check'], $check->installments()->orderBy('due_date')->pluck('instrument_type')->all());
+
+        $children = $check->scheduledChecks()->with('originInstallment')->orderBy('due_date')->get();
+        $this->assertSame(['MIXED-70', 'MIXED-NEW'], $children->pluck('check_id')->all());
+        $this->assertSame(['بنك الأصل', 'بنك البديل'], $children->pluck('bank_name')->all());
+        $this->assertSame(['mixed-parent.jpg', 'mixed-new.jpg'], $children->pluck('img')->all());
+        $this->assertSame(['same_check', 'replacement_check'], $children->pluck('originInstallment.instrument_type')->all());
+
+        $this->withoutMiddleware()->getJson('/api/partially-paid/outgoing/checks')
+            ->assertOk()
+            ->assertJsonPath('partially_paid_checks.0.id', $checkId)
+            ->assertJsonPath('partially_paid_checks.0.installments.0.instrument_type', 'same_check')
+            ->assertJsonPath('partially_paid_checks.0.installments.1.instrument_type', 'replacement_check');
+    }
+
     public function test_existing_internal_schedule_is_materialized_safely_by_migration(): void
     {
         $checkId = DB::table('outgoing_checks')->insertGetId([
@@ -313,6 +348,33 @@ class OutgoingCheckPartialSettlementTest extends TestCase
         $this->assertSame(['EDIT-1', 'EDIT-2'], $updated->scheduledChecks()->orderBy('due_date')->pluck('check_id')->all());
         $this->assertSame(['one.jpg', 'parent.jpg'], $updated->scheduledChecks()->orderBy('due_date')->pluck('img')->all());
         $this->assertEqualsWithDelta(30000, $updated->scheduledChecks()->sum('total'), 0.0001);
+    }
+
+    public function test_existing_schedule_can_be_edited_to_mixed_types(): void
+    {
+        $checkId = DB::table('outgoing_checks')->insertGetId([
+            'seller_id' => 9, 'status' => 'restructured',
+            'settlement_status' => 'partially_paid_restructured', 'total' => 70000,
+            'currency' => 'شيكل', 'check_id' => 'EDIT-MIXED', 'bank_name' => 'بنك الأصل',
+            'img' => 'edit-parent.jpg', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('outgoing_check_settlements')->insert([
+            'outgoing_check_id' => $checkId, 'amount' => 40000, 'paid_at' => '2026-09-28',
+            'idempotency_key' => 'edit-mixed-payment', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $updated = app(OutgoingCheckScheduleService::class)->replace(
+            OutgoingCheck::query()->findOrFail($checkId),
+            [
+                ['amount' => 12000, 'due_date' => '2026-10-05', 'instrument_type' => 'same_check'],
+                ['amount' => 18000, 'due_date' => '2026-11-05', 'instrument_type' => 'replacement_check', 'check_id' => 'EDIT-MIXED-NEW', 'bank_name' => 'بنك البديل'],
+            ],
+        );
+
+        $this->assertSame('restructured_parent', $updated->status);
+        $this->assertSame(['same_check', 'replacement_check'], $updated->installments()->orderBy('due_date')->pluck('instrument_type')->all());
+        $this->assertSame(['EDIT-MIXED', 'EDIT-MIXED-NEW'], $updated->scheduledChecks()->orderBy('due_date')->pluck('check_id')->all());
+        $this->assertSame(['edit-parent.jpg', 'edit-parent.jpg'], $updated->scheduledChecks()->orderBy('due_date')->pluck('img')->all());
     }
 
     public function test_general_statistics_report_paid_check_count_and_values_separately(): void

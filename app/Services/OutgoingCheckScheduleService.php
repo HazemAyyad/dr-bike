@@ -29,9 +29,6 @@ class OutgoingCheckScheduleService
                 throw ValidationException::withMessages(['installments' => ['مجموع الجدولة يجب أن يساوي المتبقي '.$remaining.'.']]);
             }
             $types = collect($rows)->pluck('instrument_type')->unique();
-            if ($types->count() !== 1) {
-                throw ValidationException::withMessages(['installments' => ['يجب أن تكون الجدولة كلها داخلية أو كلها شيكات بديلة.']]);
-            }
 
             OutgoingCheck::withoutEvents(fn () => $parent->scheduledChecks()->delete());
             $parent->installments()->delete();
@@ -56,7 +53,7 @@ class OutgoingCheckScheduleService
                 ]);
                 $installment->update(['replacement_outgoing_check_id' => $child->id, 'status' => 'materialized']);
             }
-            $parent->update(['status' => $types->first() === 'replacement_check' ? 'restructured_parent' : 'restructured']);
+            $parent->update(['status' => $types->contains('replacement_check') ? 'restructured_parent' : 'restructured']);
             DB::afterCommit(function () use ($oldFrontImages, $oldBackImages) {
                 foreach ($oldFrontImages as $file) {
                     if (! OutgoingCheck::query()->where('img', $file)->exists()) {

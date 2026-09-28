@@ -48,9 +48,6 @@ class OutgoingCheckSettlementService
             $remainingAfter = round($remainingBefore - $amount, 4);
             $installments = collect($data['installments'] ?? []);
             $instrumentTypes = $installments->pluck('instrument_type')->unique();
-            if ($instrumentTypes->count() > 1) {
-                throw ValidationException::withMessages(['installments' => ['اختر إما جدولة على نفس الشيك أو شيكات بديلة فعلية لجميع الدفعات.']]);
-            }
             $hasPendingSchedule = $check->installments()->whereIn('status', ['pending', 'materialized'])->exists();
             if ($hasPendingSchedule && $remainingAfter > 0 && $installments->isEmpty()) {
                 throw ValidationException::withMessages(['installments' => ['يجب تحديث جدول الدفعات ليطابق المتبقي الجديد.']]);
