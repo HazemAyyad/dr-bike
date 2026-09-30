@@ -22,6 +22,7 @@ use App\Services\DebtLedgerService;
 use App\Services\DocumentSerialService;
 use App\Services\EmployeeActivityLogger;
 use App\Services\InstantSaleHistoryService;
+use App\Services\InventoryCostingService;
 use App\Services\OfferPackageService;
 use App\Services\ProductStockService;
 use App\Services\SalesDailySessionService;
@@ -42,6 +43,53 @@ class InstantSales extends Controller
     private const SALE_KIND_REGULAR = 'regular';
 
     private const SALE_KIND_ADJUSTMENT = 'adjustment';
+
+    private function restorationCostContext(array $errors): array
+    {
+        $lineIds = collect(array_keys($errors))
+            ->filter(fn ($key) => str_starts_with((string) $key, 'restoration_unit_costs.'))
+            ->map(fn ($key) => (int) str_replace('restoration_unit_costs.', '', (string) $key))
+            ->filter()
+            ->values();
+        if ($lineIds->isEmpty()) {
+            return [];
+        }
+
+        $costing = app(InventoryCostingService::class);
+
+        return InstantSale::query()
+            ->with(['product.sizes.colorSizes'])
+            ->whereIn('id', $lineIds)
+            ->get()
+            ->mapWithKeys(function (InstantSale $line) use ($costing) {
+                $product = $line->product;
+                if (! $product instanceof Product) {
+                    return [];
+                }
+                $summary = $costing->identitySummary(
+                    $product,
+                    $line->size_color_id ? (int) $line->size_color_id : null,
+                    $line->size_id ? (int) $line->size_id : null,
+                );
+                $currentCost = (float) ($summary['costed_quantity'] ?? 0) > 0
+                    ? (float) ($summary['average_inventory_unit_cost'] ?? 0)
+                    : null;
+
+                return [(string) $line->id => [
+                    'line_id' => (int) $line->id,
+                    'product_name' => (string) ($product->nameAr ?? 'منتج غير معروف'),
+                    'quantity' => (float) $line->quantity,
+                    'current_inventory_cost' => $currentCost,
+                    'wholesale_price' => $product->wholesalePrice !== null
+                        ? (float) $product->wholesalePrice
+                        : null,
+                    'sale_price' => $product->normailPrice !== null
+                        ? (float) $product->normailPrice
+                        : null,
+                ]];
+            })
+            ->all();
+    }
 
     private function resolveSaleKind(Request $request): string
     {
@@ -1356,19 +1404,27 @@ public function store(Request $request)
         foreach ($data['other_products'] ?? [] as $item) {
             $otherProductsTotal += (float) $item['cost'] * (float) $item['quantity'];
         }
-        $mainData['total_cost'] = max(
+        $calculatedTotal = max(
             0,
             round($mainLineTotal + $otherProductsTotal + $additionalNotesTotal - (float) ($mainData['discount'] ?? 0), 2)
         );
+        $mainData['total_cost'] = $isClosedDayAdministrativeCorrection
+            ? max(0, round((float) $data['total_cost'], 2))
+            : $calculatedTotal;
 
-        // The client may restore an auto-saved payment amount that was captured
-        // before a discount changed the invoice total. Never post more cash to
-        // the box than the final invoice total.
+        // Normal sales may restore an auto-saved payment captured before a
+        // discount changed the total. Administrative corrections must preserve
+        // the explicitly entered amount and fail validation when it is invalid.
         if (array_key_exists('payment_box_value', $mainData)) {
-            $mainData['payment_box_value'] = min(
-                $mainData['total_cost'],
-                max(0, round((float) $mainData['payment_box_value'], 2))
-            );
+            $enteredPayment = max(0, round((float) $mainData['payment_box_value'], 2));
+            if ($isClosedDayAdministrativeCorrection && $enteredPayment > $mainData['total_cost']) {
+                throw ValidationException::withMessages([
+                    'payment_box_value' => ['المبلغ النقدي لا يمكن أن يتجاوز إجمالي الفاتورة.'],
+                ]);
+            }
+            $mainData['payment_box_value'] = $isClosedDayAdministrativeCorrection
+                ? $enteredPayment
+                : min($mainData['total_cost'], $enteredPayment);
             $request->merge([
                 'payment_box_value' => $mainData['payment_box_value'],
             ]);
@@ -1634,11 +1690,18 @@ public function store(Request $request)
             if (DB::transactionLevel() > 0) {
                 DB::rollBack();
             }
-            return response()->json([
+            $errors = $e->errors();
+            $response = [
                 'status' => 'error',
                 'message' => __('messages.validation_failed'),
-                'errors' => $e->errors()
-            ], 200);
+                'errors' => $errors,
+            ];
+            $restorationContext = $this->restorationCostContext($errors);
+            if ($restorationContext !== []) {
+                $response['restoration_cost_context'] = $restorationContext;
+            }
+
+            return response()->json($response, 200);
         }
             catch (QueryException $e) {
             if (DB::transactionLevel() > 0) {
@@ -1742,27 +1805,37 @@ public function store(Request $request)
                     ['sales_daily_session_id' => $dailySession->id]
                 );
 
+            $calculatedTotal = max(
+                0,
+                round(
+                    ($unitPrice * $packagesSold)
+                    + $otherProductsTotal
+                    + (float) ($data['additional_notes_total'] ?? 0)
+                    - (float) ($data['discount'] ?? 0),
+                    2
+                )
+            );
             $mainData = $this->sanitizeInstantSaleAttributes(array_merge([
                 'offer_package_id' => $package->id,
                 'product_id' => null,
                 'quantity' => $packagesSold,
                 'cost' => $unitPrice,
                 'discount' => (float) ($data['discount'] ?? 0),
-                'total_cost' => max(
-                    0,
-                    round(
-                        ($unitPrice * $packagesSold)
-                        + $otherProductsTotal
-                        + (float) ($data['additional_notes_total'] ?? 0)
-                        - (float) ($data['discount'] ?? 0),
-                        2
-                    )
-                ),
+                'total_cost' => $isClosedDayAdministrativeCorrection
+                    ? max(0, round((float) $data['total_cost'], 2))
+                    : $calculatedTotal,
                 'notes' => $this->instantSaleNotesText($data['additional_notes'] ?? [], $data['notes'] ?? null),
                 'additional_notes' => $data['additional_notes'] ?? [],
                 'type' => $data['type'],
                 'project_id' => $data['project_id'] ?? null,
             ], $buyerPayload, $paymentBoxPayload, $auditAndSession));
+
+            $enteredPayment = max(0, round((float) ($mainData['payment_box_value'] ?? 0), 2));
+            if ($isClosedDayAdministrativeCorrection && $enteredPayment > (float) $mainData['total_cost']) {
+                throw ValidationException::withMessages([
+                    'payment_box_value' => ['المبلغ النقدي لا يمكن أن يتجاوز إجمالي الفاتورة.'],
+                ]);
+            }
 
             if ($this->hasRemainingInstantSaleAmount($mainData, $request) && ! $this->hasRequiredDebtBuyer($request)) {
                 return response()->json([
