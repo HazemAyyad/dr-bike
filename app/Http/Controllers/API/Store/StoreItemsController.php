@@ -46,11 +46,11 @@ class StoreItemsController extends StoreBaseController
 
     public function getAllItemsShowByMainCategory(Request $request)
     {
-        $mainCategoryId = $request->query('MainCategory', $request->input('MainCategory'));
+        $storeSectionId = $request->query('MainCategory', $request->input('MainCategory'));
 
         $query = $this->baseProductQuery();
-        if ($mainCategoryId !== null && $mainCategoryId !== '') {
-            $query->where('category_id', (int) $mainCategoryId);
+        if ($storeSectionId !== null && $storeSectionId !== '') {
+            $query->where('store_section_id', (int) $storeSectionId);
         }
 
         $rows = $query->get()->map(fn (StoreProduct $product) => $this->productPayload($product));
