@@ -26,6 +26,8 @@ public static function storeImage(Request $request, string $fileName, string $pa
     if(is_string($request->input($fileName))){
        return basename($request->input($fileName));
     }
+
+    return $existing;
 }
 
 
