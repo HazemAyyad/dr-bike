@@ -12,6 +12,7 @@ use App\Models\InstantSale;
 use App\Models\ProfitSale;
 use App\Models\SalesOrder;
 use App\Services\DebtLedgerService;
+use App\Services\MediaUploadService;
 use App\Services\BoxAccessService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
@@ -392,8 +393,11 @@ class DebtLedger extends Controller
                     if (!$image) {
                         continue;
                     }
-                    $imageName = time() . '_' . uniqid() . '_' . $image->getClientOriginalName();
-                    $image->move(public_path('DebtsReceipts'), $imageName);
+                    $imageName = app(MediaUploadService::class)->storePublic(
+                        $image,
+                        'DebtsReceipts',
+                        MediaUploadService::imageMimes(),
+                    );
                     $imageNames[] = $imageName;
                 }
             }
@@ -504,8 +508,11 @@ class DebtLedger extends Controller
                     if (!$image) {
                         continue;
                     }
-                    $imageName = time() . '_' . uniqid() . '_' . $image->getClientOriginalName();
-                    $image->move(public_path('DebtsReceipts'), $imageName);
+                    $imageName = app(MediaUploadService::class)->storePublic(
+                        $image,
+                        'DebtsReceipts',
+                        MediaUploadService::imageMimes(),
+                    );
                     $imageNames[] = $imageName;
                 }
             }

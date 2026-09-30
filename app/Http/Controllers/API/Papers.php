@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Str;
+use App\Services\MediaUploadService;
 
 class Papers extends Controller
 {
@@ -21,9 +21,11 @@ class Papers extends Controller
         $imgNames = [];
         if ($request->hasFile($fileName)) {
             foreach($request->file($fileName) as $file){
-                $extension = strtolower($file->getClientOriginalExtension());
-                $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                $file->move(public_path($path.'/'), $fullName);
+                $fullName = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    $path,
+                    MediaUploadService::imageMimes(),
+                );
                 $imgNames[] = $fullName;
             }
         }
@@ -53,9 +55,11 @@ class Papers extends Controller
 
         if ($request->hasFile('img')) {
             foreach ($request->file('img') as $file) {
-                $extension = strtolower($file->getClientOriginalExtension());
-                $name = (string) Str::uuid().($extension ? '.'.$extension : '');
-                $file->move(public_path('Papers'), $name);
+                $name = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    'Papers',
+                    MediaUploadService::imageMimes(),
+                );
                 $files->push($name);
             }
         }

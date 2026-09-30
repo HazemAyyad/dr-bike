@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
+use App\Services\MediaUploadService;
 
 class MaintenanceServiceController extends Controller
 {
@@ -222,7 +223,7 @@ class MaintenanceServiceController extends Controller
             'price' => 'required|numeric|min:0',
             'is_active' => 'nullable|boolean',
             'media' => 'nullable|array',
-            'media.*' => 'file|max:512000',
+            'media.*' => 'file|max:512000|mimetypes:image/jpeg,image/png,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,image/heic,image/heif,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm,video/3gpp',
             'keep_media_ids' => 'nullable|array',
             'keep_media_ids.*' => 'integer|exists:maintenance_service_media,id',
         ]);
@@ -263,7 +264,7 @@ class MaintenanceServiceController extends Controller
         ];
 
         foreach ($request->file('media') as $file) {
-            $extension = strtolower($file->getClientOriginalExtension() ?: 'bin');
+            $extension = MediaUploadService::detectedExtension($file);
             if (! in_array($extension, $allowedExtensions, true)) {
                 throw ValidationException::withMessages([
                     'media' => ['نوع الملف غير مدعوم. الرجاء رفع صورة أو فيديو فقط.'],

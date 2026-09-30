@@ -9,6 +9,7 @@ use App\Services\MaintenanceActivityLogger;
 use App\Services\MaintenanceDailyBoxService;
 use App\Services\MaintenanceDeliveryService;
 use App\Services\MaintenanceInvoiceService;
+use App\Services\MediaUploadService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -204,8 +205,11 @@ class MaintenanceAPI extends Controller
         $files = [];
         if ($request->hasFile('files')) {
             foreach ($request->file('files') as $file) {
-                $fullName = $file->getClientOriginalName();
-                $file->move(public_path('MaintenanceFiles'), $fullName);
+                $fullName = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    'MaintenanceFiles',
+                    [...MediaUploadService::imageMimes(), ...MediaUploadService::videoMimes()],
+                );
                 $files[] = $fullName;
             }
         }
@@ -219,7 +223,7 @@ class MaintenanceAPI extends Controller
             'receipt_date' => 'nullable|date',
             'receipt_time' => 'nullable|date_format:H:i',
             'files' => 'nullable|array',
-            'files.*' => 'file|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
+            'files.*' => 'file|max:30720|mimetypes:image/jpeg,image/png,image/jpg,image/gif,image/tiff,image/webp,image/avif,image/svg+xml,video/mp4,video/quicktime,video/x-msvideo,video/x-ms-wmv,video/x-matroska,video/webm',
 
         ]);
 

@@ -13,6 +13,7 @@ use ArPHP\I18N\Arabic;
 
 use App\Models\Log;
 use App\Services\EmployeeActivityLogger;
+use App\Services\MediaUploadService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -76,8 +77,11 @@ class Debts extends Controller
     $imageNames = [];
     if ($request->hasFile('receipt_image')) {
         foreach($request->file('receipt_image') as $image){
-        $imageName = $image->getClientOriginalName();
-        $image->move(public_path('DebtsReceipts'), $imageName);
+        $imageName = app(MediaUploadService::class)->storePublic(
+            $image,
+            'DebtsReceipts',
+            MediaUploadService::imageMimes(),
+        );
         $imageNames[] = $imageName;
     }
 }

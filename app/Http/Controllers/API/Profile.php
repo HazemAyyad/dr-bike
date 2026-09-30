@@ -7,6 +7,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\File;
+use App\Services\MediaUploadService;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -91,9 +92,11 @@ class Profile extends Controller
             if ($user->type === 'employee' && $user->employee && $request->hasFile('employee_img')) {
                 $directory = public_path('EmployeeImages');
                 File::ensureDirectoryExists($directory);
-                $file = $request->file('employee_img');
-                $fileName = uniqid('employee_'.$user->employee->id.'_', true).'.'.$file->getClientOriginalExtension();
-                $file->move($directory, $fileName);
+                $fileName = app(MediaUploadService::class)->storePublic(
+                    $request->file('employee_img'),
+                    'EmployeeImages',
+                    MediaUploadService::imageMimes(),
+                );
 
                 foreach ($user->employee->employee_img ?? [] as $oldImage) {
                     $oldPath = $directory.DIRECTORY_SEPARATOR.basename((string) $oldImage);

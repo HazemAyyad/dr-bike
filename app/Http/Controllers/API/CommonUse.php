@@ -4,7 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
+use App\Services\MediaUploadService;
 
 class CommonUse extends Controller
 {
@@ -29,9 +29,11 @@ class CommonUse extends Controller
     if ($request->hasFile($field)) {
         foreach ($request->file($field) as $file) {
             if ($file instanceof \Illuminate\Http\UploadedFile) {
-                $extension = strtolower($file->getClientOriginalExtension());
-                $imageName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                $file->move(public_path($path), $imageName);
+                $imageName = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    $path,
+                    MediaUploadService::imageMimes(),
+                );
                 $newFiles[] = $imageName;
             }
         }

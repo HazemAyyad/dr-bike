@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Services\CheckSmsNotificationService;
 use App\Services\DebtLedgerService;
+use App\Services\MediaUploadService;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\Seller;
@@ -41,9 +42,11 @@ class IncomingChecks extends Controller
                     unlink(public_path("$path/" . $existing->$field));
                 }
 
-                $file = $request->file($field);
-                $name = $file->getClientOriginalName();
-                $file->move(public_path($path), $name);
+                $name = app(MediaUploadService::class)->storePublic(
+                    $request->file($field),
+                    $path,
+                    MediaUploadService::imageMimes(),
+                );
 
                 $data[$field] = $name;
             }

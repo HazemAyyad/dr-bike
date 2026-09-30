@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Str;
+use App\Services\MediaUploadService;
 
 class Pictures extends Controller
 {
@@ -16,12 +16,11 @@ public static function storeImage(Request $request, string $fileName, string $pa
 {
     if ($request->hasFile($fileName)) {
         // store new file
-        $file = $request->file($fileName);
-        $extension = strtolower($file->getClientOriginalExtension());
-        $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
-        $file->move(public_path($path . '/'), $fullName);
-
-        return $fullName;
+        return app(MediaUploadService::class)->storePublic(
+            $request->file($fileName),
+            $path,
+            [...MediaUploadService::imageMimes(), ...MediaUploadService::videoMimes()],
+        );
     }
 
     if(is_string($request->input($fileName))){

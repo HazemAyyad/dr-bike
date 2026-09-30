@@ -176,8 +176,11 @@ class OfferPackageService
             mkdir($dir, 0755, true);
         }
 
-        $name = time().'_'.preg_replace('/[^a-zA-Z0-9._-]/', '_', $file->getClientOriginalName());
-        $file->move($dir, $name);
+        $name = app(MediaUploadService::class)->storePublic(
+            $file,
+            self::IMAGE_DIR,
+            MediaUploadService::imageMimes(),
+        );
 
         return $name;
     }

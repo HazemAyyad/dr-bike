@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\MediaUploadService;
 use App\Models\Destruction;
 use App\Http\Resources\DestructionResource;
 use App\Models\Product;
@@ -16,7 +17,6 @@ use Illuminate\Database\QueryException;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Validator;
 class Destructions extends Controller
 {
@@ -158,11 +158,11 @@ class Destructions extends Controller
                 $mimeType = $file->getMimeType();
                 $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
 
-                $destinationPath = public_path($this->destructionMediaPath . '/' . $folder);
-
-                $extension = strtolower($file->getClientOriginalExtension());
-                $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                $file->move($destinationPath, $fullName);
+                $fullName = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    $this->destructionMediaPath.'/'.$folder,
+                    [...MediaUploadService::imageMimes(), ...MediaUploadService::videoMimes()],
+                );
                 $files[] = $fullName;
             }
         }

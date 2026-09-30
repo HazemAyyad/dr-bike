@@ -25,6 +25,7 @@ use App\Services\EmployeePointsService;
 use App\Services\FingerprintAttendanceProcessor;
 use App\Services\ExpenseBoxAccessService;
 use App\Services\PayrollService;
+use App\Services\MediaUploadService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -1670,13 +1671,11 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
          if ($request->hasFile($field)) {
             foreach($request->file($field) as $file){
                 
-                $imageName = $file->getClientOriginalName();
-
-                $destinationPath = public_path($path); 
-                if (!file_exists($destinationPath . '/' . $imageName)) {
-
-                $file->move(public_path($path), $imageName);
-                }
+                $imageName = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    $path,
+                    MediaUploadService::imageMimes(),
+                );
                 $data[] = $imageName;
 
         }

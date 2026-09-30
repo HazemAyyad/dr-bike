@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Box;
 use App\Models\Expense;
 use App\Services\ExpenseBoxAccessService;
+use App\Services\MediaUploadService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -17,7 +18,6 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Csv;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use Illuminate\Support\Str;
 class ExpensesAPI extends Controller
 {
     private $expensesMediaPath = 'Expenses/ExpensesMedia';
@@ -53,9 +53,11 @@ class ExpensesAPI extends Controller
             foreach ($request->file($fileName) as $file) {
                 $mimeType = $file->getMimeType();
                 $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
-                $extension = strtolower($file->getClientOriginalExtension());
-                $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                $file->move(public_path($path . '/' . $folder), $fullName);
+                $fullName = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    $path.'/'.$folder,
+                    [...MediaUploadService::imageMimes(), ...MediaUploadService::videoMimes()],
+                );
                 $files[] = $fullName;
               }
            }
@@ -67,9 +69,11 @@ class ExpensesAPI extends Controller
         //    }
             elseif($type==='multiImages'){
                 foreach($request->file($fileName) as $imageFile){
-                    $extension = strtolower($imageFile->getClientOriginalExtension());
-                    $imageName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                    $imageFile->move(public_path($path), $imageName);
+                    $imageName = app(MediaUploadService::class)->storePublic(
+                        $imageFile,
+                        $path,
+                        MediaUploadService::imageMimes(),
+                    );
                     $files[] = $imageName;
                 }
 

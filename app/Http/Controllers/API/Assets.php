@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Services\MediaUploadService;
 use App\Http\Resources\AssetResource;
 use App\Models\AccountingJournalEntry;
 use App\Models\Asset;
@@ -18,7 +19,6 @@ use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class Assets extends Controller
@@ -33,9 +33,11 @@ class Assets extends Controller
                 $mimeType = $file->getMimeType();
                 $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
 
-                $extension = strtolower($file->getClientOriginalExtension());
-                $fullName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                $file->move(public_path($this->assetMediaPath.'/'.$folder), $fullName);
+                $fullName = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    $this->assetMediaPath.'/'.$folder,
+                    [...MediaUploadService::imageMimes(), ...MediaUploadService::videoMimes()],
+                );
                 $files[] = $fullName;
             }
         }
@@ -485,9 +487,11 @@ class Assets extends Controller
                     $mimeType = $file->getMimeType();
                     $folder = str_starts_with($mimeType, 'image') ? 'images' : 'videos';
 
-                    $extension = strtolower($file->getClientOriginalExtension());
-                    $fileName = (string) Str::uuid().($extension ? '.'.$extension : '');
-                    $file->move(public_path($basePath.'/'.$folder), $fileName);
+                    $fileName = app(MediaUploadService::class)->storePublic(
+                        $file,
+                        $basePath.'/'.$folder,
+                        [...MediaUploadService::imageMimes(), ...MediaUploadService::videoMimes()],
+                    );
 
                     // Store full relative path (same style as you send in request)
                     $newFiles[] = $fileName;
