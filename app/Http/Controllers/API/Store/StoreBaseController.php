@@ -168,9 +168,13 @@ class StoreBaseController extends Controller
             'rate' => (float) ($product->rate ?? 0),
             'manufactureYear' => $product->manufactureYear ? (int) $product->manufactureYear : null,
             'discount' => (float) ($product->discount ?? 0),
-            'userIdAdd' => $product->userIdAdd,
+            'userIdAdd' => $product->userIdAdd !== null
+                ? (string) $product->userIdAdd
+                : null,
             'dateAdd' => $dateAdd,
-            'userIdUpdate' => $product->userIdUpdate,
+            'userIdUpdate' => $product->userIdUpdate !== null
+                ? (string) $product->userIdUpdate
+                : null,
             'dateUpdate' => $dateUpdate,
             'supCategory' => $product->subCategories->map(fn ($cat) => $this->subCategoryPayload($cat))->values(),
             'normalImagesItems' => $product->normalImages->map(fn ($img) => $this->imagePayload($img, $product->id))->values(),
