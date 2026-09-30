@@ -17,6 +17,8 @@ class MediaUploadService
         'image/tiff' => 'tiff',
         'image/avif' => 'avif',
         'image/svg+xml' => 'svg',
+        'image/bmp' => 'bmp',
+        'image/x-ms-bmp' => 'bmp',
         'image/heic' => 'heic',
         'image/heif' => 'heif',
         'video/mp4' => 'mp4',
@@ -26,6 +28,14 @@ class MediaUploadService
         'video/x-matroska' => 'mkv',
         'video/x-ms-wmv' => 'wmv',
         'video/3gpp' => '3gp',
+        'audio/mpeg' => 'mp3',
+        'audio/mp4' => 'm4a',
+        'audio/x-m4a' => 'm4a',
+        'audio/aac' => 'aac',
+        'audio/x-hx-aac' => 'aac',
+        'audio/ogg' => 'ogg',
+        'audio/wav' => 'wav',
+        'audio/x-wav' => 'wav',
         'application/pdf' => 'pdf',
         'application/msword' => 'doc',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
@@ -59,7 +69,7 @@ class MediaUploadService
 
     public static function imageMimes(bool $allowHeic = false): array
     {
-        $mimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff', 'image/avif', 'image/svg+xml'];
+        $mimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/tiff', 'image/avif', 'image/svg+xml', 'image/bmp', 'image/x-ms-bmp'];
 
         return $allowHeic ? [...$mimes, 'image/heic', 'image/heif'] : $mimes;
     }
@@ -67,6 +77,22 @@ class MediaUploadService
     public static function videoMimes(): array
     {
         return ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo', 'video/x-matroska', 'video/x-ms-wmv', 'video/3gpp'];
+    }
+
+    public static function audioMimes(): array
+    {
+        return ['audio/mpeg', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/x-hx-aac', 'audio/ogg', 'audio/wav', 'audio/x-wav'];
+    }
+
+    public static function documentMimes(): array
+    {
+        return [
+            'application/pdf',
+            'application/msword',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ];
     }
 
     public static function detectedExtension(UploadedFile $file): ?string

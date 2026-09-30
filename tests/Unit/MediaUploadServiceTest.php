@@ -37,4 +37,46 @@ class MediaUploadServiceTest extends TestCase
             MediaUploadService::imageMimes(),
         );
     }
+
+    public function test_it_uses_detected_mime_instead_of_client_extension(): void
+    {
+        $source = UploadedFile::fake()->image('source.jpg', 20, 10);
+        $file = new UploadedFile(
+            $source->getPathname(),
+            'misleading.pdf',
+            null,
+            UPLOAD_ERR_OK,
+            true,
+        );
+        $name = app(MediaUploadService::class)->storePublic(
+            $file,
+            'test-media-upload',
+            MediaUploadService::imageMimes(),
+        );
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f-]{36}\.jpg$/', $name);
+        $this->assertFileExists(public_path('test-media-upload/'.$name));
+
+        unlink(public_path('test-media-upload/'.$name));
+        @rmdir(public_path('test-media-upload'));
+    }
+
+    public function test_it_rejects_an_invalid_uploaded_file(): void
+    {
+        $file = new UploadedFile(
+            __DIR__.'/missing-image.jpg',
+            'missing-image.jpg',
+            'image/jpeg',
+            UPLOAD_ERR_NO_FILE,
+            true,
+        );
+
+        $this->expectException(ValidationException::class);
+
+        app(MediaUploadService::class)->storePublic(
+            $file,
+            'test-media-upload',
+            MediaUploadService::imageMimes(),
+        );
+    }
 }

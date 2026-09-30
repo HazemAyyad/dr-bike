@@ -1008,13 +1008,11 @@ class ProductFormService
                     continue;
                 }
 
-                $folder = public_path('SizeColorImages');
-                if (! is_dir($folder)) {
-                    mkdir($folder, 0755, true);
-                }
-
-                $filename = 'sc_'.$color->id.'_'.time().'_'.$file->getClientOriginalName();
-                $file->move($folder, $filename);
+                $filename = app(MediaUploadService::class)->storePublic(
+                    $file,
+                    'SizeColorImages',
+                    MediaUploadService::imageMimes(),
+                );
                 $color->update(['image_url' => 'SizeColorImages/'.$filename]);
             }
         }

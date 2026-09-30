@@ -11,6 +11,7 @@ use App\Models\Log;
 use App\Models\Seller;
 use App\Models\User;
 use App\Services\PersonCategoryTransferService;
+use App\Services\MediaUploadService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -250,10 +251,10 @@ public function getIncompletePersons()
         'relative_phone'     => 'nullable|string|regex:/^\+\d{3}\ \d{9}$/',
         'relative_job_title' => 'nullable|string',
         'ID_image'           => 'nullable|array',
-        'ID_image.*'           => 'required|file|image',
+        'ID_image.*'           => 'required|file|image|max:30720',
 
         'license_image'      => 'nullable|array',
-        'license_image.*'      => 'required|file|image',
+        'license_image.*'      => 'required|file|image|max:30720',
         'type' => 'nullable|string',
         'contact_category_ids' => 'nullable|array',
         'contact_category_ids.*' => 'integer|exists:contact_categories,id',
@@ -270,16 +271,22 @@ public function getIncompletePersons()
     if ($request->hasFile('ID_image')) {
         foreach($request->file('ID_image') as $file){
        
-            $idImageName = $file->getClientOriginalName();
-            $file->move(public_path($request->person_type.'Images/ID'), $idImageName);
+            $idImageName = app(MediaUploadService::class)->storePublic(
+                $file,
+                $request->person_type.'Images/ID',
+                MediaUploadService::imageMimes(),
+            );
             $idImageNames[] = $idImageName;
     }
   }
 
     if ($request->hasFile('license_image')) {
         foreach($request->file('license_image') as $file){
-        $licenseImageName = $file->getClientOriginalName();
-        $file->move(public_path($request->person_type.'Images/License'), $licenseImageName);
+        $licenseImageName = app(MediaUploadService::class)->storePublic(
+            $file,
+            $request->person_type.'Images/License',
+            MediaUploadService::imageMimes(),
+        );
         $licenseImageNames[] = $licenseImageName;
     }
    }

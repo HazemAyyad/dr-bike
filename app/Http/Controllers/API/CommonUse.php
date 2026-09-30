@@ -8,7 +8,13 @@ use App\Services\MediaUploadService;
 
 class CommonUse extends Controller
 {
-    public static function handleImageUpdate(Request $request, string $field, string $path, array $currentFiles = []): array
+    public static function handleImageUpdate(
+        Request $request,
+        string $field,
+        string $path,
+        array $currentFiles = [],
+        ?array $allowedMimes = null,
+    ): array
 {
     $finalFiles = [];
     $keepFiles = [];
@@ -32,7 +38,7 @@ class CommonUse extends Controller
                 $imageName = app(MediaUploadService::class)->storePublic(
                     $file,
                     $path,
-                    MediaUploadService::imageMimes(),
+                    $allowedMimes ?? MediaUploadService::imageMimes(),
                 );
                 $newFiles[] = $imageName;
             }

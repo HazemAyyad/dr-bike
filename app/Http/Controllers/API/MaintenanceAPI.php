@@ -515,7 +515,16 @@ class MaintenanceAPI extends Controller
         $data['seller_id'] = $request->seller_id?? null;
 
         // Merge existing and new files
-        $data['files'] = CommonUse::handleImageUpdate($request,'files','MaintenanceFiles',$maintenance->files);
+        $data['files'] = CommonUse::handleImageUpdate(
+            $request,
+            'files',
+            'MaintenanceFiles',
+            $maintenance->files,
+            [
+                ...\App\Services\MediaUploadService::imageMimes(),
+                ...\App\Services\MediaUploadService::videoMimes(),
+            ],
+        );
         $data['status'] = $request->status;
         unset($data['labor_cost'], $data['discount'], $data['edit_reason']);
 

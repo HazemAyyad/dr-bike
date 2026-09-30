@@ -43,7 +43,11 @@ class EmployeeOwnTasks extends Controller
             $request,
             'employee_img',
             'EmployeeTasksImages',
-            $task->employee_img ?? []
+            $task->employee_img ?? [],
+            [
+                ...\App\Services\MediaUploadService::imageMimes(),
+                ...\App\Services\MediaUploadService::videoMimes(),
+            ],
         );
 
         $task->employee_img = $finalEmployeeImages;
@@ -176,38 +180,20 @@ class EmployeeOwnTasks extends Controller
             $list = is_array($uploaded) ? $uploaded : [$uploaded];
             foreach ($list as $file) {
                 if ($file instanceof \Illuminate\Http\UploadedFile && $file->isValid()) {
-                    $storedName = self::safeProofStoredFilename($file);
-                    $file->move(public_path($path), $storedName);
+                    $storedName = app(\App\Services\MediaUploadService::class)->storePublic(
+                        $file,
+                        $path,
+                        [
+                            ...\App\Services\MediaUploadService::imageMimes(),
+                            ...\App\Services\MediaUploadService::videoMimes(),
+                        ],
+                    );
                     $newFiles[] = $storedName;
                 }
             }
         }
 
         return array_values(array_unique(array_merge($currentFiles, $newFiles)));
-    }
-
-    private static function safeProofStoredFilename(\Illuminate\Http\UploadedFile $file): string
-    {
-        $name = trim((string) $file->getClientOriginalName());
-        $name = $name !== '' ? basename($name) : '';
-        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-
-        if ($ext === '') {
-            $mime = strtolower((string) $file->getMimeType());
-            $ext = match (true) {
-                str_contains($mime, 'quicktime') => 'mov',
-                str_contains($mime, 'webm') => 'webm',
-                str_contains($mime, 'avi') => 'avi',
-                str_contains($mime, 'video') => 'mp4',
-                str_contains($mime, 'png') => 'png',
-                str_contains($mime, 'gif') => 'gif',
-                str_contains($mime, 'webp') => 'webp',
-                default => 'jpg',
-            };
-            $name = 'proof_'.uniqid('', true).'.'.$ext;
-        }
-
-        return preg_replace('/[^a-zA-Z0-9._-]/', '_', $name) ?: 'proof_'.uniqid('', true).'.jpg';
     }
 
     public function editOccurrenceTaskImages(Request $request)

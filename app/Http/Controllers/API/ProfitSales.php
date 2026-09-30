@@ -10,6 +10,7 @@ use App\Models\ProfitSale;
 use App\Models\Seller;
 use App\Services\DebtLedgerService;
 use App\Services\SalesDailySessionService;
+use App\Services\MediaUploadService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -41,8 +42,14 @@ class ProfitSales extends Controller
         }
 
         $file = $request->file($field);
-        $name = uniqid($field.'_').'.'.$file->getClientOriginalExtension();
-        $file->move(public_path($this->profitSaleMediaPath), $name);
+        $allowedMimes = $field === 'video'
+            ? MediaUploadService::videoMimes()
+            : MediaUploadService::imageMimes();
+        $name = app(MediaUploadService::class)->storePublic(
+            $file,
+            $this->profitSaleMediaPath,
+            $allowedMimes,
+        );
 
         return 'public/'.$this->profitSaleMediaPath.'/'.$name;
     }

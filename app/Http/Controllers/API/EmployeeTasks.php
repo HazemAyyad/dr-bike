@@ -1216,9 +1216,14 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         $adminImages=[];
         if ($request->hasFile('admin_img')) {
             foreach($request->file('admin_img') as $image){
-                    $imageName = $image->getClientOriginalName();
-                    $destinationPath = public_path($imgPath); 
-                    $image->move(public_path($imgPath), $imageName);    
+                    $imageName = app(\App\Services\MediaUploadService::class)->storePublic(
+                        $image,
+                        $imgPath,
+                        [
+                            ...\App\Services\MediaUploadService::imageMimes(),
+                            ...\App\Services\MediaUploadService::videoMimes(),
+                        ],
+                    );
                     $adminImages[] = $imageName;
             }
 
@@ -1283,8 +1288,11 @@ protected static function duplicateTask(Model $task, Carbon $newStart, Carbon $m
         
         if ($request->hasFile('audio')) {
             $audio = $request->file('audio');
-            $audioName = $audio->getClientOriginalName();
-            $audio->move(public_path('employeeTasksAudio'), $audioName);
+            $audioName = app(\App\Services\MediaUploadService::class)->storePublic(
+                $audio,
+                'employeeTasksAudio',
+                \App\Services\MediaUploadService::audioMimes(),
+            );
 
             $data['audio'] = $audioName;
         }
@@ -1683,7 +1691,16 @@ public function updateEmployeeTask(Request $request)
        // $finalData['admin_img'] = CommonUse::handleImageUpdate($request,'admin_img','AdminEmployeeTasksImages',$employeeTask->admin_img??[]);
         $oldRecurrence = $employeeTask->task_recurrence;
 
-        $adminUpdatedImages = CommonUse::handleImageUpdate($request,'admin_img','AdminEmployeeTasksImages',$employeeTask->admin_img);
+        $adminUpdatedImages = CommonUse::handleImageUpdate(
+            $request,
+            'admin_img',
+            'AdminEmployeeTasksImages',
+            $employeeTask->admin_img,
+            [
+                ...\App\Services\MediaUploadService::imageMimes(),
+                ...\App\Services\MediaUploadService::videoMimes(),
+            ],
+        );
         $finalData['admin_img'] = $adminUpdatedImages;
 
         if($request->audio){
@@ -1692,8 +1709,11 @@ public function updateEmployeeTask(Request $request)
             }
             elseif($request->hasFile('audio')){
                 $audio = $request->file('audio');
-                $audioName = $audio->getClientOriginalName();
-                $audio->move(public_path('employeeTasksAudio'), $audioName);
+                $audioName = app(\App\Services\MediaUploadService::class)->storePublic(
+                    $audio,
+                    'employeeTasksAudio',
+                    \App\Services\MediaUploadService::audioMimes(),
+                );
 
                 $finalData['audio'] = $audioName;
   

@@ -558,8 +558,11 @@ public function createSpecialTask(Request $request){
         }
         if ($request->hasFile('audio')) {
             $audio = $request->file('audio');
-            $audioName = $audio->getClientOriginalName();
-            $audio->move(public_path($this->specialTaskAudiosPath), $audioName);
+            $audioName = app(\App\Services\MediaUploadService::class)->storePublic(
+                $audio,
+                $this->specialTaskAudiosPath,
+                \App\Services\MediaUploadService::audioMimes(),
+            );
 
             $data['audio'] = $audioName;
         }
@@ -589,12 +592,15 @@ if ($request->has('sub_special_tasks')) {
         // Check if an image was uploaded for this subtask
         if ($request->hasFile("sub_special_tasks.$index.admin_subtask__img")) {
             foreach($request->file("sub_special_tasks.$index.admin_subtask__img") as $image){
-            $imageName = $image->getClientOriginalName();
-
-            $destinationPath = public_path($this->subSpecialTaskAdminImagesPath);
-            if (!file_exists($destinationPath . '/' . $imageName)) {
-                $image->move($destinationPath, $imageName);
-            }
+            $imageName = app(\App\Services\MediaUploadService::class)->storePublic(
+                $image,
+                $this->subSpecialTaskAdminImagesPath,
+                [
+                    ...\App\Services\MediaUploadService::imageMimes(),
+                    ...\App\Services\MediaUploadService::videoMimes(),
+                    ...\App\Services\MediaUploadService::audioMimes(),
+                ],
+            );
 
             $subImagesNames[] = $imageName; // Make sure this column exists in your DB
         }
@@ -1070,7 +1076,16 @@ public function updateTask(Request $request)
         }
 
 
-        $adminUpdatedImages = CommonUse::handleImageUpdate($request,'admin_img',$this->specialTaskAdminImagesPath,$specialTask->admin_img);
+        $adminUpdatedImages = CommonUse::handleImageUpdate(
+            $request,
+            'admin_img',
+            $this->specialTaskAdminImagesPath,
+            $specialTask->admin_img,
+            [
+                ...\App\Services\MediaUploadService::imageMimes(),
+                ...\App\Services\MediaUploadService::videoMimes(),
+            ],
+        );
         $finalData['admin_img'] = $adminUpdatedImages;
 
         if($request->audio){
@@ -1079,8 +1094,11 @@ public function updateTask(Request $request)
             }
             elseif($request->hasFile('audio')){
                 $audio = $request->file('audio');
-                $audioName = $audio->getClientOriginalName();
-                $audio->move(public_path($this->specialTaskAudiosPath), $audioName);
+                $audioName = app(\App\Services\MediaUploadService::class)->storePublic(
+                    $audio,
+                    $this->specialTaskAudiosPath,
+                    \App\Services\MediaUploadService::audioMimes(),
+                );
 
                 $finalData['audio'] = $audioName;
   
@@ -1125,8 +1143,15 @@ public function updateTask(Request $request)
                         $subImagesNames = [];
                         if ($request->hasFile("sub_special_tasks.$index.admin_subtask_img")) {
                             foreach ($request->file("sub_special_tasks.$index.admin_subtask_img") as $file) {
-                                $fullName = $file->getClientOriginalName();
-                                $file->move(public_path($this->subSpecialTaskAdminImagesPath.'/'), $fullName);
+                                $fullName = app(\App\Services\MediaUploadService::class)->storePublic(
+                                    $file,
+                                    $this->subSpecialTaskAdminImagesPath,
+                                    [
+                                        ...\App\Services\MediaUploadService::imageMimes(),
+                                        ...\App\Services\MediaUploadService::videoMimes(),
+                                        ...\App\Services\MediaUploadService::audioMimes(),
+                                    ],
+                                );
                                 $subImagesNames[] = $fullName;
                             }
                         }

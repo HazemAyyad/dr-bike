@@ -2,24 +2,22 @@
 
 namespace App\Support;
 
+use App\Services\MediaUploadService;
 use Illuminate\Http\UploadedFile;
 
 class SubtaskAdminMediaStorage
 {
     public static function store(UploadedFile $file): string
     {
-        $dir = public_path('EmployeeSubTasks/AdminImages/');
-        if (! is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        $ext = $file->getClientOriginalExtension() ?: $file->guessExtension() ?: 'bin';
-        $base = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
-        $safe = preg_replace('/[^\w\-]+/u', '_', $base) ?: 'file';
-        $fullName = $safe.'_'.uniqid('', true).'.'.$ext;
-        $file->move($dir, $fullName);
-
-        return $fullName;
+        return app(MediaUploadService::class)->storePublic(
+            $file,
+            'EmployeeSubTasks/AdminImages',
+            [
+                ...MediaUploadService::imageMimes(),
+                ...MediaUploadService::videoMimes(),
+                ...MediaUploadService::audioMimes(),
+            ],
+        );
     }
 
     /**

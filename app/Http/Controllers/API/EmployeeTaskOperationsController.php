@@ -323,8 +323,11 @@ class EmployeeTaskOperationsController extends Controller
             $audio = null;
             if ($request->hasFile('audio')) {
                 $file = $request->file('audio');
-                $audio = $file->getClientOriginalName();
-                $file->move(public_path('employeeTasksAudio'), $audio);
+                $audio = app(\App\Services\MediaUploadService::class)->storePublic(
+                    $file,
+                    'employeeTasksAudio',
+                    \App\Services\MediaUploadService::audioMimes(),
+                );
             }
 
             $template = EmployeeTaskTemplate::create([
@@ -490,7 +493,11 @@ class EmployeeTaskOperationsController extends Controller
                     $request,
                     'admin_img',
                     'AdminEmployeeTasksImages',
-                    $template->admin_img ?? []
+                    $template->admin_img ?? [],
+                    [
+                        ...\App\Services\MediaUploadService::imageMimes(),
+                        ...\App\Services\MediaUploadService::videoMimes(),
+                    ],
                 );
             }
 
@@ -500,8 +507,11 @@ class EmployeeTaskOperationsController extends Controller
                     $audio = $template->audio;
                 } elseif ($request->hasFile('audio')) {
                     $file = $request->file('audio');
-                    $audioName = $file->getClientOriginalName();
-                    $file->move(public_path('employeeTasksAudio'), $audioName);
+                    $audioName = app(\App\Services\MediaUploadService::class)->storePublic(
+                        $file,
+                        'employeeTasksAudio',
+                        \App\Services\MediaUploadService::audioMimes(),
+                    );
                     $audio = $audioName;
                 }
             }

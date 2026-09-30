@@ -543,19 +543,19 @@ class Bills extends Controller
             return [];
         }
 
-        $path = public_path('DebtsReceipts');
-        if (! is_dir($path)) {
-            mkdir($path, 0775, true);
-        }
-
         $names = [];
-        foreach ($request->file('receipt_images', []) as $index => $file) {
+        foreach ($request->file('receipt_images', []) as $file) {
             if (! $file || ! $file->isValid()) {
                 continue;
             }
-            $original = preg_replace('/[^A-Za-z0-9._-]+/', '_', $file->getClientOriginalName());
-            $name = time().'_'.$index.'_'.$original;
-            $file->move($path, $name);
+            $name = app(\App\Services\MediaUploadService::class)->storePublic(
+                $file,
+                'DebtsReceipts',
+                [
+                    ...\App\Services\MediaUploadService::imageMimes(),
+                    'application/pdf',
+                ],
+            );
             $names[] = $name;
         }
 

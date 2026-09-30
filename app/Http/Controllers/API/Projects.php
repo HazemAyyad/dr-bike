@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+use App\Services\MediaUploadService;
 
 class Projects extends Controller
 {
@@ -25,10 +26,10 @@ class Projects extends Controller
             'name'                => 'required|string|max:255',
             'project_cost'        => 'required|numeric|min:0',
             'images'            => 'nullable|array',
-            'images.*'            => 'required|file',
+            'images.*'            => 'required|file|mimes:jpg,jpeg,png,gif,webp|max:30720',
             'notes'               => 'nullable|string',
             'partnership_papers' => 'nullable|array',
-            'partnership_papers.*' => 'required|file',
+            'partnership_papers.*' => 'required|file|mimes:jpg,jpeg,png,gif,webp|max:30720',
             'customer_id'  => 'nullable|exists:customers,id',
             'seller_id'  => 'nullable|exists:sellers,id',
             'share'        => 'nullable|numeric|min:0',
@@ -143,8 +144,11 @@ class Projects extends Controller
 
         if ($request->hasFile($fileName)) {
             foreach ($request->file($fileName) as $image) {
-                $filename = $image->getClientOriginalName();
-                $image->move(public_path($path), $filename);
+                $filename = app(MediaUploadService::class)->storePublic(
+                    $image,
+                    $path,
+                    MediaUploadService::imageMimes(),
+                );
                 $imageNames[] = $filename;
             }
         }
