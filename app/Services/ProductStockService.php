@@ -446,7 +446,7 @@ class ProductStockService
                     ->firstOrFail();
                 $before = (int) $variant->stock;
                 $after = $before + $quantityDelta;
-                if (! $allowNegative && $after < 0) {
+                if ($quantityDelta < 0 && ! $allowNegative && $after < 0) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'actual_quantity' => [__('messages.cant_sale')],
                     ]);
@@ -475,7 +475,7 @@ class ProductStockService
             } else {
                 $before = (int) $lockedProduct->stock;
                 $after = $before + $quantityDelta;
-                if (! $allowNegative && $after < 0) {
+                if ($quantityDelta < 0 && ! $allowNegative && $after < 0) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'actual_quantity' => [__('messages.cant_sale')],
                     ]);

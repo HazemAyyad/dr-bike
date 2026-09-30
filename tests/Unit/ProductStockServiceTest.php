@@ -177,6 +177,36 @@ class ProductStockServiceTest extends TestCase
         ]);
     }
 
+    public function test_positive_restoration_can_improve_stock_that_remains_negative(): void
+    {
+        $product = Product::withoutEvents(fn () => Product::query()->create([
+            'id' => 356,
+            'product_code' => '356',
+            'nameAr' => 'Negative stock sale cancellation',
+            'stock' => -10,
+        ]));
+
+        Product::withoutEvents(fn () => app(ProductStockService::class)->adjustStock(
+            product: $product,
+            quantityDelta: 5,
+            type: ProductStockMovement::TYPE_SALE_CANCEL,
+            referenceType: 'instant_sale',
+            referenceId: 92,
+            note: 'Restore cancelled negative-stock sale',
+        ));
+
+        $this->assertSame(-5, (int) $product->fresh()->stock);
+        $this->assertDatabaseHas('product_stock_movements', [
+            'product_id' => 356,
+            'type' => ProductStockMovement::TYPE_SALE_CANCEL,
+            'quantity' => 5,
+            'stock_before' => -10,
+            'stock_after' => -5,
+            'reference_type' => 'instant_sale',
+            'reference_id' => 92,
+        ]);
+    }
+
     public function test_purchase_purge_restores_return_allocation_then_consumes_the_purchase_layer(): void
     {
         DB::table('app_settings')->insert([
