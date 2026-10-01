@@ -135,6 +135,14 @@ identity and verify origin reporting, visibility, lifecycle behavior, and cross-
    **Then** access is denied without disclosing protected order data.
 4. **Given** an existing customer or supplier receives Store access, **When** linking completes,
    **Then** no duplicate business identity is created and the account roles are explicit.
+5. **Given** a native or updated Store client assigns one stable checkout-attempt identifier, **When**
+   the accepted submission is retried concurrently or later by the same authenticated user, **Then**
+   the same sales order is returned and no order, stock, coupon, payment, debt, accounting,
+   notification, or status effect is duplicated.
+6. **Given** the unchanged legacy Store client submits no stable checkout-attempt identifier, **When**
+   an identical request is repeated by the same authenticated user within the bounded compatibility
+   window, **Then** the accepted order is reused without duplicate effects; outside that window the
+   system does not claim strict retry recognition until the client-generated identifier migration.
 
 ---
 
@@ -155,8 +163,10 @@ that the order shows 500 paid and the authoritative ledger records 1,500 unpaid 
    **Then** 1,500 is posted to the existing debt/accounting ledger and no separate wallet is created.
 2. **Given** an account is ineligible or exceeds its approved limit, **When** credit checkout is
    attempted, **Then** it is blocked before financial posting with a clear reason.
-3. **Given** an order submission is retried, **When** the original financial posting already exists,
-   **Then** no duplicate debt, payment, stock, or accounting effect is recorded.
+3. **Given** an accepted native/updated Store submission is retried with its stable attempt identifier,
+   or an unchanged legacy submission repeats within its bounded compatibility window, **When** the
+   original financial posting already exists, **Then** no duplicate debt, payment, stock, coupon, or
+   accounting effect is recorded within the applicable guarantee.
 
 ---
 
@@ -229,8 +239,9 @@ changes, and reconcile dashboard/report figures against known listings, orders, 
   conflicts with an existing business identity; role and ownership checks remain explicit.
 - Maintenance mode, disabled checkout, or a globally disabled store is activated while customers
   have active sessions or carts; browsing and checkout follow the configured settings consistently.
-- Legacy Store consumers omit newly introduced fields; their existing supported journeys continue
-  without requiring an immediate client update.
+- Legacy Store consumers omit newly introduced fields; safe supported journeys continue without an
+  immediate client update, checkout receives bounded compatibility mitigation, and password reset
+  remains security-gated until its minimum client migration is available.
 
 ## Requirements *(mandatory)*
 
@@ -313,8 +324,16 @@ changes, and reconcile dashboard/report figures against known listings, orders, 
   Admin, and other recognized origins without inference from UI, serial number, or creator alone.
 - **FR-030**: Store-origin orders MUST retain existing stock, financial, delivery, Shiply, status-log,
   cancellation, return, and accounting behavior applicable to sales orders.
-- **FR-031**: Every order submission and retry MUST prevent duplicate orders, stock effects, payments,
-  debt postings, or coupon usage for the same accepted customer action.
+- **FR-031**: Native and updated Store checkout submissions MUST include a stable, unique
+  `client_request_id` generated once per checkout attempt, and every retry by the same authenticated Store user with that
+  identifier MUST return the same accepted sales order without duplicating order, stock, payment,
+  debt, accounting, coupon, notification, or status effects. During rollout, an unchanged legacy Store
+  client that cannot provide this identifier MUST receive the strongest compatibility-safe mitigation:
+  matching by authenticated actor and canonical order intent within a short bounded deduplication
+  window, with no trust in client prices, totals, timestamps, or submitted identity. Strict retry
+  idempotency outside that legacy window requires migration of the client to generate the stable
+  per-attempt checkout identifier; the bounded exception MUST NOT weaken transactional protection for
+  accepted native orders or any stock, finance, debt, accounting, or coupon write.
 - **FR-032**: A linked Store user MUST see all relevant sales orders for their linked business identity,
   regardless of origin, subject to ownership, role, and business visibility rules.
 
@@ -366,10 +385,17 @@ changes, and reconcile dashboard/report figures against known listings, orders, 
 
 #### Compatibility and Safety
 
-- **FR-050**: Existing supported legacy Store journeys MUST remain operational during rollout without
-  requiring an immediate customer-app update.
+- **FR-050**: Existing safe, supported legacy Store journeys MUST remain operational during rollout
+  without an immediate customer-app update. Compatibility MUST NOT preserve security-critical legacy
+  behavior that retains a verified account-takeover weakness; such a journey MUST use an explicit,
+  minimally scoped client migration and rollout gate.
 - **FR-051**: Existing Admin and Store consumers MUST continue to accept compatible responses and
-  behavior; new required client fields or destructive changes are outside this feature.
+  behavior except for an explicitly documented security-gated correction. Password reset is that
+  exception: before the secure server replacement is enabled, the minimum compatible Store-client
+  migration MUST move verification to the server and submit an account-bound, short-lived,
+  single-use reset proof. The server MUST NOT return OTP secrets or permit reset by user ID alone merely
+  to preserve compatibility. This exception MUST remain limited to password reset and MUST NOT expand
+  into a general Store V2 or authentication redesign.
 - **FR-052**: Existing product, inventory category, physical location, stock, sales-order, customer,
   supplier, debt, accounting, permission, media, and notification records MUST NOT be repurposed or
   duplicated as competing authoritative Store data.
@@ -415,12 +441,19 @@ changes, and reconcile dashboard/report figures against known listings, orders, 
   blocked and identify all missing items in one review.
 - **SC-003**: Across catalog and order acceptance tests, 100% of displayed availability, accepted
   quantities, final prices, discounts, paid amounts, and debts reconcile with authoritative records.
-- **SC-004**: In compatibility regression testing, 100% of documented critical legacy Store journeys
-  and unaffected Admin journeys continue to complete without a mandatory client upgrade.
+- **SC-004**: In compatibility regression testing, 100% of documented safe legacy Store journeys and
+  unaffected Admin journeys continue without a mandatory client upgrade; the secure password-reset
+  replacement is enabled only after the minimum compatible client migration proves server-side OTP
+  verification, account-bound single-use reset proof, no OTP disclosure, and no user-ID-only reset.
 - **SC-005**: In authorization testing, 100% of covered cross-account and missing-permission attempts
   are denied without revealing protected business data.
-- **SC-006**: For every accepted Store-origin order in reconciliation testing, exactly one sales order
-  exists and stock, payment, coupon, debt, and accounting effects occur no more than once.
+- **SC-006**: In reconciliation and retry testing, 100% of accepted native/updated Store checkout
+  retries carrying the same per-attempt identifier return exactly one sales order with stock, payment,
+  coupon, debt, accounting, notification, and status effects occurring no more than once. For the
+  unchanged legacy client, 100% of same-actor canonical duplicates inside the declared bounded window
+  reuse one accepted order without duplicate effects; tests and rollout documentation explicitly state
+  that strict recognition outside that window begins only after the client-generated identifier
+  migration.
 - **SC-007**: A 2,000 order with a valid 500 partial payment produces a reconciled paid amount of 500
   and authoritative debt of exactly 1,500, with no separate Store balance.
 - **SC-008**: Dashboard and report totals reconcile exactly with their stated filters and source
@@ -458,6 +491,8 @@ changes, and reconcile dashboard/report figures against known listings, orders, 
   authoritative existing ledger.
 - Store-specific media is exceptional and is not required for the initial release unless planning
   proves an existing-media limitation.
-- Future versioned Store endpoints, legacy API migration, and legacy API removal are outside scope;
-  only additive preparation that preserves current behavior may be planned.
+- Future versioned Store endpoints, general legacy API migration, and legacy API removal are outside
+  scope. The only required client migrations in this feature are the stable per-attempt checkout
+  identifier for strict retry protection and the minimum password-reset security correction; unsafe
+  OTP disclosure and user-ID-only reset are not preserved as compatibility behavior.
 - The configured Doctor Bike business timezone governs promotion, coupon, and banner validity.
