@@ -16,7 +16,7 @@ final class ListingReadinessService
     public function evaluateForProduct(?Product $product, ?OnlineStoreListing $listing = null): array
     {
         $issues = [];
-        if (! $product || ! $product->exists) {
+        if (! $product || ! $product->exists || $product->trashed()) {
             $issues[] = 'missing_product';
 
             return ['state' => 'incomplete', 'issues' => $issues];

@@ -2,8 +2,11 @@
 
 namespace Tests\Unit\OnlineStore;
 
+use App\Http\Resources\OnlineStore\OnlineStoreListingResource;
 use App\Models\OnlineStore\OnlineStoreListing;
+use App\Services\OnlineStore\ListingReadinessService;
 use App\Support\OnlineStore\OnlineStoreValues;
+use Illuminate\Http\Request;
 use PHPUnit\Framework\TestCase;
 
 class OnlineStoreListingTest extends TestCase
@@ -51,5 +54,33 @@ class OnlineStoreListingTest extends TestCase
         $this->assertSame(['draft', 'ready', 'published', 'hidden'], OnlineStoreValues::LISTING_STATUSES);
         $this->assertStringNotContainsString("->float('price'", $migration);
         $this->assertStringNotContainsString("->integer('stock'", $migration);
+    }
+
+    public function test_missing_product_is_invalid_for_readiness_and_safe_serialization(): void
+    {
+        $listing = new OnlineStoreListing([
+            'name_translations' => ['en' => 'Store name'],
+            'description_translations' => ['en' => 'Store description'],
+        ]);
+        $listing->forceFill([
+            'id' => 10,
+            'product_id' => 99,
+            'status' => 'published',
+            'readiness_state' => 'complete',
+            'readiness_issues' => [],
+        ]);
+        $listing->exists = true;
+        $listing->setRelation('product', null);
+
+        $readiness = (new ListingReadinessService)->evaluate($listing);
+        $serialized = (new OnlineStoreListingResource($listing))->toArray(Request::create('/'));
+
+        $this->assertSame(['state' => 'incomplete', 'issues' => ['missing_product']], $readiness);
+        $this->assertSame('incomplete', $serialized['readiness_state']);
+        $this->assertSame(['missing_product'], $serialized['readiness_issues']);
+        $this->assertFalse($serialized['product_archived']);
+        $this->assertSame(['retail' => null, 'wholesale' => null], $serialized['base_prices']);
+        $this->assertSame(['stock' => 0, 'in_stock' => false, 'purchasable' => false], $serialized['availability']);
+        $this->assertSame('Store name', $serialized['display']['name']);
     }
 }

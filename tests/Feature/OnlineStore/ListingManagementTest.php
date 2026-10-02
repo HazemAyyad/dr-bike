@@ -87,4 +87,24 @@ class ListingManagementTest extends TestCase
             ->assertOk()->assertJsonPath('data.product_id', $product->id)
             ->assertJsonPath('data.availability.stock', 5);
     }
+
+    public function test_listing_with_soft_deleted_product_serializes_as_incomplete_without_restoring_product(): void
+    {
+        $product = OnlineStoreFixtureFactory::createProduct();
+        OnlineStoreFixtureFactory::createAuthenticatedAdminActor();
+        $listing = $this->postJson('/api/online-store/listings', ['product_id' => $product->id])
+            ->assertCreated()->json('data');
+
+        $product->delete();
+
+        $this->getJson('/api/online-store/listings/'.$listing['id'])
+            ->assertOk()
+            ->assertJsonPath('data.readiness_state', 'incomplete')
+            ->assertJsonPath('data.readiness_issues.0', 'missing_product')
+            ->assertJsonPath('data.product_archived', true)
+            ->assertJsonPath('data.base_prices.retail', null)
+            ->assertJsonPath('data.availability.purchasable', false);
+
+        $this->assertSoftDeleted('products', ['id' => $product->id]);
+    }
 }
