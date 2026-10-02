@@ -92,21 +92,21 @@ description: "Dependency-ordered implementation tasks for Online Store Managemen
 
 ### Tests for User Story 2
 
-- [ ] T030 [P] [US2] Add category hierarchy, cycle prevention, membership, inactive-category, sibling ordering, and no-`store_sections` mutation tests in `tests/Feature/OnlineStore/OnlineStoreCategoryTest.php`
-- [ ] T031 [P] [US2] Add home-section typed-target matrix tests covering manual listing/category items, automatic allow-listed config, hero banners, maintenance config, invalid class/type rejection, and `sort_order,id` ties in `tests/Feature/OnlineStore/HomeSectionTest.php`
-- [ ] T032 [P] [US2] Add banner schedule/timezone, safe URL scheme, target existence, action compatibility, and inactive-window tests in `tests/Feature/OnlineStore/BannerTest.php`
+- [x] T030 [P] [US2] Add category hierarchy, cycle prevention, membership, inactive-category, sibling ordering, and no-`store_sections` mutation tests in `tests/Feature/OnlineStore/OnlineStoreCategoryTest.php`
+- [x] T031 [P] [US2] Add home-section typed-target matrix tests covering manual listing/category items, automatic allow-listed config, hero banners, maintenance config, invalid class/type rejection, and `sort_order,id` ties in `tests/Feature/OnlineStore/HomeSectionTest.php`
+- [x] T032 [P] [US2] Add banner schedule/timezone, safe URL scheme, target existence, action compatibility, and inactive-window tests in `tests/Feature/OnlineStore/BannerTest.php`
 
 ### Implementation for User Story 2
 
-- [ ] T033 [P] [US2] Implement `OnlineStoreCategory` and `OnlineStoreCategoryListing` with JSON translations, self-parent relation, active/home flags, sibling/category ordering, and unique membership in `app/Models/OnlineStore/OnlineStoreCategory.php` and `app/Models/OnlineStore/OnlineStoreCategoryListing.php`
-- [ ] T034 [P] [US2] Implement `OnlineStoreHomeSection` and typed `OnlineStoreHomeSectionItem` with modes `manual|automatic|dedicated_banners`, allow-listed `listing|category` targets, and deterministic ordering in `app/Models/OnlineStore/OnlineStoreHomeSection.php` and `app/Models/OnlineStore/OnlineStoreHomeSectionItem.php`
-- [ ] T035 [P] [US2] Implement `OnlineStoreBanner` with multilingual content, schedule, sort, and actions `listing|category|promotion|url|none` in `app/Models/OnlineStore/OnlineStoreBanner.php`
-- [ ] T036 [US2] Implement category cycle checks, membership replacement, active-state consequences, and complete sibling reorder transactions in `app/Services/OnlineStore/OnlineStoreCategoryService.php`
-- [ ] T037 [US2] Implement section composition rules: hero uses dedicated banners; categories uses category items/config; product sections use listing items/config; maintenance uses validated config; automatic selectors accept no SQL/class/query fragments in `app/Services/OnlineStore/HomeSectionService.php`
-- [ ] T038 [US2] Implement banner target/action validation, safe URL validation, business-timezone scheduling, and deterministic order in `app/Services/OnlineStore/BannerService.php`
-- [ ] T039 [US2] Implement category, home-section, and banner management endpoints with exact `Online Store Categories Manage` and `Online Store Content Manage` permissions in `app/Http/Controllers/API/OnlineStore/StorefrontContentController.php`
-- [ ] T040 [US2] Implement storefront composition reads that omit ineligible targets without mutating curation and expose deterministic section/banner results in `app/Http/Controllers/API/Store/StoreHomeController.php`
-- [ ] T041 [US2] Register management endpoints in `routes/api.php` and compatibility-safe storefront reads in `routes/api_store.php`
+- [x] T033 [P] [US2] Implement `OnlineStoreCategory` and `OnlineStoreCategoryListing` with JSON translations, self-parent relation, active/home flags, sibling/category ordering, and unique membership in `app/Models/OnlineStore/OnlineStoreCategory.php` and `app/Models/OnlineStore/OnlineStoreCategoryListing.php`
+- [x] T034 [P] [US2] Implement `OnlineStoreHomeSection` and typed `OnlineStoreHomeSectionItem` with modes `manual|automatic|dedicated_banners`, allow-listed `listing|category` targets, and deterministic ordering in `app/Models/OnlineStore/OnlineStoreHomeSection.php` and `app/Models/OnlineStore/OnlineStoreHomeSectionItem.php`
+- [x] T035 [P] [US2] Implement `OnlineStoreBanner` with multilingual content, schedule, sort, and actions `listing|category|promotion|url|none` in `app/Models/OnlineStore/OnlineStoreBanner.php`
+- [x] T036 [US2] Implement category cycle checks, membership replacement, active-state consequences, and complete sibling reorder transactions in `app/Services/OnlineStore/OnlineStoreCategoryService.php`
+- [x] T037 [US2] Implement section composition rules: hero uses dedicated banners; categories uses category items/config; product sections use listing items/config; maintenance uses validated config; automatic selectors accept no SQL/class/query fragments in `app/Services/OnlineStore/HomeSectionService.php`
+- [x] T038 [US2] Implement banner target/action validation, safe URL validation, business-timezone scheduling, and deterministic order in `app/Services/OnlineStore/BannerService.php`
+- [x] T039 [US2] Implement category, home-section, and banner management endpoints with exact `Online Store Categories Manage` and `Online Store Content Manage` permissions in `app/Http/Controllers/API/OnlineStore/StorefrontContentController.php`
+- [x] T040 [US2] Implement storefront composition reads that omit ineligible targets without mutating curation and expose deterministic section/banner results in `app/Http/Controllers/API/Store/StoreHomeController.php`
+- [x] T041 [US2] Register management endpoints in `routes/api.php` and compatibility-safe storefront reads in `routes/api_store.php`
 
 **Checkpoint**: US2 independently supplies Store discovery/content while preserving physical inventory taxonomy.
 

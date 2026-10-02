@@ -77,6 +77,7 @@ use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
 use App\Http\Controllers\API\LegacyStoreImageController;
 use App\Http\Controllers\API\OnlineStore\ListingController as OnlineStoreListingController;
+use App\Http\Controllers\API\OnlineStore\StorefrontContentController as OnlineStoreContentController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1727,6 +1728,26 @@ Route::prefix('online-store')
         Route::patch('/listings/{listing}', [OnlineStoreListingController::class, 'update'])->name('listings.update');
         Route::post('/listings/{listing}/transition', [OnlineStoreListingController::class, 'transition'])->name('listings.transition');
         Route::get('/products/{product}/store-readiness', [OnlineStoreListingController::class, 'readiness'])->name('products.readiness');
+        Route::get('/categories', [OnlineStoreContentController::class, 'categories'])->name('categories.index');
+        Route::post('/categories', [OnlineStoreContentController::class, 'storeCategory'])->name('categories.store');
+        Route::post('/categories/reorder', [OnlineStoreContentController::class, 'reorderCategories'])->name('categories.reorder');
+        Route::get('/categories/{category}', [OnlineStoreContentController::class, 'category'])->name('categories.show');
+        Route::patch('/categories/{category}', [OnlineStoreContentController::class, 'updateCategory'])->name('categories.update');
+        Route::delete('/categories/{category}', [OnlineStoreContentController::class, 'deleteCategory'])->name('categories.destroy');
+        Route::put('/categories/{category}/listings', [OnlineStoreContentController::class, 'replaceCategoryListings'])->name('categories.listings.replace');
+        Route::get('/home-sections', [OnlineStoreContentController::class, 'sections'])->name('home-sections.index');
+        Route::post('/home-sections', [OnlineStoreContentController::class, 'storeSection'])->name('home-sections.store');
+        Route::post('/home-sections/reorder', [OnlineStoreContentController::class, 'reorderSections'])->name('home-sections.reorder');
+        Route::get('/home-sections/{section}', [OnlineStoreContentController::class, 'section'])->name('home-sections.show');
+        Route::patch('/home-sections/{section}', [OnlineStoreContentController::class, 'updateSection'])->name('home-sections.update');
+        Route::delete('/home-sections/{section}', [OnlineStoreContentController::class, 'deleteSection'])->name('home-sections.destroy');
+        Route::put('/home-sections/{section}/items', [OnlineStoreContentController::class, 'replaceSectionItems'])->name('home-sections.items.replace');
+        Route::get('/banners', [OnlineStoreContentController::class, 'banners'])->name('banners.index');
+        Route::post('/banners', [OnlineStoreContentController::class, 'storeBanner'])->name('banners.store');
+        Route::post('/banners/reorder', [OnlineStoreContentController::class, 'reorderBanners'])->name('banners.reorder');
+        Route::get('/banners/{banner}', [OnlineStoreContentController::class, 'banner'])->name('banners.show');
+        Route::patch('/banners/{banner}', [OnlineStoreContentController::class, 'updateBanner'])->name('banners.update');
+        Route::delete('/banners/{banner}', [OnlineStoreContentController::class, 'deleteBanner'])->name('banners.destroy');
         Route::middleware('check.permission:Online Store View')->group(function () {
             // Dashboard, report, and resource read routes are registered in later phases.
         });

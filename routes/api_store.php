@@ -9,6 +9,7 @@ use App\Http\Controllers\API\Store\StoreNotificationsController;
 use App\Http\Controllers\API\Store\StoreOnlineAdsController;
 use App\Http\Controllers\API\Store\StoreOrdersController;
 use App\Http\Controllers\API\Store\StoreSettingsController;
+use App\Http\Controllers\API\Store\StoreHomeController;
 use App\Http\Controllers\API\Store\StoreSupCategoryController;
 use App\Http\Controllers\API\Store\StoreUsersController;
 use Illuminate\Support\Facades\Route;
@@ -36,6 +37,9 @@ Route::post('/Users/Edit', [StoreUsersController::class, 'edit']);
 Route::post('/Users/BlockUserAndNotActive', [StoreUsersController::class, 'blockUserAndNotActive']);
 
 Route::post('/Settings/CheckSetting', [StoreSettingsController::class, 'checkSetting']);
+
+Route::get('/OnlineStore/Home', [StoreHomeController::class, 'index']);
+Route::post('/OnlineStore/Home', [StoreHomeController::class, 'index']);
 
 Route::post('/OnlineAds/GetAllAds', [StoreOnlineAdsController::class, 'getAllAds']);
 Route::post('/Notifications/GetNotifications', [StoreNotificationsController::class, 'getNotifications']);
