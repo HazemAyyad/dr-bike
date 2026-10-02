@@ -12,6 +12,7 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call(OnlineStorePermissionSeeder::class);
         $this->call(WhatsAppTemplateSeeder::class);
         // \App\Models\User::factory(10)->create();
 

@@ -10,6 +10,14 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class SalesOrder extends Model
 {
+    public const ORIGIN_ADMIN = 'admin';
+
+    public const ORIGIN_STORE = 'store';
+
+    /**
+     * origin, origin_user_id, and client_request_id are trusted orchestration
+     * fields and are deliberately excluded from mass assignment.
+     */
     protected $fillable = [
         'serial_number',
         'customer_id',
@@ -207,6 +215,11 @@ class SalesOrder extends Model
     public function createdByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function originUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'origin_user_id');
     }
 
     public function stuckAssignedUser(): BelongsTo

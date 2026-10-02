@@ -1118,6 +1118,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Goal Creation','re
 Route::group(['middleware' => ['auth:sanctum','check.permission:Sales,Follow-up Section,Projects and Purchases Management,Purchasing Section','refresh.token.expiry']], function () {
       //products
     Route::get('/all/products' , [Products::class,'allproducts']);
+
     Route::post('/product/retail-price' , [Products::class,'updateRetailPrice']);
     Route::post('/products/paste-suggestions' , [Products::class,'pasteSuggestions']);
     Route::post('/products/paste-alias' , [Products::class,'storePasteAlias']);
@@ -1704,6 +1705,43 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/subcategory/store',                 [CategoryController::class, 'storeSubCategory']);
     Route::post('/admin/subcategory/update',                [CategoryController::class, 'updateSubCategory']);
     Route::post('/admin/subcategory/toggle-status',         [CategoryController::class, 'toggleSubCategoryStatus']);
+
+/*
+|--------------------------------------------------------------------------
+| Online Store Admin boundary
+|--------------------------------------------------------------------------
+|
+| Phase 2 establishes the authenticated prefix and permission hooks only.
+| Resource routes are added by their later user-story tasks inside the
+| matching permission group; no legacy Store route is moved or replaced.
+|
+*/
+Route::prefix('online-store')
+    ->name('online-store.')
+    ->middleware(['auth:sanctum', 'refresh.token.expiry'])
+    ->group(function () {
+        Route::middleware('check.permission:Online Store View')->group(function () {
+            // Dashboard, report, and resource read routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Products Manage')->group(function () {
+            // Listing and media mutation routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Categories Manage')->group(function () {
+            // Category mutation routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Content Manage')->group(function () {
+            // Home-section and banner routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Promotions Manage')->group(function () {
+            // Promotion and coupon routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Reviews Manage')->group(function () {
+            // Review moderation routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Settings Manage')->group(function () {
+            // Settings, account-link, and credit-policy routes are registered in later phases.
+        });
+    });
     Route::get('/get/all/projects' , [Stocks::class,'allProjects']);
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
     Route::get('/all/sellers' , [Customers::class,'allSellers']);
