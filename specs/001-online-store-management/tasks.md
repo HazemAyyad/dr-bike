@@ -23,12 +23,12 @@ description: "Dependency-ordered implementation tasks for Online Store Managemen
 
 **Purpose**: Establish implementation locations, isolated test safeguards, and frozen compatibility evidence before behavior changes.
 
-- [ ] T001 Create the Online Store application namespaces and shared directory structure in `app/Models/OnlineStore/.gitkeep`, `app/Services/OnlineStore/.gitkeep`, `app/Http/Controllers/API/OnlineStore/.gitkeep`, `app/Http/Requests/OnlineStore/.gitkeep`, and `app/Policies/OnlineStore/.gitkeep`
-- [ ] T002 [P] Create Online Store unit/feature test directories and a reusable fixture builder skeleton in `tests/Unit/OnlineStore/.gitkeep`, `tests/Feature/OnlineStore/.gitkeep`, and `tests/Support/OnlineStoreFixtureFactory.php`
-- [ ] T003 Add a fail-closed disposable-database guard for Online Store database tests in `tests/Support/RequiresDisposableDatabase.php` and register it in `tests/TestCase.php` without changing production database configuration
-- [ ] T004 Capture sanitized pre-change `routes/api_store.php` request/response fixture shapes for auth, catalog, orders, settings, comments, cities, and notifications in `tests/Fixtures/OnlineStore/legacy_api_store_contracts.php`
-- [ ] T005 [P] Add reusable authenticated Store/Admin actor, customer, seller, Product/variant, stock, and ledger fixture helpers in `tests/Support/OnlineStoreFixtureFactory.php`
-- [ ] T006 Document the test database, queue fakes, Shiply/FCM sandbox boundaries, and no-production-dump-write rule in `specs/001-online-store-management/quickstart.md`
+- [X] T001 Create the Online Store application namespaces and shared directory structure in `app/Models/OnlineStore/.gitkeep`, `app/Services/OnlineStore/.gitkeep`, `app/Http/Controllers/API/OnlineStore/.gitkeep`, `app/Http/Requests/OnlineStore/.gitkeep`, and `app/Policies/OnlineStore/.gitkeep`
+- [X] T002 [P] Create Online Store unit/feature test directories and a reusable fixture builder skeleton in `tests/Unit/OnlineStore/.gitkeep`, `tests/Feature/OnlineStore/.gitkeep`, and `tests/Support/OnlineStoreFixtureFactory.php`
+- [X] T003 Add a fail-closed disposable-database guard for Online Store database tests in `tests/Support/RequiresDisposableDatabase.php` and register it in `tests/TestCase.php` without changing production database configuration
+- [X] T004 Capture sanitized pre-change `routes/api_store.php` request/response fixture shapes for auth, catalog, orders, settings, comments, cities, and notifications in `tests/Fixtures/OnlineStore/legacy_api_store_contracts.php`
+- [X] T005 [P] Add reusable authenticated Store/Admin actor, customer, seller, Product/variant, stock, and ledger fixture helpers in `tests/Support/OnlineStoreFixtureFactory.php`
+- [X] T006 Document the test database, queue fakes, Shiply/FCM sandbox boundaries, and no-production-dump-write rule in `specs/001-online-store-management/quickstart.md`
 
 **Checkpoint**: Compatibility evidence and safe test infrastructure exist before schema or behavior changes.
 

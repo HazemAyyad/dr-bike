@@ -16,6 +16,40 @@ migrations or tests against the local production-like database.
 
 ## Static and isolated checks
 
+### Disposable database guard
+
+Database-backed Online Store tests must opt in explicitly and name the exact disposable schema. The
+guard in `tests/Support/RequiresDisposableDatabase.php` rejects non-testing environments, non-MySQL/
+MariaDB drivers, missing opt-in, name mismatches, known production/developer schema names, and names
+that do not visibly contain `test`, `testing`, or `disposable` as a segment.
+
+Set these values only in a dedicated testing environment (for example, an untracked `.env.testing` or
+the test runner process); do not change production database configuration:
+
+```text
+APP_ENV=testing
+DB_DATABASE=doctor_bike_online_store_test
+ONLINE_STORE_DISPOSABLE_DB=true
+ONLINE_STORE_DISPOSABLE_DB_NAME=doctor_bike_online_store_test
+```
+
+Online Store feature tests under `Tests\\Feature\\OnlineStore` are guarded automatically by the base
+test case. Any database-backed test outside that namespace must call `requireDisposableDatabase()`
+before migrations, transactions, queries, or fixture creation. `OnlineStoreFixtureFactory` also
+invokes the guard before every persistence helper, so unsafe configuration fails before fixture data
+is written.
+
+### External-side-effect boundaries
+
+- Automated notification tests must fake Laravel notifications, events, and queues as applicable;
+  they must not dispatch real FCM traffic.
+- Automated delivery tests must fake the Shiply service/client. Optional live Shiply or FCM smoke
+  checks require explicit sandbox credentials and are reported separately from the automated suite.
+- Never place live Shiply/FCM credentials, bearer tokens, contact data, or returned payloads containing
+  personal data in fixtures or test output.
+- `DB/dr_bike.sql` is read-only. Never migrate, rewrite, format, or update it. If schema compatibility
+  needs the dump, import a copy into the allow-listed disposable schema without modifying the file.
+
 ```powershell
 php -l app/Services/OnlineStore/OnlineStoreCheckoutService.php
 php vendor/bin/phpunit tests/Unit/OnlineStore
