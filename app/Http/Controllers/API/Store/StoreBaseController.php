@@ -35,6 +35,14 @@ class StoreBaseController extends Controller
 
         $accessToken = PersonalAccessToken::findToken($token);
 
+        if (! $accessToken || ($accessToken->expires_at && $accessToken->expires_at->isPast())) {
+            return null;
+        }
+        $expiration = config('sanctum.expiration');
+        if ($expiration !== null && $accessToken->created_at?->lte(now()->subMinutes((int) $expiration))) {
+            return null;
+        }
+
         return $accessToken?->tokenable instanceof StoreUser
             ? $accessToken->tokenable
             : null;

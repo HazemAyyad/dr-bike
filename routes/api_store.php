@@ -3,13 +3,13 @@
 use App\Http\Controllers\API\Store\StoreAuthController;
 use App\Http\Controllers\API\Store\StoreCitiesController;
 use App\Http\Controllers\API\Store\StoreCommentsController;
+use App\Http\Controllers\API\Store\StoreHomeController;
 use App\Http\Controllers\API\Store\StoreItemsController;
 use App\Http\Controllers\API\Store\StoreMainCategoryController;
 use App\Http\Controllers\API\Store\StoreNotificationsController;
 use App\Http\Controllers\API\Store\StoreOnlineAdsController;
 use App\Http\Controllers\API\Store\StoreOrdersController;
 use App\Http\Controllers\API\Store\StoreSettingsController;
-use App\Http\Controllers\API\Store\StoreHomeController;
 use App\Http\Controllers\API\Store\StoreSupCategoryController;
 use App\Http\Controllers\API\Store\StoreUsersController;
 use Illuminate\Support\Facades\Route;
@@ -61,5 +61,6 @@ Route::post('/Cities/GetVillagesByCityId', [StoreCitiesController::class, 'getVi
 Route::post('/Cities/CalculateDeliveryFee', [StoreCitiesController::class, 'calculateDeliveryFee']);
 
 Route::post('/Orders/ManageOrder', [StoreOrdersController::class, 'manageOrder']);
+Route::post('/OnlineStore/Checkout', [StoreOrdersController::class, 'checkout']);
 Route::post('/Orders/CancelOrder', [StoreOrdersController::class, 'cancelOrder']);
 Route::post('/Orders/GetAllOrdersByUserId', [StoreOrdersController::class, 'getAllOrdersByUserId']);

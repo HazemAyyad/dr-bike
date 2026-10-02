@@ -177,6 +177,11 @@ class SalesOrder extends Model
         return $this->hasMany(SalesOrderShiplyEvent::class);
     }
 
+    public function couponRedemption(): HasOne
+    {
+        return $this->hasOne(\App\Models\OnlineStore\OnlineStoreCouponRedemption::class);
+    }
+
     public function deliveryCompany(): BelongsTo
     {
         return $this->belongsTo(DeliveryCompany::class);

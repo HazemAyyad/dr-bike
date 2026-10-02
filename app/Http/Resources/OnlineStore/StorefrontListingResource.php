@@ -6,6 +6,7 @@ use App\Services\OnlineStore\ListingReadinessService;
 use App\Services\OnlineStore\MediaPresentationService;
 use App\Services\OnlineStore\StoreAvailabilityService;
 use App\Services\OnlineStore\StorePriceResolver;
+use App\Services\OnlineStore\StorePricingService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -38,6 +39,7 @@ class StorefrontListingResource extends JsonResource
             ],
             'media' => app(MediaPresentationService::class)->resolved($listing),
             'base_prices' => app(StorePriceResolver::class)->resolve($product),
+            'store_prices' => $validProduct ? app(StorePricingService::class)->displayPrices($listing) : ['retail' => null, 'wholesale' => null, 'variants' => []],
             'availability' => $availability,
             'is_featured' => $listing->is_featured, 'is_new' => $listing->is_new,
             'show_on_home' => $listing->show_on_home, 'show_as_offer' => $listing->show_as_offer,

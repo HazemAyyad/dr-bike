@@ -79,6 +79,9 @@ use App\Http\Controllers\API\LegacyStoreImageController;
 use App\Http\Controllers\API\OnlineStore\ListingController as OnlineStoreListingController;
 use App\Http\Controllers\API\OnlineStore\ListingMediaController as OnlineStoreListingMediaController;
 use App\Http\Controllers\API\OnlineStore\StorefrontContentController as OnlineStoreContentController;
+use App\Http\Controllers\API\OnlineStore\AccountLinkController as OnlineStoreAccountLinkController;
+use App\Http\Controllers\API\OnlineStore\PromotionController as OnlineStorePromotionController;
+use App\Http\Controllers\API\OnlineStore\CouponController as OnlineStoreCouponController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1752,6 +1755,25 @@ Route::prefix('online-store')
         Route::get('/banners/{banner}', [OnlineStoreContentController::class, 'banner'])->name('banners.show');
         Route::patch('/banners/{banner}', [OnlineStoreContentController::class, 'updateBanner'])->name('banners.update');
         Route::delete('/banners/{banner}', [OnlineStoreContentController::class, 'deleteBanner'])->name('banners.destroy');
+        Route::get('/promotions', [OnlineStorePromotionController::class, 'index']);
+        Route::post('/promotions', [OnlineStorePromotionController::class, 'store']);
+        Route::get('/promotions/{promotion}', [OnlineStorePromotionController::class, 'show']);
+        Route::patch('/promotions/{promotion}', [OnlineStorePromotionController::class, 'update']);
+        Route::post('/promotions/{promotion}/activate', [OnlineStorePromotionController::class, 'activate']);
+        Route::post('/promotions/{promotion}/deactivate', [OnlineStorePromotionController::class, 'deactivate']);
+        Route::delete('/promotions/{promotion}', [OnlineStorePromotionController::class, 'destroy']);
+        Route::post('/pricing/preview', [OnlineStorePromotionController::class, 'preview']);
+        Route::get('/coupons', [OnlineStoreCouponController::class, 'index']);
+        Route::post('/coupons', [OnlineStoreCouponController::class, 'store']);
+        Route::get('/coupons/{coupon}', [OnlineStoreCouponController::class, 'show']);
+        Route::patch('/coupons/{coupon}', [OnlineStoreCouponController::class, 'update']);
+        Route::post('/coupons/{coupon}/activate', [OnlineStoreCouponController::class, 'activate']);
+        Route::post('/coupons/{coupon}/deactivate', [OnlineStoreCouponController::class, 'deactivate']);
+        Route::delete('/coupons/{coupon}', [OnlineStoreCouponController::class, 'destroy']);
+        Route::get('/coupons/{coupon}/redemptions', [OnlineStoreCouponController::class, 'redemptions']);
+        Route::get('/account-links', [OnlineStoreAccountLinkController::class, 'index']);
+        Route::post('/account-links', [OnlineStoreAccountLinkController::class, 'store']);
+        Route::patch('/account-links/{link}', [OnlineStoreAccountLinkController::class, 'update']);
         Route::middleware('check.permission:Online Store View')->group(function () {
             // Dashboard, report, and resource read routes are registered in later phases.
         });
