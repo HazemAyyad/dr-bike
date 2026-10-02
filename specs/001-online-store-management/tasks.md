@@ -66,19 +66,19 @@ description: "Dependency-ordered implementation tasks for Online Store Managemen
 
 ### Tests for User Story 1
 
-- [ ] T020 [P] [US1] Add model/constraint tests for unique `product_id`, states `draft|ready|published|hidden`, default `readiness_state=incomplete`, nullable translation/badge fields, boolean merchandising defaults, and no price/stock fields in `tests/Unit/OnlineStore/OnlineStoreListingTest.php`
-- [ ] T021 [P] [US1] Add listing API contract, exact-permission, lifecycle, duplicate-concurrency, completeness, and direct-request authorization tests in `tests/Feature/OnlineStore/ListingManagementTest.php`
+- [x] T020 [P] [US1] Add model/constraint tests for unique `product_id`, states `draft|ready|published|hidden`, default `readiness_state=incomplete`, nullable translation/badge fields, boolean merchandising defaults, and no price/stock fields in `tests/Unit/OnlineStore/OnlineStoreListingTest.php`
+- [x] T021 [P] [US1] Add listing API contract, exact-permission, lifecycle, duplicate-concurrency, completeness, and direct-request authorization tests in `tests/Feature/OnlineStore/ListingManagementTest.php`
 
 ### Implementation for User Story 1
 
-- [ ] T022 [P] [US1] Implement `OnlineStoreListing` with Product relation, JSON translations/issues, boolean casts, lifecycle timestamps, and unique one-row-per-Product semantics in `app/Models/OnlineStore/OnlineStoreListing.php`
-- [ ] T023 [P] [US1] Implement listing create/update/transition validation that accepts no base-price or stock mutation fields in `app/Http/Requests/OnlineStore/ManageListingRequest.php`
-- [ ] T024 [US1] Implement deterministic completeness evaluation for valid Product, display name, description, usable main media, active category, and authoritative price in `app/Services/OnlineStore/ListingReadinessService.php`
-- [ ] T025 [US1] Implement allowed transitions on the same row, publication blocking, readiness refresh, and published/hidden timestamps in `app/Services/OnlineStore/ListingLifecycleService.php`
-- [ ] T026 [US1] Implement Admin listing CRUD/readiness/transition endpoints with `Online Store Products Manage` enforcement in `app/Http/Controllers/API/OnlineStore/ListingController.php`
-- [ ] T027 [US1] Register listing/readiness/transition routes under the authenticated group in `routes/api.php`
-- [ ] T028 [US1] Serialize listing lifecycle, translations, merchandising flags, read-only authoritative base prices/availability, and readiness issues in `app/Http/Resources/OnlineStore/OnlineStoreListingResource.php`
-- [ ] T029 [US1] Integrate publication lifecycle audit calls without auditing Product base-price changes in `app/Services/OnlineStore/ListingLifecycleService.php`
+- [x] T022 [P] [US1] Implement `OnlineStoreListing` with Product relation, JSON translations/issues, boolean casts, lifecycle timestamps, and unique one-row-per-Product semantics in `app/Models/OnlineStore/OnlineStoreListing.php`
+- [x] T023 [P] [US1] Implement listing create/update/transition validation that accepts no base-price or stock mutation fields in `app/Http/Requests/OnlineStore/ManageListingRequest.php`
+- [x] T024 [US1] Implement deterministic completeness evaluation for valid Product, display name, description, usable main media, active category, and authoritative price in `app/Services/OnlineStore/ListingReadinessService.php`
+- [x] T025 [US1] Implement allowed transitions on the same row, publication blocking, readiness refresh, and published/hidden timestamps in `app/Services/OnlineStore/ListingLifecycleService.php`
+- [x] T026 [US1] Implement Admin listing CRUD/readiness/transition endpoints with `Online Store Products Manage` enforcement in `app/Http/Controllers/API/OnlineStore/ListingController.php`
+- [x] T027 [US1] Register listing/readiness/transition routes under the authenticated group in `routes/api.php`
+- [x] T028 [US1] Serialize listing lifecycle, translations, merchandising flags, read-only authoritative base prices/availability, and readiness issues in `app/Http/Resources/OnlineStore/OnlineStoreListingResource.php`
+- [x] T029 [US1] Integrate publication lifecycle audit calls without auditing Product base-price changes in `app/Services/OnlineStore/ListingLifecycleService.php`
 
 **Checkpoint**: US1 independently delivers the publishable listing lifecycle and is the suggested MVP.
 

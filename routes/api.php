@@ -76,6 +76,7 @@ use App\Http\Controllers\API\DeliveryCompaniesController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
 use App\Http\Controllers\API\LegacyStoreImageController;
+use App\Http\Controllers\API\OnlineStore\ListingController as OnlineStoreListingController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1720,6 +1721,12 @@ Route::prefix('online-store')
     ->name('online-store.')
     ->middleware(['auth:sanctum', 'refresh.token.expiry'])
     ->group(function () {
+        Route::get('/listings', [OnlineStoreListingController::class, 'index'])->name('listings.index');
+        Route::post('/listings', [OnlineStoreListingController::class, 'store'])->name('listings.store');
+        Route::get('/listings/{listing}', [OnlineStoreListingController::class, 'show'])->name('listings.show');
+        Route::patch('/listings/{listing}', [OnlineStoreListingController::class, 'update'])->name('listings.update');
+        Route::post('/listings/{listing}/transition', [OnlineStoreListingController::class, 'transition'])->name('listings.transition');
+        Route::get('/products/{product}/store-readiness', [OnlineStoreListingController::class, 'readiness'])->name('products.readiness');
         Route::middleware('check.permission:Online Store View')->group(function () {
             // Dashboard, report, and resource read routes are registered in later phases.
         });
