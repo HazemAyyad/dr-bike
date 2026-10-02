@@ -51,9 +51,9 @@ class StorefrontContentController extends Controller
     public function deleteCategory(Request $request, OnlineStoreCategory $category, OnlineStoreCategoryService $service)
     {
         $this->enforce($request, self::CATEGORIES_PERMISSION, true);
-        $service->delete($category, $request->user());
+        $disposition = $service->delete($category, $request->user());
 
-        return response()->json(null, 204);
+        return response()->json(['data' => ['disposition' => $disposition, 'category' => $category->fresh()]]);
     }
 
     public function replaceCategoryListings(Request $request, OnlineStoreCategory $category, OnlineStoreCategoryService $service)

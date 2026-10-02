@@ -71,15 +71,20 @@ final class OnlineStoreCategoryService
         });
     }
 
-    public function delete(OnlineStoreCategory $category, User $actor): void
+    public function delete(OnlineStoreCategory $category, User $actor): string
     {
-        DB::transaction(function () use ($category, $actor) {
+        return DB::transaction(function () use ($category, $actor) {
             if ($category->children()->exists()) {
                 throw ValidationException::withMessages(['category' => ['Move or remove child categories first.']]);
             }
-            $listings = $category->memberships()->pluck('online_store_listing_id');
-            $category->delete();
-            OnlineStoreListing::query()->whereIn('id', $listings)->get()->each(fn ($listing) => $this->lifecycle->refresh($listing, $actor));
+
+            $wasActive = $category->is_active;
+            $category->forceFill(['is_active' => false, 'show_on_home' => false, 'updated_by' => $actor->getKey()])->save();
+            if ($wasActive) {
+                $this->refreshMemberListings($category, $actor);
+            }
+
+            return 'deactivated';
         });
     }
 

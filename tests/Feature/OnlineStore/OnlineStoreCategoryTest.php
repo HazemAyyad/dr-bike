@@ -42,4 +42,24 @@ class OnlineStoreCategoryTest extends TestCase
         $this->assertSame($storeSectionsBefore, DB::table('store_sections')->count());
         $this->assertDatabaseHas('online_store_category_listing', ['online_store_category_id' => $root['id'], 'online_store_listing_id' => $listing->id]);
     }
+
+    public function test_referenced_category_is_deactivated_without_removing_typed_targets(): void
+    {
+        OnlineStoreFixtureFactory::createAuthenticatedAdminActor();
+        $category = $this->postJson('/api/online-store/categories', ['name_translations' => ['en' => 'Used']])->assertCreated()->json('data');
+        $section = $this->postJson('/api/online-store/home-sections', ['key' => 'categories', 'section_type' => 'categories', 'selection_mode' => 'manual'])->assertCreated()->json('data');
+        $this->putJson('/api/online-store/home-sections/'.$section['id'].'/items', ['items' => [['target_type' => 'category', 'target_id' => $category['id'], 'sort_order' => 0]]])->assertOk();
+
+        $this->deleteJson('/api/online-store/categories/'.$category['id'])
+            ->assertOk()
+            ->assertJsonPath('data.disposition', 'deactivated')
+            ->assertJsonPath('data.category.is_active', false);
+
+        $this->assertDatabaseHas('online_store_categories', ['id' => $category['id'], 'is_active' => false]);
+        $this->assertDatabaseHas('online_store_home_section_items', ['home_section_id' => $section['id'], 'target_type' => 'category', 'target_id' => $category['id']]);
+
+        $unused = $this->postJson('/api/online-store/categories', ['name_translations' => ['en' => 'Unused']])->assertCreated()->json('data');
+        $this->deleteJson('/api/online-store/categories/'.$unused['id'])->assertOk()->assertJsonPath('data.disposition', 'deactivated');
+        $this->assertDatabaseHas('online_store_categories', ['id' => $unused['id'], 'is_active' => false]);
+    }
 }

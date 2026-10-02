@@ -11,10 +11,11 @@ final class BannerService
 {
     private const TARGET_TABLES = ['listing' => 'online_store_listings', 'category' => 'online_store_categories', 'promotion' => 'online_store_promotions'];
 
-    public function save(?OnlineStoreBanner $banner, array $data, int $actorId): OnlineStoreBanner
+    public function save(?OnlineStoreBanner $banner, array $data, int $actorId, ?CarbonImmutable $at = null): OnlineStoreBanner
     {
+        $at = ($at ?? CarbonImmutable::now(config('app.timezone')))->utc();
         $merged = array_merge($banner?->only(['action_type', 'action_target_id', 'action_url', 'starts_at', 'ends_at']) ?? [], $data);
-        $this->validateAction($merged);
+        $this->validateAction($merged, $at);
         $data = $this->normalizeDates($data);
         $banner ??= new OnlineStoreBanner;
         $banner->fill($data);
@@ -34,7 +35,7 @@ final class BannerService
         return OnlineStoreBanner::query()->where('is_active', true)
             ->where(fn ($q) => $q->whereNull('starts_at')->orWhere('starts_at', '<=', $at))
             ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', $at))
-            ->orderBy('sort_order')->orderBy('id')->get()->filter(fn ($banner) => $this->targetIsEligible($banner))->values();
+            ->orderBy('sort_order')->orderBy('id')->get()->filter(fn ($banner) => $this->targetIsEligible($banner, $at))->values();
     }
 
     public function reorder(array $orderedIds): void
@@ -51,7 +52,7 @@ final class BannerService
         });
     }
 
-    private function validateAction(array $data): void
+    private function validateAction(array $data, CarbonImmutable $at): void
     {
         $type = $data['action_type'] ?? 'none';
         $target = $data['action_target_id'] ?? null;
@@ -59,6 +60,9 @@ final class BannerService
         if (isset(self::TARGET_TABLES[$type])) {
             if (! $target || $url !== null || ! DB::table(self::TARGET_TABLES[$type])->where('id', $target)->exists()) {
                 throw ValidationException::withMessages(['action_target_id' => ['The action requires an existing compatible target and no URL.']]);
+            }
+            if (! $this->internalTargetIsEligible($type, (int) $target, $at)) {
+                throw ValidationException::withMessages(['action_target_id' => ['The internal target is not currently customer-visible.']]);
             }
         } elseif ($type === 'url') {
             $scheme = is_string($url) ? strtolower((string) parse_url($url, PHP_URL_SCHEME)) : '';
@@ -95,19 +99,27 @@ final class BannerService
         return $value ? CarbonImmutable::parse($value, config('app.timezone'))->utc() : null;
     }
 
-    private function targetIsEligible(OnlineStoreBanner $banner): bool
+    private function targetIsEligible(OnlineStoreBanner $banner, CarbonImmutable $at): bool
     {
         return match ($banner->action_type) {
+            'listing', 'category', 'promotion' => $this->internalTargetIsEligible($banner->action_type, (int) $banner->action_target_id, $at),
+            'url', 'none' => true,
+            default => false,
+        };
+    }
+
+    private function internalTargetIsEligible(string $type, int $targetId, CarbonImmutable $at): bool
+    {
+        return match ($type) {
             'listing' => DB::table('online_store_listings as listing')->join('products as product', 'product.id', '=', 'listing.product_id')
-                ->where('listing.id', $banner->action_target_id)->where('listing.status', 'published')->where('listing.readiness_state', 'complete')
+                ->where('listing.id', $targetId)->where('listing.status', 'published')->where('listing.readiness_state', 'complete')
                 ->whereNull('product.deleted_at')->whereExists(fn ($query) => $query->selectRaw('1')->from('online_store_category_listing as membership')
                 ->join('online_store_categories as category', 'category.id', '=', 'membership.online_store_category_id')
                 ->whereColumn('membership.online_store_listing_id', 'listing.id')->where('category.is_active', true))->exists(),
-            'category' => DB::table('online_store_categories')->where('id', $banner->action_target_id)->where('is_active', true)->exists(),
-            'promotion' => DB::table('online_store_promotions')->where('id', $banner->action_target_id)->where('is_active', true)
-                ->where(fn ($query) => $query->whereNull('starts_at')->orWhere('starts_at', '<=', now()->utc()))
-                ->where(fn ($query) => $query->whereNull('ends_at')->orWhere('ends_at', '>=', now()->utc()))->exists(),
-            'url', 'none' => true,
+            'category' => DB::table('online_store_categories')->where('id', $targetId)->where('is_active', true)->exists(),
+            'promotion' => DB::table('online_store_promotions')->where('id', $targetId)->where('is_active', true)
+                ->where(fn ($query) => $query->whereNull('starts_at')->orWhere('starts_at', '<=', $at))
+                ->where(fn ($query) => $query->whereNull('ends_at')->orWhere('ends_at', '>=', $at))->exists(),
             default => false,
         };
     }
