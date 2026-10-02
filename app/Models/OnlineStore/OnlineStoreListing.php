@@ -43,4 +43,9 @@ class OnlineStoreListing extends Model
     {
         return $this->belongsTo(User::class, 'updated_by');
     }
+
+    public function mediaPresentations()
+    {
+        return $this->hasMany(OnlineStoreMediaPresentation::class, 'online_store_listing_id')->orderBy('sort_order')->orderBy('id');
+    }
 }

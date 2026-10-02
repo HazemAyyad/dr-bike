@@ -9,6 +9,9 @@ use App\Models\OnlineStore\OnlineStoreListing;
 use App\Models\Product;
 use App\Services\OnlineStore\ListingLifecycleService;
 use App\Services\OnlineStore\ListingReadinessService;
+use App\Services\OnlineStore\MediaPresentationService;
+use App\Services\OnlineStore\StoreAvailabilityService;
+use App\Services\OnlineStore\StorePriceResolver;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -25,16 +28,17 @@ class ListingController extends Controller
         return new OnlineStoreListingResource($listing->load('product'));
     }
 
-    public function store(ManageListingRequest $request, ListingLifecycleService $lifecycle): OnlineStoreListingResource|JsonResponse
+    public function store(ManageListingRequest $request, ListingLifecycleService $lifecycle, MediaPresentationService $media): OnlineStoreListingResource|JsonResponse
     {
         try {
-            $listing = DB::transaction(function () use ($request, $lifecycle) {
+            $listing = DB::transaction(function () use ($request, $lifecycle, $media) {
                 $listing = new OnlineStoreListing($request->safe()->except(['normailPrice', 'wholesalePrice', 'price', 'stock', 'base_price', 'base_prices']));
                 $listing->status = 'draft';
                 $listing->readiness_state = 'incomplete';
                 $listing->created_by = $request->user()->getKey();
                 $listing->updated_by = $request->user()->getKey();
                 $listing->save();
+                $listing = $media->initialize($listing, $request->user());
 
                 return $lifecycle->refresh($listing, $request->user());
             });
@@ -62,12 +66,9 @@ class ListingController extends Controller
         return new OnlineStoreListingResource($lifecycle->transition($listing, $request->validated('status'), $request->user()));
     }
 
-    public function readiness(ManageListingRequest $request, Product $product, ListingReadinessService $readiness): JsonResponse
+    public function readiness(ManageListingRequest $request, Product $product, ListingReadinessService $readiness, StorePriceResolver $prices, StoreAvailabilityService $availability): JsonResponse
     {
         $listing = OnlineStoreListing::query()->where('product_id', $product->getKey())->first();
-        $variantStock = DB::table('sizes')->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
-            ->where('sizes.itemId', $product->getKey())->sum('size_colors.stock');
-        $hasVariants = DB::table('sizes')->where('itemId', $product->getKey())->exists();
         $sourceMedia = [
             'view_images' => DB::table('view_image_products')->where('itemId', $product->getKey())->whereNotNull('imageUrl')->where('imageUrl', '<>', '')->count(),
             'normal_images' => DB::table('normal_image_products')->where('itemId', $product->getKey())->whereNotNull('imageUrl')->where('imageUrl', '<>', '')->count(),
@@ -77,8 +78,8 @@ class ListingController extends Controller
         return response()->json(['data' => [
             ...$readiness->evaluateForProduct($product, $listing),
             'product_id' => $product->getKey(), 'listing_id' => $listing?->getKey(),
-            'base_prices' => ['retail' => $product->normailPrice, 'wholesale' => $product->wholesalePrice],
-            'availability' => ['stock' => (int) ($hasVariants ? $variantStock : ($product->stock ?? 0))],
+            'base_prices' => $prices->resolve($product),
+            'availability' => $availability->resolve($product, $listing),
             'source_media' => $sourceMedia,
         ]]);
     }

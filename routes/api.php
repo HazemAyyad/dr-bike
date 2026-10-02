@@ -77,6 +77,7 @@ use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
 use App\Http\Controllers\API\LegacyStoreImageController;
 use App\Http\Controllers\API\OnlineStore\ListingController as OnlineStoreListingController;
+use App\Http\Controllers\API\OnlineStore\ListingMediaController as OnlineStoreListingMediaController;
 use App\Http\Controllers\API\OnlineStore\StorefrontContentController as OnlineStoreContentController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
@@ -1728,6 +1729,9 @@ Route::prefix('online-store')
         Route::patch('/listings/{listing}', [OnlineStoreListingController::class, 'update'])->name('listings.update');
         Route::post('/listings/{listing}/transition', [OnlineStoreListingController::class, 'transition'])->name('listings.transition');
         Route::get('/products/{product}/store-readiness', [OnlineStoreListingController::class, 'readiness'])->name('products.readiness');
+        Route::get('/listings/{listing}/media', [OnlineStoreListingMediaController::class, 'show'])->name('listings.media.show');
+        Route::post('/listings/{listing}/media/initialize', [OnlineStoreListingMediaController::class, 'initialize'])->name('listings.media.initialize');
+        Route::put('/listings/{listing}/media', [OnlineStoreListingMediaController::class, 'replace'])->name('listings.media.replace');
         Route::get('/categories', [OnlineStoreContentController::class, 'categories'])->name('categories.index');
         Route::post('/categories', [OnlineStoreContentController::class, 'storeCategory'])->name('categories.store');
         Route::post('/categories/reorder', [OnlineStoreContentController::class, 'reorderCategories'])->name('categories.reorder');

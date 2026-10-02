@@ -79,8 +79,11 @@ class OnlineStoreListingTest extends TestCase
         $this->assertSame('incomplete', $serialized['readiness_state']);
         $this->assertSame(['missing_product'], $serialized['readiness_issues']);
         $this->assertFalse($serialized['product_archived']);
-        $this->assertSame(['retail' => null, 'wholesale' => null], $serialized['base_prices']);
-        $this->assertSame(['stock' => 0, 'in_stock' => false, 'purchasable' => false], $serialized['availability']);
+        $this->assertSame(['retail' => null, 'wholesale' => null, 'variants' => []], $serialized['base_prices']);
+        $this->assertSame([
+            'visible' => false, 'purchasable' => false, 'available_qty' => 0,
+            'physical_stock' => 0, 'reserved_qty' => 0, 'variants' => [],
+        ], $serialized['availability']);
         $this->assertSame('Store name', $serialized['display']['name']);
     }
 }

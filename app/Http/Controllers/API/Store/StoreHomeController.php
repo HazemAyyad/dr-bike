@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\API\Store;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\OnlineStore\StorefrontListingResource;
 use App\Models\OnlineStore\OnlineStoreHomeSection;
 use App\Models\OnlineStore\OnlineStoreListing;
 use App\Services\OnlineStore\BannerService;
+use App\Services\OnlineStore\ListingReadinessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -38,16 +40,28 @@ class StoreHomeController extends Controller
 
     private function manualItems(OnlineStoreHomeSection $section): array
     {
-        return $section->items->filter(function ($item) {
+        return $section->items->map(function ($item) {
             if ($item->target_type === 'category') {
-                return DB::table('online_store_categories')->where('id', $item->target_id)->where('is_active', true)->exists();
+                if (! DB::table('online_store_categories')->where('id', $item->target_id)->where('is_active', true)->exists()) {
+                    return null;
+                }
+
+                return ['target_type' => 'category', 'target_id' => $item->target_id, 'sort_order' => $item->sort_order];
             }
             if ($item->target_type === 'listing') {
-                return $this->eligibleListings()->whereKey($item->target_id)->exists();
+                $listing = $this->eligibleListings()->with('product')->find($item->target_id);
+                if (! $listing || app(ListingReadinessService::class)->evaluate($listing)['state'] !== 'complete') {
+                    return null;
+                }
+
+                return [
+                    'target_type' => 'listing', 'target_id' => $item->target_id, 'sort_order' => $item->sort_order,
+                    'listing' => (new StorefrontListingResource($listing))->toArray(request()),
+                ];
             }
 
-            return false;
-        })->map(fn ($item) => ['target_type' => $item->target_type, 'target_id' => $item->target_id, 'sort_order' => $item->sort_order])->values()->all();
+            return null;
+        })->filter()->values()->all();
     }
 
     private function automaticItems(OnlineStoreHomeSection $section): array
@@ -69,7 +83,10 @@ class StoreHomeController extends Controller
             default => $query->whereRaw('1 = 0'),
         };
 
-        return $query->limit($limit)->get(['id'])->map(fn ($listing) => ['target_type' => 'listing', 'target_id' => $listing->id])->all();
+        return $query->with('product')->get()->filter(fn ($listing) => app(ListingReadinessService::class)->evaluate($listing)['state'] === 'complete')->take($limit)->map(fn ($listing) => [
+            'target_type' => 'listing', 'target_id' => $listing->id,
+            'listing' => (new StorefrontListingResource($listing))->toArray(request()),
+        ])->all();
     }
 
     private function eligibleListings(): Builder

@@ -120,19 +120,19 @@ description: "Dependency-ordered implementation tasks for Online Store Managemen
 
 ### Tests for User Story 3
 
-- [ ] T042 [P] [US3] Add media initialization tests for all valid source rows ordered `view_image`, `normal_image`, `image3d`, then source ID, with first valid row main and publication blocked when no usable visible main exists in `tests/Feature/OnlineStore/MediaPresentationTest.php`
-- [ ] T043 [P] [US3] Add presentation validation tests for one visible main, source ownership, exceptional Store media exclusivity, supported metadata, source deletion, independent reorder/hide, and zero source mutation in `tests/Unit/OnlineStore/MediaPresentationServiceTest.php`
-- [ ] T044 [P] [US3] Add authoritative retail/wholesale/variant price and stock-read tests, falsified client-value rejection, mixed variants, and visible/non-purchasable zero-stock behavior in `tests/Feature/OnlineStore/StoreCatalogAuthorityTest.php`
+- [X] T042 [P] [US3] Add media initialization tests for all valid source rows ordered `view_image`, `normal_image`, `image3d`, then source ID, with first valid row main and publication blocked when no usable visible main exists in `tests/Feature/OnlineStore/MediaPresentationTest.php`
+- [X] T043 [P] [US3] Add presentation validation tests for one visible main, source ownership, exceptional Store media exclusivity, supported metadata, source deletion, independent reorder/hide, and zero source mutation in `tests/Unit/OnlineStore/MediaPresentationServiceTest.php`
+- [X] T044 [P] [US3] Add authoritative retail/wholesale/variant price and stock-read tests, falsified client-value rejection, mixed variants, and visible/non-purchasable zero-stock behavior in `tests/Feature/OnlineStore/StoreCatalogAuthorityTest.php`
 
 ### Implementation for User Story 3
 
-- [ ] T045 [P] [US3] Implement `OnlineStoreMediaPresentation` with allow-listed `normal_image|image3d|view_image|variant|store_specific`, nullable `source_id`, mutually exclusive `store_media_path`, visibility/main flags, metadata, and stable Store order in `app/Models/OnlineStore/OnlineStoreMediaPresentation.php`
-- [ ] T046 [US3] Implement first-listing media initialization using valid View rows then Normal rows then 3D rows, each by source ID, assigning sequential Store order and first valid main without reading nonexistent inventory order/main fields in `app/Services/OnlineStore/MediaPresentationService.php`
-- [ ] T047 [US3] Implement transactional Store-only replace/reorder/hide/main validation that proves source ownership and never updates/deletes authoritative media rows in `app/Services/OnlineStore/MediaPresentationService.php`
-- [ ] T048 [US3] Implement read-only authoritative retail/wholesale/variant price resolution with no listing override in `app/Services/OnlineStore/StorePriceResolver.php`
-- [ ] T049 [US3] Implement Product/variant availability reads through existing reservation semantics and visible/non-purchasable zero-stock output in `app/Services/OnlineStore/StoreAvailabilityService.php`
-- [ ] T050 [US3] Implement Admin media presentation/readiness endpoints and validation in `app/Http/Controllers/API/OnlineStore/ListingMediaController.php` and `app/Http/Requests/OnlineStore/ReplaceListingMediaRequest.php`
-- [ ] T051 [US3] Update Store listing/catalog serialization to expose deterministic presentation, read-only base/final price inputs, and availability in `app/Http/Resources/OnlineStore/StorefrontListingResource.php`
+- [X] T045 [P] [US3] Implement `OnlineStoreMediaPresentation` with allow-listed `normal_image|image3d|view_image|variant|store_specific`, nullable `source_id`, mutually exclusive `store_media_path`, visibility/main flags, metadata, and stable Store order in `app/Models/OnlineStore/OnlineStoreMediaPresentation.php`
+- [X] T046 [US3] Implement first-listing media initialization using valid View rows then Normal rows then 3D rows, each by source ID, assigning sequential Store order and first valid main without reading nonexistent inventory order/main fields in `app/Services/OnlineStore/MediaPresentationService.php`
+- [X] T047 [US3] Implement transactional Store-only replace/reorder/hide/main validation that proves source ownership and never updates/deletes authoritative media rows in `app/Services/OnlineStore/MediaPresentationService.php`
+- [X] T048 [US3] Implement read-only authoritative retail/wholesale/variant price resolution with no listing override in `app/Services/OnlineStore/StorePriceResolver.php`
+- [X] T049 [US3] Implement Product/variant availability reads through existing reservation semantics and visible/non-purchasable zero-stock output in `app/Services/OnlineStore/StoreAvailabilityService.php`
+- [X] T050 [US3] Implement Admin media presentation/readiness endpoints and validation in `app/Http/Controllers/API/OnlineStore/ListingMediaController.php` and `app/Http/Requests/OnlineStore/ReplaceListingMediaRequest.php`
+- [X] T051 [US3] Update Store listing/catalog serialization to expose deterministic presentation, read-only base/final price inputs, and availability in `app/Http/Resources/OnlineStore/StorefrontListingResource.php`
 
 **Checkpoint**: US3 independently proves accurate media, price, and stock presentation with no competing authority.
 

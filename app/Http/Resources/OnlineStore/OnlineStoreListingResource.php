@@ -2,9 +2,10 @@
 
 namespace App\Http\Resources\OnlineStore;
 
+use App\Services\OnlineStore\StoreAvailabilityService;
+use App\Services\OnlineStore\StorePriceResolver;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Facades\DB;
 
 class OnlineStoreListingResource extends JsonResource
 {
@@ -12,13 +13,13 @@ class OnlineStoreListingResource extends JsonResource
     {
         $product = $this->resource->product;
         $hasValidProduct = $product !== null && $product->exists && ! $product->trashed();
-        $variantStock = $hasValidProduct
-            ? DB::table('sizes')->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
-                ->where('sizes.itemId', $product->getKey())->sum('size_colors.stock')
-            : 0;
-        $hasVariants = $hasValidProduct && DB::table('sizes')->where('itemId', $product->getKey())->exists();
-        $available = $hasValidProduct ? (int) ($hasVariants ? $variantStock : ($product->stock ?? 0)) : 0;
         $readinessIssues = $this->readinessIssues($hasValidProduct);
+        $basePrices = $hasValidProduct
+            ? app(StorePriceResolver::class)->resolve($product)
+            : ['retail' => null, 'wholesale' => null, 'variants' => []];
+        $availability = $hasValidProduct
+            ? app(StoreAvailabilityService::class)->resolve($product, $this->resource)
+            : ['visible' => false, 'purchasable' => false, 'available_qty' => 0, 'physical_stock' => 0, 'reserved_qty' => 0, 'variants' => []];
 
         return [
             'id' => $this->id, 'product_id' => $this->product_id, 'status' => $this->status,
@@ -35,9 +36,8 @@ class OnlineStoreListingResource extends JsonResource
             'readiness_state' => $hasValidProduct ? $this->readiness_state : 'incomplete',
             'readiness_issues' => $readinessIssues,
             'product_archived' => $product?->trashed() ?? false,
-            'base_prices' => ['retail' => $hasValidProduct ? $product->normailPrice : null, 'wholesale' => $hasValidProduct ? $product->wholesalePrice : null],
-            'availability' => ['stock' => $available, 'in_stock' => $available > 0,
-                'purchasable' => $this->status === 'published' && $available > 0],
+            'base_prices' => $basePrices,
+            'availability' => $availability,
             'published_at' => $this->published_at, 'hidden_at' => $this->hidden_at,
         ];
     }
