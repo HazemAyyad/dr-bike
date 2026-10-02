@@ -63,7 +63,7 @@ return [
         'delivery_fee' => ['request_keys' => ['villageId', 'shiplyVillageId', 'price'], 'response' => ['deliveryCost' => 'float', 'priceDelivery' => 'float', 'fees' => 'object']],
     ],
     'notifications' => [
-        'list' => ['request_keys' => ['userId'], 'response' => ['rows' => 'array<notification_payload>', 'paginationInfo' => 'pagination_payload']],
-        'edit' => ['request_keys' => ['id', 'notificationId'], 'response' => ['message' => 'string']],
+        'list' => ['request_keys' => ['userId'], 'response' => ['rows' => 'array', 'total' => 'integer', 'totalNotFiltered' => 'integer']],
+        'edit' => ['request_keys' => ['id', 'notificationId'], 'response' => ['message' => 'string', 'isSuccess' => 'boolean', 'error' => 'nullable', 'isFailure' => 'boolean']],
     ],
 ];
