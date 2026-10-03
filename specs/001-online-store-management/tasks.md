@@ -261,18 +261,18 @@ description: "Dependency-ordered implementation tasks for Online Store Managemen
 
 ### Tests for User Story 7
 
-- [ ] T103 [P] [US7] Add review rating/state, Product/customer/User ownership, cross-account IDOR, moderation, source-order deletion, and server-derived verified-purchase tests in `tests/Feature/OnlineStore/OnlineStoreReviewTest.php`
-- [ ] T104 [P] [US7] Add notification recipient eligibility, locale fallback, template-control, FCM payload/deep-link, blocked-user, and sensitive-data exclusion tests in `tests/Feature/OnlineStore/OnlineStoreNotificationTest.php`
-- [ ] T105 [P] [US7] Add frozen legacy comments empty/success envelope compatibility tests around review delegation in `tests/Feature/OnlineStore/LegacyCommentCompatibilityTest.php`
+- [X] T103 [P] [US7] Add review rating/state, Product/customer/User ownership, cross-account IDOR, moderation, source-order deletion, and server-derived verified-purchase tests in `tests/Feature/OnlineStore/OnlineStoreReviewTest.php`
+- [X] T104 [P] [US7] Add notification recipient eligibility, locale fallback, template-control, FCM payload/deep-link, blocked-user, and sensitive-data exclusion tests in `tests/Feature/OnlineStore/OnlineStoreNotificationTest.php`
+- [X] T105 [P] [US7] Add frozen legacy comments empty/success envelope compatibility tests around review delegation in `tests/Feature/OnlineStore/LegacyCommentCompatibilityTest.php`
 
 ### Implementation for User Story 7
 
-- [ ] T106 [P] [US7] Implement `OnlineStoreReview` with Product/customer/User relations, nullable SalesOrder, rating 1..5, states `pending|published|rejected`, moderation attribution, and indexed history in `app/Models/OnlineStore/OnlineStoreReview.php`
-- [ ] T107 [US7] Implement review ownership, submission, moderation, and verified-purchase derivation from eligible completed/non-reversed SalesOrder items in `app/Services/OnlineStore/OnlineStoreReviewService.php`
-- [ ] T108 [US7] Extend existing notification types/templates and deep-link metadata for Store order/marketing events in `app/Services/AdminNotificationService.php` and `app/Support/NotificationCatalog.php`
-- [ ] T109 [US7] Implement Store notification orchestration through existing FCM/template controls and recipient eligibility in `app/Services/OnlineStore/OnlineStoreNotificationService.php`
-- [ ] T110 [US7] Implement review Admin/customer endpoints and `Online Store Reviews Manage` permission/ownership checks in `app/Http/Controllers/API/OnlineStore/ReviewController.php` and `app/Http/Controllers/API/Store/StoreCommentsController.php`
-- [ ] T111 [US7] Register review and notification endpoints while retaining legacy route names/envelopes in `routes/api.php` and `routes/api_store.php`
+- [X] T106 [P] [US7] Implement `OnlineStoreReview` with Product/customer/User relations, nullable SalesOrder, rating 1..5, states `pending|published|rejected`, moderation attribution, and indexed history in `app/Models/OnlineStore/OnlineStoreReview.php`
+- [X] T107 [US7] Implement review ownership, submission, moderation, and verified-purchase derivation from eligible completed/non-reversed SalesOrder items in `app/Services/OnlineStore/OnlineStoreReviewService.php`
+- [X] T108 [US7] Extend existing notification types/templates and deep-link metadata for Store order/marketing events in `app/Services/AdminNotificationService.php` and `app/Support/NotificationCatalog.php`
+- [X] T109 [US7] Implement Store notification orchestration through existing FCM/template controls and recipient eligibility in `app/Services/OnlineStore/OnlineStoreNotificationService.php`
+- [X] T110 [US7] Implement review Admin/customer endpoints and `Online Store Reviews Manage` permission/ownership checks in `app/Http/Controllers/API/OnlineStore/ReviewController.php` and `app/Http/Controllers/API/Store/StoreCommentsController.php`
+- [X] T111 [US7] Register review and notification endpoints while retaining legacy route names/envelopes in `routes/api.php` and `routes/api_store.php`
 
 **Checkpoint**: US7 independently delivers review trust and Store communication without a parallel notification system.
 

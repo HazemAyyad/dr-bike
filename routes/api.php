@@ -84,6 +84,8 @@ use App\Http\Controllers\API\OnlineStore\PromotionController as OnlineStorePromo
 use App\Http\Controllers\API\OnlineStore\CouponController as OnlineStoreCouponController;
 use App\Http\Controllers\API\OnlineStore\CreditPolicyController as OnlineStoreCreditPolicyController;
 use App\Http\Controllers\API\OnlineStore\StoreGovernanceController as OnlineStoreGovernanceController;
+use App\Http\Controllers\API\OnlineStore\ReviewController as OnlineStoreReviewController;
+use App\Http\Controllers\API\OnlineStore\NotificationController as OnlineStoreNotificationController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1783,6 +1785,10 @@ Route::prefix('online-store')
         Route::get('/audit-events', [OnlineStoreGovernanceController::class, 'auditEvents'])->name('audit-events.index');
         Route::get('/dashboard', [OnlineStoreGovernanceController::class, 'dashboard'])->name('dashboard');
         Route::get('/reports', [OnlineStoreGovernanceController::class, 'report'])->name('reports.index');
+        Route::get('/reviews', [OnlineStoreReviewController::class, 'index'])->name('reviews.index');
+        Route::get('/reviews/{review}', [OnlineStoreReviewController::class, 'show'])->name('reviews.show');
+        Route::post('/reviews/{review}/moderate', [OnlineStoreReviewController::class, 'moderate'])->name('reviews.moderate');
+        Route::post('/notifications/promotions/{promotion}', [OnlineStoreNotificationController::class, 'promotion'])->name('notifications.promotions.send');
         Route::middleware('check.permission:Online Store View')->group(function () {
             // Dashboard, report, and resource read routes are registered in later phases.
         });
@@ -1799,7 +1805,8 @@ Route::prefix('online-store')
             // Promotion and coupon routes are registered in later phases.
         });
         Route::middleware('check.permission:Online Store Reviews Manage')->group(function () {
-            // Review moderation routes are registered in later phases.
+            // Review routes enforce this exact permission in ReviewController
+            // so inaccessible resources retain the approved 404 behavior.
         });
         Route::middleware('check.permission:Online Store Settings Manage')->group(function () {
             // Settings, account-link, and credit-policy routes are registered in later phases.

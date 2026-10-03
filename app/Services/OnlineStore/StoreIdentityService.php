@@ -9,6 +9,7 @@ use App\Models\Seller;
 use App\Models\User;
 use App\Support\OnlineStore\OnlineStoreValues;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -72,16 +73,7 @@ final class StoreIdentityService
 
     public function activeLink(User $user, ?string $role = null): OnlineStoreAccountLink
     {
-        $query = OnlineStoreAccountLink::query()->with(['customer', 'seller'])
-            ->where('user_id', $user->getKey())->where('status', 'active')->whereNotNull('verified_at');
-        if ($role !== null) {
-            $query->where('role', $role);
-        }
-        $links = $query->get()->filter(function (OnlineStoreAccountLink $link) {
-            $party = $link->party();
-
-            return $party !== null && ! (bool) ($party->is_canceled ?? false);
-        })->values();
+        $links = $this->activeLinks($user, $role);
         if ($links->count() !== 1) {
             throw ValidationException::withMessages(['account_role' => [$links->isEmpty()
                 ? 'No active verified Store account link exists.'
@@ -89,6 +81,27 @@ final class StoreIdentityService
         }
 
         return $links->first();
+    }
+
+    /** @return Collection<int, OnlineStoreAccountLink> */
+    public function activeLinks(User $user, ?string $role = null): Collection
+    {
+        if ($user->trashed() || $user->is_blocked || strcasecmp((string) $user->type, 'User') !== 0) {
+            return new Collection;
+        }
+
+        return OnlineStoreAccountLink::query()->with(['customer', 'seller'])
+            ->where('user_id', $user->getKey())
+            ->where('status', 'active')
+            ->whereNotNull('verified_at')
+            ->when($role !== null, fn ($query) => $query->where('role', $role))
+            ->get()
+            ->filter(function (OnlineStoreAccountLink $link) {
+                $party = $link->party();
+
+                return $party !== null && ! (bool) ($party->is_canceled ?? false);
+            })
+            ->values();
     }
 
     public function ownedOrders(User $user): Builder

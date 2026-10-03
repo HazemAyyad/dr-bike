@@ -15,6 +15,7 @@ use App\Models\NotificationDeliveryAttempt;
 use App\Models\OutgoingCheck;
 use App\Models\StockImageExport;
 use App\Models\Store\StoreSalesOrder;
+use App\Models\User;
 use App\Support\EmployeePendingTasksForToday;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -77,6 +78,10 @@ class AdminNotificationService
     public const TYPE_STORE_ORDER_CREATED = 'store_order_created';
 
     public const TYPE_STORE_ORDER_CANCELED = 'store_order_canceled';
+
+    public const TYPE_STORE_CUSTOMER_ORDER_STATUS = 'store_customer_order_status';
+
+    public const TYPE_STORE_MARKETING_PROMOTION = 'store_marketing_promotion';
 
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
 
@@ -1196,6 +1201,69 @@ class AdminNotificationService
     }
 
     /**
+     * Persist and deliver a Store-user notification through the existing
+     * notification/template/FCM infrastructure. Store recipients continue
+     * to use their existing users.fcm_token; no parallel token authority is
+     * introduced.
+     *
+     * @param  array<string, scalar|null>  $data
+     */
+    public function createStoreRecipientNotification(
+        User $recipient,
+        string $type,
+        string $title,
+        string $body,
+        array $data,
+        ?string $relatedType = null,
+        ?int $relatedId = null,
+    ): ?AdminNotification {
+        if ($recipient->trashed() || $recipient->is_blocked || strcasecmp((string) $recipient->type, 'User') !== 0) {
+            return null;
+        }
+
+        $this->assertSafeStoreNotificationData($data);
+        $notification = $this->create(
+            $type,
+            $title,
+            $body,
+            $data,
+            null,
+            $relatedType,
+            $relatedId,
+            false,
+            (int) $recipient->getKey(),
+        );
+        $policy = $this->notificationControl->policyFor($type);
+        if (! $policy || $this->notificationControl->pushAllowedNow($policy)) {
+            $this->pushToStoreUser($notification, $recipient);
+        }
+
+        return $notification;
+    }
+
+    public function pushToStoreUser(AdminNotification $notification, User $recipient): bool
+    {
+        if ((int) $notification->recipient_user_id !== (int) $recipient->getKey()
+            || $recipient->trashed()
+            || $recipient->is_blocked
+            || strcasecmp((string) $recipient->type, 'User') !== 0) {
+            return false;
+        }
+
+        $token = trim((string) ($recipient->fcm_token ?? ''));
+        if ($token === '') {
+            return false;
+        }
+
+        return $this->firebaseService->sendToTokenQuietly(
+            $token,
+            $notification->title,
+            $notification->body,
+            $this->buildFcmDataPayload($notification),
+        ) !== null;
+    }
+
+    /**
      * @return array<string, string>
      */
     public function buildFcmDataPayload(AdminNotification $notification): array
@@ -1250,5 +1318,27 @@ class AdminNotificationService
         }
 
         return $out;
+    }
+
+    /** @param array<string, scalar|null> $data */
+    private function assertSafeStoreNotificationData(array $data): void
+    {
+        $forbidden = ['debt', 'credit_limit', 'phone', 'address', 'token', 'otp', 'password', 'payment', 'credential'];
+        foreach (array_keys($data) as $key) {
+            $normalized = mb_strtolower((string) $key);
+            if (collect($forbidden)->contains(fn (string $value) => str_contains($normalized, $value))) {
+                throw new \InvalidArgumentException('Sensitive data is not allowed in Store notification payloads.');
+            }
+        }
+
+        $destination = (string) ($data['destination_type'] ?? 'none');
+        if (! in_array($destination, ['none', 'order', 'listing', 'category', 'promotion', 'home'], true)) {
+            throw new \InvalidArgumentException('Unsupported Store notification destination.');
+        }
+        $destinationId = $data['destination_id'] ?? null;
+        if (($destination === 'none' && $destinationId !== null && $destinationId !== '')
+            || ($destination !== 'none' && (! is_numeric($destinationId) || (int) $destinationId < 1))) {
+            throw new \InvalidArgumentException('Store notification destination metadata is invalid.');
+        }
     }
 }

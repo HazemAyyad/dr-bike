@@ -46,6 +46,9 @@ Route::post('/Notifications/GetNotifications', [StoreNotificationsController::cl
 Route::post('/Notifications/EditNotification', [StoreNotificationsController::class, 'editNotification']);
 Route::post('/Comments/GetAllCommentsToItem', [StoreCommentsController::class, 'getAllCommentsToItem']);
 Route::post('/Comments/ManageComment', [StoreCommentsController::class, 'manageComment']);
+Route::get('/OnlineStore/Reviews', [StoreCommentsController::class, 'own']);
+Route::post('/OnlineStore/Reviews', [StoreCommentsController::class, 'submit']);
+Route::get('/OnlineStore/Products/{product}/Reviews', [StoreCommentsController::class, 'product']);
 
 Route::post('/MainCategorys/GetAllShowMainCategories', [StoreMainCategoryController::class, 'getAllShowMainCategories']);
 Route::post('/SupCategorys/GetAllShowSupCategories', [StoreSupCategoryController::class, 'getAllShowSupCategories']);
