@@ -86,4 +86,44 @@ class OnlineStoreCreditPolicyTest extends TestCase
         $this->assertLessThan($stock, $credit);
         $this->assertLessThan($order, $stock);
     }
+
+    public function test_checkout_financial_hook_uses_authoritative_services_before_order_side_effects(): void
+    {
+        $checkout = file_get_contents(dirname(__DIR__, 3).'/app/Services/OnlineStore/OnlineStoreCheckoutService.php');
+        $couponHook = strpos($checkout, "'before_creation_effects' => \$reserveCoupon");
+        $financialHook = strpos($checkout, "'before_reservation_effects' => \$postFinancials");
+        $this->assertIsInt($couponHook);
+        $this->assertIsInt($financialHook);
+        $this->assertLessThan($financialHook, $couponHook);
+
+        $orderService = file_get_contents(dirname(__DIR__, 3).'/app/Services/SalesOrderService.php');
+        $storeStart = strpos($orderService, 'public function store(');
+        $storeEnd = strpos($orderService, 'public function update(', $storeStart);
+        $store = substr($orderService, $storeStart, $storeEnd - $storeStart);
+        $items = strpos($store, '$this->syncItems(');
+        $financials = strpos($store, '$beforeReservationEffects($freshOrder);');
+        $reservation = strpos($store, '$this->applyUnconfirmedStockReservation(');
+        $status = strpos($store, '$this->logStatus(');
+        $notification = strpos($store, '$this->notifications->notifyStatusChange(');
+        foreach ([$items, $financials, $reservation, $status, $notification] as $position) {
+            $this->assertIsInt($position);
+        }
+        $this->assertLessThan($financials, $items);
+        $this->assertLessThan($reservation, $financials);
+        $this->assertLessThan($status, $reservation);
+        $this->assertLessThan($notification, $status);
+
+        $fulfillment = file_get_contents(dirname(__DIR__, 3).'/app/Services/SalesOrderFulfillmentService.php');
+        $financialStart = strpos($fulfillment, 'public function postAcceptedOrderFinancials(');
+        $financialEnd = strpos($fulfillment, 'public function reverseFinancialsForCancellation(', $financialStart);
+        $financial = substr($fulfillment, $financialStart, $financialEnd - $financialStart);
+        $initialPayment = strpos($financial, '$this->postInitialPayment(');
+        $debt = strpos($financial, '$this->debtLedgerService->syncSalesOrderToLedger(');
+        $accounting = strpos($financial, '$this->accountingProjection->syncOrFail(');
+        $this->assertIsInt($initialPayment);
+        $this->assertIsInt($debt);
+        $this->assertIsInt($accounting);
+        $this->assertLessThan($debt, $initialPayment);
+        $this->assertLessThan($accounting, $debt);
+    }
 }

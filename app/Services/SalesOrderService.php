@@ -298,7 +298,8 @@ class SalesOrderService
      *     origin?: string,
      *     origin_user_id?: int|null,
      *     client_request_id?: string|null,
-     *     before_creation_effects?: (callable(SalesOrder): void)|null
+     *     before_creation_effects?: (callable(SalesOrder): void)|null,
+     *     before_reservation_effects?: (callable(SalesOrder): void)|null
      * }  $trustedContext
      */
     public function store(User $user, Request $request, array $trustedContext = []): SalesOrder
@@ -323,8 +324,12 @@ class SalesOrderService
         if ($beforeCreationEffects !== null && ! is_callable($beforeCreationEffects)) {
             throw new \LogicException('The trusted pre-effect SalesOrder callback must be callable.');
         }
+        $beforeReservationEffects = $trustedContext['before_reservation_effects'] ?? null;
+        if ($beforeReservationEffects !== null && ! is_callable($beforeReservationEffects)) {
+            throw new \LogicException('The trusted pre-reservation SalesOrder callback must be callable.');
+        }
 
-        return DB::transaction(function () use ($user, $data, $origin, $originUserId, $clientRequestId, $beforeCreationEffects) {
+        return DB::transaction(function () use ($user, $data, $origin, $originUserId, $clientRequestId, $beforeCreationEffects, $beforeReservationEffects) {
             $this->lockOrderStockScope($data['items'] ?? []);
             $totals = $this->calculateTotals($data);
             $customerSnapshot = $this->resolveCustomerSnapshot($data);
@@ -389,6 +394,10 @@ class SalesOrderService
             if (! $order->is_debt_collection) {
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
                 $freshOrder = $order->fresh(['items.product']);
+                if ($beforeReservationEffects !== null) {
+                    $beforeReservationEffects($freshOrder);
+                    $freshOrder->refresh()->loadMissing('items.product');
+                }
                 $this->guardReservedStockConflicts($freshOrder, $data);
                 $this->applyUnconfirmedStockReservation($freshOrder, $data, $user);
             }

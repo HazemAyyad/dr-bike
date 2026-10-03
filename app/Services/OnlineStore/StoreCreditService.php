@@ -154,6 +154,13 @@ final class StoreCreditService
             ->whereNull('financial_posted_at')
             ->whereNotIn('status', ['canceled', 'archived', 'returned'])
             ->where('is_debt_collection', false)
+            ->whereNotExists(function ($debt) {
+                $debt->selectRaw('1')->from('debt_transactions as pending_exposure_debt')
+                    ->whereColumn('pending_exposure_debt.source_id', 'sales_orders.id')
+                    ->where('pending_exposure_debt.source', 'sales_order')
+                    ->whereNull('pending_exposure_debt.archived_at')
+                    ->whereNull('pending_exposure_debt.deleted_at');
+            })
             ->when($link->role === 'customer', fn ($q) => $q->where('partner_type', 'customer')->where('partner_id', $link->customer_id))
             ->when($link->role === 'seller', fn ($q) => $q->where('partner_type', 'seller')->where('partner_id', $link->seller_id));
         if ($lock) {

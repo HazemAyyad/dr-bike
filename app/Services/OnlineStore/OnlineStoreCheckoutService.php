@@ -13,6 +13,7 @@ use App\Models\SizeColor;
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreShiplyVillage;
 use App\Models\User;
+use App\Services\SalesOrderFulfillmentService;
 use App\Services\SalesOrderService;
 use App\Services\SalesOrderStockService;
 use App\Services\ShiplyService;
@@ -33,6 +34,7 @@ final class OnlineStoreCheckoutService
         private ListingReadinessService $readiness,
         private SalesOrderStockService $stock,
         private SalesOrderService $orders,
+        private SalesOrderFulfillmentService $fulfillment,
         private ShiplyService $shiply,
     ) {}
 
@@ -97,6 +99,9 @@ final class OnlineStoreCheckoutService
         $reserveCoupon = $priced['coupon'] ? function (SalesOrder $order) use ($priced, $actor, $link): void {
             $this->coupons->reserve($priced['coupon'], $order, $actor, $link, $priced['coupon_discount']);
         } : null;
+        $postFinancials = in_array($paymentType, ['credit', 'mixed'], true)
+            ? fn (SalesOrder $order) => $this->fulfillment->postAcceptedOrderFinancials($order, $actor)
+            : null;
         $trusted = new Request([
             'partner_type' => $link->role, 'partner_id' => $party->getKey(),
             'customer_id' => $link->role === 'customer' ? $party->getKey() : null,
@@ -114,6 +119,7 @@ final class OnlineStoreCheckoutService
         $order = $this->orders->store($actor, $trusted, [
             'origin' => SalesOrder::ORIGIN_STORE, 'origin_user_id' => $actor->getKey(), 'client_request_id' => $requestId,
             'before_creation_effects' => $reserveCoupon,
+            'before_reservation_effects' => $postFinancials,
         ]);
 
         return $order;

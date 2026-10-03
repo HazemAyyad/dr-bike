@@ -41,7 +41,7 @@ class StoreCreditConcurrencyTest extends TestCase
         }
     }
 
-    public function test_locked_pending_exposure_prevents_two_attempts_consuming_one_limit(): void
+    public function test_locked_ledger_exposure_prevents_two_attempts_consuming_one_limit(): void
     {
         $fixture = OnlineStoreCreditFixture::create('customer', 1500, 10, 2000);
         $service = app(OnlineStoreCheckoutService::class);
@@ -52,7 +52,9 @@ class StoreCreditConcurrencyTest extends TestCase
             $service->checkout($fixture['actor'], OnlineStoreCreditFixture::nativePayload($fixture['listing']->id, 'limit-second', 'credit', 0));
         } finally {
             $summary = app(StoreCreditService::class)->summary($fixture['link']);
-            $this->assertSame(1500.0, $summary['pending_order_exposure']);
+            $this->assertSame(1500.0, $summary['current_debt']);
+            $this->assertSame(0.0, $summary['pending_order_exposure']);
+            $this->assertSame(1500.0, $summary['total_exposure']);
             $this->assertSame(500.0, $summary['available_credit']);
             $this->assertDatabaseCount('sales_orders', 1);
             $this->assertSame($first['order']->id, DB::table('sales_orders')->value('id'));
