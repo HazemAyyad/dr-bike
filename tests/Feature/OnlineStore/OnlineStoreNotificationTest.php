@@ -134,6 +134,90 @@ class OnlineStoreNotificationTest extends TestCase
         $this->assertSame($eligible->id, $accepted->recipient_user_id);
     }
 
+    public function test_promotion_applicability_maps_retail_and_wholesale_to_authoritative_active_links(): void
+    {
+        [$customerUser] = $this->linkedCustomer();
+        [$sellerUser] = $this->linkedSeller();
+        $service = app(OnlineStoreNotificationService::class);
+        $at = CarbonImmutable::parse('2026-10-03 10:00:00');
+
+        $retail = $this->activePromotion(['applies_to' => 'retail']);
+        $this->assertNotNull($service->notifyPromotion($customerUser, $retail, $at));
+        $this->assertNull($service->notifyPromotion($sellerUser, $retail, $at));
+
+        $wholesale = $this->activePromotion(['applies_to' => 'wholesale']);
+        $this->assertNotNull($service->notifyPromotion($sellerUser, $wholesale, $at));
+        $this->assertNull($service->notifyPromotion($customerUser, $wholesale, $at));
+
+        $both = $this->activePromotion(['applies_to' => 'both']);
+        $this->assertNotNull($service->notifyPromotion($customerUser, $both, $at));
+        $this->assertNotNull($service->notifyPromotion($sellerUser, $both, $at));
+    }
+
+    public function test_broadcast_sends_once_per_eligible_user_and_counts_role_mismatches(): void
+    {
+        [$customerUser] = $this->linkedCustomer();
+        [$sellerOnly] = $this->linkedSeller();
+        [$dualRole] = $this->linkedCustomer();
+        $this->addSellerLink($dualRole);
+
+        [$suspendedCustomer, , $suspendedLink] = $this->linkedCustomer();
+        $suspendedLink->update(['status' => 'suspended', 'verified_at' => null]);
+        $this->addSellerLink($suspendedCustomer);
+
+        [$unverifiedCustomer, , $unverifiedLink] = $this->linkedCustomer();
+        $unverifiedLink->update(['verified_at' => null]);
+        $this->addSellerLink($unverifiedCustomer);
+
+        [$canceledCustomer, $canceledParty] = $this->linkedCustomer();
+        $canceledParty->update(['is_canceled' => true]);
+
+        $promotion = $this->activePromotion(['applies_to' => 'retail']);
+        $service = app(OnlineStoreNotificationService::class);
+        $at = CarbonImmutable::parse('2026-10-03 10:00:00');
+
+        $this->assertNull($service->notifyPromotion($suspendedCustomer, $promotion, $at));
+        $this->assertNull($service->notifyPromotion($unverifiedCustomer, $promotion, $at));
+        $this->assertNull($service->notifyPromotion($canceledCustomer, $promotion, $at));
+        $this->assertSame(['sent' => 2, 'skipped' => 4], $service->broadcastPromotion($promotion, $at));
+
+        $this->assertDatabaseHas('admin_notifications', [
+            'type' => OnlineStoreNotificationService::TYPE_MARKETING_PROMOTION,
+            'recipient_user_id' => $customerUser->id,
+        ]);
+        $this->assertDatabaseMissing('admin_notifications', [
+            'type' => OnlineStoreNotificationService::TYPE_MARKETING_PROMOTION,
+            'recipient_user_id' => $sellerOnly->id,
+        ]);
+        $this->assertSame(1, AdminNotification::query()
+            ->where('type', OnlineStoreNotificationService::TYPE_MARKETING_PROMOTION)
+            ->where('recipient_user_id', $dualRole->id)
+            ->count());
+        $this->assertDatabaseCount('admin_notifications', 2);
+    }
+
+    public function test_both_applicability_reaches_each_role_and_deduplicates_dual_role_users(): void
+    {
+        [$customerUser] = $this->linkedCustomer();
+        [$sellerUser] = $this->linkedSeller();
+        [$dualRole] = $this->linkedCustomer();
+        $this->addSellerLink($dualRole);
+
+        $promotion = $this->activePromotion(['applies_to' => 'both']);
+        $result = app(OnlineStoreNotificationService::class)->broadcastPromotion(
+            $promotion,
+            CarbonImmutable::parse('2026-10-03 10:00:00')
+        );
+
+        $this->assertSame(['sent' => 3, 'skipped' => 0], $result);
+        $this->assertDatabaseHas('admin_notifications', ['recipient_user_id' => $customerUser->id]);
+        $this->assertDatabaseHas('admin_notifications', ['recipient_user_id' => $sellerUser->id]);
+        $this->assertSame(1, AdminNotification::query()
+            ->where('type', OnlineStoreNotificationService::TYPE_MARKETING_PROMOTION)
+            ->where('recipient_user_id', $dualRole->id)
+            ->count());
+    }
+
     /** @return array{0: \App\Models\User, 1: \App\Models\Customer, 2: \App\Models\OnlineStore\OnlineStoreAccountLink} */
     private function linkedCustomer(array $userOverrides = []): array
     {
@@ -146,6 +230,30 @@ class OnlineStoreNotificationTest extends TestCase
         );
 
         return [$user, $customer, $link];
+    }
+
+    /** @return array{0: \App\Models\User, 1: \App\Models\Seller, 2: \App\Models\OnlineStore\OnlineStoreAccountLink} */
+    private function linkedSeller(array $userOverrides = []): array
+    {
+        $user = OnlineStoreFixtureFactory::createStoreActor($userOverrides);
+        $seller = OnlineStoreFixtureFactory::createSeller();
+        $link = app(StoreIdentityService::class)->save(
+            OnlineStoreFixtureFactory::createAdminActor(),
+            $user,
+            ['role' => 'seller', 'seller_id' => $seller->id, 'account_source' => 'admin_app', 'status' => 'active']
+        );
+
+        return [$user, $seller, $link];
+    }
+
+    private function addSellerLink(\App\Models\User $user): void
+    {
+        $seller = OnlineStoreFixtureFactory::createSeller();
+        app(StoreIdentityService::class)->save(
+            OnlineStoreFixtureFactory::createAdminActor(),
+            $user,
+            ['role' => 'seller', 'seller_id' => $seller->id, 'account_source' => 'admin_app', 'status' => 'active']
+        );
     }
 
     private function activePromotion(array $overrides = []): OnlineStorePromotion

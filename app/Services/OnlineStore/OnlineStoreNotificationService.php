@@ -71,7 +71,8 @@ final class OnlineStoreNotificationService
         ?CarbonInterface $at = null,
     ): ?AdminNotification {
         $at ??= now();
-        if (! $this->eligibleRecipient($recipient) || ! $this->promotionIsCurrent($promotion, $at)) {
+        if (! $this->eligiblePromotionRecipient($recipient, $promotion)
+            || ! $this->promotionIsCurrent($promotion, $at)) {
             return null;
         }
 
@@ -160,6 +161,22 @@ final class OnlineStoreNotificationService
             && ! $recipient->is_blocked
             && strcasecmp((string) $recipient->type, 'User') === 0
             && $this->identity->activeLinks($recipient)->isNotEmpty();
+    }
+
+    private function eligiblePromotionRecipient(User $recipient, OnlineStorePromotion $promotion): bool
+    {
+        $role = match ((string) $promotion->applies_to) {
+            'retail' => 'customer',
+            'wholesale' => 'seller',
+            'both' => null,
+            default => false,
+        };
+
+        if ($role === false) {
+            return false;
+        }
+
+        return $this->identity->activeLinks($recipient, $role)->isNotEmpty();
     }
 
     private function promotionIsCurrent(OnlineStorePromotion $promotion, CarbonInterface $at): bool
