@@ -53,8 +53,21 @@ class OnlineStoreAccountLink extends Model
         return $this->belongsTo(User::class, 'verified_by');
     }
 
+    public function creditPolicy()
+    {
+        return $this->hasOne(OnlineStoreCreditPolicy::class, 'account_link_id');
+    }
+
     public function party(): Customer|Seller|null
     {
         return $this->role === 'customer' ? $this->customer : $this->seller;
+    }
+
+    public function isVerifiedCreditIdentity(): bool
+    {
+        $matchesParty = ($this->role === 'customer' && $this->customer_id && ! $this->seller_id)
+            || ($this->role === 'seller' && $this->seller_id && ! $this->customer_id);
+
+        return $this->status === 'active' && $this->verified_at !== null && $matchesParty;
     }
 }

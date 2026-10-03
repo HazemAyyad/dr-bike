@@ -878,9 +878,7 @@ class DebtLedgerService
         float $recognizedTotal,
         float $paidAmount
     ): ?DebtTransaction {
-        $order->loadMissing('customer');
-        $customerId = $order->customer_id ? (int) $order->customer_id : null;
-        $sellerId = null;
+        [$customerId, $sellerId] = $this->salesOrderParty($order);
 
         if (! $customerId && ! $sellerId) {
             $this->deleteSourceLedger('sales_order', (int) $order->id);
@@ -935,6 +933,22 @@ class DebtLedgerService
             $transactionDate,
             $currency
         );
+    }
+
+    /** @return array{0: ?int, 1: ?int} */
+    private function salesOrderParty(SalesOrder $order): array
+    {
+        if ($order->partner_type === 'seller' && $order->partner_id) {
+            return [null, (int) $order->partner_id];
+        }
+        if ($order->partner_type === 'customer' && $order->partner_id) {
+            return [(int) $order->partner_id, null];
+        }
+        if ($order->customer_id) {
+            return [(int) $order->customer_id, null];
+        }
+
+        return [null, null];
     }
 
     public function syncProfitSaleToLedger(ProfitSale $sale): ?DebtTransaction

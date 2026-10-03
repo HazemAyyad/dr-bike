@@ -82,6 +82,8 @@ use App\Http\Controllers\API\OnlineStore\StorefrontContentController as OnlineSt
 use App\Http\Controllers\API\OnlineStore\AccountLinkController as OnlineStoreAccountLinkController;
 use App\Http\Controllers\API\OnlineStore\PromotionController as OnlineStorePromotionController;
 use App\Http\Controllers\API\OnlineStore\CouponController as OnlineStoreCouponController;
+use App\Http\Controllers\API\OnlineStore\CreditPolicyController as OnlineStoreCreditPolicyController;
+use App\Http\Controllers\API\OnlineStore\StoreGovernanceController as OnlineStoreGovernanceController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1774,6 +1776,13 @@ Route::prefix('online-store')
         Route::get('/account-links', [OnlineStoreAccountLinkController::class, 'index']);
         Route::post('/account-links', [OnlineStoreAccountLinkController::class, 'store']);
         Route::patch('/account-links/{link}', [OnlineStoreAccountLinkController::class, 'update']);
+        Route::put('/account-links/{link}/credit-policy', [OnlineStoreCreditPolicyController::class, 'update'])->name('account-links.credit-policy.update');
+        Route::get('/account-links/{link}/credit', [OnlineStoreCreditPolicyController::class, 'show'])->name('account-links.credit.show');
+        Route::get('/settings', [OnlineStoreGovernanceController::class, 'settings'])->name('settings.show');
+        Route::put('/settings', [OnlineStoreGovernanceController::class, 'updateSettings'])->name('settings.update');
+        Route::get('/audit-events', [OnlineStoreGovernanceController::class, 'auditEvents'])->name('audit-events.index');
+        Route::get('/dashboard', [OnlineStoreGovernanceController::class, 'dashboard'])->name('dashboard');
+        Route::get('/reports', [OnlineStoreGovernanceController::class, 'report'])->name('reports.index');
         Route::middleware('check.permission:Online Store View')->group(function () {
             // Dashboard, report, and resource read routes are registered in later phases.
         });

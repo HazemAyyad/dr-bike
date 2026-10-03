@@ -19,7 +19,8 @@ class StoreOrdersController extends StoreBaseController
         $actor = $this->authenticatedUser($request);
         $data = $request->validate([
             'client_request_id' => 'required|string|max:100', 'account_role' => 'required|in:customer,seller',
-            'payment' => 'required|array', 'payment.type' => 'required|in:cash', 'payment.paid_amount' => 'nullable|numeric|min:0',
+            'payment' => 'required|array', 'payment.type' => 'required|in:cash,credit,mixed',
+            'payment.paid_amount' => 'nullable|numeric|min:0',
             'coupon_code' => 'nullable|string|max:100', 'delivery' => 'nullable|array',
             'delivery.customer_address' => 'nullable|string|max:1000', 'delivery.city_id' => 'nullable|integer',
             'delivery.shiply_city_id' => 'nullable|integer', 'delivery.shiply_village_id' => 'nullable|integer',
@@ -29,6 +30,7 @@ class StoreOrdersController extends StoreBaseController
             'items.*.quantity' => 'required|integer|min:1',
         ]);
         $data['payment_type'] = $data['payment']['type'];
+        $data['payment_amount'] = $data['payment']['paid_amount'] ?? 0;
         foreach (['customer_address', 'city_id', 'shiply_city_id', 'shiply_village_id', 'partner_address_id', 'delivery_company_id'] as $field) {
             if (array_key_exists($field, $data['delivery'] ?? [])) {
                 $data[$field] = $data['delivery'][$field];

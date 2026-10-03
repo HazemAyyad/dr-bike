@@ -27,6 +27,8 @@ final class OnlineStoreCheckoutService
         private StoreCheckoutIdempotencyService $idempotency,
         private LegacyCheckoutDeduplicationService $legacyDedupe,
         private StorePricingService $pricing,
+        private StoreCreditService $credit,
+        private OnlineStoreSettingsService $settings,
         private CouponService $coupons,
         private ListingReadinessService $readiness,
         private SalesOrderStockService $stock,
@@ -52,8 +54,13 @@ final class OnlineStoreCheckoutService
     {
         $role = $legacy ? null : ($payload['account_role'] ?? null);
         $link = $this->identity->activeLink($actor, $role);
-        if (($payload['payment_type'] ?? 'cash') !== 'cash') {
-            throw ValidationException::withMessages(['payment_type' => ['Credit and mixed Store checkout are introduced in the approved credit phase.']]);
+        $paymentType = $legacy ? 'cash' : (string) ($payload['payment_type'] ?? 'cash');
+        if (! in_array($paymentType, ['cash', 'credit', 'mixed'], true)) {
+            throw ValidationException::withMessages(['payment.type' => ['The Store payment type is invalid.']]);
+        }
+        $paymentCurrency = strtoupper(trim((string) ($payload['payment_currency'] ?? StoreCreditService::STORE_CHECKOUT_CURRENCY)));
+        if ($paymentCurrency !== StoreCreditService::STORE_CHECKOUT_CURRENCY) {
+            throw ValidationException::withMessages(['payment.currency' => ['Online Store V1 checkout uses the authoritative ILS price currency.']]);
         }
         $lines = $this->resolveLines($legacy ? ($payload['details'] ?? []) : ($payload['items'] ?? []), $legacy);
         $couponCode = $legacy ? ($payload['discoundCode'] ?? null) : ($payload['coupon_code'] ?? null);
@@ -68,6 +75,20 @@ final class OnlineStoreCheckoutService
             ];
         }
         $address = $this->addressData($payload, $legacy, $priced['payable_before_delivery']);
+        $orderTotal = round((float) $priced['payable_before_delivery'] + (float) $address['delivery_fee'], 2);
+        $submittedPaymentAmount = round((float) ($payload['payment_amount'] ?? 0), 2);
+        if ($paymentType !== 'mixed' && $submittedPaymentAmount > 0) {
+            throw ValidationException::withMessages(['payment.paid_amount' => ['A paid amount is accepted only for mixed Store checkout.']]);
+        }
+        $paymentAmount = $paymentType === 'mixed' ? $submittedPaymentAmount : 0.0;
+        if ($paymentAmount < 0 || $paymentAmount > $orderTotal || ($paymentType === 'mixed' && ($paymentAmount <= 0 || $paymentAmount >= $orderTotal))) {
+            throw ValidationException::withMessages(['payment.paid_amount' => ['Mixed payment must be positive and less than the authoritative order total.']]);
+        }
+        $this->settings->assertCheckoutAllowed((float) $priced['payable_before_delivery'], $paymentType);
+        if (in_array($paymentType, ['credit', 'mixed'], true)) {
+            $this->credit->assertCanCheckout($link, round($orderTotal - $paymentAmount, 2), $paymentCurrency);
+        }
+        $this->assertAuthoritativeAvailability($lines);
         $party = $link->party();
         $items = collect($priced['items'])->map(fn ($item) => [
             'product_id' => $item['product_id'], 'size_id' => $item['size_id'], 'size_color_id' => $item['size_color_id'],
@@ -86,7 +107,7 @@ final class OnlineStoreCheckoutService
             'shiply_village_name' => $address['shiply_village_name'], 'customer_delivery_fee' => $address['delivery_fee'],
             'partner_address_id' => $payload['partner_address_id'] ?? null,
             'delivery_company_id' => $payload['delivery_company_id'] ?? null,
-            'payment_type' => 'cash', 'payment_amount' => 0, 'discount' => $priced['coupon_discount'],
+            'payment_type' => $paymentType, 'payment_amount' => $paymentAmount, 'discount' => $priced['coupon_discount'],
             'items' => $items, 'reserve_stock' => true,
             'notes' => $couponCode ? 'Online Store coupon applied' : null,
         ]);
@@ -146,8 +167,14 @@ final class OnlineStoreCheckoutService
             }
         }
 
+        return $grouped->all();
+    }
+
+    private function assertAuthoritativeAvailability(array $lines): void
+    {
+        $productIds = collect($lines)->pluck('listing.product_id')->unique()->sort()->values()->all();
         $availability = collect($this->stock->bulkAvailability($productIds));
-        foreach ($grouped as $line) {
+        foreach ($lines as $line) {
             $available = $availability->first(fn ($row) => (int) $row['product_id'] === (int) $line['listing']->product_id
                 && (($line['size_color_id'] === null && (($row['is_aggregate'] ?? false) || $row['size_color_id'] === null))
                     || (int) $row['size_color_id'] === (int) $line['size_color_id']));
@@ -156,7 +183,6 @@ final class OnlineStoreCheckoutService
             }
         }
 
-        return $grouped->all();
     }
 
     private function addressData(array $payload, bool $legacy, float $parcelPrice): array

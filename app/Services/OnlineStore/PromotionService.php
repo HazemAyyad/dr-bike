@@ -13,6 +13,8 @@ use Illuminate\Validation\ValidationException;
 
 final class PromotionService
 {
+    public function __construct(private readonly OnlineStoreAuditService $auditService) {}
+
     public function save(User $actor, array $data, ?OnlineStorePromotion $promotion = null): OnlineStorePromotion
     {
         return DB::transaction(function () use ($actor, $data, $promotion) {
@@ -134,8 +136,6 @@ final class PromotionService
         $action = $before === null ? 'created'
             : ((! (bool) ($before['is_active'] ?? false) && $promotion->is_active) ? 'activated'
                 : (((bool) ($before['is_active'] ?? false) && ! $promotion->is_active) ? 'deactivated' : 'updated'));
-        DB::table('online_store_audit_events')->insert(['actor_user_id' => $actor->getKey(), 'action' => $action,
-            'entity_type' => 'promotion', 'entity_id' => $promotion->getKey(), 'before_values' => $before ? json_encode($before) : null,
-            'after_values' => json_encode($after), 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+        $this->auditService->record($actor, $action, 'promotion', (int) $promotion->getKey(), $before, $after);
     }
 }

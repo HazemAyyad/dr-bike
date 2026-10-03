@@ -14,6 +14,8 @@ use Illuminate\Validation\ValidationException;
 
 final class StoreIdentityService
 {
+    public function __construct(private readonly OnlineStoreAuditService $auditService) {}
+
     public function save(User $actor, User $storeUser, array $data, ?OnlineStoreAccountLink $link = null): OnlineStoreAccountLink
     {
         return DB::transaction(function () use ($actor, $storeUser, $data, $link) {
@@ -117,11 +119,6 @@ final class StoreIdentityService
 
     private function audit(User $actor, OnlineStoreAccountLink $link, ?array $before, array $after): void
     {
-        DB::table('online_store_audit_events')->insert([
-            'actor_user_id' => $actor->getKey(), 'action' => $before ? 'updated' : 'linked',
-            'entity_type' => 'account_link', 'entity_id' => $link->getKey(),
-            'before_values' => $before ? json_encode($before) : null, 'after_values' => json_encode($after),
-            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
-        ]);
+        $this->auditService->record($actor, $before ? 'updated' : 'linked', 'account_link', (int) $link->getKey(), $before, $after);
     }
 }

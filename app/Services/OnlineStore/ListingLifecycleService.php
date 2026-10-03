@@ -9,7 +9,10 @@ use Illuminate\Validation\ValidationException;
 
 final class ListingLifecycleService
 {
-    public function __construct(private readonly ListingReadinessService $readiness) {}
+    public function __construct(
+        private readonly ListingReadinessService $readiness,
+        private readonly OnlineStoreAuditService $audit,
+    ) {}
 
     public function refresh(OnlineStoreListing $listing, ?User $actor = null): OnlineStoreListing
     {
@@ -77,11 +80,6 @@ final class ListingLifecycleService
 
     private function audit(OnlineStoreListing $listing, ?User $actor, string $action, array $before): void
     {
-        DB::table('online_store_audit_events')->insert([
-            'actor_user_id' => $actor?->getKey(), 'action' => $action, 'entity_type' => 'listing',
-            'entity_id' => $listing->getKey(), 'before_values' => json_encode($before),
-            'after_values' => json_encode($this->snapshot($listing)), 'request_id' => request()->header('X-Request-ID'),
-            'ip_address' => request()->ip(), 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
-        ]);
+        $this->audit->record($actor, $action, 'listing', (int) $listing->getKey(), $before, $this->snapshot($listing));
     }
 }

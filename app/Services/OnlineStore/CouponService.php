@@ -15,6 +15,8 @@ use Illuminate\Validation\ValidationException;
 
 final class CouponService
 {
+    public function __construct(private readonly OnlineStoreAuditService $auditService) {}
+
     public function save(User $actor, array $data, ?OnlineStoreCoupon $coupon = null): OnlineStoreCoupon
     {
         return DB::transaction(function () use ($actor, $data, $coupon) {
@@ -226,6 +228,6 @@ final class CouponService
         $action = $before === null ? 'created'
             : ((! (bool) ($before['is_active'] ?? false) && $coupon->is_active) ? 'activated'
                 : (((bool) ($before['is_active'] ?? false) && ! $coupon->is_active) ? 'deactivated' : 'updated'));
-        DB::table('online_store_audit_events')->insert(['actor_user_id' => $actor->getKey(), 'action' => $action, 'entity_type' => 'coupon', 'entity_id' => $coupon->getKey(), 'before_values' => $before ? json_encode($before) : null, 'after_values' => json_encode($after), 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+        $this->auditService->record($actor, $action, 'coupon', (int) $coupon->getKey(), $before, $after);
     }
 }

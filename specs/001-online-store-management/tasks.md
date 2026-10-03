@@ -205,19 +205,19 @@ description: "Dependency-ordered implementation tasks for Online Store Managemen
 
 ### Tests for User Story 6
 
-- [ ] T079 [P] [US6] Add credit-policy validation tests for active verified link, explicit eligibility, optional non-negative `decimal(14,2)` limit, bounded currency, approval/expiry, and no persisted current/available balance in `tests/Unit/OnlineStore/OnlineStoreCreditPolicyTest.php`
-- [ ] T080 [P] [US6] Add customer and supplier 2,000/500/1,500 partial-payment reconciliation tests across settlement, debt transaction, accounting lines, source keys, and cancellation reversal in `tests/Feature/OnlineStore/StoreCreditCheckoutTest.php`
-- [ ] T081 [P] [US6] Add ineligible, expired, over-limit, currency mismatch, concurrent limit consumption, stock failure, and rollback-with-no-partial-effects tests in `tests/Feature/OnlineStore/StoreCreditConcurrencyTest.php`
+- [X] T079 [P] [US6] Add credit-policy validation tests for active verified link, explicit eligibility, optional non-negative `decimal(14,2)` limit, bounded currency, approval/expiry, and no persisted current/available balance in `tests/Unit/OnlineStore/OnlineStoreCreditPolicyTest.php`
+- [X] T080 [P] [US6] Add customer and supplier 2,000/500/1,500 partial-payment reconciliation tests across settlement, debt transaction, accounting lines, source keys, and cancellation reversal in `tests/Feature/OnlineStore/StoreCreditCheckoutTest.php`
+- [X] T081 [P] [US6] Add ineligible, expired, over-limit, currency mismatch, concurrent limit consumption, stock failure, and rollback-with-no-partial-effects tests in `tests/Feature/OnlineStore/StoreCreditConcurrencyTest.php`
 
 ### Implementation for User Story 6
 
-- [ ] T082 [P] [US6] Implement `OnlineStoreCreditPolicy` with unique account link, explicit `is_eligible=false`, nullable non-negative `credit_limit decimal(14,2)`, currency, approval, expiry, and no balance columns in `app/Models/OnlineStore/OnlineStoreCreditPolicy.php`
-- [ ] T083 [US6] Implement party-aware ledger exposure/current debt and available credit calculation with policy locking in `app/Services/OnlineStore/StoreCreditService.php`
-- [ ] T084 [US6] Extend sales-order debt synchronization to use exactly one validated customer or seller dimension and post only the unpaid remainder idempotently in `app/Services/DebtLedgerService.php`
-- [ ] T085 [US6] Extend SalesOrder accounting projections, settlements, metadata, and reversals to use the same customer/seller dimension while retaining unique source-key idempotency in `app/Services/AccountingProjectionService.php`
-- [ ] T086 [US6] Integrate locked eligibility/limit checks, existing initial payment/settlement flow, and unpaid ledger posting into Store checkout without adding payment/debt tables in `app/Services/OnlineStore/OnlineStoreCheckoutService.php`
-- [ ] T087 [US6] Implement credit-policy management and ledger-derived credit read endpoints with `Online Store Settings Manage` permission in `app/Http/Controllers/API/OnlineStore/CreditPolicyController.php`
-- [ ] T088 [US6] Register credit-policy and credit-summary routes in `routes/api.php`
+- [X] T082 [P] [US6] Implement `OnlineStoreCreditPolicy` with unique account link, explicit `is_eligible=false`, nullable non-negative `credit_limit decimal(14,2)`, currency, approval, expiry, and no balance columns in `app/Models/OnlineStore/OnlineStoreCreditPolicy.php`
+- [X] T083 [US6] Implement party-aware ledger exposure/current debt and available credit calculation with policy locking in `app/Services/OnlineStore/StoreCreditService.php`
+- [X] T084 [US6] Extend sales-order debt synchronization to use exactly one validated customer or seller dimension and post only the unpaid remainder idempotently in `app/Services/DebtLedgerService.php`
+- [X] T085 [US6] Extend SalesOrder accounting projections, settlements, metadata, and reversals to use the same customer/seller dimension while retaining unique source-key idempotency in `app/Services/AccountingProjectionService.php`
+- [X] T086 [US6] Integrate locked eligibility/limit checks, existing initial payment/settlement flow, and unpaid ledger posting into Store checkout without adding payment/debt tables in `app/Services/OnlineStore/OnlineStoreCheckoutService.php`
+- [X] T087 [US6] Implement credit-policy management and ledger-derived credit read endpoints with `Online Store Settings Manage` permission in `app/Http/Controllers/API/OnlineStore/CreditPolicyController.php`
+- [X] T088 [US6] Register credit-policy and credit-summary routes in `routes/api.php`
 
 **Checkpoint**: US6 proves customer/supplier credit through existing settlement, debt, and accounting authorities.
 
@@ -231,23 +231,23 @@ description: "Dependency-ordered implementation tasks for Online Store Managemen
 
 ### Tests for User Story 8
 
-- [ ] T089 [P] [US8] Add Store settings singleton/invariant and precedence tests for disabled store, maintenance, checkout, COD, guest browsing, minimum order, languages, policies, and fixed `visible_non_purchasable` V1 behavior in `tests/Feature/OnlineStore/OnlineStoreSettingsTest.php`
-- [ ] T090 [P] [US8] Add a permission matrix test for all seven capabilities, Admin bypass, employee direct URL denial, inaccessible 404 behavior, and no UI-only authorization assumptions in `tests/Feature/OnlineStore/OnlineStorePermissionTest.php`
-- [ ] T091 [P] [US8] Add audit tests for publication, promotions, coupons, settings, identity links, review moderation, and other Store pricing outcomes with actor/action/entity/time/before-after data and secret/PII redaction in `tests/Feature/OnlineStore/OnlineStoreAuditTest.php`
-- [ ] T092 [P] [US8] Add dashboard/report reconciliation tests for explicit admin/store origins, listing states, stock, promotions, coupons, pending reviews, retail/wholesale, AOV, and Store debt activity with filters/timezone and unavailable-not-zero semantics in `tests/Feature/OnlineStore/OnlineStoreReportTest.php`; seed review-table evidence through the isolated database fixture rather than depending on the later US7 model/service, then repeat the integrated assertion in final regression
-- [ ] T093 [P] [US8] Add 10,000-listing query-budget and 95th-percentile two-second acceptance harness in `tests/Feature/OnlineStore/OnlineStorePerformanceTest.php`
+- [X] T089 [P] [US8] Add Store settings singleton/invariant and precedence tests for disabled store, maintenance, checkout, COD, guest browsing, minimum order, languages, policies, and fixed `visible_non_purchasable` V1 behavior in `tests/Feature/OnlineStore/OnlineStoreSettingsTest.php`
+- [X] T090 [P] [US8] Add a permission matrix test for all seven capabilities, Admin bypass, employee direct URL denial, inaccessible 404 behavior, and no UI-only authorization assumptions in `tests/Feature/OnlineStore/OnlineStorePermissionTest.php`
+- [X] T091 [P] [US8] Add audit tests for publication, promotions, coupons, settings, identity links, review moderation, and other Store pricing outcomes with actor/action/entity/time/before-after data and secret/PII redaction in `tests/Feature/OnlineStore/OnlineStoreAuditTest.php`
+- [X] T092 [P] [US8] Add dashboard/report reconciliation tests for explicit admin/store origins, listing states, stock, promotions, coupons, pending reviews, retail/wholesale, AOV, and Store debt activity with filters/timezone and unavailable-not-zero semantics in `tests/Feature/OnlineStore/OnlineStoreReportTest.php`; seed review-table evidence through the isolated database fixture rather than depending on the later US7 model/service, then repeat the integrated assertion in final regression
+- [X] T093 [P] [US8] Add 10,000-listing query-budget and 95th-percentile two-second acceptance harness in `tests/Feature/OnlineStore/OnlineStorePerformanceTest.php`
 
 ### Implementation for User Story 8
 
-- [ ] T094 [P] [US8] Implement singleton `OnlineStoreSettings` with the exact fields and typed JSON/money/boolean casts from `data-model.md` in `app/Models/OnlineStore/OnlineStoreSettings.php`
-- [ ] T095 [P] [US8] Implement `OnlineStoreAuditEvent` with allow-listed entity/action, actor, before/after, correlation, IP, timestamp, indexes, and secret redaction in `app/Models/OnlineStore/OnlineStoreAuditEvent.php`
-- [ ] T096 [US8] Implement typed setting validation and operating-state precedence in `app/Services/OnlineStore/OnlineStoreSettingsService.php`
-- [ ] T097 [US8] Implement transaction-coupled Store audit recording and redaction, leaving Product base-price auditing in the inventory/pricing domain in `app/Services/OnlineStore/OnlineStoreAuditService.php`
-- [ ] T098 [US8] Implement indexed authoritative dashboard aggregates and explicit admin/store origin summaries in `app/Services/OnlineStore/OnlineStoreDashboardService.php`
-- [ ] T099 [US8] Implement filtered/timezone-aware report queries that reconcile to SalesOrders, listings, redemptions, reviews, stock reads, and ledger activity in `app/Services/OnlineStore/OnlineStoreReportService.php`
-- [ ] T100 [US8] Implement settings/audit writes with `Online Store Settings Manage` and dashboard/report reads with `Online Store View` in `app/Http/Controllers/API/OnlineStore/StoreGovernanceController.php`
-- [ ] T101 [US8] Map typed settings to the legacy `isClose/message/call/whatsApp` response without weakening protected writes in `app/Http/Controllers/API/Store/StoreSettingsController.php`
-- [ ] T102 [US8] Register governance/dashboard/report endpoints in `routes/api.php`
+- [X] T094 [P] [US8] Implement singleton `OnlineStoreSettings` with the exact fields and typed JSON/money/boolean casts from `data-model.md` in `app/Models/OnlineStore/OnlineStoreSettings.php`
+- [X] T095 [P] [US8] Implement `OnlineStoreAuditEvent` with allow-listed entity/action, actor, before/after, correlation, IP, timestamp, indexes, and secret redaction in `app/Models/OnlineStore/OnlineStoreAuditEvent.php`
+- [X] T096 [US8] Implement typed setting validation and operating-state precedence in `app/Services/OnlineStore/OnlineStoreSettingsService.php`
+- [X] T097 [US8] Implement transaction-coupled Store audit recording and redaction, leaving Product base-price auditing in the inventory/pricing domain in `app/Services/OnlineStore/OnlineStoreAuditService.php`
+- [X] T098 [US8] Implement indexed authoritative dashboard aggregates and explicit admin/store origin summaries in `app/Services/OnlineStore/OnlineStoreDashboardService.php`
+- [X] T099 [US8] Implement filtered/timezone-aware report queries that reconcile to SalesOrders, listings, redemptions, reviews, stock reads, and ledger activity in `app/Services/OnlineStore/OnlineStoreReportService.php`
+- [X] T100 [US8] Implement settings/audit writes with `Online Store Settings Manage` and dashboard/report reads with `Online Store View` in `app/Http/Controllers/API/OnlineStore/StoreGovernanceController.php`
+- [X] T101 [US8] Map typed settings to the legacy `isClose/message/call/whatsApp` response without weakening protected writes in `app/Http/Controllers/API/Store/StoreSettingsController.php`
+- [X] T102 [US8] Register governance/dashboard/report endpoints in `routes/api.php`
 
 **Checkpoint**: US8 independently provides authoritative governance, auditability, and reconciled measurement.
 
