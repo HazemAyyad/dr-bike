@@ -73,6 +73,9 @@ final class OnlineStoreCheckoutService
             'product_id' => $item['product_id'], 'size_id' => $item['size_id'], 'size_color_id' => $item['size_color_id'],
             'quantity' => $item['quantity'], 'unit_price' => $item['unit_price'], 'is_hidden' => false,
         ])->all();
+        $reserveCoupon = $priced['coupon'] ? function (SalesOrder $order) use ($priced, $actor, $link): void {
+            $this->coupons->reserve($priced['coupon'], $order, $actor, $link, $priced['coupon_discount']);
+        } : null;
         $trusted = new Request([
             'partner_type' => $link->role, 'partner_id' => $party->getKey(),
             'customer_id' => $link->role === 'customer' ? $party->getKey() : null,
@@ -89,10 +92,8 @@ final class OnlineStoreCheckoutService
         ]);
         $order = $this->orders->store($actor, $trusted, [
             'origin' => SalesOrder::ORIGIN_STORE, 'origin_user_id' => $actor->getKey(), 'client_request_id' => $requestId,
+            'before_creation_effects' => $reserveCoupon,
         ]);
-        if ($priced['coupon']) {
-            $this->coupons->reserve($priced['coupon'], $order, $actor, $link, $priced['coupon_discount']);
-        }
 
         return $order;
     }

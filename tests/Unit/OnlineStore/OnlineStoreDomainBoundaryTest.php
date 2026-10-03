@@ -61,9 +61,9 @@ class OnlineStoreDomainBoundaryTest extends TestCase
 
     public function test_shared_policy_keeps_admin_bypass_but_hides_inaccessible_resources(): void
     {
-        $admin = new User();
+        $admin = new User;
         $admin->forceFill(['id' => 100, 'type' => 'admin']);
-        $policy = new OnlineStorePolicy();
+        $policy = new OnlineStorePolicy;
 
         $this->assertTrue($policy->authorize($admin, 'Online Store View')->allowed());
         $this->assertTrue($policy->authorizeResource($admin, 'Online Store View', true, 999)->allowed());
@@ -71,6 +71,31 @@ class OnlineStoreDomainBoundaryTest extends TestCase
         $denied = $policy->authorizeResource($admin, 'Online Store View', false);
         $this->assertFalse($denied->allowed());
         $this->assertSame(404, $denied->status());
+    }
+
+    public function test_coupon_reservation_hook_precedes_sales_order_creation_effects(): void
+    {
+        $repositoryRoot = dirname(__DIR__, 3);
+        $salesOrderService = file_get_contents($repositoryRoot.'/app/Services/SalesOrderService.php');
+        $checkoutService = file_get_contents($repositoryRoot.'/app/Services/OnlineStore/OnlineStoreCheckoutService.php');
+
+        $hook = strpos($salesOrderService, '$beforeCreationEffects($order);');
+        $items = strpos($salesOrderService, '$this->syncItems($order');
+        $stock = strpos($salesOrderService, '$this->applyUnconfirmedStockReservation(');
+        $status = strpos($salesOrderService, '$this->logStatus($order, null');
+        $notification = strpos($salesOrderService, '$this->notifications->notifyStatusChange(');
+
+        $this->assertIsInt($hook);
+        $this->assertIsInt($items);
+        $this->assertIsInt($stock);
+        $this->assertIsInt($status);
+        $this->assertIsInt($notification);
+        $this->assertLessThan($items, $hook);
+        $this->assertLessThan($stock, $hook);
+        $this->assertLessThan($status, $hook);
+        $this->assertLessThan($notification, $hook);
+        $this->assertStringContainsString("'before_creation_effects' => \$reserveCoupon", $checkoutService);
+        $this->assertStringNotContainsString("\n        if (\$priced['coupon']) {\n            \$this->coupons->reserve", $checkoutService);
     }
 
     private function phaseTwoMigrationSource(): string

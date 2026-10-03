@@ -293,7 +293,14 @@ class SalesOrderService
             ->findOrFail($orderId);
     }
 
-    /** @param array{origin?: string, origin_user_id?: int|null, client_request_id?: string|null} $trustedContext */
+    /**
+     * @param  array{
+     *     origin?: string,
+     *     origin_user_id?: int|null,
+     *     client_request_id?: string|null,
+     *     before_creation_effects?: (callable(SalesOrder): void)|null
+     * }  $trustedContext
+     */
     public function store(User $user, Request $request, array $trustedContext = []): SalesOrder
     {
         $data = $this->validateOrderPayload($request, false);
@@ -312,8 +319,12 @@ class SalesOrderService
             $originUserId = null;
             $clientRequestId = null;
         }
+        $beforeCreationEffects = $trustedContext['before_creation_effects'] ?? null;
+        if ($beforeCreationEffects !== null && ! is_callable($beforeCreationEffects)) {
+            throw new \LogicException('The trusted pre-effect SalesOrder callback must be callable.');
+        }
 
-        return DB::transaction(function () use ($user, $data, $origin, $originUserId, $clientRequestId) {
+        return DB::transaction(function () use ($user, $data, $origin, $originUserId, $clientRequestId, $beforeCreationEffects) {
             $this->lockOrderStockScope($data['items'] ?? []);
             $totals = $this->calculateTotals($data);
             $customerSnapshot = $this->resolveCustomerSnapshot($data);
@@ -359,6 +370,10 @@ class SalesOrderService
                 'origin_user_id' => $originUserId,
                 'client_request_id' => $clientRequestId,
             ])->save();
+
+            if ($beforeCreationEffects !== null) {
+                $beforeCreationEffects($order);
+            }
 
             if (empty($order->root_order_id)) {
                 $order->update(['root_order_id' => $order->id]);

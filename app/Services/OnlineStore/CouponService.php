@@ -76,19 +76,7 @@ final class CouponService
         if ($coupon->scope === 'global' && $coupon->targets->isNotEmpty()) {
             throw ValidationException::withMessages(['coupon_code' => ['The coupon scope is misconfigured.']]);
         }
-        $countable = ['reserved', 'applied'];
-        $usage = $coupon->redemptions()->whereIn('status', $countable);
-        $userUsage = $coupon->redemptions()->where('user_id', $user->getKey())->whereIn('status', $countable);
-        if ($excludeRedemptionId !== null) {
-            $usage->where('id', '<>', $excludeRedemptionId);
-            $userUsage->where('id', '<>', $excludeRedemptionId);
-        }
-        if ($coupon->total_usage_limit !== null && $usage->count() >= $coupon->total_usage_limit) {
-            throw ValidationException::withMessages(['coupon_code' => ['The coupon usage limit has been reached.']]);
-        }
-        if ($coupon->per_user_usage_limit !== null && $userUsage->count() >= $coupon->per_user_usage_limit) {
-            throw ValidationException::withMessages(['coupon_code' => ['The coupon user limit has been reached.']]);
-        }
+        $this->assertUsageCapacity($coupon, $user, $excludeRedemptionId);
 
         return $coupon;
     }
@@ -112,7 +100,21 @@ final class CouponService
 
     public function reserve(OnlineStoreCoupon $coupon, SalesOrder $order, User $user, OnlineStoreAccountLink $link, float $amount): OnlineStoreCouponRedemption
     {
-        return OnlineStoreCouponRedemption::query()->firstOrCreate(['sales_order_id' => $order->getKey()], [
+        $existing = OnlineStoreCouponRedemption::query()->where('sales_order_id', $order->getKey())->lockForUpdate()->first();
+        if ($existing) {
+            if ((int) $existing->coupon_id !== (int) $coupon->getKey()
+                || (int) $existing->user_id !== (int) $user->getKey()) {
+                throw new \LogicException('A SalesOrder cannot be reserved against a different coupon or Store actor.');
+            }
+
+            return $existing;
+        }
+
+        $lockedCoupon = OnlineStoreCoupon::query()->whereKey($coupon->getKey())->lockForUpdate()->firstOrFail();
+        $this->assertUsageCapacity($lockedCoupon, $user);
+
+        return OnlineStoreCouponRedemption::query()->create([
+            'sales_order_id' => $order->getKey(),
             'coupon_id' => $coupon->getKey(), 'user_id' => $user->getKey(),
             'customer_id' => $link->role === 'customer' ? $link->customer_id : null,
             'seller_id' => $link->role === 'seller' ? $link->seller_id : null,
@@ -175,6 +177,23 @@ final class CouponService
         }
         if ($targets !== null) {
             $this->normalizedTargets($targets);
+        }
+    }
+
+    private function assertUsageCapacity(OnlineStoreCoupon $coupon, User $user, ?int $excludeRedemptionId = null): void
+    {
+        $countable = ['reserved', 'applied'];
+        $usage = $coupon->redemptions()->whereIn('status', $countable);
+        $userUsage = $coupon->redemptions()->where('user_id', $user->getKey())->whereIn('status', $countable);
+        if ($excludeRedemptionId !== null) {
+            $usage->where('id', '<>', $excludeRedemptionId);
+            $userUsage->where('id', '<>', $excludeRedemptionId);
+        }
+        if ($coupon->total_usage_limit !== null && $usage->count() >= $coupon->total_usage_limit) {
+            throw ValidationException::withMessages(['coupon_code' => ['The coupon usage limit has been reached.']]);
+        }
+        if ($coupon->per_user_usage_limit !== null && $userUsage->count() >= $coupon->per_user_usage_limit) {
+            throw ValidationException::withMessages(['coupon_code' => ['The coupon user limit has been reached.']]);
         }
     }
 
