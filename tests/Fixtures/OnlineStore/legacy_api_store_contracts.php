@@ -22,9 +22,18 @@ return [
             'success' => 'user_payload',
             'error' => ['message' => 'string'],
         ],
-        'forgot_password_legacy_insecure' => [
-            'request' => ['Email' => 'string'],
-            'success' => ['userId' => 'string', 'email' => 'string', 'otp' => 'string', 'message' => 'string'],
+        'forgot_password_secure_exception' => [
+            'request' => ['Email' => 'string', 'app' => 'store', 'platform' => 'android|ios', 'current_version' => 'semver', 'current_build' => 'integer>=10'],
+            'success' => ['status' => 'success', 'message' => 'string'],
+            'upgrade_required' => ['status' => 'upgrade_required', 'message' => 'string', 'minimum_build' => 10],
+        ],
+        'verify_forgot_password_otp' => [
+            'request' => ['Email' => 'string', 'otp' => 'six_digits', 'client_metadata' => 'required'],
+            'success' => ['status' => 'success', 'resetProof' => 'opaque|string', 'message' => 'string'],
+        ],
+        'reset_forgotten_password' => [
+            'request' => ['resetProof' => 'opaque|string', 'newPassword' => 'string', 'confirmPassword' => 'string', 'client_metadata' => 'required'],
+            'success' => ['status' => 'success', 'message' => 'string'],
         ],
     ],
     'catalog' => [

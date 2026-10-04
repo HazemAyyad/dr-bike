@@ -6,56 +6,86 @@ use App\Models\AppSetting;
 
 class AppUpdateSettings
 {
-    private const PLATFORMS = ['android', 'ios', 'windows'];
+    public const STORE_PASSWORD_RESET_MINIMUM_BUILD = 10;
+
+    private const APP_PLATFORMS = [
+        'admin' => ['android', 'ios', 'windows'],
+        'store' => ['android', 'ios'],
+    ];
 
     private const KEY_MAP = [
-        'android' => [
-            'is_active' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_ACTIVE,
-            'latest_version' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_LATEST_VERSION,
-            'latest_build' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_LATEST_BUILD,
-            'minimum_build' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_MINIMUM_BUILD,
-            'force_update' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_FORCE,
-            'url' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_URL,
-            'title' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_TITLE,
-            'message' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_MESSAGE,
+        'admin' => [
+            'android' => [
+                'is_active' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_ACTIVE,
+                'latest_version' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_LATEST_VERSION,
+                'latest_build' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_LATEST_BUILD,
+                'minimum_build' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_MINIMUM_BUILD,
+                'force_update' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_FORCE,
+                'url' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_URL,
+                'title' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_TITLE,
+                'message' => AppSetting::KEY_APP_UPDATE_ADMIN_ANDROID_MESSAGE,
+            ],
+            'ios' => [
+                'is_active' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_ACTIVE,
+                'latest_version' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_LATEST_VERSION,
+                'latest_build' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_LATEST_BUILD,
+                'minimum_build' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_MINIMUM_BUILD,
+                'force_update' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_FORCE,
+                'url' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_URL,
+                'title' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_TITLE,
+                'message' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_MESSAGE,
+            ],
+            'windows' => [
+                'is_active' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_ACTIVE,
+                'latest_version' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_VERSION,
+                'latest_build' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_BUILD,
+                'minimum_build' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_MINIMUM_BUILD,
+                'force_update' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_FORCE,
+                'url' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_URL,
+                'title' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_TITLE,
+                'message' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_MESSAGE,
+            ],
         ],
-        'ios' => [
-            'is_active' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_ACTIVE,
-            'latest_version' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_LATEST_VERSION,
-            'latest_build' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_LATEST_BUILD,
-            'minimum_build' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_MINIMUM_BUILD,
-            'force_update' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_FORCE,
-            'url' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_URL,
-            'title' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_TITLE,
-            'message' => AppSetting::KEY_APP_UPDATE_ADMIN_IOS_MESSAGE,
-        ],
-        'windows' => [
-            'is_active' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_ACTIVE,
-            'latest_version' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_VERSION,
-            'latest_build' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_LATEST_BUILD,
-            'minimum_build' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_MINIMUM_BUILD,
-            'force_update' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_FORCE,
-            'url' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_URL,
-            'title' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_TITLE,
-            'message' => AppSetting::KEY_APP_UPDATE_ADMIN_WINDOWS_MESSAGE,
+        'store' => [
+            'android' => [
+                'is_active' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_ACTIVE,
+                'latest_version' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_LATEST_VERSION,
+                'latest_build' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_LATEST_BUILD,
+                'minimum_build' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_MINIMUM_BUILD,
+                'force_update' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_FORCE,
+                'url' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_URL,
+                'title' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_TITLE,
+                'message' => AppSetting::KEY_APP_UPDATE_STORE_ANDROID_MESSAGE,
+            ],
+            'ios' => [
+                'is_active' => AppSetting::KEY_APP_UPDATE_STORE_IOS_ACTIVE,
+                'latest_version' => AppSetting::KEY_APP_UPDATE_STORE_IOS_LATEST_VERSION,
+                'latest_build' => AppSetting::KEY_APP_UPDATE_STORE_IOS_LATEST_BUILD,
+                'minimum_build' => AppSetting::KEY_APP_UPDATE_STORE_IOS_MINIMUM_BUILD,
+                'force_update' => AppSetting::KEY_APP_UPDATE_STORE_IOS_FORCE,
+                'url' => AppSetting::KEY_APP_UPDATE_STORE_IOS_URL,
+                'title' => AppSetting::KEY_APP_UPDATE_STORE_IOS_TITLE,
+                'message' => AppSetting::KEY_APP_UPDATE_STORE_IOS_MESSAGE,
+            ],
         ],
     ];
 
     public static function all(): array
     {
-        return [
-            'admin' => [
-                'android' => self::platform('android'),
-                'ios' => self::platform('ios'),
-                'windows' => self::platform('windows'),
-            ],
-        ];
+        return collect(self::APP_PLATFORMS)->mapWithKeys(fn (array $platforms, string $app) => [
+            $app => collect($platforms)->mapWithKeys(fn (string $platform) => [
+                $platform => self::platform($platform, $app),
+            ])->all(),
+        ])->all();
     }
 
-    public static function platform(string $platform): array
+    public static function platform(string $platform, string $app = 'admin'): array
     {
+        $app = strtolower($app);
         $platform = strtolower($platform);
-        $keys = self::KEY_MAP[$platform] ?? self::KEY_MAP['android'];
+        $keys = self::KEY_MAP[$app][$platform]
+            ?? self::KEY_MAP[$app]['android']
+            ?? self::KEY_MAP['admin']['android'];
 
         return [
             'is_active' => AppSetting::getBool($keys['is_active'], false),
@@ -71,26 +101,26 @@ class AppUpdateSettings
 
     public static function updateFromArray(array $settings): array
     {
-        $admin = $settings['admin'] ?? $settings;
-        if (! is_array($admin)) {
-            return self::all();
-        }
-
-        foreach (self::PLATFORMS as $platform) {
-            $incoming = $admin[$platform] ?? null;
-            if (! is_array($incoming)) {
+        foreach (self::APP_PLATFORMS as $app => $platforms) {
+            $incomingApp = $settings[$app] ?? ($app === 'admin' ? $settings : null);
+            if (! is_array($incomingApp)) {
                 continue;
             }
 
-            self::updatePlatform($platform, $incoming);
+            foreach ($platforms as $platform) {
+                $incoming = $incomingApp[$platform] ?? null;
+                if (is_array($incoming)) {
+                    self::updatePlatform($app, $platform, $incoming);
+                }
+            }
         }
 
         return self::all();
     }
 
-    private static function updatePlatform(string $platform, array $incoming): void
+    private static function updatePlatform(string $app, string $platform, array $incoming): void
     {
-        $keys = self::KEY_MAP[$platform];
+        $keys = self::KEY_MAP[$app][$platform];
 
         foreach (['is_active', 'force_update'] as $field) {
             if (array_key_exists($field, $incoming)) {

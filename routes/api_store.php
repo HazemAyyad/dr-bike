@@ -28,6 +28,7 @@ use Illuminate\Support\Facades\Route;
 Route::post('/Auth/login', [StoreAuthController::class, 'login']);
 Route::post('/Auth/CheckUser', [StoreAuthController::class, 'checkUser']);
 Route::post('/Auth/ForgotPassword', [StoreAuthController::class, 'forgotPassword']);
+Route::post('/Auth/VerifyForgotPasswordOtp', [StoreAuthController::class, 'verifyForgotPasswordOtp']);
 Route::post('/Auth/ChangePassword', [StoreAuthController::class, 'changePassword']);
 Route::patch('/Auth/ChangePasswordToForgot', [StoreAuthController::class, 'changePasswordToForgot']);
 
