@@ -4,6 +4,7 @@ namespace Tests\Support;
 
 use App\Models\NormalImageProduct;
 use App\Models\OnlineStore\OnlineStoreListing;
+use App\Services\InventoryAdjustmentService;
 use App\Services\OnlineStore\StoreCreditService;
 use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Support\Facades\DB;
@@ -35,6 +36,17 @@ final class OnlineStoreCreditFixture
             'wholesalePrice' => $price,
             'stock' => $stock,
         ]);
+        if ($stock > 0) {
+            app(InventoryAdjustmentService::class)->initializeMissingCost(
+                product: $product,
+                unitCost: max(1, $price / 2),
+                reason: 'Online Store runtime fixture opening cost',
+                notes: 'Covers synthetic opening stock without changing its quantity.',
+                currency: $currency,
+                sizeColorId: null,
+                userId: $admin->getKey(),
+            );
+        }
         $listing = OnlineStoreListing::query()->forceCreate([
             'product_id' => $product->getKey(),
             'status' => 'published',
