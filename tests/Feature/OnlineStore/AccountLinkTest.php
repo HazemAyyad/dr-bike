@@ -4,6 +4,7 @@ namespace Tests\Feature\OnlineStore;
 
 use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\Sanctum;
 use Tests\Support\OnlineStoreFixtureFactory;
@@ -219,5 +220,145 @@ class AccountLinkTest extends TestCase
             'customer_id' => $firstCustomer->id,
             'status' => 'active',
         ]);
+    }
+
+    public function test_store_account_discovery_includes_unlinked_and_explicitly_linked_users_only(): void
+    {
+        $token = 'discovery-'.Str::lower(Str::random(12));
+        $partyOnlyTerm = 'party-only-'.Str::lower(Str::random(12));
+        $admin = OnlineStoreFixtureFactory::createAuthenticatedAdminActor(['name' => $token.' admin']);
+        $unlinked = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' unlinked']);
+        $customerUser = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' customer']);
+        $sellerUser = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' seller']);
+        $dualRoleUser = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' dual']);
+        $blocked = OnlineStoreFixtureFactory::createStoreActor([
+            'name' => $token.' blocked',
+            'is_blocked' => true,
+        ]);
+        $employee = OnlineStoreFixtureFactory::createStoreActor([
+            'name' => $token.' employee',
+            'type' => 'employee',
+        ]);
+        $otherType = OnlineStoreFixtureFactory::createStoreActor([
+            'name' => $token.' other',
+            'type' => 'service',
+        ]);
+        $archived = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' archived']);
+        $archived->delete();
+
+        $service = app(StoreIdentityService::class);
+        $customerLink = $service->save($admin, $customerUser, [
+            'role' => 'customer',
+            'customer_id' => OnlineStoreFixtureFactory::createCustomer(['name' => $partyOnlyTerm])->id,
+            'account_source' => 'admin_app',
+            'status' => 'active',
+        ]);
+        $sellerLink = $service->save($admin, $sellerUser, [
+            'role' => 'seller',
+            'seller_id' => OnlineStoreFixtureFactory::createSeller(['name' => $partyOnlyTerm])->id,
+            'account_source' => 'import',
+            'status' => 'pending',
+        ]);
+        $dualCustomerLink = $service->save($admin, $dualRoleUser, [
+            'role' => 'customer',
+            'customer_id' => OnlineStoreFixtureFactory::createCustomer()->id,
+            'account_source' => 'admin_app',
+            'status' => 'active',
+        ]);
+        $dualSellerLink = $service->save($admin, $dualRoleUser, [
+            'role' => 'seller',
+            'seller_id' => OnlineStoreFixtureFactory::createSeller()->id,
+            'account_source' => 'store_app',
+            'status' => 'active',
+        ]);
+
+        $response = $this->getJson('/api/online-store/accounts?'.http_build_query([
+            'search' => $token,
+            'per_page' => 100,
+        ]))->assertOk();
+        $accounts = collect($response->json('data'));
+
+        $this->assertEqualsCanonicalizing(
+            [$unlinked->id, $customerUser->id, $sellerUser->id, $dualRoleUser->id, $blocked->id],
+            $accounts->pluck('id')->all(),
+        );
+        $this->assertNotContains($admin->id, $accounts->pluck('id')->all());
+        $this->assertNotContains($employee->id, $accounts->pluck('id')->all());
+        $this->assertNotContains($otherType->id, $accounts->pluck('id')->all());
+        $this->assertNotContains($archived->id, $accounts->pluck('id')->all());
+
+        $this->assertSame([], $accounts->firstWhere('id', $unlinked->id)['links']);
+        $this->assertSame([$customerLink->id], collect($accounts->firstWhere('id', $customerUser->id)['links'])->pluck('id')->all());
+        $this->assertSame([$sellerLink->id], collect($accounts->firstWhere('id', $sellerUser->id)['links'])->pluck('id')->all());
+        $this->assertEqualsCanonicalizing(
+            [$dualCustomerLink->id, $dualSellerLink->id],
+            collect($accounts->firstWhere('id', $dualRoleUser->id)['links'])->pluck('id')->all(),
+        );
+        $this->assertSame(1, $accounts->where('id', $dualRoleUser->id)->count());
+        $this->assertTrue($accounts->firstWhere('id', $blocked->id)['is_blocked']);
+        $this->assertFalse($accounts->firstWhere('id', $blocked->id)['is_linkable']);
+
+        $this->assertSame(
+            ['id', 'name', 'email', 'phone', 'is_blocked', 'is_linkable', 'links'],
+            array_keys($accounts->firstWhere('id', $customerUser->id)),
+        );
+        $this->assertSame(
+            ['id', 'role', 'customer_id', 'seller_id', 'status', 'verified_at', 'account_source'],
+            array_keys($accounts->firstWhere('id', $customerUser->id)['links'][0]),
+        );
+        $this->getJson('/api/online-store/accounts?search='.$partyOnlyTerm)
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+    }
+
+    public function test_store_account_discovery_searches_user_name_email_and_phone(): void
+    {
+        OnlineStoreFixtureFactory::createAuthenticatedAdminActor();
+        $token = Str::lower(Str::random(14));
+        $phone = '059'.random_int(1_000_000, 9_999_999);
+        $user = OnlineStoreFixtureFactory::createStoreActor([
+            'name' => 'Name '.$token,
+            'email' => 'email-'.$token.'@example.invalid',
+            'phone' => $phone,
+        ]);
+
+        foreach ([$token, 'email-'.$token, $phone] as $search) {
+            $this->getJson('/api/online-store/accounts?search='.urlencode($search))
+                ->assertOk()
+                ->assertJsonCount(1, 'data')
+                ->assertJsonPath('data.0.id', $user->id);
+        }
+    }
+
+    public function test_store_account_discovery_is_deterministically_paginated(): void
+    {
+        OnlineStoreFixtureFactory::createAuthenticatedAdminActor();
+        $token = 'pagination-'.Str::lower(Str::random(12));
+        $first = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' A']);
+        $second = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' B']);
+        $third = OnlineStoreFixtureFactory::createStoreActor(['name' => $token.' C']);
+
+        $pageOne = $this->getJson('/api/online-store/accounts?'.http_build_query([
+            'search' => $token,
+            'per_page' => 2,
+        ]))->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('per_page', 2)
+            ->assertJsonPath('total', 3);
+        $this->assertSame([$first->id, $second->id], collect($pageOne->json('data'))->pluck('id')->all());
+
+        $pageTwo = $this->getJson('/api/online-store/accounts?'.http_build_query([
+            'search' => $token,
+            'per_page' => 2,
+            'page' => 2,
+        ]))->assertOk()->assertJsonCount(1, 'data');
+        $this->assertSame([$third->id], collect($pageTwo->json('data'))->pluck('id')->all());
+
+        $this->getJson('/api/online-store/accounts?'.http_build_query(['search' => str_repeat('x', 256)]))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('search');
+        $this->getJson('/api/online-store/accounts?per_page=101')
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('per_page');
     }
 }

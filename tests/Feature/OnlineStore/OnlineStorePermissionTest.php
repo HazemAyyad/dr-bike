@@ -107,6 +107,7 @@ class OnlineStorePermissionTest extends TestCase
         Sanctum::actingAs($employee);
         $this->withoutMiddleware(RefreshSanctumTokenExpiry::class);
 
+        $this->getJson('/api/online-store/accounts')->assertForbidden();
         $this->getJson('/api/online-store/account-links')->assertForbidden();
         $this->patchJson('/api/online-store/account-links/'.$fixture['link']->id, [
             'status' => 'suspended',
@@ -119,6 +120,9 @@ class OnlineStorePermissionTest extends TestCase
         EmployeePermission::query()->create(['employee_id' => $details->id, 'permission_id' => $settingsPermission->id]);
         $employee->unsetRelation('employee');
 
+        $this->getJson('/api/online-store/accounts')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
         $this->getJson('/api/online-store/account-links')
             ->assertOk()
             ->assertJsonStructure(['data']);

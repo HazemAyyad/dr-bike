@@ -1775,6 +1775,7 @@ Route::prefix('online-store')
         Route::post('/coupons/{coupon}/deactivate', [OnlineStoreCouponController::class, 'deactivate']);
         Route::delete('/coupons/{coupon}', [OnlineStoreCouponController::class, 'destroy']);
         Route::get('/coupons/{coupon}/redemptions', [OnlineStoreCouponController::class, 'redemptions']);
+        Route::get('/accounts', [OnlineStoreAccountLinkController::class, 'accounts'])->name('accounts.index');
         Route::get('/account-links', [OnlineStoreAccountLinkController::class, 'index']);
         Route::post('/account-links', [OnlineStoreAccountLinkController::class, 'store']);
         Route::patch('/account-links/{link}', [OnlineStoreAccountLinkController::class, 'update']);
