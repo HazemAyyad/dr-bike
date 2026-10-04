@@ -146,7 +146,73 @@ class LegacyStoreContractTest extends TestCase
         ])->assertOk()
             ->assertJsonStructure($this->userPayloadKeys())
             ->assertJsonPath('email', $registeredEmail)
-            ->assertJsonPath('typeUser', 'User');
+            ->assertJsonPath('typeUser', 'User')
+            ->assertJsonPath('accountRoles', []);
+    }
+
+    public function test_legacy_user_payload_exposes_only_authoritative_active_verified_account_roles(): void
+    {
+        $admin = OnlineStoreFixtureFactory::createAdminActor();
+        $password = 'legacy-account-role-password';
+
+        $customerUser = OnlineStoreFixtureFactory::createStoreActor([
+            'email' => 'customer-role-'.Str::uuid().'@example.invalid',
+            'password' => Hash::make($password),
+        ]);
+        app(StoreIdentityService::class)->save($admin, $customerUser, [
+            'role' => 'customer', 'customer_id' => OnlineStoreFixtureFactory::createCustomer()->id,
+            'account_source' => 'store_app', 'status' => 'active',
+        ]);
+        $customerLogin = $this->postJson('/Auth/login', [
+            'email' => $customerUser->email, 'password' => $password,
+        ])->assertOk()
+            ->assertJsonPath('user.typeUser', 'User')
+            ->assertJsonPath('user.accountRoles', ['customer']);
+        $customerToken = (string) $customerLogin->json('token');
+        $this->withToken($customerToken)->postJson('/Users/GetById', ['id' => $customerUser->id])
+            ->assertOk()->assertJsonPath('accountRoles', ['customer']);
+        $this->withToken($customerToken)->postJson('/Users/Edit', [
+            'id' => $customerUser->id, 'fullName' => 'Customer Role User',
+        ])->assertOk()->assertJsonPath('accountRoles', ['customer']);
+
+        $sellerUser = OnlineStoreFixtureFactory::createStoreActor();
+        app(StoreIdentityService::class)->save($admin, $sellerUser, [
+            'role' => 'seller', 'seller_id' => OnlineStoreFixtureFactory::createSeller()->id,
+            'account_source' => 'store_app', 'status' => 'active',
+        ]);
+        $this->postJson('/Auth/CheckUser?UserId='.$sellerUser->id)->assertOk()
+            ->assertJsonPath('typeUser', 'User')
+            ->assertJsonPath('accountRoles', ['seller']);
+
+        $dualUser = OnlineStoreFixtureFactory::createStoreActor();
+        app(StoreIdentityService::class)->save($admin, $dualUser, [
+            'role' => 'seller', 'seller_id' => OnlineStoreFixtureFactory::createSeller()->id,
+            'account_source' => 'store_app', 'status' => 'active',
+        ]);
+        app(StoreIdentityService::class)->save($admin, $dualUser, [
+            'role' => 'customer', 'customer_id' => OnlineStoreFixtureFactory::createCustomer()->id,
+            'account_source' => 'store_app', 'status' => 'active',
+        ]);
+        $this->postJson('/Auth/CheckUser?UserId='.$dualUser->id)->assertOk()
+            ->assertJsonPath('accountRoles', ['customer', 'seller']);
+
+        $pendingUser = OnlineStoreFixtureFactory::createStoreActor();
+        app(StoreIdentityService::class)->save($admin, $pendingUser, [
+            'role' => 'customer', 'customer_id' => OnlineStoreFixtureFactory::createCustomer()->id,
+            'account_source' => 'store_app', 'status' => 'pending',
+        ]);
+        $this->postJson('/Auth/CheckUser?UserId='.$pendingUser->id)->assertOk()
+            ->assertJsonPath('accountRoles', []);
+
+        $canceledUser = OnlineStoreFixtureFactory::createStoreActor();
+        $canceledSeller = OnlineStoreFixtureFactory::createSeller();
+        app(StoreIdentityService::class)->save($admin, $canceledUser, [
+            'role' => 'seller', 'seller_id' => $canceledSeller->id,
+            'account_source' => 'store_app', 'status' => 'active',
+        ]);
+        $canceledSeller->forceFill(['is_canceled' => true])->save();
+        $this->postJson('/Auth/CheckUser?UserId='.$canceledUser->id)->assertOk()
+            ->assertJsonPath('accountRoles', []);
     }
 
     public function test_settings_ads_and_notification_success_and_empty_envelopes_are_frozen(): void
@@ -413,7 +479,7 @@ class LegacyStoreContractTest extends TestCase
             'id', 'userName', 'normalizedUserName', 'email', 'normalizedEmail', 'emailConfirmed',
             'passwordHash', 'securityStamp', 'concurrencyStamp', 'phoneNumber', 'phoneNumberConfirmed',
             'twoFactorEnabled', 'lockoutEnd', 'lockoutEnabled', 'accessFailedCount', 'address', 'block',
-            'fullName', 'phoneNumber2', 'typeUser', 'userToken', 'dateAdd', 'userUpdate', 'dateUpdate',
+            'fullName', 'phoneNumber2', 'typeUser', 'accountRoles', 'userToken', 'dateAdd', 'userUpdate', 'dateUpdate',
             'cityId', 'city', 'mainOrders', 'roles',
         ];
     }

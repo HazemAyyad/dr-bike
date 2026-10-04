@@ -6,6 +6,7 @@ use App\Models\Customer;
 use App\Models\OnlineStore\OnlineStoreAccountLink;
 use App\Models\SalesOrder;
 use App\Models\Seller;
+use App\Models\Store\StoreUser;
 use App\Models\User;
 use App\Support\OnlineStore\OnlineStoreValues;
 use Illuminate\Database\Eloquent\Builder;
@@ -99,7 +100,7 @@ final class StoreIdentityService
     }
 
     /** @return Collection<int, OnlineStoreAccountLink> */
-    public function activeLinks(User $user, ?string $role = null): Collection
+    public function activeLinks(User|StoreUser $user, ?string $role = null): Collection
     {
         if ($user->trashed() || $user->is_blocked || strcasecmp((string) $user->type, 'User') !== 0) {
             return new Collection;
@@ -117,6 +118,17 @@ final class StoreIdentityService
                 return $party !== null && ! (bool) ($party->is_canceled ?? false);
             })
             ->values();
+    }
+
+    /** @return list<string> */
+    public function activeRoles(User|StoreUser $user): array
+    {
+        $roles = $this->activeLinks($user)->pluck('role')->unique();
+
+        return collect(OnlineStoreValues::ACCOUNT_ROLES)
+            ->filter(fn (string $role) => $roles->containsStrict($role))
+            ->values()
+            ->all();
     }
 
     public function ownedOrders(User $user): Builder

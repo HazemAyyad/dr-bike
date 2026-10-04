@@ -8,6 +8,7 @@ use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreSubCategory;
 use App\Models\Store\StoreUser;
+use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -101,6 +102,7 @@ class StoreBaseController extends Controller
             'fullName' => $name,
             'phoneNumber2' => $user->sub_phone,
             'typeUser' => $user->type ?: 'User',
+            'accountRoles' => app(StoreIdentityService::class)->activeRoles($user),
             'userToken' => $user->fcm_token ?? '',
             'dateAdd' => $this->dateString($user->created_at),
             'userUpdate' => '',
