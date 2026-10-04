@@ -69,7 +69,7 @@ class BannerTest extends TestCase
         $this->postJson('/api/online-store/banners', ['image_path' => 'active-category.jpg', 'action_type' => 'category', 'action_target_id' => $activeCategory['id']])->assertCreated();
 
         DB::table('online_store_promotions')->insert([
-            ['id' => 1900000001, 'name' => 'Inactive', 'discount_type' => 'fixed', 'discount_value' => 1, 'applies_to' => 'both', 'scope' => 'global', 'is_active' => false, 'priority' => 0, 'created_at' => now(), 'updated_at' => now()],
+            ['id' => 1900000001, 'name' => 'Inactive', 'discount_type' => 'fixed', 'discount_value' => 1, 'applies_to' => 'both', 'scope' => 'global', 'starts_at' => null, 'ends_at' => null, 'is_active' => false, 'priority' => 0, 'created_at' => now(), 'updated_at' => now()],
             ['id' => 1900000002, 'name' => 'Future', 'discount_type' => 'fixed', 'discount_value' => 1, 'applies_to' => 'both', 'scope' => 'global', 'starts_at' => '2026-10-05 07:00:00', 'ends_at' => '2026-10-05 09:00:00', 'is_active' => true, 'priority' => 0, 'created_at' => now(), 'updated_at' => now()],
         ]);
         $this->postJson('/api/online-store/banners', ['image_path' => 'inactive-promotion.jpg', 'action_type' => 'promotion', 'action_target_id' => 1900000001])->assertUnprocessable();
