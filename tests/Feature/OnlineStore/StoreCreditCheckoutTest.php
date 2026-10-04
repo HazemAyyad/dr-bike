@@ -87,8 +87,11 @@ class StoreCreditCheckoutTest extends TestCase
         $this->assertSame(1, AccountingJournalEntry::query()
             ->where('source_key', 'sales_order_settlement:'.$settlement->id)->count());
         $this->assertSame(1, DB::table('sales_order_status_logs')->where('sales_order_id', $order->id)->count());
-        $this->assertSame(1, DB::table('admin_notifications')->where('related_type', 'sales_order')
-            ->where('related_id', $order->id)->count());
+        $notifications = DB::table('admin_notifications')->where('related_type', 'sales_order')
+            ->where('related_id', $order->id);
+        $this->assertSame(2, (clone $notifications)->count());
+        $this->assertSame(1, (clone $notifications)->whereNull('recipient_user_id')->count());
+        $this->assertSame(1, (clone $notifications)->where('recipient_user_id', $fixture['actor']->id)->count());
 
         app(SalesOrderService::class)->cancel($fixture['actor'], $order->id, 'Store cancellation regression');
         $this->assertFalse(DB::table('debt_transactions')->where('source', 'sales_order')

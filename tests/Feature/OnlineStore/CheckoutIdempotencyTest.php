@@ -71,6 +71,10 @@ class CheckoutIdempotencyTest extends TestCase
         $this->assertDatabaseCount('sales_order_items', 1);
         $this->assertDatabaseHas('sales_order_items', ['sales_order_id' => $first['order']->id, 'quantity' => 2, 'reserved_qty' => 2, 'unit_price' => 125]);
         $this->assertSame(1, DB::table('sales_order_status_logs')->where('sales_order_id', $first['order']->id)->count());
-        $this->assertSame(1, DB::table('admin_notifications')->where('related_type', 'sales_order')->where('related_id', $first['order']->id)->count());
+        $notifications = DB::table('admin_notifications')->where('related_type', 'sales_order')
+            ->where('related_id', $first['order']->id);
+        $this->assertSame(2, (clone $notifications)->count());
+        $this->assertSame(1, (clone $notifications)->whereNull('recipient_user_id')->count());
+        $this->assertSame(1, (clone $notifications)->where('recipient_user_id', $actor->id)->count());
     }
 }

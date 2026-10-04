@@ -61,7 +61,11 @@ class OnlineStoreEndToEndTest extends TestCase
         $this->assertDatabaseCount('sales_orders', 1);
         $this->assertDatabaseCount('sales_order_items', 1);
         $this->assertSame(1, DB::table('sales_order_status_logs')->where('sales_order_id', $order->id)->count());
-        $this->assertSame(1, DB::table('admin_notifications')->where('related_type', 'sales_order')->where('related_id', $order->id)->count());
+        $orderNotifications = DB::table('admin_notifications')
+            ->where('related_type', 'sales_order')->where('related_id', $order->id);
+        $this->assertSame(2, (clone $orderNotifications)->count());
+        $this->assertSame(1, (clone $orderNotifications)->whereNull('recipient_user_id')->count());
+        $this->assertSame(1, (clone $orderNotifications)->where('recipient_user_id', $fixture['actor']->id)->count());
         $this->assertSame(0, SalesOrderSettlement::query()->where('sales_order_id', $order->id)->count());
         $this->assertSame(0, DB::table('debt_transactions')->where('source', 'sales_order')->where('source_id', $order->id)->count());
 

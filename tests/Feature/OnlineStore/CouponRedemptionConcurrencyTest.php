@@ -88,7 +88,11 @@ class CouponRedemptionConcurrencyTest extends TestCase
         $this->assertDatabaseCount('online_store_coupon_redemptions', 1);
         $this->assertDatabaseHas('online_store_coupon_redemptions', ['sales_order_id' => $first['order']->id, 'status' => 'reserved', 'discount_amount' => 10]);
         $this->assertSame(1, DB::table('sales_order_status_logs')->where('sales_order_id', $first['order']->id)->count());
-        $this->assertSame(1, DB::table('admin_notifications')->where('related_type', 'sales_order')->where('related_id', $first['order']->id)->count());
+        $notifications = DB::table('admin_notifications')->where('related_type', 'sales_order')
+            ->where('related_id', $first['order']->id);
+        $this->assertSame(2, (clone $notifications)->count());
+        $this->assertSame(1, (clone $notifications)->whereNull('recipient_user_id')->count());
+        $this->assertSame(1, (clone $notifications)->where('recipient_user_id', $actor->id)->count());
         app(SalesOrderService::class)->cancel($actor, $first['order']->id, 'fixture cancel');
         $this->assertDatabaseHas('online_store_coupon_redemptions', ['sales_order_id' => $first['order']->id, 'status' => 'released']);
         $this->assertDatabaseHas('sales_order_items', ['sales_order_id' => $first['order']->id, 'reserved_qty' => 0]);
@@ -196,7 +200,10 @@ class CouponRedemptionConcurrencyTest extends TestCase
         $this->assertDatabaseCount('online_store_coupon_redemptions', 1);
         $this->assertDatabaseHas('online_store_coupon_redemptions', ['sales_order_id' => $accepted['order']->id, 'status' => 'reserved']);
         $this->assertSame(1, DB::table('sales_order_status_logs')->count());
-        $this->assertSame(1, DB::table('admin_notifications')->where('related_type', 'sales_order')->count());
+        $notifications = DB::table('admin_notifications')->where('related_type', 'sales_order');
+        $this->assertSame(2, (clone $notifications)->count());
+        $this->assertSame(1, (clone $notifications)->whereNull('recipient_user_id')->count());
+        $this->assertSame(1, (clone $notifications)->where('recipient_user_id', $firstActor->id)->count());
     }
 
     private function createPurchasableListing(string $description): OnlineStoreListing
