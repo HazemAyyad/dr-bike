@@ -11,6 +11,14 @@ use PHPUnit\Framework\TestCase;
 
 class OnlineStoreListingTest extends TestCase
 {
+    public function test_legacy_store_product_maps_listing_by_product_foreign_key(): void
+    {
+        $source = file_get_contents(__DIR__.'/../../../app/Models/Store/StoreProduct.php');
+
+        $this->assertStringContainsString('function onlineStoreListing(): HasOne', $source);
+        $this->assertStringContainsString("hasOne(OnlineStoreListing::class, 'product_id')", $source);
+    }
+
     public function test_model_exposes_merchandising_fields_but_no_authoritative_price_or_stock_fields(): void
     {
         $listing = new OnlineStoreListing;

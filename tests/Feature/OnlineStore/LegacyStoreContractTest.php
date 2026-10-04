@@ -225,6 +225,18 @@ class LegacyStoreContractTest extends TestCase
         $product = OnlineStoreFixtureFactory::createProduct([
             'nameAr' => 'Unique Legacy Search Product', 'store_section_id' => $section->id,
         ]);
+        $listingId = random_int(1_800_000_000, 1_899_999_999);
+        $this->assertNotSame($product->id, $listingId);
+        OnlineStoreListing::query()->forceCreate([
+            'id' => $listingId,
+            'product_id' => $product->id,
+            'status' => 'draft',
+            'readiness_state' => 'incomplete',
+        ]);
+        $productWithoutListing = OnlineStoreFixtureFactory::createProduct([
+            'nameAr' => 'Unique Legacy Search Product Without Listing',
+            'store_section_id' => $section->id,
+        ]);
         DB::table('sub_category_products')->insert([
             'product_id' => $product->id,
             'sub_category_id' => $subCategory->id,
@@ -242,16 +254,29 @@ class LegacyStoreContractTest extends TestCase
         $sub->assertJsonFragment(['id' => $subCategory->id, 'nameAr' => 'Legacy Subcategory'])
             ->assertJsonStructure(['rows' => ['*' => ['id', 'nameAr', 'nameEng', 'nameAbree', 'mainCategoryId', 'isShow']]]);
 
+        DB::flushQueryLog();
+        DB::enableQueryLog();
         $search = $this->postJson('/Items/GetAllItemByName', ['Name' => 'Unique Legacy Search'])->assertOk();
+        $listingQueries = collect(DB::getQueryLog())
+            ->filter(fn (array $query) => str_contains($query['query'], 'online_store_listings'));
+        DB::disableQueryLog();
         $this->assertSame(['rows', 'paginationInfo'], array_keys($search->json()));
-        $search->assertJsonCount(1, 'rows')->assertJsonPath('rows.0.id', $product->id)
+        $search->assertJsonCount(2, 'rows')
+            ->assertJsonFragment(['id' => $product->id, 'listingId' => $listingId])
+            ->assertJsonFragment(['id' => $productWithoutListing->id, 'listingId' => null])
             ->assertJsonStructure(['rows' => ['*' => $this->productPayloadKeys()]]);
+        $this->assertCount(1, $listingQueries, 'Legacy item lists must eager-load listings in one query.');
         $this->postJson('/Items/GetAllItemsShowByMainCategory', ['MainCategory' => $section->id])
-            ->assertOk()->assertJsonPath('rows.0.id', $product->id);
+            ->assertOk()->assertJsonFragment(['id' => $product->id, 'listingId' => $listingId]);
         $this->postJson('/Items/GetAllShowItemsBySupCatId', ['supCategoryId' => $subCategory->id])
-            ->assertOk()->assertJsonPath('rows.0.id', $product->id);
+            ->assertOk()->assertJsonFragment(['id' => $product->id, 'listingId' => $listingId]);
         $this->postJson('/Items/GetItemById', ['itemId' => $product->id])->assertOk()
-            ->assertJsonStructure($this->productPayloadKeys())->assertJsonPath('id', $product->id);
+            ->assertJsonStructure($this->productPayloadKeys())->assertJsonPath('id', $product->id)
+            ->assertJsonPath('listingId', $listingId);
+        $this->postJson('/Items/GetAllItemByName', ['Name' => 'Unique Legacy Search Product Without Listing'])
+            ->assertOk()->assertJsonCount(1, 'rows')
+            ->assertJsonPath('rows.0.id', $productWithoutListing->id)
+            ->assertJsonPath('rows.0.listingId', null);
         $this->postJson('/Items/GetAllItemByName', ['Name' => '__contract_missing__'])->assertOk()
             ->assertExactJson(['rows' => [], 'paginationInfo' => ['totalRowsCount' => 0, 'totalPagesCount' => 1]]);
         $this->postJson('/Items/GetItemById', ['itemId' => 2147483647])->assertNotFound()
@@ -397,7 +422,7 @@ class LegacyStoreContractTest extends TestCase
     private function productPayloadKeys(): array
     {
         return [
-            'id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'descriptionAr', 'descriptionEng',
+            'id', 'listingId', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'descriptionAr', 'descriptionEng',
             'descriptionAbree', 'videoUrl', 'normailPrice', 'wholesalePrice', 'stock', 'model',
             'isNewItem', 'isMoreSales', 'rate', 'manufactureYear', 'discount', 'userIdAdd', 'dateAdd',
             'userIdUpdate', 'dateUpdate', 'supCategory', 'normalImagesItems', '_3DImagesItems',

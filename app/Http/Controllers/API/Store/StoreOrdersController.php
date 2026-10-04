@@ -200,6 +200,7 @@ class StoreOrdersController extends StoreBaseController
     private function orderRelations(): array
     {
         return [
+            'details.product.onlineStoreListing',
             'details.product.subCategories',
             'details.product.normalImages',
             'details.product.viewImages',

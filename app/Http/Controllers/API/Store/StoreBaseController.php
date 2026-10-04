@@ -159,6 +159,9 @@ class StoreBaseController extends Controller
 
         return [
             'id' => (int) $product->id,
+            'listingId' => $product->onlineStoreListing
+                ? (int) $product->onlineStoreListing->getKey()
+                : null,
             'nameAr' => (string) ($product->nameAr ?? ''),
             'nameEng' => (string) ($product->nameEng ?? $product->nameAr ?? ''),
             'nameAbree' => (string) ($product->nameAbree ?? $product->nameAr ?? ''),
