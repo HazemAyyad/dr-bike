@@ -35,6 +35,7 @@ class ManageAccountLinkRequest extends FormRequest
             'seller_id' => ['nullable', 'integer', 'exists:sellers,id', 'required_if:role,seller', 'prohibited_if:role,customer'],
             'account_source' => [$this->isMethod('post') ? 'required' : 'sometimes', Rule::in(OnlineStoreValues::ACCOUNT_SOURCES)],
             'status' => [$this->isMethod('post') ? 'required' : 'sometimes', OnlineStoreValues::accountStatusRule()],
+            'search' => ['sometimes', 'string', 'max:255'],
         ];
     }
 }

@@ -190,6 +190,10 @@ class SalesOrderService
     private function applyListFilters($query, array $filters, bool $includeStatus): void
     {
 
+        if (! empty($filters['origin'])) {
+            $query->where('origin', $filters['origin']);
+        }
+
         if ($includeStatus && ! empty($filters['status'])) {
             if ($filters['status'] === 'all') {
                 $query->whereNotIn('status', [
@@ -781,6 +785,9 @@ class SalesOrderService
             'id' => $order->id,
             'serial_number' => $order->serial_number,
             'status' => $order->status,
+            'origin' => $order->origin,
+            'origin_user_id' => $order->origin_user_id !== null ? (int) $order->origin_user_id : null,
+            'client_request_id' => $order->client_request_id,
             'customer_id' => $order->customer_id,
             'partner_type' => $order->partner_type,
             'partner_id' => $order->partner_id,
@@ -985,6 +992,9 @@ class SalesOrderService
             'id' => $order->id,
             'serial_number' => $order->serial_number,
             'status' => $order->status,
+            'origin' => $order->origin,
+            'origin_user_id' => $order->origin_user_id !== null ? (int) $order->origin_user_id : null,
+            'client_request_id' => $order->client_request_id,
             'customer_name' => $order->customer_name,
             'customer_phone' => $order->customer_phone,
             'city_name' => $this->formatShiplyAddressLabel($order) ?: $order->city?->name_ar,

@@ -71,7 +71,7 @@ final class OnlineStoreFixtureFactory
 
         return Product::query()->forceCreate(array_merge([
             'id' => $id,
-            'product_code' => (string) $id,
+            'product_code' => str_pad((string) ($id % 1_000_000), 6, '0', STR_PAD_LEFT),
             'nameAr' => 'Fixture Product',
             'nameEng' => 'Fixture Product',
             'nameAbree' => 'Fixture Product',

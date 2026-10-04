@@ -3,13 +3,14 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Models\OnlineStore\OnlineStoreAccountLink;
+use App\Notifications\ResetPasswordNotification as CustomResetPasswordNotification;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Laravel\Sanctum\PersonalAccessToken;
-use App\Notifications\ResetPasswordNotification as CustomResetPasswordNotification;
 
 
 class User extends Authenticatable
@@ -95,6 +96,11 @@ class User extends Authenticatable
     public function smartDevices()
     {
         return $this->hasMany(SmartDevice::class);
+    }
+
+    public function onlineStoreAccountLinks()
+    {
+        return $this->hasMany(OnlineStoreAccountLink::class);
     }
 
     /**
