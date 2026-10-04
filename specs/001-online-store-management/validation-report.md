@@ -17,6 +17,20 @@ disposable MySQL/MariaDB schema was configured in this session. `ONLINE_STORE_DI
 Online Store Feature test before `migrate:fresh` or fixture persistence. No local, staging-like, or
 production-like database was migrated or modified.
 
+### Task completion status
+
+| Task | Status |
+|---|---|
+| T142 | Definitions complete |
+| T143 | Pending execution against a verified disposable database |
+| T144 | Pending runtime regression, security, and concurrency execution |
+| T145 | Constitution and source-of-truth audit complete |
+| T146 | Rollout and rollback documentation complete |
+
+**Phase 12 runtime acceptance is not yet closed.** T143 and T144 remain open until the required
+Feature suites execute successfully against an approved disposable database. Existing discovery,
+static review, and safe Unit evidence below remains valid but does not substitute for that execution.
+
 ### Executed and passed
 
 | Check | Result |
@@ -230,7 +244,6 @@ These are production smoke checks and are not marked complete by local discovery
   one DB-backed Unit case were not executed.
 - **Deviation**: none from the requested safety boundary. The guard was not bypassed, assertions were
   not weakened, Flutter repositories were untouched, and Store V2 was not started.
-- **Release conclusion**: T142-T146 definitions, audit, and rollout evidence are complete, but runtime
-  E2E acceptance remains pending an approved disposable-database run. This closes only the documented
-  Phase 12 verification slice after that evidence is reviewed; it does not declare the Store product
-  redesign complete.
+- **Release conclusion**: T142 definitions, T145 audit, and T146 rollout/rollback documentation are
+  complete. T143 and T144 remain pending an approved disposable-database run. Phase 12 runtime
+  acceptance is **not yet closed**, and the Store product redesign is not declared complete.
