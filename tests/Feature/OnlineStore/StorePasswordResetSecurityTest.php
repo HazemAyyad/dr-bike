@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\RateLimiter;
+use ReflectionMethod;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
 
@@ -75,6 +77,72 @@ class StorePasswordResetSecurityTest extends TestCase
         $this->assertSame(hash('sha256', $proof), $stored->token);
         $this->postJson('/Auth/VerifyForgotPasswordOtp', [...self::VERSION, 'Email' => $first->email, 'otp' => $otp])
             ->assertUnprocessable();
+    }
+
+    public function test_forgot_requests_are_bounded_without_changing_the_generic_response(): void
+    {
+        Mail::fake();
+        $user = OnlineStoreFixtureFactory::createStoreActor(['email' => 'bounded-existing@example.invalid']);
+        $responses = collect();
+
+        foreach (range(1, StorePasswordResetService::MAX_CHALLENGE_REQUESTS_PER_IDENTITY + 1) as $request) {
+            $responses->push($this->postJson('/Auth/ForgotPassword', [
+                ...self::VERSION, 'Email' => $user->email,
+            ])->assertOk()->json());
+        }
+
+        $this->assertCount(1, $responses->unique(fn (array $response) => json_encode($response)));
+        $this->assertSame(['status' => 'success', 'message' => 'success'], $responses->last());
+        Mail::assertSentCount(StorePasswordResetService::MAX_CHALLENGE_REQUESTS_PER_IDENTITY);
+        $this->assertSame(
+            StorePasswordResetService::MAX_CHALLENGE_REQUESTS_PER_IDENTITY,
+            PasswordResetCode::query()->where('user_id', $user->id)->count()
+        );
+
+        $missingResponses = collect();
+        foreach (range(1, StorePasswordResetService::MAX_CHALLENGE_REQUESTS_PER_IDENTITY + 1) as $request) {
+            $missingResponses->push($this->postJson('/Auth/ForgotPassword', [
+                ...self::VERSION, 'Email' => 'bounded-missing@example.invalid',
+            ])->assertOk()->json());
+        }
+        $this->assertSame($responses->all(), $missingResponses->all());
+    }
+
+    public function test_requesting_another_otp_does_not_reset_verification_attempts(): void
+    {
+        Mail::fake();
+        $user = OnlineStoreFixtureFactory::createStoreActor(['email' => 'shared-attempts@example.invalid']);
+        $this->requestOtp($user->email);
+        $this->postJson('/Auth/VerifyForgotPasswordOtp', [...self::VERSION, 'Email' => $user->email, 'otp' => '000000'])
+            ->assertUnprocessable();
+
+        $latestOtp = $this->requestOtp($user->email);
+        foreach (range(2, StorePasswordResetService::MAX_VERIFY_ATTEMPTS) as $attempt) {
+            $this->postJson('/Auth/VerifyForgotPasswordOtp', [...self::VERSION, 'Email' => $user->email, 'otp' => '000000'])
+                ->assertUnprocessable();
+        }
+
+        $this->postJson('/Auth/VerifyForgotPasswordOtp', [...self::VERSION, 'Email' => $user->email, 'otp' => $latestOtp])
+            ->assertUnprocessable();
+    }
+
+    public function test_challenge_rate_limit_keys_hash_identity_and_ip(): void
+    {
+        $service = app(StorePasswordResetService::class);
+        $method = new ReflectionMethod($service, 'challengeRequestKey');
+        $email = 'private.identity@example.invalid';
+        $ip = '203.0.113.41';
+        $identityKey = $method->invoke($service, 'identity', $email);
+        $ipKey = $method->invoke($service, 'ip', $ip);
+
+        $this->assertStringNotContainsString($email, $identityKey);
+        $this->assertStringNotContainsString($ip, $ipKey);
+        $this->assertMatchesRegularExpression('/^store-password-reset:challenge:identity:[a-f0-9]{64}$/', $identityKey);
+        $this->assertMatchesRegularExpression('/^store-password-reset:challenge:ip:[a-f0-9]{64}$/', $ipKey);
+
+        $service->allowsChallengeRequest($email, $ip);
+        $this->assertSame(1, RateLimiter::attempts($identityKey));
+        $this->assertSame(1, RateLimiter::attempts($ipKey));
     }
 
     public function test_wrong_expired_and_attempt_bounded_otp_are_denied(): void
@@ -176,6 +244,8 @@ class StorePasswordResetSecurityTest extends TestCase
 
             return true;
         });
+
+        $otp = (string) Mail::sent(ResetPasswordMail::class)->last()->validToken;
 
         return (string) $otp;
     }

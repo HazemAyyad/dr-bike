@@ -18,6 +18,27 @@ final class StorePasswordResetService
 
     public const MAX_VERIFY_ATTEMPTS = 5;
 
+    public const MAX_CHALLENGE_REQUESTS_PER_IDENTITY = 3;
+
+    public const MAX_CHALLENGE_REQUESTS_PER_IP = 10;
+
+    public const CHALLENGE_REQUEST_WINDOW_SECONDS = 900;
+
+    public function allowsChallengeRequest(string $identity, string $ipAddress): bool
+    {
+        $identityKey = $this->challengeRequestKey('identity', $this->normalizeIdentity($identity));
+        $ipKey = $this->challengeRequestKey('ip', trim($ipAddress));
+        $allowed = ! RateLimiter::tooManyAttempts($identityKey, self::MAX_CHALLENGE_REQUESTS_PER_IDENTITY)
+            && ! RateLimiter::tooManyAttempts($ipKey, self::MAX_CHALLENGE_REQUESTS_PER_IP);
+
+        // Count every syntactically valid request before account lookup so existing and
+        // missing identities follow the same observable throttling path.
+        RateLimiter::hit($identityKey, self::CHALLENGE_REQUEST_WINDOW_SECONDS);
+        RateLimiter::hit($ipKey, self::CHALLENGE_REQUEST_WINDOW_SECONDS);
+
+        return $allowed;
+    }
+
     public function createChallenge(User $user): string
     {
         $otp = (string) random_int(100000, 999999);
@@ -37,8 +58,6 @@ final class StorePasswordResetService
                 'used_at' => null,
             ]);
         });
-
-        RateLimiter::clear($this->attemptKey((string) $user->email));
 
         return $otp;
     }
@@ -124,5 +143,10 @@ final class StorePasswordResetService
     private function attemptKey(string $identity): string
     {
         return 'store-password-reset:'.hash('sha256', $this->normalizeIdentity($identity));
+    }
+
+    private function challengeRequestKey(string $scope, string $value): string
+    {
+        return 'store-password-reset:challenge:'.$scope.':'.hash('sha256', $value);
     }
 }

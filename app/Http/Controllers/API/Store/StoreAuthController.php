@@ -66,11 +66,14 @@ class StoreAuthController extends StoreBaseController
             'Email' => ['required', 'email'],
         ]);
         $email = mb_strtolower(trim((string) $data['Email']));
-        $user = User::query()
-            ->where('email', $email)
-            ->where('type', 'User')
-            ->where('is_blocked', false)
-            ->first();
+        $mayIssue = $passwordResets->allowsChallengeRequest($email, (string) $request->ip());
+        $user = $mayIssue
+            ? User::query()
+                ->where('email', $email)
+                ->where('type', 'User')
+                ->where('is_blocked', false)
+                ->first()
+            : null;
 
         if ($user) {
             $otp = $passwordResets->createChallenge($user);
