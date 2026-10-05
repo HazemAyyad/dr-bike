@@ -13,6 +13,12 @@ return new class extends Migration
         }
 
         Schema::table('asset_logs', function (Blueprint $table) {
+            if (! Schema::hasColumn('asset_logs', 'type')) {
+                $table->string('type')->nullable()->after('total');
+            }
+        });
+
+        Schema::table('asset_logs', function (Blueprint $table) {
             if (! Schema::hasColumn('asset_logs', 'depreciation_period')) {
                 $table->string('depreciation_period', 7)->nullable()->after('type');
             }

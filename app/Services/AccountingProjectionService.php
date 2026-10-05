@@ -1388,6 +1388,7 @@ class AccountingProjectionService
     private function syncSalesOrderSettlement(SalesOrderSettlement $settlement): ?AccountingJournalEntry
     {
         $settlement->loadMissing(['box', 'order']);
+        $party = $this->salesOrderPartyEntity($settlement->order);
 
         if ($settlement->source === 'cancellation_reversal') {
             $settlement->order?->settlements()
@@ -1415,20 +1416,18 @@ class AccountingProjectionService
             $creditLines = $settlement->order?->is_debt_collection
                 ? $this->partyEffectLines(
                     $settlement,
-                    ['customer_id' => $settlement->order?->customer_id, 'box_id' => $settlement->box_id],
+                    array_merge($party, ['box_id' => $settlement->box_id]),
                     $cash,
                     'taken',
                     $this->partyBalanceBeforeSource(
-                        $settlement->order?->customer_id,
-                        null,
+                        $party['customer_id'],
+                        $party['seller_id'],
                         $settlement->box?->currency,
                         'sales_order',
                         (int) $settlement->sales_order_id,
                     ),
                 )
-                : [$this->line('customer_deposits', 0, $cash, $settlement, [
-                    'customer_id' => $settlement->order?->customer_id,
-                ])];
+                : [$this->line('customer_deposits', 0, $cash, $settlement, $party)];
 
             return $this->accounting->post(
                 'sales_order_settlement:'.$settlement->id,
@@ -1439,7 +1438,8 @@ class AccountingProjectionService
                 'دفعة مقدمة لطلبية #'.$settlement->sales_order_id,
                 array_merge([
                     $this->line('cash', $cash, 0, $settlement, [
-                        'customer_id' => $settlement->order?->customer_id,
+                        'customer_id' => $party['customer_id'],
+                        'seller_id' => $party['seller_id'],
                         'box_id' => $settlement->box_id,
                     ]),
                 ], $creditLines),
@@ -1454,7 +1454,7 @@ class AccountingProjectionService
         if ($total <= 0) {
             return null;
         }
-        $entity = ['customer_id' => $settlement->order?->customer_id, 'box_id' => $settlement->box_id];
+        $entity = array_merge($party, ['box_id' => $settlement->box_id]);
         $lines = [];
         if ($cash > 0) {
             $lines[] = $this->line('cash', $cash, 0, $settlement, $entity);
@@ -1494,6 +1494,7 @@ class AccountingProjectionService
 
     private function syncSalesOrder(SalesOrder $order): ?AccountingJournalEntry
     {
+        $party = $this->salesOrderPartyEntity($order);
         $sale = InstantSale::query()
             ->where('sales_order_id', $order->id)
             ->whereNull('parent_id')
@@ -1548,20 +1549,20 @@ class AccountingProjectionService
 
         $lines = [];
         if ($depositApplied > 0) {
-            $lines[] = $this->line('customer_deposits', $depositApplied, 0, $order, ['customer_id' => $order->customer_id]);
+            $lines[] = $this->line('customer_deposits', $depositApplied, 0, $order, $party);
         }
         if ($cashAtRecognition > 0) {
-            $lines[] = $this->line('cash', $cashAtRecognition, 0, $order, ['box_id' => $order->payment_box_id]);
+            $lines[] = $this->line('cash', $cashAtRecognition, 0, $order, array_merge($party, ['box_id' => $order->payment_box_id]));
         }
         if ($customerReceivable > 0) {
             $lines = array_merge($lines, $this->partyEffectLines(
                 $order,
-                ['customer_id' => $order->customer_id],
+                $party,
                 $customerReceivable,
                 'given',
                 $this->partyBalanceBeforeSource(
-                    $order->customer_id,
-                    null,
+                    $party['customer_id'],
+                    $party['seller_id'],
                     'شيكل',
                     'sales_order',
                     (int) $order->id,
@@ -1576,7 +1577,7 @@ class AccountingProjectionService
                 'delivery_company_id' => $order->delivery_company_id,
             ]);
         }
-        $lines[] = $this->line('sales_revenue', 0, $total, $order);
+        $lines[] = $this->line('sales_revenue', 0, $total, $order, $party);
 
         $costInspection = $this->inventoryIntegrity->assertSalesOrderReady($order);
         $cost = round((float) $costInspection['total_cost'], 4);
@@ -1596,6 +1597,7 @@ class AccountingProjectionService
             [
                 'cost_coverage_complete' => true,
                 'customer_deposit_applied' => $depositApplied,
+                'party' => $party,
                 'receivable_allocation' => [
                     'customer' => $customerReceivable,
                     'carrier' => $carrierReceivable,
@@ -1603,6 +1605,19 @@ class AccountingProjectionService
             ],
             $order->updated_by ?: $order->created_by ?: auth()->id(),
         );
+    }
+
+    /** @return array{customer_id: ?int, seller_id: ?int} */
+    private function salesOrderPartyEntity(?SalesOrder $order): array
+    {
+        if ($order?->partner_type === 'seller' && $order->partner_id) {
+            return ['customer_id' => null, 'seller_id' => (int) $order->partner_id];
+        }
+        if ($order?->partner_type === 'customer' && $order->partner_id) {
+            return ['customer_id' => (int) $order->partner_id, 'seller_id' => null];
+        }
+
+        return ['customer_id' => $order?->customer_id ? (int) $order->customer_id : null, 'seller_id' => null];
     }
 
     private function syncDebtCashMovement(DebtTransaction $transaction): ?AccountingJournalEntry

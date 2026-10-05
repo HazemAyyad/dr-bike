@@ -8,6 +8,7 @@ use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreSubCategory;
 use App\Models\Store\StoreUser;
+use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\PersonalAccessToken;
 
@@ -34,6 +35,14 @@ class StoreBaseController extends Controller
         }
 
         $accessToken = PersonalAccessToken::findToken($token);
+
+        if (! $accessToken || ($accessToken->expires_at && $accessToken->expires_at->isPast())) {
+            return null;
+        }
+        $expiration = config('sanctum.expiration');
+        if ($expiration !== null && $accessToken->created_at?->lte(now()->subMinutes((int) $expiration))) {
+            return null;
+        }
 
         return $accessToken?->tokenable instanceof StoreUser
             ? $accessToken->tokenable
@@ -93,6 +102,7 @@ class StoreBaseController extends Controller
             'fullName' => $name,
             'phoneNumber2' => $user->sub_phone,
             'typeUser' => $user->type ?: 'User',
+            'accountRoles' => app(StoreIdentityService::class)->activeRoles($user),
             'userToken' => $user->fcm_token ?? '',
             'dateAdd' => $this->dateString($user->created_at),
             'userUpdate' => '',
@@ -151,6 +161,9 @@ class StoreBaseController extends Controller
 
         return [
             'id' => (int) $product->id,
+            'listingId' => $product->onlineStoreListing
+                ? (int) $product->onlineStoreListing->getKey()
+                : null,
             'nameAr' => (string) ($product->nameAr ?? ''),
             'nameEng' => (string) ($product->nameEng ?? $product->nameAr ?? ''),
             'nameAbree' => (string) ($product->nameAbree ?? $product->nameAr ?? ''),

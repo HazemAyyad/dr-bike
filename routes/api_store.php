@@ -3,6 +3,7 @@
 use App\Http\Controllers\API\Store\StoreAuthController;
 use App\Http\Controllers\API\Store\StoreCitiesController;
 use App\Http\Controllers\API\Store\StoreCommentsController;
+use App\Http\Controllers\API\Store\StoreHomeController;
 use App\Http\Controllers\API\Store\StoreItemsController;
 use App\Http\Controllers\API\Store\StoreMainCategoryController;
 use App\Http\Controllers\API\Store\StoreNotificationsController;
@@ -27,6 +28,7 @@ use Illuminate\Support\Facades\Route;
 Route::post('/Auth/login', [StoreAuthController::class, 'login']);
 Route::post('/Auth/CheckUser', [StoreAuthController::class, 'checkUser']);
 Route::post('/Auth/ForgotPassword', [StoreAuthController::class, 'forgotPassword']);
+Route::post('/Auth/VerifyForgotPasswordOtp', [StoreAuthController::class, 'verifyForgotPasswordOtp']);
 Route::post('/Auth/ChangePassword', [StoreAuthController::class, 'changePassword']);
 Route::patch('/Auth/ChangePasswordToForgot', [StoreAuthController::class, 'changePasswordToForgot']);
 
@@ -37,11 +39,17 @@ Route::post('/Users/BlockUserAndNotActive', [StoreUsersController::class, 'block
 
 Route::post('/Settings/CheckSetting', [StoreSettingsController::class, 'checkSetting']);
 
+Route::get('/OnlineStore/Home', [StoreHomeController::class, 'index']);
+Route::post('/OnlineStore/Home', [StoreHomeController::class, 'index']);
+
 Route::post('/OnlineAds/GetAllAds', [StoreOnlineAdsController::class, 'getAllAds']);
 Route::post('/Notifications/GetNotifications', [StoreNotificationsController::class, 'getNotifications']);
 Route::post('/Notifications/EditNotification', [StoreNotificationsController::class, 'editNotification']);
 Route::post('/Comments/GetAllCommentsToItem', [StoreCommentsController::class, 'getAllCommentsToItem']);
 Route::post('/Comments/ManageComment', [StoreCommentsController::class, 'manageComment']);
+Route::get('/OnlineStore/Reviews', [StoreCommentsController::class, 'own']);
+Route::post('/OnlineStore/Reviews', [StoreCommentsController::class, 'submit']);
+Route::get('/OnlineStore/Products/{product}/Reviews', [StoreCommentsController::class, 'product']);
 
 Route::post('/MainCategorys/GetAllShowMainCategories', [StoreMainCategoryController::class, 'getAllShowMainCategories']);
 Route::post('/SupCategorys/GetAllShowSupCategories', [StoreSupCategoryController::class, 'getAllShowSupCategories']);
@@ -57,5 +65,6 @@ Route::post('/Cities/GetVillagesByCityId', [StoreCitiesController::class, 'getVi
 Route::post('/Cities/CalculateDeliveryFee', [StoreCitiesController::class, 'calculateDeliveryFee']);
 
 Route::post('/Orders/ManageOrder', [StoreOrdersController::class, 'manageOrder']);
+Route::post('/OnlineStore/Checkout', [StoreOrdersController::class, 'checkout']);
 Route::post('/Orders/CancelOrder', [StoreOrdersController::class, 'cancelOrder']);
 Route::post('/Orders/GetAllOrdersByUserId', [StoreOrdersController::class, 'getAllOrdersByUserId']);

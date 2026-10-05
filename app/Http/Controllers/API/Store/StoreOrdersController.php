@@ -2,202 +2,99 @@
 
 namespace App\Http\Controllers\API\Store;
 
-use App\Models\City;
-use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreSalesOrder;
 use App\Models\Store\StoreSalesOrderItem;
-use App\Models\Store\StoreShiplyCity;
-use App\Models\Store\StoreShiplyVillage;
-use App\Models\SalesOrderStatusLog;
+use App\Models\User;
 use App\Services\AdminNotificationService;
-use App\Services\DocumentSerialService;
 use App\Services\EmployeeActivityLogger;
-use App\Services\ShiplyService;
-use App\Support\ShiplySettings;
+use App\Services\OnlineStore\OnlineStoreCheckoutService;
+use App\Services\OnlineStore\StoreIdentityService;
+use App\Services\SalesOrderService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class StoreOrdersController extends StoreBaseController
 {
-    public function manageOrder(Request $request)
+    public function checkout(Request $request, OnlineStoreCheckoutService $checkout)
     {
-        $details = collect($request->input('details', []));
-        if ($details->isEmpty()) {
-            return response()->json(['message' => 'OrderDetailsRequired'], 400);
+        $actor = $this->authenticatedUser($request);
+        $data = $request->validate([
+            'client_request_id' => 'required|string|max:100', 'account_role' => 'required|in:customer,seller',
+            'payment' => 'required|array', 'payment.type' => 'required|in:cash,credit,mixed',
+            'payment.paid_amount' => 'nullable|numeric|min:0',
+            'coupon_code' => 'nullable|string|max:100', 'delivery' => 'nullable|array',
+            'delivery.customer_address' => 'nullable|string|max:1000', 'delivery.city_id' => 'nullable|integer',
+            'delivery.shiply_city_id' => 'nullable|integer', 'delivery.shiply_village_id' => 'nullable|integer',
+            'delivery.partner_address_id' => 'nullable|integer', 'delivery.delivery_company_id' => 'nullable|integer',
+            'items' => 'required|array|min:1', 'items.*.listing_id' => 'required|integer',
+            'items.*.size_id' => 'nullable|integer', 'items.*.size_color_id' => 'nullable|integer',
+            'items.*.quantity' => 'required|integer|min:1',
+        ]);
+        $data['payment_type'] = $data['payment']['type'];
+        $data['payment_amount'] = $data['payment']['paid_amount'] ?? 0;
+        foreach (['customer_address', 'city_id', 'shiply_city_id', 'shiply_village_id', 'partner_address_id', 'delivery_company_id'] as $field) {
+            if (array_key_exists($field, $data['delivery'] ?? [])) {
+                $data[$field] = $data['delivery'][$field];
+            }
         }
+        $result = $checkout->checkout($actor, $data);
 
-        $cityId = $request->input('cityId');
-        $mode = ShiplySettings::mode();
-        $shiplyCity = is_numeric($cityId)
-            ? StoreShiplyCity::query()
-                ->where('mode', $mode)
-                ->where('shiply_id', (int) $cityId)
-                ->whereNull('deleted_at_remote')
-                ->first()
-            : null;
-        $shiplyVillage = $this->resolveVillageForCity(
-            $shiplyCity,
-            $mode,
-            $request->input('shiplyVillageId', $request->input('villageId'))
-        );
-
-        $order = DB::transaction(function () use ($request, $details, $cityId, $shiplyCity, $shiplyVillage, $mode) {
-            $subtotal = (float) $request->input('totalPriceWithOutDiscound', 0);
-            $discounted = (float) $request->input('totalPriceWithDiscound', $subtotal);
-            $couponTotal = $request->input('totalPriceWithDiscoundCode');
-            $totalBeforeDelivery = $couponTotal !== null ? (float) $couponTotal : $discounted;
-            $delivery = $this->deliveryFeeForShiplyCity($shiplyCity, $shiplyVillage, $totalBeforeDelivery, $mode);
-            $total = $totalBeforeDelivery + $delivery;
-
-            $order = StoreSalesOrder::query()->create([
-                'serial_number' => null,
-                'customer_id' => null,
-                'customer_name' => $request->input('customerName'),
-                'customer_phone' => $request->input('phoneNum1'),
-                'customer_address' => $request->input('address'),
-                'city_id' => null,
-                'shiply_city_id' => is_numeric($cityId) ? (int) $cityId : null,
-                'shiply_village_id' => $shiplyVillage?->shiply_id,
-                'shiply_city_name' => $shiplyCity?->name,
-                'shiply_village_name' => $shiplyVillage?->name,
-                'status' => $this->toSalesOrderStatus($request->input('status', 'New')),
-                'payment_type' => 'cash',
-                'customer_delivery_fee' => $delivery,
-                'subtotal' => $subtotal,
-                'discount' => max(0, $subtotal - $discounted),
-                'total' => $total,
-                'notes' => $request->filled('discoundCode')
-                    ? 'Store discount code: '.$request->input('discoundCode')
-                    : null,
-                'created_by' => is_numeric($request->input('userAddId')) ? (int) $request->input('userAddId') : null,
-                'updated_by' => is_numeric($request->input('userUpdate')) ? (int) $request->input('userUpdate') : null,
-            ]);
-
-            foreach ($details as $detail) {
-                $productId = (int) ($detail['itemId'] ?? 0);
-                $product = StoreProduct::query()->find($productId);
-
-                StoreSalesOrderItem::query()->create([
-                    'sales_order_id' => $order->id,
-                    'product_id' => $productId,
-                    'size_id' => $this->nullableInt($detail['itemSizeId'] ?? null),
-                    'size_color_id' => $this->nullableInt($detail['itemSizeColorId'] ?? null),
-                    'product_name' => $product?->nameAr,
-                    'quantity' => (int) ($detail['quantity'] ?? 1),
-                    'reserved_qty' => 0,
-                    'dispatched_qty' => 0,
-                    'unit_price' => (float) ($detail['itemPrice'] ?? 0),
-                    'line_total' => (float) ($detail['totalPriceWithDiscound'] ?? 0),
-                    'is_hidden' => false,
-                ]);
-            }
-
-            if (empty($order->root_order_id)) {
-                $order->forceFill(['root_order_id' => $order->id])->save();
-            }
-
-            if (empty($order->serial_number)) {
-                $serial = app(DocumentSerialService::class)->nextSerial(
-                    DocumentSerialService::TYPE_SALES_ORDER,
-                    $order->created_at
-                );
-                $order->forceFill(['serial_number' => 'S'.$serial])->save();
-            }
-
-            SalesOrderStatusLog::query()->create([
-                'sales_order_id' => $order->id,
-                'from_status' => null,
-                'to_status' => $order->status,
-                'note' => 'Store order created',
-                'user_id' => is_numeric($request->input('userAddId')) ? (int) $request->input('userAddId') : null,
-            ]);
-
-            return $order->fresh($this->orderRelations());
-        });
-
-        app(AdminNotificationService::class)->notifyStoreOrderCreated($order);
-        app(EmployeeActivityLogger::class)->logForUserId(
-            is_numeric($order->created_by) ? (int) $order->created_by : (int) ($request->user()?->id ?? 0),
-            'sales',
-            'created_sales_order',
-            'إنشاء طلبية مبيعات',
-            'تم إنشاء طلبية رقم '.($order->serial_number ?? $order->id).' بقيمة '.number_format((float) ($order->total ?? 0), 2, '.', ''),
-            $order,
-            (float) ($order->total ?? 0),
-            [
-                'order_number' => $order->serial_number,
-                'customer_name' => $order->customer_name,
-                'customer_phone' => $order->customer_phone,
-                'items_count' => $order->details->count(),
-            ]
-        );
-
-        return response()->json($this->orderPayload($order, $request->all()));
+        return response()->json(['data' => $result['order']->fresh(['items', 'statusLogs', 'couponRedemption']), 'replayed' => ! $result['created']], $result['created'] ? 201 : 200);
     }
 
-    public function getAllOrdersByUserId(Request $request)
+    public function manageOrder(Request $request, OnlineStoreCheckoutService $checkout)
     {
-        $userId = $request->query('userId', $request->input('userId'));
+        $actor = $this->authenticatedUser($request);
+        if (collect($request->input('details', []))->isEmpty()) {
+            return response()->json(['message' => 'OrderDetailsRequired'], 400);
+        }
+        $result = $checkout->legacyCheckout($actor, $request->all());
+        $order = StoreSalesOrder::query()->with($this->orderRelations())->findOrFail($result['order']->getKey());
+        if ($result['created']) {
+            app(AdminNotificationService::class)->notifyStoreOrderCreated($order);
+            app(EmployeeActivityLogger::class)->logForUserId((int) $actor->getKey(), 'sales', 'created_sales_order', 'إنشاء طلبية مبيعات',
+                'تم إنشاء طلبية رقم '.($order->serial_number ?? $order->id).' بقيمة '.number_format((float) $order->total, 2, '.', ''), $order, (float) $order->total,
+                ['order_number' => $order->serial_number, 'customer_name' => $order->customer_name, 'customer_phone' => $order->customer_phone, 'items_count' => $order->details->count()]);
+        }
+
+        return response()->json($this->orderPayload($order));
+    }
+
+    public function getAllOrdersByUserId(Request $request, StoreIdentityService $identity)
+    {
+        $actor = $this->authenticatedUser($request);
+        $this->rejectForeignSubmittedUser($request, $actor);
         $status = $request->query('statusOrder', $request->input('statusOrder'));
 
-        $query = StoreSalesOrder::query()
+        $ownedIds = $identity->ownedOrders($actor)->pluck('id');
+        $query = StoreSalesOrder::query()->whereIn('id', $ownedIds)
             ->with($this->orderRelations())
             ->orderByDesc('id');
-
-        if (is_numeric($userId)) {
-            $query->where('created_by', (int) $userId);
-        }
 
         if ($status !== null && $status !== '') {
             $query->where('status', $this->toSalesOrderStatus($status));
         }
 
-        $rows = $query->limit(200)->get()->map(fn (StoreSalesOrder $order) => $this->orderPayload($order));
+        $rows = $query->limit(200)->get()->map(fn (StoreSalesOrder $order) => $this->orderPayload($order, ['customerId' => $actor->id]));
 
         return response()->json($this->rowsResponse($rows));
     }
 
-    public function cancelOrder(Request $request)
+    public function cancelOrder(Request $request, StoreIdentityService $identity, SalesOrderService $orders)
     {
+        $actor = $this->authenticatedUser($request);
+        $this->rejectForeignSubmittedUser($request, $actor);
         $orderId = $request->query('id', $request->input('id', $request->input('orderId')));
-        $userId = $request->query('userId', $request->input('userId', $request->input('userUpdate')));
-
         if (! is_numeric($orderId)) {
             return response()->json(['message' => 'OrderIdRequired'], 400);
         }
 
-        $query = StoreSalesOrder::query()
-            ->with($this->orderRelations())
-            ->where('id', (int) $orderId);
-
-        if (is_numeric($userId)) {
-            $query->where('created_by', (int) $userId);
-        }
-
-        $order = $query->first();
-
-        if (! $order) {
-            return response()->json(['message' => 'OrderNotFound'], 404);
-        }
-
-        $fromStatus = $order->status;
-
-        $order->forceFill([
-            'status' => 'canceled',
-            'updated_by' => is_numeric($userId) ? (int) $userId : $order->updated_by,
-        ])->save();
-
-        SalesOrderStatusLog::query()->create([
-            'sales_order_id' => $order->id,
-            'from_status' => $fromStatus,
-            'to_status' => 'canceled',
-            'note' => 'Store customer canceled the order',
-            'user_id' => is_numeric($userId) ? (int) $userId : null,
-        ]);
-
+        $owned = $identity->ownedOrderOrFail($actor, (int) $orderId);
+        $fromStatus = $owned->status;
+        $orders->cancel($actor, (int) $owned->getKey(), 'Store customer canceled the order');
+        $order = StoreSalesOrder::query()->with($this->orderRelations())->findOrFail($owned->getKey());
         app(AdminNotificationService::class)->notifyStoreOrderCanceled($order);
         app(EmployeeActivityLogger::class)->logForUserId(
-            is_numeric($userId) ? (int) $userId : (int) ($request->user()?->id ?? 0),
+            (int) $actor->getKey(),
             'sales',
             'canceled_sales_order',
             'إلغاء طلبية مبيعات',
@@ -214,32 +111,55 @@ class StoreOrdersController extends StoreBaseController
         return response()->json($this->orderPayload($order->fresh($this->orderRelations())));
     }
 
+    private function authenticatedUser(Request $request): User
+    {
+        $storeUser = $this->storeUserFromRequest($request);
+        if (! $storeUser) {
+            abort(401, 'Unauthenticated.');
+        }
+        $user = User::query()->find($storeUser->getKey());
+        if (! $user || $user->is_blocked) {
+            abort(401, 'Unauthenticated.');
+        }
+
+        return $user;
+    }
+
+    private function rejectForeignSubmittedUser(Request $request, User $actor): void
+    {
+        $submitted = $request->query('userId', $request->input('userId', $request->input('userUpdate')));
+        if (is_numeric($submitted) && (int) $submitted !== (int) $actor->getKey()) {
+            abort(404);
+        }
+    }
+
     private function orderPayload(StoreSalesOrder $order, array $fallback = []): array
     {
         $cityId = $order->shiply_city_id ? (int) $order->shiply_city_id : (int) ($fallback['cityId'] ?? 0);
         $subtotal = (float) ($order->subtotal ?? 0);
         $discount = (float) ($order->discount ?? 0);
+        $redemption = $order->couponRedemption;
 
         return [
             'id' => (int) $order->id,
             'serialNumber' => (string) ($order->serial_number ?? ''),
             'orderNumber' => (string) ($order->serial_number ?? $order->id),
-            'customerId' => (string) ($fallback['customerId'] ?? $order->created_by ?? ''),
+            'customerId' => (string) ($fallback['customerId'] ?? $order->origin_user_id ?? $order->created_by ?? ''),
             'customerName' => (string) ($order->customer_name ?? $fallback['customerName'] ?? ''),
             'phoneNum1' => (string) ($order->customer_phone ?? $fallback['phoneNum1'] ?? ''),
-            'phoneNum2' => (string) ($fallback['phoneNum2'] ?? ''),
+            'phoneNum2' => '',
             'cityId' => $cityId,
             'address' => (string) ($order->customer_address ?? $fallback['address'] ?? ''),
             'status' => $this->fromSalesOrderStatus($order->status),
-            'isWholesale' => (bool) ($fallback['isWholesale'] ?? false),
+            'isWholesale' => $order->partner_type === 'seller',
             'priceDelivery' => (float) ($order->customer_delivery_fee ?? 0),
             'totalPriceWithDiscound' => max(0, $subtotal - $discount),
             'totalPriceWithOutDiscound' => $subtotal,
-            'discoundCodeId' => $fallback['discoundCodeId'] ?? null,
-            'discoundCodePercent' => $fallback['discoundCodePercent'] ?? null,
-            'discoundCode' => $fallback['discoundCode'] ?? null,
-            'totalPriceWithDiscoundCode' => $fallback['totalPriceWithDiscoundCode'] ?? null,
-            'userAddId' => (string) ($order->created_by ?? $fallback['userAddId'] ?? ''),
+            'discoundCodeId' => $redemption?->coupon_id,
+            'discoundCodePercent' => $redemption?->coupon?->discount_type === 'percentage' ? (float) $redemption->coupon->discount_value : null,
+            'discoundCode' => $redemption?->coupon?->code,
+            'totalPriceWithDiscoundCode' => $redemption ? max(0, $subtotal - $discount) : null,
+            'userAddId' => (string) ($order->origin_user_id ?? $order->created_by ?? ''),
             'dateAdd' => $this->dateString($order->created_at),
             'userUpdate' => (string) ($order->updated_by ?? $fallback['userUpdate'] ?? ''),
             'dateUpdate' => $this->dateString($order->updated_at),
@@ -280,6 +200,7 @@ class StoreOrdersController extends StoreBaseController
     private function orderRelations(): array
     {
         return [
+            'details.product.onlineStoreListing',
             'details.product.subCategories',
             'details.product.normalImages',
             'details.product.viewImages',
@@ -288,6 +209,7 @@ class StoreOrdersController extends StoreBaseController
             'latestHandover',
             'statusLogs.user',
             'shiplyEvents',
+            'couponRedemption.coupon',
         ];
     }
 
@@ -341,83 +263,6 @@ class StoreOrdersController extends StoreBaseController
                 'occurredAt' => $this->dateString($event->occurred_at),
             ])->values(),
         ];
-    }
-
-    private function nullableInt($value): ?int
-    {
-        if ($value === null || $value === '' || $value === 'null') {
-            return null;
-        }
-
-        return is_numeric($value) ? (int) $value : null;
-    }
-
-    private function resolveVillageForCity(?StoreShiplyCity $shiplyCity, string $mode, $villageId): ?StoreShiplyVillage
-    {
-        if (! $shiplyCity) {
-            return null;
-        }
-
-        $query = StoreShiplyVillage::query()
-            ->where('mode', $mode)
-            ->where('shiply_city_id', (int) $shiplyCity->shiply_id)
-            ->whereNull('deleted_at_remote')
-            ->where('is_closed', false);
-
-        if (is_numeric($villageId)) {
-            $selected = (clone $query)
-                ->where('shiply_id', (int) $villageId)
-                ->first();
-
-            if ($selected) {
-                return $selected;
-            }
-        }
-
-        return $query->orderBy('name')->first();
-    }
-
-    private function deliveryFeeForShiplyCity(
-        ?StoreShiplyCity $shiplyCity,
-        ?StoreShiplyVillage $shiplyVillage,
-        float $parcelPrice,
-        string $mode
-    ): float {
-        if (! $shiplyCity) {
-            return 0.0;
-        }
-
-        $city = City::query()
-            ->where('is_active', true)
-            ->where(function ($query) use ($shiplyCity) {
-                $query
-                    ->where('shiply_area_code', (string) $shiplyCity->shiply_id)
-                    ->orWhere('name_ar', $shiplyCity->name)
-                    ->orWhere('name_en', $shiplyCity->name);
-            })
-            ->first();
-
-        $fee = $city?->currentDeliveryFee();
-
-        if ($fee !== null && (float) $fee > 0) {
-            return round((float) $fee, 2);
-        }
-
-        if (! $shiplyVillage) {
-            return 0.0;
-        }
-
-        try {
-            $quote = app(ShiplyService::class)->calculateDeliveryCost(
-                (int) $shiplyVillage->shiply_id,
-                max(0, $parcelPrice),
-                $mode
-            );
-
-            return round((float) ($quote['delivery_cost'] ?? 0), 2);
-        } catch (\Throwable) {
-            return 0.0;
-        }
     }
 
     private function toSalesOrderStatus($status): string

@@ -6,6 +6,7 @@ use App\Enums\SalesOrderStatus;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderShiplyEvent;
 use App\Models\User;
+use App\Services\OnlineStore\OnlineStoreNotificationService;
 use Illuminate\Support\Facades\Log;
 
 class SalesOrderNotificationService
@@ -23,6 +24,7 @@ class SalesOrderNotificationService
     public function __construct(
         protected AdminNotificationService $adminNotifications,
         protected SalesOrderShiplyTrackingService $shiplyTracking,
+        protected OnlineStoreNotificationService $onlineStoreNotifications,
     ) {}
 
     public function notifyStatusChange(
@@ -67,6 +69,7 @@ class SalesOrderNotificationService
                 (int) $order->id,
                 true
             );
+            $this->onlineStoreNotifications->notifyOrderStatus($order, $toStatus);
         } catch (\Throwable $e) {
             Log::error('Sales order notification failed: '.$e->getMessage(), [
                 'order_id' => $order->id,

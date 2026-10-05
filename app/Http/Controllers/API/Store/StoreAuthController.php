@@ -2,11 +2,15 @@
 
 namespace App\Http\Controllers\API\Store;
 
-use App\Models\PasswordResetCode;
+use App\Mail\ResetPasswordMail;
 use App\Models\Store\StoreUser;
+use App\Models\User;
+use App\Services\OnlineStore\StorePasswordResetService;
+use App\Support\AppUpdateSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class StoreAuthController extends StoreBaseController
 {
@@ -52,37 +56,76 @@ class StoreAuthController extends StoreBaseController
         return response()->json($this->userPayload($user));
     }
 
-    public function forgotPassword(Request $request)
+    public function forgotPassword(Request $request, StorePasswordResetService $passwordResets)
     {
-        $email = $request->query('Email', $request->input('Email'));
-        $user = StoreUser::query()->where('email', $email)->first();
-
-        if (! $user) {
-            return response()->json(['message' => 'UserNotFound'], 404);
+        if ($response = $this->passwordResetVersionGate($request)) {
+            return $response;
         }
 
-        $code = random_int(1000, 9999);
-        PasswordResetCode::updateOrCreate(['email' => $email], ['token' => $code]);
+        $data = $request->validate([
+            'Email' => ['required', 'email'],
+        ]);
+        $email = mb_strtolower(trim((string) $data['Email']));
+        $mayIssue = $passwordResets->allowsChallengeRequest($email, (string) $request->ip());
+        $user = $mayIssue
+            ? User::query()
+                ->where('email', $email)
+                ->where('type', 'User')
+                ->where('is_blocked', false)
+                ->first()
+            : null;
+
+        if ($user) {
+            $otp = $passwordResets->createChallenge($user);
+            try {
+                Mail::to($user->email)->send(new ResetPasswordMail($user->email, $otp));
+            } catch (\Throwable) {
+                Log::warning('store_password_reset_delivery_failed');
+            }
+        }
 
         return response()->json([
-            'userId' => (string) $user->id,
-            'email' => $email,
-            'otp' => (string) $code,
+            'status' => 'success',
+            'message' => 'success',
+        ]);
+    }
+
+    public function verifyForgotPasswordOtp(Request $request, StorePasswordResetService $passwordResets)
+    {
+        if ($response = $this->passwordResetVersionGate($request)) {
+            return $response;
+        }
+
+        $data = $request->validate([
+            'Email' => ['required', 'email'],
+            'otp' => ['required', 'digits:6'],
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'resetProof' => $passwordResets->verify((string) $data['Email'], (string) $data['otp']),
             'message' => 'success',
         ]);
     }
 
     public function changePassword(Request $request)
     {
+        $user = $this->storeUserFromRequest($request);
+        if (! $user || (bool) ($user->is_blocked ?? false)) {
+            abort(401, 'Unauthenticated.');
+        }
+
         $data = $request->validate([
-            'userId' => ['required'],
+            'userId' => ['nullable'],
             'oldPassword' => ['required', 'string'],
             'newPassword' => ['required', 'string'],
             'confirmPassword' => ['required', 'same:newPassword'],
         ]);
 
-        $user = StoreUser::query()->find($data['userId']);
-        if (! $user || ! Hash::check($data['oldPassword'], $user->password)) {
+        if (isset($data['userId']) && (int) $data['userId'] !== (int) $user->getKey()) {
+            abort(404);
+        }
+        if (! Hash::check($data['oldPassword'], $user->password)) {
             return response()->json(['message' => 'OldPasswordNotCorrect'], 400);
         }
 
@@ -91,21 +134,42 @@ class StoreAuthController extends StoreBaseController
         return response()->json(['message' => 'success']);
     }
 
-    public function changePasswordToForgot(Request $request)
+    public function changePasswordToForgot(Request $request, StorePasswordResetService $passwordResets)
     {
+        if ($response = $this->passwordResetVersionGate($request)) {
+            return $response;
+        }
+
         $data = $request->validate([
-            'userId' => ['required'],
-            'newPassword' => ['required', 'string'],
+            'resetProof' => ['required', 'string', 'min:40', 'max:255'],
+            'newPassword' => ['required', 'string', 'min:8'],
             'confirmPassword' => ['required', 'same:newPassword'],
         ]);
 
-        $user = StoreUser::query()->find($data['userId']);
-        if (! $user) {
-            return response()->json(['message' => 'UserNotFound'], 404);
+        $passwordResets->reset((string) $data['resetProof'], (string) $data['newPassword']);
+
+        return response()->json(['status' => 'success', 'message' => 'success']);
+    }
+
+    private function passwordResetVersionGate(Request $request)
+    {
+        $app = strtolower(trim((string) $request->input('app', $request->query('app'))));
+        $platform = strtolower(trim((string) $request->input('platform', $request->query('platform'))));
+        $version = trim((string) $request->input('current_version', $request->query('current_version')));
+        $build = $request->input('current_build', $request->query('current_build'));
+
+        $validVersion = preg_match('/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/', $version) === 1;
+        $validBuild = filter_var($build, FILTER_VALIDATE_INT) !== false;
+
+        if ($app !== 'store' || ! in_array($platform, ['android', 'ios'], true)
+            || ! $validVersion || ! $validBuild || (int) $build < AppUpdateSettings::STORE_PASSWORD_RESET_MINIMUM_BUILD) {
+            return response()->json([
+                'status' => 'upgrade_required',
+                'message' => 'A Store app update is required to reset the password securely.',
+                'minimum_build' => AppUpdateSettings::STORE_PASSWORD_RESET_MINIMUM_BUILD,
+            ], 426);
         }
 
-        $user->forceFill(['password' => Hash::make($data['newPassword'])])->save();
-
-        return response()->json(['message' => 'success']);
+        return null;
     }
 }

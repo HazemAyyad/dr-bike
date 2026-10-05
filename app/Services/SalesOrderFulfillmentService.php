@@ -38,6 +38,7 @@ class SalesOrderFulfillmentService
         protected SalesOrderShiplyTrackingService $shiplyTracking,
         protected SalesOrderMediaRequirementService $mediaRequirements,
         protected SalesOrdersDailyBoxService $ordersDailyBoxes,
+        protected AccountingProjectionService $accountingProjection,
     ) {}
 
     public function handoverToDelivery(User $user, int $orderId, array $payload): SalesOrder
@@ -814,6 +815,50 @@ class SalesOrderFulfillmentService
             'payment_box_id' => $box->id,
             'sales_daily_session_id' => $session->id,
         ]);
+    }
+
+    /**
+     * Secure an accepted order's initial settlement and unpaid ledger amount.
+     * Revenue recognition remains owned by the existing delivery lifecycle.
+     *
+     * @return array{paid_amount: float, unpaid_amount: float, settlement_id: int|null, debt_transaction_id: int|null}
+     */
+    public function postAcceptedOrderFinancials(SalesOrder $order, User $user): array
+    {
+        return DB::transaction(function () use ($order, $user) {
+            $locked = SalesOrder::query()->lockForUpdate()->findOrFail($order->getKey());
+            $this->postInitialPayment($locked, $user);
+            $locked->refresh();
+
+            $settlement = SalesOrderSettlement::query()
+                ->where('idempotency_key', 'sales-order-initial-payment-'.$locked->id)
+                ->first();
+            $paidAmount = round(min((float) $locked->total, max(0, (float) ($settlement?->amount ?? 0))), 2);
+            $unpaidAmount = round(max(0, (float) $locked->total - $paidAmount), 2);
+            $debt = $this->debtLedgerService->syncSalesOrderToLedger(
+                $locked,
+                (float) $locked->total,
+                $paidAmount,
+            );
+
+            $locked->update([
+                'payment_amount' => $paidAmount,
+                'customer_debt_balance' => $unpaidAmount,
+                'carrier_receivable_balance' => 0,
+                'updated_by' => $user->id,
+            ]);
+
+            if ($settlement) {
+                $this->accountingProjection->syncOrFail($settlement->fresh());
+            }
+
+            return [
+                'paid_amount' => $paidAmount,
+                'unpaid_amount' => $unpaidAmount,
+                'settlement_id' => $settlement?->getKey(),
+                'debt_transaction_id' => $debt?->getKey(),
+            ];
+        });
     }
 
     /**

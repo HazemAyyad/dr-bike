@@ -19,7 +19,7 @@ class StoreUsersController extends StoreBaseController
             'confirmPassword' => ['required', 'same:password'],
         ]);
 
-        $user = new StoreUser();
+        $user = new StoreUser;
         $user->forceFill([
             'name' => strstr($data['email'], '@', true) ?: $data['email'],
             'email' => $data['email'],
@@ -36,24 +36,16 @@ class StoreUsersController extends StoreBaseController
 
     public function getById(Request $request)
     {
-        $id = $request->query('id', $request->input('id'));
-        $user = StoreUser::query()->find($id);
-
-        if (! $user) {
-            return response()->json(['message' => 'UserNotFound'], 404);
-        }
+        $user = $this->authenticatedStoreUser($request);
+        $this->rejectForeignId($request, $user, 'id');
 
         return response()->json($this->userPayload($user));
     }
 
     public function edit(Request $request)
     {
-        $id = $request->input('id', $request->query('id'));
-        $user = StoreUser::query()->find($id);
-
-        if (! $user) {
-            return response()->json(['message' => 'UserNotFound'], 404);
-        }
+        $user = $this->authenticatedStoreUser($request);
+        $this->rejectForeignId($request, $user, 'id');
 
         $data = $request->validate([
             'email' => ['nullable', 'email', Rule::unique('users', 'email')->ignore($user->id)],
@@ -61,7 +53,6 @@ class StoreUsersController extends StoreBaseController
             'phoneNumber2' => ['nullable', 'string'],
             'address' => ['nullable', 'string'],
             'fullName' => ['nullable', 'string'],
-            'typeUser' => ['nullable', 'string'],
             'cityId' => ['nullable'],
         ]);
 
@@ -71,7 +62,8 @@ class StoreUsersController extends StoreBaseController
             'phone' => $data['phoneNumber'] ?? $user->phone,
             'sub_phone' => $data['phoneNumber2'] ?? $user->sub_phone,
             'address' => $data['address'] ?? $user->address,
-            'type' => $data['typeUser'] ?? $user->type,
+            // Authentication role/type is server-owned and never profile-editable.
+            'type' => $user->type,
             'city' => array_key_exists('cityId', $data) ? (string) $data['cityId'] : $user->city,
         ])->save();
 
@@ -80,15 +72,29 @@ class StoreUsersController extends StoreBaseController
 
     public function blockUserAndNotActive(Request $request)
     {
-        $userId = $request->query('userId', $request->input('userId'));
-        $user = StoreUser::query()->find($userId);
-
-        if (! $user) {
-            return response()->json(['message' => 'UserNotFound'], 404);
-        }
+        $user = $this->authenticatedStoreUser($request);
+        $this->rejectForeignId($request, $user, 'userId');
 
         $user->forceFill(['is_blocked' => true])->save();
 
         return response()->json(['message' => 'success']);
+    }
+
+    private function authenticatedStoreUser(Request $request): StoreUser
+    {
+        $user = $this->storeUserFromRequest($request);
+        if (! $user || (bool) ($user->is_blocked ?? false)) {
+            abort(401, 'Unauthenticated.');
+        }
+
+        return $user;
+    }
+
+    private function rejectForeignId(Request $request, StoreUser $user, string $field): void
+    {
+        $submitted = $request->query($field, $request->input($field));
+        if ($submitted !== null && (! is_numeric($submitted) || (int) $submitted !== (int) $user->getKey())) {
+            abort(404);
+        }
     }
 }

@@ -114,6 +114,11 @@ class Kernel extends ConsoleKernel
             ->withoutOverlapping()
             ->runInBackground();
 
+        $schedule->command('online-store:purge-checkout-attempts')
+            ->hourly()
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping();
+
         $schedule->command('stock-images:queue-work')
             ->everyMinute()
             ->timezone('Asia/Hebron')

@@ -9,6 +9,7 @@ use App\Services\SalesOrderPartialService;
 use App\Services\SalesOrderPurgeService;
 use App\Services\SalesOrderService;
 use App\Services\SalesOrderStatementService;
+use App\Support\OnlineStore\OnlineStoreValues;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
@@ -38,6 +39,7 @@ class SalesOrdersController extends Controller
                 'has_customer_debt' => 'nullable|boolean',
                 'has_carrier_receivable' => 'nullable|boolean',
                 'stuck_assigned_to' => 'nullable|integer|exists:users,id',
+                'origin' => ['nullable', OnlineStoreValues::originRule()],
             ]);
 
             return response()->json([

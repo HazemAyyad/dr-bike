@@ -76,6 +76,17 @@ use App\Http\Controllers\API\DeliveryCompaniesController;
 use App\Http\Controllers\API\OldInstanBuyingsAPI;
 use App\Http\Controllers\API\Invoices;
 use App\Http\Controllers\API\LegacyStoreImageController;
+use App\Http\Controllers\API\OnlineStore\ContentMediaController as OnlineStoreContentMediaController;
+use App\Http\Controllers\API\OnlineStore\ListingController as OnlineStoreListingController;
+use App\Http\Controllers\API\OnlineStore\ListingMediaController as OnlineStoreListingMediaController;
+use App\Http\Controllers\API\OnlineStore\StorefrontContentController as OnlineStoreContentController;
+use App\Http\Controllers\API\OnlineStore\AccountLinkController as OnlineStoreAccountLinkController;
+use App\Http\Controllers\API\OnlineStore\PromotionController as OnlineStorePromotionController;
+use App\Http\Controllers\API\OnlineStore\CouponController as OnlineStoreCouponController;
+use App\Http\Controllers\API\OnlineStore\CreditPolicyController as OnlineStoreCreditPolicyController;
+use App\Http\Controllers\API\OnlineStore\StoreGovernanceController as OnlineStoreGovernanceController;
+use App\Http\Controllers\API\OnlineStore\ReviewController as OnlineStoreReviewController;
+use App\Http\Controllers\API\OnlineStore\NotificationController as OnlineStoreNotificationController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1118,6 +1129,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Goal Creation','re
 Route::group(['middleware' => ['auth:sanctum','check.permission:Sales,Follow-up Section,Projects and Purchases Management,Purchasing Section','refresh.token.expiry']], function () {
       //products
     Route::get('/all/products' , [Products::class,'allproducts']);
+
     Route::post('/product/retail-price' , [Products::class,'updateRetailPrice']);
     Route::post('/products/paste-suggestions' , [Products::class,'pasteSuggestions']);
     Route::post('/products/paste-alias' , [Products::class,'storePasteAlias']);
@@ -1704,6 +1716,105 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/subcategory/store',                 [CategoryController::class, 'storeSubCategory']);
     Route::post('/admin/subcategory/update',                [CategoryController::class, 'updateSubCategory']);
     Route::post('/admin/subcategory/toggle-status',         [CategoryController::class, 'toggleSubCategoryStatus']);
+
+/*
+|--------------------------------------------------------------------------
+| Online Store Admin boundary
+|--------------------------------------------------------------------------
+|
+| Phase 2 establishes the authenticated prefix and permission hooks only.
+| Resource routes are added by their later user-story tasks inside the
+| matching permission group; no legacy Store route is moved or replaced.
+|
+*/
+Route::prefix('online-store')
+    ->name('online-store.')
+    ->middleware(['auth:sanctum', 'refresh.token.expiry'])
+    ->group(function () {
+        Route::get('/listings', [OnlineStoreListingController::class, 'index'])->name('listings.index');
+        Route::post('/listings', [OnlineStoreListingController::class, 'store'])->name('listings.store');
+        Route::get('/listings/{listing}', [OnlineStoreListingController::class, 'show'])->name('listings.show');
+        Route::patch('/listings/{listing}', [OnlineStoreListingController::class, 'update'])->name('listings.update');
+        Route::post('/listings/{listing}/transition', [OnlineStoreListingController::class, 'transition'])->name('listings.transition');
+        Route::get('/products/{product}/store-readiness', [OnlineStoreListingController::class, 'readiness'])->name('products.readiness');
+        Route::get('/listings/{listing}/media', [OnlineStoreListingMediaController::class, 'show'])->name('listings.media.show');
+        Route::post('/listings/{listing}/media/initialize', [OnlineStoreListingMediaController::class, 'initialize'])->name('listings.media.initialize');
+        Route::put('/listings/{listing}/media', [OnlineStoreListingMediaController::class, 'replace'])->name('listings.media.replace');
+        Route::get('/categories', [OnlineStoreContentController::class, 'categories'])->name('categories.index');
+        Route::post('/categories', [OnlineStoreContentController::class, 'storeCategory'])->name('categories.store');
+        Route::post('/categories/reorder', [OnlineStoreContentController::class, 'reorderCategories'])->name('categories.reorder');
+        Route::get('/categories/{category}', [OnlineStoreContentController::class, 'category'])->name('categories.show');
+        Route::patch('/categories/{category}', [OnlineStoreContentController::class, 'updateCategory'])->name('categories.update');
+        Route::delete('/categories/{category}', [OnlineStoreContentController::class, 'deleteCategory'])->name('categories.destroy');
+        Route::put('/categories/{category}/listings', [OnlineStoreContentController::class, 'replaceCategoryListings'])->name('categories.listings.replace');
+        Route::get('/home-sections', [OnlineStoreContentController::class, 'sections'])->name('home-sections.index');
+        Route::post('/home-sections', [OnlineStoreContentController::class, 'storeSection'])->name('home-sections.store');
+        Route::post('/home-sections/reorder', [OnlineStoreContentController::class, 'reorderSections'])->name('home-sections.reorder');
+        Route::get('/home-sections/{section}', [OnlineStoreContentController::class, 'section'])->name('home-sections.show');
+        Route::patch('/home-sections/{section}', [OnlineStoreContentController::class, 'updateSection'])->name('home-sections.update');
+        Route::delete('/home-sections/{section}', [OnlineStoreContentController::class, 'deleteSection'])->name('home-sections.destroy');
+        Route::put('/home-sections/{section}/items', [OnlineStoreContentController::class, 'replaceSectionItems'])->name('home-sections.items.replace');
+        Route::post('/content-images', [OnlineStoreContentMediaController::class, 'store'])->name('content-images.store');
+        Route::get('/banners', [OnlineStoreContentController::class, 'banners'])->name('banners.index');
+        Route::post('/banners', [OnlineStoreContentController::class, 'storeBanner'])->name('banners.store');
+        Route::post('/banners/reorder', [OnlineStoreContentController::class, 'reorderBanners'])->name('banners.reorder');
+        Route::get('/banners/{banner}', [OnlineStoreContentController::class, 'banner'])->name('banners.show');
+        Route::patch('/banners/{banner}', [OnlineStoreContentController::class, 'updateBanner'])->name('banners.update');
+        Route::delete('/banners/{banner}', [OnlineStoreContentController::class, 'deleteBanner'])->name('banners.destroy');
+        Route::get('/promotions', [OnlineStorePromotionController::class, 'index']);
+        Route::post('/promotions', [OnlineStorePromotionController::class, 'store']);
+        Route::get('/promotions/{promotion}', [OnlineStorePromotionController::class, 'show']);
+        Route::patch('/promotions/{promotion}', [OnlineStorePromotionController::class, 'update']);
+        Route::post('/promotions/{promotion}/activate', [OnlineStorePromotionController::class, 'activate']);
+        Route::post('/promotions/{promotion}/deactivate', [OnlineStorePromotionController::class, 'deactivate']);
+        Route::delete('/promotions/{promotion}', [OnlineStorePromotionController::class, 'destroy']);
+        Route::post('/pricing/preview', [OnlineStorePromotionController::class, 'preview']);
+        Route::get('/coupons', [OnlineStoreCouponController::class, 'index']);
+        Route::post('/coupons', [OnlineStoreCouponController::class, 'store']);
+        Route::get('/coupons/{coupon}', [OnlineStoreCouponController::class, 'show']);
+        Route::patch('/coupons/{coupon}', [OnlineStoreCouponController::class, 'update']);
+        Route::post('/coupons/{coupon}/activate', [OnlineStoreCouponController::class, 'activate']);
+        Route::post('/coupons/{coupon}/deactivate', [OnlineStoreCouponController::class, 'deactivate']);
+        Route::delete('/coupons/{coupon}', [OnlineStoreCouponController::class, 'destroy']);
+        Route::get('/coupons/{coupon}/redemptions', [OnlineStoreCouponController::class, 'redemptions']);
+        Route::get('/accounts', [OnlineStoreAccountLinkController::class, 'accounts'])->name('accounts.index');
+        Route::get('/account-links', [OnlineStoreAccountLinkController::class, 'index']);
+        Route::post('/account-links', [OnlineStoreAccountLinkController::class, 'store']);
+        Route::patch('/account-links/{link}', [OnlineStoreAccountLinkController::class, 'update']);
+        Route::put('/account-links/{link}/credit-policy', [OnlineStoreCreditPolicyController::class, 'update'])->name('account-links.credit-policy.update');
+        Route::get('/account-links/{link}/credit', [OnlineStoreCreditPolicyController::class, 'show'])->name('account-links.credit.show');
+        Route::get('/settings', [OnlineStoreGovernanceController::class, 'settings'])->name('settings.show');
+        Route::put('/settings', [OnlineStoreGovernanceController::class, 'updateSettings'])->name('settings.update');
+        Route::get('/audit-events', [OnlineStoreGovernanceController::class, 'auditEvents'])->name('audit-events.index');
+        Route::get('/dashboard', [OnlineStoreGovernanceController::class, 'dashboard'])->name('dashboard');
+        Route::get('/reports', [OnlineStoreGovernanceController::class, 'report'])->name('reports.index');
+        Route::get('/reviews', [OnlineStoreReviewController::class, 'index'])->name('reviews.index');
+        Route::get('/reviews/{review}', [OnlineStoreReviewController::class, 'show'])->name('reviews.show');
+        Route::post('/reviews/{review}/moderate', [OnlineStoreReviewController::class, 'moderate'])->name('reviews.moderate');
+        Route::post('/notifications/promotions/{promotion}', [OnlineStoreNotificationController::class, 'promotion'])->name('notifications.promotions.send');
+        Route::middleware('check.permission:Online Store View')->group(function () {
+            // Dashboard, report, and resource read routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Products Manage')->group(function () {
+            // Listing and media mutation routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Categories Manage')->group(function () {
+            // Category mutation routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Content Manage')->group(function () {
+            // Home-section and banner routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Promotions Manage')->group(function () {
+            // Promotion and coupon routes are registered in later phases.
+        });
+        Route::middleware('check.permission:Online Store Reviews Manage')->group(function () {
+            // Review routes enforce this exact permission in ReviewController
+            // so inaccessible resources retain the approved 404 behavior.
+        });
+        Route::middleware('check.permission:Online Store Settings Manage')->group(function () {
+            // Settings, account-link, and credit-policy routes are registered in later phases.
+        });
+    });
     Route::get('/get/all/projects' , [Stocks::class,'allProjects']);
     Route::get('/employees' , [EmployeeDetails::class,'employeesList']);
     Route::get('/all/sellers' , [Customers::class,'allSellers']);

@@ -18,6 +18,7 @@ use App\Models\ShiplyVillage;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\User;
+use App\Services\OnlineStore\CouponService;
 use App\Support\ProductImageResolver;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
@@ -37,6 +38,7 @@ class SalesOrderService
         protected SalesOrderMediaRequirementService $mediaRequirements,
         protected SalesOrderStockShortageService $shortages,
         protected SalesDailySessionService $sessionService,
+        protected CouponService $onlineStoreCoupons,
     ) {}
 
     /**
@@ -188,6 +190,10 @@ class SalesOrderService
     private function applyListFilters($query, array $filters, bool $includeStatus): void
     {
 
+        if (! empty($filters['origin'])) {
+            $query->where('origin', $filters['origin']);
+        }
+
         if ($includeStatus && ! empty($filters['status'])) {
             if ($filters['status'] === 'all') {
                 $query->whereNotIn('status', [
@@ -291,15 +297,48 @@ class SalesOrderService
             ->findOrFail($orderId);
     }
 
-    public function store(User $user, Request $request): SalesOrder
+    /**
+     * @param  array{
+     *     origin?: string,
+     *     origin_user_id?: int|null,
+     *     client_request_id?: string|null,
+     *     before_creation_effects?: (callable(SalesOrder): void)|null,
+     *     before_reservation_effects?: (callable(SalesOrder): void)|null
+     * }  $trustedContext
+     */
+    public function store(User $user, Request $request, array $trustedContext = []): SalesOrder
     {
         $data = $this->validateOrderPayload($request, false);
 
-        return DB::transaction(function () use ($user, $data) {
+        $origin = $trustedContext['origin'] ?? SalesOrder::ORIGIN_ADMIN;
+        $originUserId = $trustedContext['origin_user_id'] ?? null;
+        $clientRequestId = isset($trustedContext['client_request_id'])
+            ? trim((string) $trustedContext['client_request_id']) : null;
+        if (! in_array($origin, [SalesOrder::ORIGIN_ADMIN, SalesOrder::ORIGIN_STORE], true)) {
+            throw ValidationException::withMessages(['origin' => ['The trusted order origin is invalid.']]);
+        }
+        if ($origin === SalesOrder::ORIGIN_STORE && (! $originUserId || $clientRequestId === '')) {
+            throw ValidationException::withMessages(['client_request_id' => ['Store orders require an authenticated actor and request identifier.']]);
+        }
+        if ($origin === SalesOrder::ORIGIN_ADMIN) {
+            $originUserId = null;
+            $clientRequestId = null;
+        }
+        $beforeCreationEffects = $trustedContext['before_creation_effects'] ?? null;
+        if ($beforeCreationEffects !== null && ! is_callable($beforeCreationEffects)) {
+            throw new \LogicException('The trusted pre-effect SalesOrder callback must be callable.');
+        }
+        $beforeReservationEffects = $trustedContext['before_reservation_effects'] ?? null;
+        if ($beforeReservationEffects !== null && ! is_callable($beforeReservationEffects)) {
+            throw new \LogicException('The trusted pre-reservation SalesOrder callback must be callable.');
+        }
+
+        return DB::transaction(function () use ($user, $data, $origin, $originUserId, $clientRequestId, $beforeCreationEffects, $beforeReservationEffects) {
+            $this->lockOrderStockScope($data['items'] ?? []);
             $totals = $this->calculateTotals($data);
             $customerSnapshot = $this->resolveCustomerSnapshot($data);
 
-            $order = SalesOrder::create([
+            $order = new SalesOrder([
                 'customer_id' => $customerSnapshot['customer_id'],
                 'partner_type' => $data['partner_type'] ?? ($customerSnapshot['customer_id'] ? 'customer' : null),
                 'partner_id' => $data['partner_id'] ?? $customerSnapshot['customer_id'],
@@ -335,6 +374,15 @@ class SalesOrderService
                 'created_by' => $user->id,
                 'updated_by' => $user->id,
             ]);
+            $order->forceFill([
+                'origin' => $origin,
+                'origin_user_id' => $originUserId,
+                'client_request_id' => $clientRequestId,
+            ])->save();
+
+            if ($beforeCreationEffects !== null) {
+                $beforeCreationEffects($order);
+            }
 
             if (empty($order->root_order_id)) {
                 $order->update(['root_order_id' => $order->id]);
@@ -350,6 +398,10 @@ class SalesOrderService
             if (! $order->is_debt_collection) {
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
                 $freshOrder = $order->fresh(['items.product']);
+                if ($beforeReservationEffects !== null) {
+                    $beforeReservationEffects($freshOrder);
+                    $freshOrder->refresh()->loadMissing('items.product');
+                }
                 $this->guardReservedStockConflicts($freshOrder, $data);
                 $this->applyUnconfirmedStockReservation($freshOrder, $data, $user);
             }
@@ -471,6 +523,7 @@ class SalesOrderService
 
         if ($order->is_debt_collection) {
             return DB::transaction(function () use ($user, $order) {
+                $this->onlineStoreCoupons->markApplied($order);
                 $this->fulfillmentService->postInitialPayment($order, $user);
                 $from = $order->status;
                 $order->update([
@@ -493,6 +546,7 @@ class SalesOrderService
         }
 
         return DB::transaction(function () use ($user, $order) {
+            $this->onlineStoreCoupons->markApplied($order);
             $this->fulfillmentService->postInitialPayment($order, $user);
             $order->loadMissing('items.product', 'media');
             $conflicts = $this->stockService->analyzeOrderStockImpact($order);
@@ -628,7 +682,12 @@ class SalesOrderService
             SalesOrderStatus::PartialDelivered,
             SalesOrderStatus::Review,
         ], true)) {
-            return $this->fulfillmentService->markReturned($user, $orderId, $note);
+            return DB::transaction(function () use ($user, $orderId, $note) {
+                $returned = $this->fulfillmentService->markReturned($user, $orderId, $note);
+                $this->onlineStoreCoupons->release($returned);
+
+                return $returned;
+            });
         }
 
         if (! $order->statusEnum()->canCancel()) {
@@ -654,6 +713,7 @@ class SalesOrderService
             ]);
             $this->logStatus($order, $from, SalesOrderStatus::Canceled->value, $note ?? 'إلغاء الطلبية', $user->id);
             $this->notifications->notifyStatusChange($order->fresh(), $from, SalesOrderStatus::Canceled->value, $user, $note);
+            $this->onlineStoreCoupons->release($order);
 
             return $order->fresh($this->detailRelations());
         });
@@ -725,6 +785,9 @@ class SalesOrderService
             'id' => $order->id,
             'serial_number' => $order->serial_number,
             'status' => $order->status,
+            'origin' => $order->origin,
+            'origin_user_id' => $order->origin_user_id !== null ? (int) $order->origin_user_id : null,
+            'client_request_id' => $order->client_request_id,
             'customer_id' => $order->customer_id,
             'partner_type' => $order->partner_type,
             'partner_id' => $order->partner_id,
@@ -929,6 +992,9 @@ class SalesOrderService
             'id' => $order->id,
             'serial_number' => $order->serial_number,
             'status' => $order->status,
+            'origin' => $order->origin,
+            'origin_user_id' => $order->origin_user_id !== null ? (int) $order->origin_user_id : null,
+            'client_request_id' => $order->client_request_id,
             'customer_name' => $order->customer_name,
             'customer_phone' => $order->customer_phone,
             'city_name' => $this->formatShiplyAddressLabel($order) ?: $order->city?->name_ar,
@@ -1220,6 +1286,19 @@ class SalesOrderService
             'calculated_total' => $calculatedTotal,
             'total' => $total,
         ];
+    }
+
+    /** @param array<int, array<string, mixed>> $items */
+    private function lockOrderStockScope(array $items): void
+    {
+        $productIds = collect($items)->pluck('product_id')->filter()->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+        if ($productIds !== []) {
+            Product::query()->whereIn('id', $productIds)->orderBy('id')->lockForUpdate()->get();
+        }
+        $variantIds = collect($items)->pluck('size_color_id')->filter()->map(fn ($id) => (int) $id)->unique()->sort()->values()->all();
+        if ($variantIds !== []) {
+            SizeColor::query()->whereIn('id', $variantIds)->orderBy('id')->lockForUpdate()->get();
+        }
     }
 
     /**

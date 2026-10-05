@@ -2,6 +2,7 @@
 
 namespace App\Models\Store;
 
+use App\Models\OnlineStore\OnlineStoreCouponRedemption;
 use App\Models\SalesOrderDelivery;
 use App\Models\SalesOrderShiplyEvent;
 use App\Models\SalesOrderStatusLog;
@@ -38,5 +39,10 @@ class StoreSalesOrder extends Model
     public function shiplyEvents(): HasMany
     {
         return $this->hasMany(SalesOrderShiplyEvent::class, 'sales_order_id');
+    }
+
+    public function couponRedemption(): HasOne
+    {
+        return $this->hasOne(OnlineStoreCouponRedemption::class, 'sales_order_id');
     }
 }

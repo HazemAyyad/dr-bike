@@ -90,7 +90,7 @@ class StoreItemsController extends StoreBaseController
     private function baseProductQuery()
     {
         return StoreProduct::query()
-            ->with(['subCategories', 'normalImages', 'viewImages', 'image3d', 'sizes.colors'])
+            ->with(['onlineStoreListing', 'subCategories', 'normalImages', 'viewImages', 'image3d', 'sizes.colors'])
             ->where('isShow', true)
             ->orderByDesc('id');
     }
