@@ -2,15 +2,13 @@
 
 namespace App\Http\Controllers\API\Store;
 
-use App\Http\Controllers\Controller;
-use App\Http\Resources\OnlineStore\StorefrontListingResource;
+use App\Models\OnlineStore\OnlineStoreCategory;
 use App\Models\OnlineStore\OnlineStoreHomeSection;
 use App\Services\OnlineStore\BannerService;
 use App\Services\OnlineStore\StorefrontCatalogService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\DB;
 
-class StoreHomeController extends Controller
+class StoreHomeController extends StoreBaseController
 {
     public function __construct(private readonly StorefrontCatalogService $catalog) {}
 
@@ -26,7 +24,7 @@ class StoreHomeController extends Controller
     private function compose(OnlineStoreHomeSection $section, BannerService $banners): array
     {
         $items = match (true) {
-            $section->section_type === 'hero' => $banners->active()->map(fn ($banner) => $banner->toArray())->all(),
+            $section->section_type === 'hero' => $banners->active()->map(fn ($banner) => $this->bannerPayload($banner))->all(),
             $section->section_type === 'maintenance' => [$section->selection_config],
             $section->selection_mode === 'manual' => $this->manualItems($section),
             $section->selection_mode === 'automatic' => $this->automaticItems($section),
@@ -42,11 +40,21 @@ class StoreHomeController extends Controller
     {
         return $section->items->map(function ($item) {
             if ($item->target_type === 'category') {
-                if (! DB::table('online_store_categories')->where('id', $item->target_id)->where('is_active', true)->exists()) {
+                $category = OnlineStoreCategory::query()
+                    ->whereKey($item->target_id)
+                    ->where('is_active', true)
+                    ->with('children')
+                    ->first();
+                if (! $category) {
                     return null;
                 }
 
-                return ['target_type' => 'category', 'target_id' => $item->target_id, 'sort_order' => $item->sort_order];
+                return [
+                    'target_type' => 'category',
+                    'target_id' => $item->target_id,
+                    'sort_order' => $item->sort_order,
+                    'category' => $this->onlineStoreCategoryPayload($category),
+                ];
             }
             if ($item->target_type === 'listing') {
                 $listing = $this->eligibleListings()->with('product')->find($item->target_id);
@@ -56,7 +64,7 @@ class StoreHomeController extends Controller
 
                 return [
                     'target_type' => 'listing', 'target_id' => $item->target_id, 'sort_order' => $item->sort_order,
-                    'listing' => (new StorefrontListingResource($listing))->toArray(request()),
+                    'listing' => $this->storefrontListingPayload($listing),
                 ];
             }
 
@@ -69,7 +77,19 @@ class StoreHomeController extends Controller
         $config = $section->selection_config ?? [];
         $limit = min(50, max(1, (int) ($config['limit'] ?? 12)));
         if ($section->section_type === 'categories') {
-            return DB::table('online_store_categories')->where('is_active', true)->orderBy('sort_order')->orderBy('id')->limit($limit)->get()->map(fn ($row) => ['target_type' => 'category', 'target_id' => $row->id])->all();
+            return OnlineStoreCategory::query()
+                ->where('is_active', true)
+                ->whereNull('parent_id')
+                ->with('children')
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->limit($limit)
+                ->get()
+                ->map(fn (OnlineStoreCategory $category) => [
+                    'target_type' => 'category',
+                    'target_id' => $category->id,
+                    'category' => $this->onlineStoreCategoryPayload($category),
+                ])->all();
         }
         $query = $this->eligibleListings();
         $selector = $config['selector'] ?? null;
@@ -85,8 +105,21 @@ class StoreHomeController extends Controller
 
         return $this->catalog->eligible($query)->take($limit)->map(fn ($listing) => [
             'target_type' => 'listing', 'target_id' => $listing->id,
-            'listing' => (new StorefrontListingResource($listing))->toArray(request()),
+            'listing' => $this->storefrontListingPayload($listing),
         ])->all();
+    }
+
+    private function bannerPayload($banner): array
+    {
+        return [
+            'id' => (int) $banner->id,
+            'image_path' => (string) $banner->image_path,
+            'title_translations' => (array) $banner->title_translations,
+            'content_translations' => (array) $banner->content_translations,
+            'action_type' => (string) $banner->action_type,
+            'action_target_id' => $banner->action_target_id === null ? null : (int) $banner->action_target_id,
+            'action_url' => $banner->action_url,
+        ];
     }
 
     private function eligibleListings()
