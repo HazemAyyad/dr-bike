@@ -65,6 +65,15 @@ $allowedCommands = [
         'label' => '=== إضافة قوالب واتساب (php artisan db:seed --class=WhatsAppTemplateSeeder --force) ===',
     ],
     [
+        'name' => 'db:seed',
+        'params' => [
+            '--class' => 'OnlineStoreHomeDemoSeeder',
+            '--force' => true,
+        ],
+        'guard' => 'online_store_home_demo',
+        'label' => '=== إضافة أقسام وبنرات المتجر الكهربائي الافتراضية (مرة واحدة) ===',
+    ],
+    [
         'name' => 'shiply:sync-addresses',
         'params' => ['--mode' => 'test', '--register-webhook' => true],
         'label' => '=== Shiply: مزامنة عناوين test + تسجيل webhook ===',
@@ -94,6 +103,17 @@ foreach ($allowedCommands as $cmd) {
 
     if (! empty($cmd['label'])) {
         echo htmlspecialchars($cmd['label']."\n", ENT_QUOTES, 'UTF-8');
+    }
+
+    if (($cmd['guard'] ?? null) === 'online_store_home_demo'
+        && \Illuminate\Support\Facades\Schema::hasTable('online_store_home_sections')
+        && \Illuminate\Support\Facades\Schema::hasTable('online_store_banners')
+        && \Database\Seeders\OnlineStoreHomeDemoSeeder::exists()) {
+        echo "   INFO  Online Store home demo data already exists, skipping.\n";
+        echo "Exit code: 0\n";
+        echo "----------------------------------------\n";
+
+        continue;
     }
 
     if (str_starts_with($cmd['name'], 'shiply:')) {
