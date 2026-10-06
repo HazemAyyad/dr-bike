@@ -18,11 +18,27 @@ final class ContentMediaController extends Controller
 
     private const PUBLIC_PATH_PREFIX = 'public/OnlineStore/Content';
 
+    private const PRODUCT_PERMISSION = 'Online Store Products Manage';
+
+    private const PRODUCT_DIRECTORY = 'OnlineStore/Products';
+
+    private const PRODUCT_PUBLIC_PATH_PREFIX = 'public/OnlineStore/Products';
+
     public function store(Request $request, MediaUploadService $media): JsonResponse
+    {
+        return $this->storeImage($request, $media, self::PERMISSION, self::DIRECTORY, self::PUBLIC_PATH_PREFIX);
+    }
+
+    public function storeProductImage(Request $request, MediaUploadService $media): JsonResponse
+    {
+        return $this->storeImage($request, $media, self::PRODUCT_PERMISSION, self::PRODUCT_DIRECTORY, self::PRODUCT_PUBLIC_PATH_PREFIX);
+    }
+
+    private function storeImage(Request $request, MediaUploadService $media, string $permission, string $directory, string $publicPathPrefix): JsonResponse
     {
         $actor = $request->user();
         abort_unless($actor instanceof User, 401);
-        app(OnlineStorePolicy::class)->authorize($actor, self::PERMISSION)->authorize();
+        app(OnlineStorePolicy::class)->authorize($actor, $permission)->authorize();
 
         $validated = $request->validate([
             'file' => [
@@ -35,11 +51,11 @@ final class ContentMediaController extends Controller
 
         /** @var UploadedFile $file */
         $file = $validated['file'];
-        $filename = $media->storePublic($file, self::DIRECTORY, MediaUploadService::imageMimes());
+        $filename = $media->storePublic($file, $directory, MediaUploadService::imageMimes());
 
         return response()->json([
             'data' => [
-                'image_path' => self::PUBLIC_PATH_PREFIX.'/'.$filename,
+                'image_path' => $publicPathPrefix.'/'.$filename,
             ],
         ], 201);
     }

@@ -13,6 +13,7 @@ class OnlineStoreListing extends Model
     protected $fillable = [
         'product_id', 'name_translations', 'description_translations', 'badge_translations',
         'is_featured', 'is_new', 'show_on_home', 'show_as_offer', 'sort_order',
+        'online_stock_limit',
     ];
 
     protected $casts = [
@@ -25,6 +26,7 @@ class OnlineStoreListing extends Model
         'show_on_home' => 'boolean',
         'show_as_offer' => 'boolean',
         'sort_order' => 'integer',
+        'online_stock_limit' => 'integer',
         'published_at' => 'datetime',
         'hidden_at' => 'datetime',
     ];

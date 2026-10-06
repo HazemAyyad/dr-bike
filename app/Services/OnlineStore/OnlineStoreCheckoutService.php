@@ -32,6 +32,7 @@ final class OnlineStoreCheckoutService
         private OnlineStoreSettingsService $settings,
         private CouponService $coupons,
         private ListingReadinessService $readiness,
+        private StoreAvailabilityService $storeAvailability,
         private SalesOrderStockService $stock,
         private SalesOrderService $orders,
         private SalesOrderFulfillmentService $fulfillment,
@@ -186,6 +187,14 @@ final class OnlineStoreCheckoutService
                     || (int) $row['size_color_id'] === (int) $line['size_color_id']));
             if (! $available || (int) $available['available_qty'] < $line['quantity']) {
                 throw ValidationException::withMessages(['items' => ['Requested quantity exceeds authoritative available stock.']]);
+            }
+        }
+
+        foreach (collect($lines)->groupBy(fn ($line) => $line['listing']->getKey()) as $listingLines) {
+            $first = $listingLines->first();
+            $storeAvailable = $this->storeAvailability->resolve($first['listing']->product, $first['listing']);
+            if ((int) $storeAvailable['available_qty'] < (int) $listingLines->sum('quantity')) {
+                throw ValidationException::withMessages(['items' => ['Requested quantity exceeds the quantity available through the Online Store.']]);
             }
         }
 

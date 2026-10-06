@@ -57,6 +57,7 @@ class ManageListingRequest extends FormRequest
                 $rules[$field] = ['sometimes', 'boolean'];
             }
             $rules['sort_order'] = ['sometimes', 'integer', 'min:0'];
+            $rules['online_stock_limit'] = ['sometimes', 'nullable', 'integer', 'min:0'];
         }
 
         return $rules;

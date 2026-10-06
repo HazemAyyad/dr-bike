@@ -22,11 +22,17 @@ final class StoreAvailabilityService
             'reserved_qty' => $row['reserved_qty'], 'available_qty' => $row['available_qty'],
             'purchasable' => $row['available_qty'] > 0,
         ])->values()->all();
-        $available = $aggregate !== null ? (int) $aggregate['available_qty'] : (int) collect($variants)->sum('available_qty');
+        $inventoryAvailable = $aggregate !== null ? (int) $aggregate['available_qty'] : (int) collect($variants)->sum('available_qty');
+        $limit = $listing?->online_stock_limit;
+        $available = $limit === null ? $inventoryAvailable : min($inventoryAvailable, max(0, (int) $limit));
         $eligible = $listing === null || ($listing->status === 'published' && $this->readiness->evaluate($listing)['state'] === 'complete');
 
         return ['visible' => $eligible, 'purchasable' => $eligible && $available > 0,
             'available_qty' => $available, 'physical_stock' => (int) ($aggregate['physical_stock'] ?? 0),
-            'reserved_qty' => (int) ($aggregate['reserved_qty'] ?? 0), 'variants' => $variants];
+            'reserved_qty' => (int) ($aggregate['reserved_qty'] ?? 0),
+            'inventory_available_qty' => $inventoryAvailable,
+            'online_stock_limit' => $limit === null ? null : (int) $limit,
+            'uses_full_inventory' => $limit === null,
+            'variants' => $variants];
     }
 }

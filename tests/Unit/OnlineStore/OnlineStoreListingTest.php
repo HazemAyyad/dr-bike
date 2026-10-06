@@ -27,11 +27,20 @@ class OnlineStoreListingTest extends TestCase
         $this->assertContains('product_id', $fillable);
         $this->assertContains('name_translations', $fillable);
         $this->assertContains('is_featured', $fillable);
+        $this->assertContains('online_stock_limit', $fillable);
         $this->assertNotContains('status', $fillable);
         $this->assertNotContains('readiness_state', $fillable);
         foreach (['price', 'normailPrice', 'wholesalePrice', 'stock'] as $field) {
             $this->assertNotContains($field, $fillable);
         }
+    }
+
+    public function test_online_stock_limit_uses_a_separate_nullable_listing_column(): void
+    {
+        $migration = file_get_contents(__DIR__.'/../../../database/migrations/2026_10_06_000001_add_online_stock_limit_to_online_store_listings.php');
+
+        $this->assertStringContainsString("unsignedInteger('online_stock_limit')->nullable()", $migration);
+        $this->assertSame('integer', (new OnlineStoreListing)->getCasts()['online_stock_limit']);
     }
 
     public function test_model_casts_translation_flags_readiness_and_lifecycle_timestamps(): void

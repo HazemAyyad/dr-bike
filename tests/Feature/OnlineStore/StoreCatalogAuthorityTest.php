@@ -70,6 +70,31 @@ class StoreCatalogAuthorityTest extends TestCase
         $this->assertSame(0, (int) $product->fresh()->stock);
     }
 
+    public function test_online_stock_limit_caps_store_availability_without_changing_product_stock(): void
+    {
+        $product = OnlineStoreFixtureFactory::createProduct(['descriptionEng' => 'Description', 'stock' => 25]);
+        $listing = OnlineStoreListing::query()->forceCreate([
+            'product_id' => $product->id,
+            'status' => 'published',
+            'readiness_state' => 'complete',
+            'online_stock_limit' => 10,
+        ]);
+        $this->makeListingCustomerVisible($listing);
+
+        $availability = app(StoreAvailabilityService::class)->resolve($product->fresh(), $listing->fresh());
+
+        $this->assertSame(10, $availability['available_qty']);
+        $this->assertSame(25, $availability['inventory_available_qty']);
+        $this->assertSame(10, $availability['online_stock_limit']);
+        $this->assertFalse($availability['uses_full_inventory']);
+        $this->assertSame(25, (int) $product->fresh()->stock);
+
+        $listing->forceFill(['online_stock_limit' => null])->save();
+        $availability = app(StoreAvailabilityService::class)->resolve($product->fresh(), $listing->fresh());
+        $this->assertSame(25, $availability['available_qty']);
+        $this->assertTrue($availability['uses_full_inventory']);
+    }
+
     public function test_storefront_serialization_handles_an_archived_product_as_incomplete(): void
     {
         $product = OnlineStoreFixtureFactory::createProduct(['descriptionEng' => 'Description']);

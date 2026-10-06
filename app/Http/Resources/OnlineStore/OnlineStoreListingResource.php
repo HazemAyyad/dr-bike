@@ -4,6 +4,7 @@ namespace App\Http\Resources\OnlineStore;
 
 use App\Services\OnlineStore\StoreAvailabilityService;
 use App\Services\OnlineStore\StorePriceResolver;
+use App\Services\OnlineStore\MediaPresentationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -33,6 +34,14 @@ class OnlineStoreListingResource extends JsonResource
             'is_featured' => $this->is_featured, 'is_new' => $this->is_new,
             'show_on_home' => $this->show_on_home, 'show_as_offer' => $this->show_as_offer,
             'sort_order' => $this->sort_order,
+            'online_stock_limit' => $this->online_stock_limit,
+            'product' => $product ? [
+                'id' => (int) $product->getKey(),
+                'code' => (string) ($product->product_code ?? ''),
+                'name_translations' => ['ar' => $product->nameAr, 'en' => $product->nameEng, 'he' => $product->nameAbree],
+                'description_translations' => ['ar' => $product->descriptionAr, 'en' => $product->descriptionEng, 'he' => $product->descriptionAbree],
+            ] : null,
+            'media' => $hasValidProduct ? app(MediaPresentationService::class)->adminPresentation($this->resource) : [],
             'readiness_state' => $hasValidProduct ? $this->readiness_state : 'incomplete',
             'readiness_issues' => $readinessIssues,
             'product_archived' => $product?->trashed() ?? false,
