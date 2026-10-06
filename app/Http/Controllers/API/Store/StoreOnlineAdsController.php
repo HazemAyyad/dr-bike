@@ -2,16 +2,25 @@
 
 namespace App\Http\Controllers\API\Store;
 
+use App\Services\OnlineStore\BannerService;
 use Illuminate\Http\Request;
 
 class StoreOnlineAdsController extends StoreBaseController
 {
-    public function getAllAds(Request $request)
+    public function getAllAds(Request $request, BannerService $banners)
     {
-        return response()->json([
-            'rows' => [],
-            'total' => 0,
-            'totalNotFiltered' => 0,
-        ]);
+        $rows = $banners->active()->map(fn ($banner) => [
+            'id' => (int) $banner->id,
+            'imageUrl' => (string) $banner->image_path,
+            'image_path' => (string) $banner->image_path,
+            'titleTranslations' => $banner->title_translations,
+            'contentTranslations' => $banner->content_translations,
+            'actionType' => (string) $banner->action_type,
+            'actionTargetId' => $banner->action_target_id,
+            'actionUrl' => $banner->action_url,
+            'sortOrder' => (int) $banner->sort_order,
+        ])->values();
+
+        return response()->json(['rows' => $rows, 'total' => $rows->count(), 'totalNotFiltered' => $rows->count()]);
     }
 }

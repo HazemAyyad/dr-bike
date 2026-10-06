@@ -5,15 +5,15 @@ namespace App\Http\Controllers\API\Store;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\OnlineStore\StorefrontListingResource;
 use App\Models\OnlineStore\OnlineStoreHomeSection;
-use App\Models\OnlineStore\OnlineStoreListing;
 use App\Services\OnlineStore\BannerService;
-use App\Services\OnlineStore\ListingReadinessService;
-use Illuminate\Database\Eloquent\Builder;
+use App\Services\OnlineStore\StorefrontCatalogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
 class StoreHomeController extends Controller
 {
+    public function __construct(private readonly StorefrontCatalogService $catalog) {}
+
     public function index(BannerService $banners): JsonResponse
     {
         $sections = OnlineStoreHomeSection::query()->where('is_visible', true)
@@ -50,7 +50,7 @@ class StoreHomeController extends Controller
             }
             if ($item->target_type === 'listing') {
                 $listing = $this->eligibleListings()->with('product')->find($item->target_id);
-                if (! $listing || app(ListingReadinessService::class)->evaluate($listing)['state'] !== 'complete') {
+                if (! $listing || ! $this->catalog->isEligible($listing)) {
                     return null;
                 }
 
@@ -83,19 +83,14 @@ class StoreHomeController extends Controller
             default => $query->whereRaw('1 = 0'),
         };
 
-        return $query->with('product')->get()->filter(fn ($listing) => app(ListingReadinessService::class)->evaluate($listing)['state'] === 'complete')->take($limit)->map(fn ($listing) => [
+        return $this->catalog->eligible($query)->take($limit)->map(fn ($listing) => [
             'target_type' => 'listing', 'target_id' => $listing->id,
             'listing' => (new StorefrontListingResource($listing))->toArray(request()),
         ])->all();
     }
 
-    private function eligibleListings(): Builder
+    private function eligibleListings()
     {
-        return OnlineStoreListing::query()->where('status', 'published')->where('readiness_state', 'complete')
-            ->whereHas('product', fn ($query) => $query->whereNull('deleted_at'))
-            ->whereHas('product')
-            ->whereExists(fn ($query) => $query->selectRaw('1')->from('online_store_category_listing as membership')
-                ->join('online_store_categories as category', 'category.id', '=', 'membership.online_store_category_id')
-                ->whereColumn('membership.online_store_listing_id', 'online_store_listings.id')->where('category.is_active', true));
+        return $this->catalog->eligibleQuery();
     }
 }

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\API\Store;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\OnlineStore\StorefrontListingResource;
+use App\Models\OnlineStore\OnlineStoreCategory;
+use App\Models\OnlineStore\OnlineStoreListing;
 use App\Models\Store\StoreCategory;
 use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreShiplyCity;
@@ -131,6 +134,90 @@ class StoreBaseController extends Controller
             'userEdit' => (string) ($category->userEdit ?? ''),
             'dateEdit' => $this->dateString($category->dateEdit ?? $category->updated_at),
             'supCategories' => [],
+        ];
+    }
+
+    protected function onlineStoreCategoryPayload(OnlineStoreCategory $category, bool $withChildren = true): array
+    {
+        $names = (array) $category->name_translations;
+        $descriptions = (array) $category->description_translations;
+        $children = $withChildren
+            ? $category->children->map(fn (OnlineStoreCategory $child) => $this->onlineStoreCategoryPayload($child, true))->values()
+            : collect();
+
+        return [
+            'id' => (int) $category->id,
+            'categoryId' => (int) $category->id,
+            'parentId' => $category->parent_id === null ? null : (int) $category->parent_id,
+            'nameAr' => (string) ($names['ar'] ?? $names['en'] ?? $names['he'] ?? ''),
+            'nameEng' => (string) ($names['en'] ?? $names['ar'] ?? $names['he'] ?? ''),
+            'nameAbree' => (string) ($names['he'] ?? $names['ar'] ?? $names['en'] ?? ''),
+            'descriptionAr' => (string) ($descriptions['ar'] ?? $descriptions['en'] ?? $descriptions['he'] ?? ''),
+            'descriptionEng' => (string) ($descriptions['en'] ?? $descriptions['ar'] ?? $descriptions['he'] ?? ''),
+            'descriptionAbree' => (string) ($descriptions['he'] ?? $descriptions['ar'] ?? $descriptions['en'] ?? ''),
+            'imageUrl' => (string) ($category->image_path ?? ''),
+            'isShow' => (bool) $category->is_active,
+            'sortOrder' => (int) $category->sort_order,
+            'userAdd' => '',
+            'dateAdd' => $this->dateString($category->created_at),
+            'userEdit' => '',
+            'dateEdit' => $this->dateString($category->updated_at),
+            'supCategories' => $children,
+            'children' => $children,
+        ];
+    }
+
+    protected function storefrontListingPayload(OnlineStoreListing $listing): array
+    {
+        $listing->loadMissing(['product', 'mediaPresentations']);
+        $product = $listing->product;
+        $storefront = (new StorefrontListingResource($listing))->toArray(request());
+        $media = collect($storefront['media']);
+        $legacyMedia = fn ($types) => $media->whereIn('source_type', (array) $types)->map(fn (array $item) => [
+            'id' => (int) $item['id'],
+            'imageUrl' => (string) $item['path'],
+            'itemId' => (int) $listing->product_id,
+        ])->values();
+        $prices = $storefront['store_prices'];
+        $availability = $storefront['availability'];
+
+        return [
+            'id' => (int) $listing->product_id,
+            'productId' => (int) $listing->product_id,
+            'listingId' => (int) $listing->id,
+            'listingStatus' => (string) $listing->status,
+            'readinessState' => (string) $storefront['readiness_state'],
+            'nameAr' => (string) (($listing->name_translations['ar'] ?? null) ?: ($product->nameAr ?? $storefront['display']['name'] ?? '')),
+            'nameEng' => (string) (($listing->name_translations['en'] ?? null) ?: ($product->nameEng ?? $storefront['display']['name'] ?? '')),
+            'nameAbree' => (string) (($listing->name_translations['he'] ?? null) ?: ($product->nameAbree ?? $storefront['display']['name'] ?? '')),
+            'isShow' => true,
+            'descriptionAr' => (string) (($listing->description_translations['ar'] ?? null) ?: ($product->descriptionAr ?? $storefront['display']['description'] ?? '')),
+            'descriptionEng' => (string) (($listing->description_translations['en'] ?? null) ?: ($product->descriptionEng ?? $storefront['display']['description'] ?? '')),
+            'descriptionAbree' => (string) (($listing->description_translations['he'] ?? null) ?: ($product->descriptionAbree ?? $storefront['display']['description'] ?? '')),
+            'videoUrl' => null,
+            'normailPrice' => (float) ($prices['retail'] ?? 0),
+            'wholesalePrice' => (float) ($prices['wholesale'] ?? 0),
+            'stock' => (int) ($availability['available_qty'] ?? 0),
+            'available' => (bool) ($availability['visible'] ?? false),
+            'purchasable' => (bool) ($availability['purchasable'] ?? false),
+            'model' => (string) ($product->model ?? ''),
+            'isNewItem' => (bool) $listing->is_new,
+            'isMoreSales' => (bool) ($product->isMoreSales ?? false),
+            'rate' => (float) ($product->rate ?? 0),
+            'manufactureYear' => $product?->manufactureYear ? (int) $product->manufactureYear : null,
+            'discount' => (float) ($product->discount ?? 0),
+            'userIdAdd' => null,
+            'dateAdd' => $this->dateString($listing->created_at),
+            'userIdUpdate' => null,
+            'dateUpdate' => $this->dateString($listing->updated_at),
+            'supCategory' => [],
+            'normalImagesItems' => $legacyMedia(['normal_image', 'store_specific', 'variant']),
+            '_3DImagesItems' => $legacyMedia('image3d'),
+            'viewImagesItems' => $legacyMedia('view_image'),
+            'itemSizes' => [],
+            'storefrontMedia' => $storefront['media'],
+            'storePrices' => $prices,
+            'availability' => $availability,
         ];
     }
 

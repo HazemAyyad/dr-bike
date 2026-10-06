@@ -2,96 +2,90 @@
 
 namespace App\Http\Controllers\API\Store;
 
-use App\Models\Store\StoreProduct;
+use App\Services\OnlineStore\StorefrontCatalogService;
 use Illuminate\Http\Request;
 
 class StoreItemsController extends StoreBaseController
 {
+    public function __construct(private readonly StorefrontCatalogService $catalog) {}
+
     public function getAllItemIsMoreSales()
     {
-        $products = $this->baseProductQuery()
-            ->where('isMoreSales', true)
-            ->get();
+        $query = $this->catalog->eligibleQuery()
+            ->whereHas('product', fn ($product) => $product->where('isMoreSales', true))
+            ->orderBy('sort_order')->orderBy('id');
+        $listings = $this->catalog->eligible($query);
 
-        if ($products->isEmpty()) {
-            $products = $this->baseProductQuery()
-                ->limit(30)
-                ->get();
+        if ($listings->isEmpty()) {
+            $listings = $this->catalog->eligible(
+                $this->catalog->eligibleQuery()->orderBy('sort_order')->orderBy('id')->limit(30)
+            );
         }
 
-        $rows = $products
-            ->map(fn (StoreProduct $product) => $this->productPayload($product));
-
-        return response()->json($this->rowsResponse($rows));
+        return response()->json($this->rowsResponse(
+            $listings->map(fn ($listing) => $this->storefrontListingPayload($listing))
+        ));
     }
 
     public function getAllItemByName(Request $request)
     {
         $name = trim((string) $request->query('Name', $request->input('Name', '')));
-
-        $query = $this->baseProductQuery();
+        $query = $this->catalog->eligibleQuery();
         if ($name !== '') {
-            $query->where(function ($q) use ($name) {
-                $q->where('nameAr', 'like', "%{$name}%")
-                    ->orWhere('nameEng', 'like', "%{$name}%")
-                    ->orWhere('nameAbree', 'like', "%{$name}%")
-                    ->orWhere('product_code', 'like', "%{$name}%");
+            $query->where(function ($listing) use ($name) {
+                $listing->where('name_translations', 'like', "%{$name}%")
+                    ->orWhereHas('product', fn ($product) => $product
+                        ->where('nameAr', 'like', "%{$name}%")
+                        ->orWhere('nameEng', 'like', "%{$name}%")
+                        ->orWhere('nameAbree', 'like', "%{$name}%")
+                        ->orWhere('product_code', 'like', "%{$name}%"));
             });
         }
 
-        $rows = $query->get()->map(fn (StoreProduct $product) => $this->productPayload($product));
-
-        return response()->json($this->rowsResponse($rows));
+        return response()->json($this->rowsResponse(
+            $this->catalog->eligible($query->orderBy('sort_order')->orderBy('id'))
+                ->map(fn ($listing) => $this->storefrontListingPayload($listing))
+        ));
     }
 
     public function getAllItemsShowByMainCategory(Request $request)
     {
-        $storeSectionId = $request->query('MainCategory', $request->input('MainCategory'));
-
-        $query = $this->baseProductQuery();
-        if ($storeSectionId !== null && $storeSectionId !== '') {
-            $query->where('store_section_id', (int) $storeSectionId);
+        $categoryId = $request->query('MainCategory', $request->input('MainCategory'));
+        $query = $this->catalog->eligibleQuery();
+        if ($categoryId !== null && $categoryId !== '') {
+            // Membership is intentionally direct. Descendant categories are selectable
+            // identities of their own and are never inferred from inventory locations.
+            $query->whereExists(fn ($membership) => $membership->selectRaw('1')
+                ->from('online_store_category_listing as selected_membership')
+                ->whereColumn('selected_membership.online_store_listing_id', 'online_store_listings.id')
+                ->where('selected_membership.online_store_category_id', (int) $categoryId));
         }
 
-        $rows = $query->get()->map(fn (StoreProduct $product) => $this->productPayload($product));
-
-        return response()->json($this->rowsResponse($rows));
+        return response()->json($this->rowsResponse(
+            $this->catalog->eligible($query->orderBy('sort_order')->orderBy('id'))
+                ->map(fn ($listing) => $this->storefrontListingPayload($listing))
+        ));
     }
 
     public function getItemById(Request $request)
     {
-        $itemId = $request->query('itemId', $request->input('itemId'));
+        $productId = (int) $request->query('itemId', $request->input('itemId'));
+        $listing = $this->catalog->eligible(
+            $this->catalog->eligibleQuery()->where('product_id', $productId)->limit(1)
+        )->first();
 
-        $product = $this->baseProductQuery()
-            ->where('id', (int) $itemId)
-            ->first();
-
-        if (! $product) {
+        if (! $listing) {
             return response()->json(['message' => 'ThisItemNotFound'], 404);
         }
 
-        return response()->json($this->productPayload($product));
+        return response()->json($this->storefrontListingPayload($listing));
     }
 
     public function getAllShowItemsBySupCatId(Request $request)
     {
-        $supCategoryId = $request->query('supCategoryId', $request->input('supCategoryId'));
+        $categoryId = $request->query('supCategoryId', $request->input('supCategoryId'));
+        $request->merge(['MainCategory' => $categoryId]);
 
-        $query = $this->baseProductQuery();
-        if ($supCategoryId !== null && $supCategoryId !== '') {
-            $query->whereHas('subCategories', fn ($q) => $q->where('sub_categories.id', (int) $supCategoryId));
-        }
-
-        $rows = $query->get()->map(fn (StoreProduct $product) => $this->productPayload($product));
-
-        return response()->json($this->rowsResponse($rows));
-    }
-
-    private function baseProductQuery()
-    {
-        return StoreProduct::query()
-            ->with(['onlineStoreListing', 'subCategories', 'normalImages', 'viewImages', 'image3d', 'sizes.colors'])
-            ->where('isShow', true)
-            ->orderByDesc('id');
+        return $this->getAllItemsShowByMainCategory($request);
     }
 }

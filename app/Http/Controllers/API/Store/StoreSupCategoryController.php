@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers\API\Store;
 
-use App\Models\Store\StoreSubCategory;
+use App\Models\OnlineStore\OnlineStoreCategory;
 use Illuminate\Http\Request;
 
 class StoreSupCategoryController extends StoreBaseController
@@ -11,16 +11,22 @@ class StoreSupCategoryController extends StoreBaseController
     {
         $mainCategoryId = $request->query('mainCategoryId', $request->input('mainCategoryId'));
 
-        $query = StoreSubCategory::query()
-            ->where('isShow', true)
-            ->orderBy('sortOrder')
+        $query = OnlineStoreCategory::query()
+            ->where('is_active', true)
+            ->whereNotNull('parent_id')
+            ->orderBy('sort_order')
             ->orderBy('id');
 
         if ($mainCategoryId !== null && $mainCategoryId !== '') {
-            $query->where('mainCategoryId', (int) $mainCategoryId);
+            $query->where('parent_id', (int) $mainCategoryId);
         }
 
-        $rows = $query->get()->map(fn (StoreSubCategory $category) => $this->subCategoryPayload($category));
+        $rows = $query->get()->map(function (OnlineStoreCategory $category) {
+            $payload = $this->onlineStoreCategoryPayload($category, false);
+            $payload['mainCategoryId'] = $payload['parentId'];
+
+            return $payload;
+        });
 
         return response()->json($this->rowsResponse($rows));
     }

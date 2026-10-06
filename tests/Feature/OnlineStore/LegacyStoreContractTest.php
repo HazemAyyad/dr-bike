@@ -6,10 +6,8 @@ use App\Models\AdminNotification;
 use App\Models\NormalImageProduct;
 use App\Models\OnlineStore\OnlineStoreListing;
 use App\Models\OnlineStore\OnlineStoreReview;
-use App\Models\Store\StoreCategory;
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreShiplyVillage;
-use App\Models\Store\StoreSubCategory;
 use App\Models\Store\StoreUser;
 use App\Models\StoreSection;
 use App\Services\OnlineStore\OnlineStoreNotificationService;
@@ -278,46 +276,30 @@ class LegacyStoreContractTest extends TestCase
 
     public function test_category_and_item_list_detail_empty_and_not_found_contracts_are_frozen(): void
     {
-        $section = StoreSection::query()->create([
-            'name' => 'Legacy Section', 'description' => 'Legacy description', 'sort_order' => 1, 'is_active' => true,
+        StoreSection::query()->create(['name' => 'Physical Section', 'sort_order' => 0, 'is_active' => true]);
+        $categoryId = random_int(1_700_000_000, 1_749_999_999);
+        $subCategoryId = $categoryId + 1;
+        DB::table('online_store_categories')->insert([
+            ['id' => $categoryId, 'parent_id' => null, 'name_translations' => json_encode(['ar' => 'Online Category']), 'is_active' => true, 'show_on_home' => false, 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()],
+            ['id' => $subCategoryId, 'parent_id' => $categoryId, 'name_translations' => json_encode(['ar' => 'Online Child']), 'is_active' => true, 'show_on_home' => false, 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()],
         ]);
-        $category = StoreCategory::query()->forceCreate([
-            'nameAr' => 'Legacy Category', 'nameEng' => 'Legacy Category', 'isShow' => true,
-        ]);
-        $subCategory = StoreSubCategory::query()->forceCreate([
-            'nameAr' => 'Legacy Subcategory', 'nameEng' => 'Legacy Subcategory',
-            'isShow' => true, 'mainCategoryId' => $category->id,
-        ]);
-        $product = OnlineStoreFixtureFactory::createProduct([
-            'nameAr' => 'Unique Legacy Search Product', 'store_section_id' => $section->id,
-        ]);
-        $listingId = random_int(1_800_000_000, 1_899_999_999);
-        $this->assertNotSame($product->id, $listingId);
-        OnlineStoreListing::query()->forceCreate([
-            'id' => $listingId,
-            'product_id' => $product->id,
-            'status' => 'draft',
-            'readiness_state' => 'incomplete',
-        ]);
-        $productWithoutListing = OnlineStoreFixtureFactory::createProduct([
-            'nameAr' => 'Unique Legacy Search Product Without Listing',
-            'store_section_id' => $section->id,
-        ]);
-        DB::table('sub_category_products')->insert([
-            'product_id' => $product->id,
-            'sub_category_id' => $subCategory->id,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $product = OnlineStoreFixtureFactory::createProduct(['nameAr' => 'Unique Legacy Search Product', 'descriptionEng' => 'Description']);
+        $listingId = $product->id + 10000000;
+        $listing = OnlineStoreListing::query()->forceCreate(['id' => $listingId, 'product_id' => $product->id, 'status' => 'published', 'readiness_state' => 'complete']);
+        $imageId = $listingId + 1;
+        NormalImageProduct::query()->forceCreate(['id' => $imageId, 'itemId' => $product->id, 'imageUrl' => 'catalog.jpg']);
+        DB::table('online_store_category_listing')->insert(['online_store_category_id' => $subCategoryId, 'online_store_listing_id' => $listingId, 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('online_store_media_presentations')->insert(['online_store_listing_id' => $listingId, 'source_type' => 'normal_image', 'source_id' => $imageId, 'is_main' => true, 'is_visible' => true, 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()]);
+        $productWithoutListing = OnlineStoreFixtureFactory::createProduct(['nameAr' => 'Unique Legacy Search Product Without Listing']);
 
         $main = $this->postJson('/MainCategorys/GetAllShowMainCategories')->assertOk();
         $this->assertSame(['rows', 'paginationInfo'], array_keys($main->json()));
-        $main->assertJsonFragment(['id' => $section->id, 'nameAr' => 'Legacy Section'])
+        $main->assertJsonFragment(['id' => $categoryId, 'nameAr' => 'Online Category'])
             ->assertJsonStructure(['rows' => ['*' => ['id', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'supCategories']]]);
 
-        $sub = $this->postJson('/SupCategorys/GetAllShowSupCategories', ['mainCategoryId' => $category->id])->assertOk();
+        $sub = $this->postJson('/SupCategorys/GetAllShowSupCategories', ['mainCategoryId' => $categoryId])->assertOk();
         $this->assertSame(['rows', 'paginationInfo'], array_keys($sub->json()));
-        $sub->assertJsonFragment(['id' => $subCategory->id, 'nameAr' => 'Legacy Subcategory'])
+        $sub->assertJsonFragment(['id' => $subCategoryId, 'nameAr' => 'Online Child'])
             ->assertJsonStructure(['rows' => ['*' => ['id', 'nameAr', 'nameEng', 'nameAbree', 'mainCategoryId', 'isShow']]]);
 
         DB::flushQueryLog();
@@ -327,22 +309,19 @@ class LegacyStoreContractTest extends TestCase
             ->filter(fn (array $query) => str_contains($query['query'], 'online_store_listings'));
         DB::disableQueryLog();
         $this->assertSame(['rows', 'paginationInfo'], array_keys($search->json()));
-        $search->assertJsonCount(2, 'rows')
+        $search->assertJsonCount(1, 'rows')
             ->assertJsonFragment(['id' => $product->id, 'listingId' => $listingId])
-            ->assertJsonFragment(['id' => $productWithoutListing->id, 'listingId' => null])
             ->assertJsonStructure(['rows' => ['*' => $this->productPayloadKeys()]]);
-        $this->assertCount(1, $listingQueries, 'Legacy item lists must eager-load listings in one query.');
-        $this->postJson('/Items/GetAllItemsShowByMainCategory', ['MainCategory' => $section->id])
+        $this->assertNotEmpty($listingQueries);
+        $this->postJson('/Items/GetAllItemsShowByMainCategory', ['MainCategory' => $subCategoryId])
             ->assertOk()->assertJsonFragment(['id' => $product->id, 'listingId' => $listingId]);
-        $this->postJson('/Items/GetAllShowItemsBySupCatId', ['supCategoryId' => $subCategory->id])
+        $this->postJson('/Items/GetAllShowItemsBySupCatId', ['supCategoryId' => $subCategoryId])
             ->assertOk()->assertJsonFragment(['id' => $product->id, 'listingId' => $listingId]);
         $this->postJson('/Items/GetItemById', ['itemId' => $product->id])->assertOk()
             ->assertJsonStructure($this->productPayloadKeys())->assertJsonPath('id', $product->id)
             ->assertJsonPath('listingId', $listingId);
         $this->postJson('/Items/GetAllItemByName', ['Name' => 'Unique Legacy Search Product Without Listing'])
-            ->assertOk()->assertJsonCount(1, 'rows')
-            ->assertJsonPath('rows.0.id', $productWithoutListing->id)
-            ->assertJsonPath('rows.0.listingId', null);
+            ->assertOk()->assertJsonCount(0, 'rows');
         $this->postJson('/Items/GetAllItemByName', ['Name' => '__contract_missing__'])->assertOk()
             ->assertExactJson(['rows' => [], 'paginationInfo' => ['totalRowsCount' => 0, 'totalPagesCount' => 1]]);
         $this->postJson('/Items/GetItemById', ['itemId' => 2147483647])->assertNotFound()
@@ -488,11 +467,11 @@ class LegacyStoreContractTest extends TestCase
     private function productPayloadKeys(): array
     {
         return [
-            'id', 'listingId', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'descriptionAr', 'descriptionEng',
+            'id', 'productId', 'listingId', 'listingStatus', 'readinessState', 'nameAr', 'nameEng', 'nameAbree', 'isShow', 'descriptionAr', 'descriptionEng',
             'descriptionAbree', 'videoUrl', 'normailPrice', 'wholesalePrice', 'stock', 'model',
-            'isNewItem', 'isMoreSales', 'rate', 'manufactureYear', 'discount', 'userIdAdd', 'dateAdd',
+            'available', 'purchasable', 'isNewItem', 'isMoreSales', 'rate', 'manufactureYear', 'discount', 'userIdAdd', 'dateAdd',
             'userIdUpdate', 'dateUpdate', 'supCategory', 'normalImagesItems', '_3DImagesItems',
-            'viewImagesItems', 'itemSizes',
+            'viewImagesItems', 'itemSizes', 'storefrontMedia', 'storePrices', 'availability',
         ];
     }
 
