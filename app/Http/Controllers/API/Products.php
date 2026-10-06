@@ -77,6 +77,7 @@ class Products extends Controller
         $products = $products->get([
                 'id',
                 'nameAr',
+                'nameEng',
                 'stock',
                 'normailPrice',
                 'wholesalePrice',
@@ -494,6 +495,7 @@ class Products extends Controller
             [
                 'id' => $product->id,
                 'nameAr' => $product->nameAr,
+                'nameEng' => $product->nameEng,
                 'stock' => $variantPayload['stock'],
                 'has_variants' => $variantPayload['has_variants'],
                 'sizes' => $variantPayload['sizes'],

@@ -40,6 +40,7 @@ class ProductSearchFilter
 
         return $query
             ->where('nameAr', 'like', $term)
+            ->orWhere('nameEng', 'like', $term)
             ->orWhere('product_code', 'like', $term)
             ->orWhereHas('storeSection', fn (Builder $section) => $section->where('name', 'like', $term))
             ->orWhereHas('sizes', function (Builder $size) use ($term) {
