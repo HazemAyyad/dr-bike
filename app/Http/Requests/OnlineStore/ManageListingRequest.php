@@ -53,6 +53,18 @@ class ManageListingRequest extends FormRequest
                 $rules[$field] = ['sometimes', 'nullable', 'array'];
                 $rules[$field.'.*'] = ['nullable', 'string'];
             }
+            $rules['detail_presentation'] = ['sometimes', 'nullable', 'array'];
+            foreach (['brand_translations', 'shipping_warranty_translations', 'return_policy_translations'] as $field) {
+                $rules['detail_presentation.'.$field] = ['sometimes', 'nullable', 'array'];
+                $rules['detail_presentation.'.$field.'.*'] = ['nullable', 'string', 'max:5000'];
+            }
+            $rules['detail_presentation.quick_specs'] = ['sometimes', 'array', 'max:3'];
+            $rules['detail_presentation.quick_specs.*'] = ['required', 'array'];
+            $rules['detail_presentation.quick_specs.*.icon'] = ['required', 'string', 'in:speed,battery,motor,range,weight,warranty,custom'];
+            foreach (['label_translations', 'value_translations'] as $field) {
+                $rules['detail_presentation.quick_specs.*.'.$field] = ['required', 'array'];
+                $rules['detail_presentation.quick_specs.*.'.$field.'.*'] = ['nullable', 'string', 'max:120'];
+            }
             foreach (['is_featured', 'is_new', 'show_on_home', 'show_as_offer'] as $field) {
                 $rules[$field] = ['sometimes', 'boolean'];
             }

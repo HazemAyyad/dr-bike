@@ -13,7 +13,7 @@ final class MediaPresentationService
 {
     private const SOURCE_TABLES = ['view_image' => 'view_image_products', 'normal_image' => 'normal_image_products', 'image3d' => 'image3d_products'];
 
-    private const METADATA_KEYS = ['media_type', 'mime_type', 'alt_translations', 'poster_path', 'is_360'];
+    private const METADATA_KEYS = ['media_type', 'mime_type', 'alt_translations', 'poster_path', 'is_360', 'role'];
 
     public function initialize(OnlineStoreListing $listing, ?User $actor = null): OnlineStoreListing
     {
@@ -124,7 +124,7 @@ final class MediaPresentationService
                 throw ValidationException::withMessages(['items' => ['Unsupported media metadata keys.']]);
             }
             $allowedMetadata = in_array($type, ['view_image', 'image3d', 'store_specific'], true)
-                ? self::METADATA_KEYS : ['mime_type', 'alt_translations'];
+                ? self::METADATA_KEYS : ['mime_type', 'alt_translations', 'role'];
             if (is_array($metadata) && array_diff(array_keys($metadata), $allowedMetadata)) {
                 throw ValidationException::withMessages(['items' => ['The source capability cannot represent the supplied metadata.']]);
             }

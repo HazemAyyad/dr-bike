@@ -12,6 +12,7 @@ class OnlineStoreListing extends Model
 
     protected $fillable = [
         'product_id', 'name_translations', 'description_translations', 'badge_translations',
+        'detail_presentation',
         'is_featured', 'is_new', 'show_on_home', 'show_as_offer', 'sort_order',
         'online_stock_limit',
     ];
@@ -20,6 +21,7 @@ class OnlineStoreListing extends Model
         'name_translations' => 'array',
         'description_translations' => 'array',
         'badge_translations' => 'array',
+        'detail_presentation' => 'array',
         'readiness_issues' => 'array',
         'is_featured' => 'boolean',
         'is_new' => 'boolean',

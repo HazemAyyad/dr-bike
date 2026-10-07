@@ -1756,6 +1756,7 @@ Route::prefix('online-store')
         Route::put('/home-sections/{section}/items', [OnlineStoreContentController::class, 'replaceSectionItems'])->name('home-sections.items.replace');
         Route::post('/content-images', [OnlineStoreContentMediaController::class, 'store'])->name('content-images.store');
         Route::post('/product-images', [OnlineStoreContentMediaController::class, 'storeProductImage'])->name('product-images.store');
+        Route::post('/product-media', [OnlineStoreContentMediaController::class, 'storeProductMedia'])->name('product-media.store');
         Route::get('/banners', [OnlineStoreContentController::class, 'banners'])->name('banners.index');
         Route::post('/banners', [OnlineStoreContentController::class, 'storeBanner'])->name('banners.store');
         Route::post('/banners/reorder', [OnlineStoreContentController::class, 'reorderBanners'])->name('banners.reorder');

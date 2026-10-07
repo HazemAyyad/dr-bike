@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\OnlineStore\StorefrontListingResource;
 use App\Models\OnlineStore\OnlineStoreCategory;
 use App\Models\OnlineStore\OnlineStoreListing;
+use App\Models\OnlineStore\OnlineStoreReview;
 use App\Models\Store\StoreCategory;
 use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreShiplyCity;
@@ -13,6 +14,7 @@ use App\Models\Store\StoreSubCategory;
 use App\Models\Store\StoreUser;
 use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\PersonalAccessToken;
 
 class StoreBaseController extends Controller
@@ -172,7 +174,14 @@ class StoreBaseController extends Controller
         $listing->loadMissing(['product', 'mediaPresentations']);
         $product = $listing->product;
         $storefront = (new StorefrontListingResource($listing))->toArray(request());
-        $media = collect($storefront['media']);
+        $media = collect($storefront['media'])->map(function (array $item) {
+            $item['path'] = $this->storefrontMediaPath($item['path'] ?? null);
+            if (isset($item['media_metadata']['poster_path'])) {
+                $item['media_metadata']['poster_path'] = $this->storefrontMediaPath($item['media_metadata']['poster_path']);
+            }
+
+            return $item;
+        });
         $legacyMedia = fn ($types) => $media->whereIn('source_type', (array) $types)->map(fn (array $item) => [
             'id' => (int) $item['id'],
             'imageUrl' => (string) $item['path'],
@@ -180,6 +189,19 @@ class StoreBaseController extends Controller
         ])->values();
         $prices = $storefront['store_prices'];
         $availability = $storefront['availability'];
+        $retail = is_array($prices['retail'] ?? null) ? $prices['retail'] : null;
+        $retailBase = (float) ($retail['base'] ?? 0);
+        $retailFinal = (float) ($retail['final'] ?? $retailBase);
+        $retailDiscount = (float) ($retail['discount'] ?? 0);
+        $discountPercent = $retailBase > 0 && $retailDiscount > 0
+            ? round(($retailDiscount / $retailBase) * 100, 2)
+            : 0.0;
+        $video = $media->first(fn (array $item) => ($item['media_metadata']['media_type'] ?? null) === 'video'
+            || str_starts_with((string) ($item['media_metadata']['mime_type'] ?? ''), 'video/'));
+        $reviews = request()->is('Items/GetItemById')
+            ? OnlineStoreReview::query()->published()->where('product_id', $listing->product_id)
+                ->selectRaw('COUNT(*) as review_count, AVG(rating) as average_rating')->first()
+            : null;
 
         return [
             'id' => (int) $listing->product_id,
@@ -194,18 +216,20 @@ class StoreBaseController extends Controller
             'descriptionAr' => (string) (($listing->description_translations['ar'] ?? null) ?: ($product->descriptionAr ?? $storefront['display']['description'] ?? '')),
             'descriptionEng' => (string) (($listing->description_translations['en'] ?? null) ?: ($product->descriptionEng ?? $storefront['display']['description'] ?? '')),
             'descriptionAbree' => (string) (($listing->description_translations['he'] ?? null) ?: ($product->descriptionAbree ?? $storefront['display']['description'] ?? '')),
-            'videoUrl' => null,
-            'normailPrice' => (float) ($prices['retail'] ?? 0),
-            'wholesalePrice' => (float) ($prices['wholesale'] ?? 0),
+            'videoUrl' => $video['path'] ?? null,
+            'normailPrice' => $retailFinal,
+            'oldPrice' => $retailDiscount > 0 ? $retailBase : null,
+            'wholesalePrice' => (float) (($prices['wholesale']['final'] ?? null) ?? 0),
             'stock' => (int) ($availability['available_qty'] ?? 0),
             'available' => (bool) ($availability['visible'] ?? false),
             'purchasable' => (bool) ($availability['purchasable'] ?? false),
             'model' => (string) ($product->model ?? ''),
             'isNewItem' => (bool) $listing->is_new,
             'isMoreSales' => (bool) ($product->isMoreSales ?? false),
-            'rate' => (float) ($product->rate ?? 0),
+            'rate' => (float) ($reviews?->average_rating ?? 0),
+            'reviewCount' => (int) ($reviews?->review_count ?? 0),
             'manufactureYear' => $product?->manufactureYear ? (int) $product->manufactureYear : null,
-            'discount' => (float) ($product->discount ?? 0),
+            'discount' => $discountPercent,
             'userIdAdd' => null,
             'dateAdd' => $this->dateString($listing->created_at),
             'userIdUpdate' => null,
@@ -214,11 +238,59 @@ class StoreBaseController extends Controller
             'normalImagesItems' => $legacyMedia(['normal_image', 'store_specific', 'variant']),
             '_3DImagesItems' => $legacyMedia('image3d'),
             'viewImagesItems' => $legacyMedia('view_image'),
-            'itemSizes' => [],
-            'storefrontMedia' => $storefront['media'],
+            'itemSizes' => $this->listingVariantPayload($listing, $prices, $availability),
+            'storefrontMedia' => $media->values()->all(),
             'storePrices' => $prices,
             'availability' => $availability,
+            'storePresentation' => $storefront['detail_presentation'] ?? null,
         ];
+    }
+
+    private function listingVariantPayload(OnlineStoreListing $listing, array $prices, array $availability): array
+    {
+        $priceByVariant = collect($prices['variants'] ?? [])->keyBy('id');
+        $availabilityByVariant = collect($availability['variants'] ?? [])->keyBy('size_color_id');
+        $rows = DB::table('sizes')
+            ->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
+            ->where('sizes.itemId', $listing->product_id)
+            ->orderBy('sizes.id')->orderBy('size_colors.id')
+            ->get([
+                'sizes.id as size_id', 'sizes.size', 'sizes.description',
+                'size_colors.id as color_id', 'size_colors.colorAr', 'size_colors.colorEn', 'size_colors.colorAbbr',
+            ]);
+
+        $listingAvailable = max(0, (int) ($availability['available_qty'] ?? 0));
+
+        return $rows->groupBy('size_id')->map(function ($variants, $sizeId) use ($listing, $priceByVariant, $availabilityByVariant, $listingAvailable) {
+            $first = $variants->first();
+
+            return [
+                'id' => (int) $sizeId,
+                'itemId' => (int) $listing->product_id,
+                'size' => (string) ($first->size ?? ''),
+                'discount' => null,
+                'description' => (string) ($first->description ?? ''),
+                'itemSizeColor' => $variants->map(function ($variant) use ($priceByVariant, $availabilityByVariant, $listingAvailable) {
+                    $priceRow = $priceByVariant->get((int) $variant->color_id);
+                    $price = is_array($priceRow) ? ($priceRow['retail'] ?? null) : null;
+                    $stock = $availabilityByVariant->get((int) $variant->color_id);
+                    $base = is_array($price) ? (float) ($price['base'] ?? 0) : null;
+                    $discount = is_array($price) ? (float) ($price['discount'] ?? 0) : 0.0;
+
+                    return [
+                        'id' => (int) $variant->color_id,
+                        'sizeId' => (int) $variant->size_id,
+                        'colorAr' => (string) ($variant->colorAr ?? ''),
+                        'colorEn' => (string) ($variant->colorEn ?? ''),
+                        'colorAbbr' => (string) ($variant->colorAbbr ?? ''),
+                        'normailPrice' => is_array($price) ? (float) ($price['final'] ?? $base ?? 0) : null,
+                        'wholesalePrice' => null,
+                        'discount' => $base && $discount > 0 ? round(($discount / $base) * 100, 2) : null,
+                        'stock' => min($listingAvailable, (int) ($stock['available_qty'] ?? 0)),
+                    ];
+                })->values(),
+            ];
+        })->values()->all();
     }
 
     protected function subCategoryPayload(StoreSubCategory $category): array

@@ -33,6 +33,7 @@ class StorefrontListingResource extends JsonResource
             'readiness_state' => $validProduct ? $dynamicReadiness['state'] : 'incomplete', 'readiness_issues' => $issues,
             'name_translations' => $listing->name_translations, 'description_translations' => $listing->description_translations,
             'badge_translations' => $listing->badge_translations,
+            'detail_presentation' => $listing->detail_presentation,
             'display' => [
                 'name' => $this->fallback($listing->name_translations, $product ? [$product->nameAr, $product->nameEng, $product->nameAbree] : []),
                 'description' => $this->fallback($listing->description_translations, $product ? [$product->descriptionAr, $product->descriptionEng, $product->descriptionAbree] : []),

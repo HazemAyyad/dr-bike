@@ -27,6 +27,7 @@ class OnlineStoreListingResource extends JsonResource
             'name_translations' => $this->name_translations,
             'description_translations' => $this->description_translations,
             'badge_translations' => $this->badge_translations,
+            'detail_presentation' => $this->detail_presentation,
             'display' => [
                 'name' => $this->fallback($this->name_translations, $product ? [$product->nameAr, $product->nameEng, $product->nameAbree] : []),
                 'description' => $this->fallback($this->description_translations, $product ? [$product->descriptionAr, $product->descriptionEng, $product->descriptionAbree] : []),
