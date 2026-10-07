@@ -37,8 +37,12 @@ class StoreOrdersController extends StoreBaseController
             }
         }
         $result = $checkout->checkout($actor, $data);
+        $order = StoreSalesOrder::query()->with($this->orderRelations())->findOrFail($result['order']->getKey());
 
-        return response()->json(['data' => $result['order']->fresh(['items', 'statusLogs', 'couponRedemption']), 'replayed' => ! $result['created']], $result['created'] ? 201 : 200);
+        return response()->json([
+            'data' => $this->orderPayload($order, ['customerId' => $actor->id]),
+            'replayed' => ! $result['created'],
+        ], $result['created'] ? 201 : 200);
     }
 
     public function manageOrder(Request $request, OnlineStoreCheckoutService $checkout)

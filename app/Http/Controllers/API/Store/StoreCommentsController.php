@@ -6,6 +6,7 @@ use App\Models\OnlineStore\OnlineStoreReview;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\OnlineStore\OnlineStoreReviewService;
+use App\Services\OnlineStore\StoreCustomerOnboardingService;
 use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Http\Request;
 
@@ -32,8 +33,9 @@ class StoreCommentsController extends StoreBaseController
         Request $request,
         OnlineStoreReviewService $reviews,
         StoreIdentityService $identity,
+        StoreCustomerOnboardingService $onboarding,
     ) {
-        $actor = $this->authenticatedActor($request, $identity);
+        $actor = $this->authenticatedActor($request, $identity, $onboarding);
         $data = $request->validate([
             'id' => 'nullable|integer|min:0',
             'productId' => 'required|integer|min:1',
@@ -56,9 +58,14 @@ class StoreCommentsController extends StoreBaseController
         ]);
     }
 
-    public function submit(Request $request, OnlineStoreReviewService $reviews, StoreIdentityService $identity)
+    public function submit(
+        Request $request,
+        OnlineStoreReviewService $reviews,
+        StoreIdentityService $identity,
+        StoreCustomerOnboardingService $onboarding,
+    )
     {
-        $actor = $this->authenticatedActor($request, $identity);
+        $actor = $this->authenticatedActor($request, $identity, $onboarding);
         $data = $request->validate([
             'product_id' => 'required|integer|min:1',
             'rating' => 'required|integer|min:1|max:5',
@@ -70,9 +77,14 @@ class StoreCommentsController extends StoreBaseController
         return response()->json(['data' => $reviews->storePayload($review)], 201);
     }
 
-    public function own(Request $request, OnlineStoreReviewService $reviews, StoreIdentityService $identity)
+    public function own(
+        Request $request,
+        OnlineStoreReviewService $reviews,
+        StoreIdentityService $identity,
+        StoreCustomerOnboardingService $onboarding,
+    )
     {
-        $actor = $this->authenticatedActor($request, $identity);
+        $actor = $this->authenticatedActor($request, $identity, $onboarding);
         $rows = $reviews->ownedBy($actor)->map(fn (OnlineStoreReview $review) => $reviews->storePayload($review))->values();
 
         return ['data' => $rows, 'meta' => ['total' => $rows->count()]];
@@ -86,7 +98,11 @@ class StoreCommentsController extends StoreBaseController
         return ['data' => $rows, 'meta' => ['total' => $rows->count()]];
     }
 
-    private function authenticatedActor(Request $request, StoreIdentityService $identity): User
+    private function authenticatedActor(
+        Request $request,
+        StoreIdentityService $identity,
+        StoreCustomerOnboardingService $onboarding,
+    ): User
     {
         $storeUser = $this->storeUserFromRequest($request);
         if (! $storeUser) {
@@ -96,6 +112,7 @@ class StoreCommentsController extends StoreBaseController
         if (! $actor || $actor->is_blocked) {
             abort(401, 'Unauthenticated.');
         }
+        $onboarding->ensureCustomerAccount($actor);
         $identity->activeLink($actor, 'customer');
 
         return $actor;

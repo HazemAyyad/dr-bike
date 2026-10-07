@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\API\Store\StoreAuthController;
+use App\Http\Controllers\API\Store\StoreAddressesController;
 use App\Http\Controllers\API\Store\StoreCitiesController;
 use App\Http\Controllers\API\Store\StoreCommentsController;
 use App\Http\Controllers\API\Store\StoreCouponsController;
@@ -55,6 +56,10 @@ Route::get('/OnlineStore/Products/{product}/Reviews', [StoreCommentsController::
 Route::get('/OnlineStore/Favorites', [StoreFavoritesController::class, 'index']);
 Route::post('/OnlineStore/Favorites/Toggle', [StoreFavoritesController::class, 'toggle']);
 Route::post('/OnlineStore/Coupons/Validate', [StoreCouponsController::class, 'validateCoupon']);
+Route::get('/OnlineStore/Addresses', [StoreAddressesController::class, 'index']);
+Route::post('/OnlineStore/Addresses', [StoreAddressesController::class, 'store']);
+Route::post('/OnlineStore/Addresses/Update', [StoreAddressesController::class, 'update']);
+Route::post('/OnlineStore/Addresses/Delete', [StoreAddressesController::class, 'destroy']);
 
 Route::post('/MainCategorys/GetAllShowMainCategories', [StoreMainCategoryController::class, 'getAllShowMainCategories']);
 Route::post('/SupCategorys/GetAllShowSupCategories', [StoreSupCategoryController::class, 'getAllShowSupCategories']);
