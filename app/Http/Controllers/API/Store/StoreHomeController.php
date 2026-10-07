@@ -113,7 +113,7 @@ class StoreHomeController extends StoreBaseController
     {
         return [
             'id' => (int) $banner->id,
-            'image_path' => (string) $banner->image_path,
+            'image_path' => $this->storefrontMediaPath($banner->image_path),
             'title_translations' => (array) $banner->title_translations,
             'content_translations' => (array) $banner->content_translations,
             'action_type' => (string) $banner->action_type,

@@ -28,12 +28,16 @@ class StorefrontCompatibilityAuthorityTest extends TestCase
         StoreSection::query()->forceCreate(['id' => 1980000001, 'name' => 'Warehouse A', 'sort_order' => 0, 'is_active' => true]);
         $second = $this->category('Second', 2);
         $first = $this->category('First', 1);
+        DB::table('online_store_categories')->where('id', $first)->update([
+            'image_path' => 'public/OnlineStore/Content/first.jpg',
+        ]);
         $child = $this->category('Child', 0, $first);
         $this->category('Inactive', 0, null, false);
 
         $main = $this->postJson('/MainCategorys/GetAllShowMainCategories')->assertOk();
         $main->assertJsonCount(2, 'rows')
             ->assertJsonPath('rows.0.id', $first)
+            ->assertJsonPath('rows.0.imageUrl', 'OnlineStore/Content/first.jpg')
             ->assertJsonPath('rows.0.supCategories.0.id', $child)
             ->assertJsonPath('rows.1.id', $second);
         $this->assertNotContains('Warehouse A', collect($main->json('rows'))->pluck('nameAr'));

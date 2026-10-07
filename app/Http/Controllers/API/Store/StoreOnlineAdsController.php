@@ -11,8 +11,8 @@ class StoreOnlineAdsController extends StoreBaseController
     {
         $rows = $banners->active()->map(fn ($banner) => [
             'id' => (int) $banner->id,
-            'imageUrl' => (string) $banner->image_path,
-            'image_path' => (string) $banner->image_path,
+            'imageUrl' => $this->storefrontMediaPath($banner->image_path),
+            'image_path' => $this->storefrontMediaPath($banner->image_path),
             'titleTranslations' => $banner->title_translations,
             'contentTranslations' => $banner->content_translations,
             'actionType' => (string) $banner->action_type,

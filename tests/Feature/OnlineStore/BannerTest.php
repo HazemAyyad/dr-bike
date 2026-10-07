@@ -38,7 +38,7 @@ class BannerTest extends TestCase
         $this->postJson('/api/online-store/banners', ['image_path' => 'fixture.jpg', 'action_type' => 'none', 'action_url' => 'https://example.invalid'])->assertUnprocessable();
         $this->postJson('/api/online-store/banners', ['image_path' => 'fixture.jpg', 'action_type' => 'none', 'starts_at' => '2026-10-03 12:00:00', 'ends_at' => '2026-10-02 12:00:00'])->assertUnprocessable();
 
-        $second = $this->postJson('/api/online-store/banners', ['image_path' => 'second.jpg', 'action_type' => 'url', 'action_url' => 'https://example.invalid/two', 'is_active' => true, 'sort_order' => 1, 'starts_at' => '2026-10-02 10:00:00', 'ends_at' => '2026-10-02 14:00:00'])->assertCreated()->json('data');
+        $second = $this->postJson('/api/online-store/banners', ['image_path' => 'public/OnlineStore/Content/second.jpg', 'action_type' => 'url', 'action_url' => 'https://example.invalid/two', 'is_active' => true, 'sort_order' => 1, 'starts_at' => '2026-10-02 10:00:00', 'ends_at' => '2026-10-02 14:00:00'])->assertCreated()->json('data');
         $first = $this->postJson('/api/online-store/banners', ['image_path' => 'first.jpg', 'action_type' => 'none', 'is_active' => true, 'sort_order' => 1, 'starts_at' => '2026-10-02 10:00:00', 'ends_at' => '2026-10-02 14:00:00'])->assertCreated()->json('data');
         $this->postJson('/api/online-store/banners', ['image_path' => 'future.jpg', 'action_type' => 'none', 'is_active' => true, 'sort_order' => 0, 'starts_at' => '2026-10-03 10:00:00'])->assertCreated();
 
@@ -46,7 +46,11 @@ class BannerTest extends TestCase
 
         $items = collect($this->getJson('/OnlineStore/Home')->assertOk()->json('data.sections.0.items'));
         $this->assertSame(collect([$second['id'], $first['id']])->sort()->values()->all(), $items->pluck('id')->all());
+        $this->assertSame(['OnlineStore/Content/second.jpg', 'first.jpg'], $items->pluck('image_path')->all());
         $this->assertNotContains('future.jpg', $items->pluck('image_path')->all());
+
+        $ads = collect($this->postJson('/OnlineAds/GetAllAds')->assertOk()->json('rows'));
+        $this->assertSame(['OnlineStore/Content/second.jpg', 'first.jpg'], $ads->pluck('imageUrl')->all());
     }
 
     public function test_internal_targets_must_be_customer_visible_and_use_the_supplied_reference_time(): void

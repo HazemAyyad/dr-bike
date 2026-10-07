@@ -155,7 +155,7 @@ class StoreBaseController extends Controller
             'descriptionAr' => (string) ($descriptions['ar'] ?? $descriptions['en'] ?? $descriptions['he'] ?? ''),
             'descriptionEng' => (string) ($descriptions['en'] ?? $descriptions['ar'] ?? $descriptions['he'] ?? ''),
             'descriptionAbree' => (string) ($descriptions['he'] ?? $descriptions['ar'] ?? $descriptions['en'] ?? ''),
-            'imageUrl' => (string) ($category->image_path ?? ''),
+            'imageUrl' => $this->storefrontMediaPath($category->image_path),
             'isShow' => (bool) $category->is_active,
             'sortOrder' => (int) $category->sort_order,
             'userAdd' => '',
@@ -308,6 +308,19 @@ class StoreBaseController extends Controller
             'imageUrl' => (string) ($image->imageUrl ?? ''),
             'itemId' => (int) ($image->itemId ?? $productId),
         ];
+    }
+
+    protected function storefrontMediaPath(?string $value): string
+    {
+        $path = trim(str_replace('\\', '/', (string) $value));
+        if ($path === '' || str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+            return $path;
+        }
+
+        // Store clients already use a base URL ending in /public. Content
+        // uploads are persisted as public/... for admin compatibility, so
+        // remove that document-root prefix from customer-facing payloads.
+        return (string) preg_replace('#^(?:/?public/)+#i', '', $path);
     }
 
     protected function dateString($value): string
