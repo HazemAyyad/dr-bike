@@ -7,6 +7,7 @@ use App\Services\AdminNotificationService;
 use App\Services\OnlineStore\StoreCustomerOnboardingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class StoreUsersController extends StoreBaseController
@@ -82,6 +83,24 @@ class StoreUsersController extends StoreBaseController
         $user->forceFill(['is_blocked' => true])->save();
 
         return response()->json(['message' => 'success']);
+    }
+
+    public function profileImage(Request $request)
+    {
+        $user = $this->authenticatedStoreUser($request);
+        $data = $request->validate([
+            'image' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+        ]);
+
+        $previous = $user->profile_image_path;
+        $path = $data['image']->store('store/avatars', 'public');
+        $user->forceFill(['profile_image_path' => $path])->save();
+
+        if ($previous && $previous !== $path && str_starts_with($previous, 'store/avatars/')) {
+            Storage::disk('public')->delete($previous);
+        }
+
+        return response()->json($this->userPayload($user->fresh()));
     }
 
     private function authenticatedStoreUser(Request $request): StoreUser

@@ -15,13 +15,30 @@ class OnlineStoreShowcaseSeeder extends Seeder
         $this->call(OnlineStoreHomeDemoSeeder::class);
 
         DB::transaction(function () {
-            $categories = OnlineStoreCategory::query()->orderBy('sort_order')->orderBy('id')->get();
-            if ($categories->isEmpty()) {
-                $categories = collect($this->categories())->map(function (array $data) {
-                    return OnlineStoreCategory::query()->create($data);
+            $existing = OnlineStoreCategory::query()
+                ->whereNull('parent_id')
+                ->orderBy('sort_order')
+                ->orderBy('id')
+                ->get();
+            $categories = collect($this->categories())->map(function (array $data) use (&$existing) {
+                $names = (array) $data['name_translations'];
+                $category = $existing->first(function (OnlineStoreCategory $candidate) use ($names) {
+                    $candidateNames = (array) $candidate->name_translations;
+
+                    return collect(['ar', 'en', 'he'])->contains(
+                        fn (string $locale) => $this->normalizedName($candidateNames[$locale] ?? null)
+                            === $this->normalizedName($names[$locale] ?? null)
+                    );
                 });
-                $this->assignListings($categories->keyBy('sort_order'));
-            }
+
+                if (! $category) {
+                    $category = OnlineStoreCategory::query()->create($data);
+                    $existing->push($category);
+                }
+
+                return ['seed_order' => (int) $data['sort_order'], 'category' => $category];
+            });
+            $this->assignListings($categories->pluck('category', 'seed_order'));
 
             $published = OnlineStoreListing::query()
                 ->where('status', 'published')
@@ -105,5 +122,10 @@ class OnlineStoreShowcaseSeeder extends Seeder
         }
 
         return false;
+    }
+
+    private function normalizedName(mixed $value): string
+    {
+        return mb_strtolower(trim((string) $value));
     }
 }

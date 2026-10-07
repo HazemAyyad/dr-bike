@@ -38,6 +38,9 @@ class StoreOrdersController extends StoreBaseController
         }
         $result = $checkout->checkout($actor, $data);
         $order = StoreSalesOrder::query()->with($this->orderRelations())->findOrFail($result['order']->getKey());
+        if ($result['created']) {
+            $this->notifyCreatedOrder($actor, $order);
+        }
 
         return response()->json([
             'data' => $this->orderPayload($order, ['customerId' => $actor->id]),
@@ -54,13 +57,30 @@ class StoreOrdersController extends StoreBaseController
         $result = $checkout->legacyCheckout($actor, $request->all());
         $order = StoreSalesOrder::query()->with($this->orderRelations())->findOrFail($result['order']->getKey());
         if ($result['created']) {
-            app(AdminNotificationService::class)->notifyStoreOrderCreated($order);
-            app(EmployeeActivityLogger::class)->logForUserId((int) $actor->getKey(), 'sales', 'created_sales_order', 'إنشاء طلبية مبيعات',
-                'تم إنشاء طلبية رقم '.($order->serial_number ?? $order->id).' بقيمة '.number_format((float) $order->total, 2, '.', ''), $order, (float) $order->total,
-                ['order_number' => $order->serial_number, 'customer_name' => $order->customer_name, 'customer_phone' => $order->customer_phone, 'items_count' => $order->details->count()]);
+            $this->notifyCreatedOrder($actor, $order);
         }
 
         return response()->json($this->orderPayload($order));
+    }
+
+    private function notifyCreatedOrder(User $actor, StoreSalesOrder $order): void
+    {
+        app(AdminNotificationService::class)->notifyStoreOrderCreated($order);
+        app(EmployeeActivityLogger::class)->logForUserId(
+            (int) $actor->getKey(),
+            'sales',
+            'created_sales_order',
+            'إنشاء طلبية مبيعات',
+            'تم إنشاء طلبية رقم '.($order->serial_number ?? $order->id).' بقيمة '.number_format((float) $order->total, 2, '.', ''),
+            $order,
+            (float) $order->total,
+            [
+                'order_number' => $order->serial_number,
+                'customer_name' => $order->customer_name,
+                'customer_phone' => $order->customer_phone,
+                'items_count' => $order->details->count(),
+            ]
+        );
     }
 
     public function getAllOrdersByUserId(Request $request, StoreIdentityService $identity)

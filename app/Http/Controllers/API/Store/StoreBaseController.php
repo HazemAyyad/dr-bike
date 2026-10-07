@@ -103,6 +103,9 @@ class StoreBaseController extends Controller
             'lockoutEnabled' => false,
             'accessFailedCount' => 0,
             'address' => $user->address,
+            'profileImageUrl' => $user->profile_image_path
+                ? $this->storefrontMediaPath('storage/'.$user->profile_image_path)
+                : null,
             'block' => (bool) ($user->is_blocked ?? false),
             'fullName' => $name,
             'phoneNumber2' => $user->sub_phone,

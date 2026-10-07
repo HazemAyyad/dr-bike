@@ -43,6 +43,7 @@ class User extends Authenticatable
         'sub_phone',
         'city',
         'address',
+        'profile_image_path',
         'type',
         'development_role',
         'is_blocked',

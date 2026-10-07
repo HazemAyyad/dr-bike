@@ -39,7 +39,10 @@ class OnlineStoreHomeDemoSeederTest extends TestCase
         $source = file_get_contents(__DIR__.'/../../../database/seeders/OnlineStoreShowcaseSeeder.php');
 
         $this->assertStringContainsString("'--class' => 'OnlineStoreShowcaseSeeder'", $deploy);
-        $this->assertStringContainsString('if ($categories->isEmpty())', $source);
+        $this->assertStringContainsString("whereNull('parent_id')", $source);
+        $this->assertStringContainsString('normalizedName', $source);
+        $this->assertStringContainsString('if (! $category)', $source);
+        $this->assertStringNotContainsString('if ($categories->isEmpty())', $source);
         $this->assertStringContainsString("where('status', 'published')", $source);
         $this->assertStringContainsString("where('readiness_state', 'complete')", $source);
         $this->assertStringContainsString('OnlineStoreHomeDemoSeeder::class', $source);
