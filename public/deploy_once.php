@@ -74,6 +74,14 @@ $allowedCommands = [
         'label' => '=== إضافة أقسام وبنرات المتجر الكهربائي الافتراضية (مرة واحدة) ===',
     ],
     [
+        'name' => 'db:seed',
+        'params' => [
+            '--class' => 'OnlineStoreShowcaseSeeder',
+            '--force' => true,
+        ],
+        'label' => '=== تجهيز تصنيفات وعرض الصفحة الرئيسية للمتجر بدون استبدال البيانات الحالية ===',
+    ],
+    [
         'name' => 'shiply:sync-addresses',
         'params' => ['--mode' => 'test', '--register-webhook' => true],
         'label' => '=== Shiply: مزامنة عناوين test + تسجيل webhook ===',

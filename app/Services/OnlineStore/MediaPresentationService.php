@@ -19,21 +19,52 @@ final class MediaPresentationService
     {
         return DB::transaction(function () use ($listing, $actor) {
             $locked = OnlineStoreListing::query()->with('product')->lockForUpdate()->findOrFail($listing->getKey());
-            if ($locked->mediaPresentations()->exists() || ! $locked->product || $locked->product->trashed()) {
+            if (! $locked->product || $locked->product->trashed()) {
                 return $locked->fresh(['product', 'mediaPresentations']);
             }
             $rows = collect();
             foreach (self::SOURCE_TABLES as $type => $table) {
                 $rows = $rows->concat(DB::table($table)->where('itemId', $locked->product_id)
-                    ->whereNotNull('imageUrl')->where('imageUrl', '<>', '')->orderBy('id')->get(['id'])->map(fn ($row) => ['source_type' => $type, 'source_id' => $row->id]));
+                    ->whereNotNull('imageUrl')->where('imageUrl', '<>', '')->orderBy('id')->get(['id'])
+                    ->map(fn ($row) => ['source_type' => $type, 'source_id' => $row->id, 'store_media_path' => null, 'media_metadata' => null]));
             }
-            foreach ($rows->values() as $order => $row) {
+            $rows = $rows->concat(DB::table('size_colors')
+                ->join('sizes', 'sizes.id', '=', 'size_colors.sizeId')
+                ->where('sizes.itemId', $locked->product_id)
+                ->whereNotNull('size_colors.image_url')->where('size_colors.image_url', '<>', '')
+                ->orderBy('sizes.id')->orderBy('size_colors.id')
+                ->get(['size_colors.id'])
+                ->map(fn ($row) => [
+                    'source_type' => 'variant', 'source_id' => $row->id, 'store_media_path' => null,
+                    'media_metadata' => ['media_type' => 'image', 'role' => 'variant'],
+                ]));
+            if (filled($locked->product->videoUrl)) {
+                $rows->push([
+                    'source_type' => 'store_specific', 'source_id' => null,
+                    'store_media_path' => trim((string) $locked->product->videoUrl),
+                    'media_metadata' => ['media_type' => 'video', 'role' => 'video'],
+                ]);
+            }
+
+            $existing = $locked->mediaPresentations()->get();
+            $identities = $existing->mapWithKeys(fn ($item) => [
+                $item->source_type.':'.($item->source_id ?? trim((string) $item->store_media_path)) => true,
+            ]);
+            $nextOrder = ((int) $existing->max('sort_order')) + ($existing->isEmpty() ? 0 : 1);
+            $hasMain = $existing->contains(fn ($item) => $item->is_main);
+            foreach ($rows->values() as $row) {
+                $identity = $row['source_type'].':'.($row['source_id'] ?? trim((string) $row['store_media_path']));
+                if ($identities->has($identity)) {
+                    continue;
+                }
                 $presentation = $locked->mediaPresentations()->make([
-                    ...$row, 'is_main' => $order === 0, 'is_visible' => true, 'sort_order' => $order,
+                    ...$row, 'is_main' => ! $hasMain, 'is_visible' => true, 'sort_order' => $nextOrder++,
                 ]);
                 $presentation->created_by = $actor?->getKey();
                 $presentation->updated_by = $actor?->getKey();
                 $presentation->save();
+                $hasMain = true;
+                $identities->put($identity, true);
             }
 
             return $locked->fresh(['product', 'mediaPresentations']);

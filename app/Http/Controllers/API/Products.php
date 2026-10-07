@@ -78,6 +78,7 @@ class Products extends Controller
                 'id',
                 'nameAr',
                 'nameEng',
+                'videoUrl',
                 'stock',
                 'normailPrice',
                 'wholesalePrice',

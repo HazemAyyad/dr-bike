@@ -6,6 +6,7 @@ use App\Mail\ResetPasswordMail;
 use App\Models\Store\StoreUser;
 use App\Models\User;
 use App\Services\OnlineStore\StorePasswordResetService;
+use App\Services\OnlineStore\StoreCustomerOnboardingService;
 use App\Support\AppUpdateSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -14,7 +15,7 @@ use Illuminate\Support\Facades\Mail;
 
 class StoreAuthController extends StoreBaseController
 {
-    public function login(Request $request)
+    public function login(Request $request, StoreCustomerOnboardingService $onboarding)
     {
         $data = $request->validate([
             'email' => ['required', 'email'],
@@ -35,6 +36,8 @@ class StoreAuthController extends StoreBaseController
         if (! empty($data['userToken'])) {
             $user->forceFill(['fcm_token' => $data['userToken']])->save();
         }
+
+        $onboarding->ensureCustomerAccount($user);
 
         $token = $user->createToken('store-app', ['*'], now()->addWeek())->plainTextToken;
 

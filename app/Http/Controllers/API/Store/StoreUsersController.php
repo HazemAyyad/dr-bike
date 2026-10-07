@@ -4,13 +4,14 @@ namespace App\Http\Controllers\API\Store;
 
 use App\Models\Store\StoreUser;
 use App\Services\AdminNotificationService;
+use App\Services\OnlineStore\StoreCustomerOnboardingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 
 class StoreUsersController extends StoreBaseController
 {
-    public function register(Request $request)
+    public function register(Request $request, StoreCustomerOnboardingService $onboarding)
     {
         $data = $request->validate([
             'email' => ['required', 'email', 'unique:users,email'],
@@ -29,15 +30,18 @@ class StoreUsersController extends StoreBaseController
             'is_blocked' => false,
         ])->save();
 
+        $onboarding->ensureCustomerAccount($user);
+
         app(AdminNotificationService::class)->notifyStoreUserRegistered($user);
 
         return response()->json($this->userPayload($user));
     }
 
-    public function getById(Request $request)
+    public function getById(Request $request, StoreCustomerOnboardingService $onboarding)
     {
         $user = $this->authenticatedStoreUser($request);
         $this->rejectForeignId($request, $user, 'id');
+        $onboarding->ensureCustomerAccount($user);
 
         return response()->json($this->userPayload($user));
     }

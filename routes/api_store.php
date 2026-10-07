@@ -3,6 +3,8 @@
 use App\Http\Controllers\API\Store\StoreAuthController;
 use App\Http\Controllers\API\Store\StoreCitiesController;
 use App\Http\Controllers\API\Store\StoreCommentsController;
+use App\Http\Controllers\API\Store\StoreCouponsController;
+use App\Http\Controllers\API\Store\StoreFavoritesController;
 use App\Http\Controllers\API\Store\StoreHomeController;
 use App\Http\Controllers\API\Store\StoreItemsController;
 use App\Http\Controllers\API\Store\StoreMainCategoryController;
@@ -50,6 +52,9 @@ Route::post('/Comments/ManageComment', [StoreCommentsController::class, 'manageC
 Route::get('/OnlineStore/Reviews', [StoreCommentsController::class, 'own']);
 Route::post('/OnlineStore/Reviews', [StoreCommentsController::class, 'submit']);
 Route::get('/OnlineStore/Products/{product}/Reviews', [StoreCommentsController::class, 'product']);
+Route::get('/OnlineStore/Favorites', [StoreFavoritesController::class, 'index']);
+Route::post('/OnlineStore/Favorites/Toggle', [StoreFavoritesController::class, 'toggle']);
+Route::post('/OnlineStore/Coupons/Validate', [StoreCouponsController::class, 'validateCoupon']);
 
 Route::post('/MainCategorys/GetAllShowMainCategories', [StoreMainCategoryController::class, 'getAllShowMainCategories']);
 Route::post('/SupCategorys/GetAllShowSupCategories', [StoreSupCategoryController::class, 'getAllShowSupCategories']);

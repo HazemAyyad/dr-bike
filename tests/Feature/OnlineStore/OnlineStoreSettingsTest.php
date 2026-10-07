@@ -68,7 +68,7 @@ class OnlineStoreSettingsTest extends TestCase
         }
     }
 
-    public function test_legacy_settings_shape_maps_typed_values_without_new_fields(): void
+    public function test_legacy_settings_shape_maps_typed_values_and_checkout_capabilities(): void
     {
         app(OnlineStoreSettingsService::class)->save(OnlineStoreFixtureFactory::createAdminActor(), [
             'store_enabled' => false,
@@ -78,10 +78,17 @@ class OnlineStoreSettingsTest extends TestCase
         ]);
 
         $this->postJson('/Settings/CheckSetting')->assertOk()->assertJsonStructure([
-            'data' => ['id', 'isClose', 'message', 'call', 'whatsApp', 'instagram', 'twitter'],
+            'data' => [
+                'id', 'isClose', 'message', 'call', 'whatsApp', 'instagram', 'twitter',
+                'storeEnabled', 'checkoutEnabled', 'cashOnDeliveryEnabled', 'minimumOrder', 'operatingState',
+            ],
             'isSuccess', 'error', 'isFailure',
         ])->assertJsonPath('data.isClose', true)
             ->assertJsonPath('data.call', 'fixture-support')
-            ->assertJsonPath('data.whatsApp', 'fixture-whatsapp');
+            ->assertJsonPath('data.whatsApp', 'fixture-whatsapp')
+            ->assertJsonPath('data.storeEnabled', false)
+            ->assertJsonPath('data.checkoutEnabled', false)
+            ->assertJsonPath('data.cashOnDeliveryEnabled', false)
+            ->assertJsonPath('data.operatingState', 'disabled');
     }
 }

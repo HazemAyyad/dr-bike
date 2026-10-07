@@ -73,6 +73,8 @@ class ListingController extends Controller
             'view_images' => DB::table('view_image_products')->where('itemId', $product->getKey())->whereNotNull('imageUrl')->where('imageUrl', '<>', '')->count(),
             'normal_images' => DB::table('normal_image_products')->where('itemId', $product->getKey())->whereNotNull('imageUrl')->where('imageUrl', '<>', '')->count(),
             'images_3d' => DB::table('image3d_products')->where('itemId', $product->getKey())->whereNotNull('imageUrl')->where('imageUrl', '<>', '')->count(),
+            'variant_images' => DB::table('size_colors')->join('sizes', 'sizes.id', '=', 'size_colors.sizeId')->where('sizes.itemId', $product->getKey())->whereNotNull('size_colors.image_url')->where('size_colors.image_url', '<>', '')->count(),
+            'videos' => filled($product->videoUrl) ? 1 : 0,
         ];
 
         return response()->json(['data' => [

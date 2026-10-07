@@ -32,4 +32,17 @@ class OnlineStoreHomeDemoSeederTest extends TestCase
         $this->assertStringContainsString("'guard' => 'online_store_home_demo'", $source);
         $this->assertStringContainsString('OnlineStoreHomeDemoSeeder::exists()', $source);
     }
+
+    public function test_showcase_seeder_is_deployed_and_preserves_existing_catalog_content(): void
+    {
+        $deploy = file_get_contents(__DIR__.'/../../../public/deploy_once.php');
+        $source = file_get_contents(__DIR__.'/../../../database/seeders/OnlineStoreShowcaseSeeder.php');
+
+        $this->assertStringContainsString("'--class' => 'OnlineStoreShowcaseSeeder'", $deploy);
+        $this->assertStringContainsString('if ($categories->isEmpty())', $source);
+        $this->assertStringContainsString("where('status', 'published')", $source);
+        $this->assertStringContainsString("where('readiness_state', 'complete')", $source);
+        $this->assertStringContainsString('OnlineStoreHomeDemoSeeder::class', $source);
+        $this->assertStringNotContainsString('truncate', strtolower($source));
+    }
 }

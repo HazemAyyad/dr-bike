@@ -83,7 +83,7 @@ class ProductImageResolver
     }
 
     /**
-     * @return array{product_image: string, product_viewImages: Collection, product_normalImages: Collection, product_image3d: Collection}
+     * @return array{product_image: string, product_viewImages: array, product_normalImages: array, product_image3d: array, product_variantImages: array, product_video: ?string}
      */
     public static function formatForList(Product $product): array
     {
@@ -92,6 +92,17 @@ class ProductImageResolver
             'product_viewImages' => self::mapValidUrls($product->viewImages)->all(),
             'product_normalImages' => self::mapValidUrls($product->normalImages)->all(),
             'product_image3d' => self::mapValidUrls($product->image3d)->all(),
+            'product_variantImages' => $product->sizes
+                ->flatMap(fn ($size) => $size->colorSizes)
+                ->map(fn ($variant) => trim((string) $variant->image_url))
+                ->filter(fn ($url) => self::isValidUrl($url))
+                ->map(fn ($url) => ApiImageUrl::normalize($url))
+                ->unique()
+                ->values()
+                ->all(),
+            'product_video' => self::isValidUrl($product->videoUrl)
+                ? ApiImageUrl::normalize((string) $product->videoUrl)
+                : null,
         ];
     }
 

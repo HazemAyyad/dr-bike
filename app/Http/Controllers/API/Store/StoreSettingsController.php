@@ -30,6 +30,11 @@ class StoreSettingsController extends StoreBaseController
             'whatsApp' => (string) ($typed?->whatsapp ?? $settings->get('store_whatsapp') ?? $settings->get('whatsApp') ?? $settings->get('whatsapp') ?? ''),
             'instagram' => (string) ($settings->get('store_instagram') ?? $settings->get('instagram') ?? ''),
             'twitter' => (string) ($settings->get('store_twitter') ?? $settings->get('twitter') ?? ''),
+            'storeEnabled' => (bool) ($typed?->store_enabled ?? ! $legacyClosed),
+            'checkoutEnabled' => (bool) ($state['checkout_allowed'] ?? false),
+            'cashOnDeliveryEnabled' => (bool) ($state['cod_allowed'] ?? false),
+            'minimumOrder' => (float) ($typed?->minimum_order ?? 0),
+            'operatingState' => (string) ($state['state'] ?? ($legacyClosed ? 'disabled' : 'open')),
         ];
 
         return response()->json([

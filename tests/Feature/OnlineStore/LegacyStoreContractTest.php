@@ -11,6 +11,7 @@ use App\Models\Store\StoreShiplyVillage;
 use App\Models\Store\StoreUser;
 use App\Models\StoreSection;
 use App\Services\OnlineStore\OnlineStoreNotificationService;
+use App\Services\OnlineStore\CouponService;
 use App\Services\OnlineStore\StoreIdentityService;
 use App\Services\ShiplyService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -50,6 +51,8 @@ class LegacyStoreContractTest extends TestCase
             'POST Notifications/GetNotifications', 'POST Notifications/EditNotification',
             'POST Comments/GetAllCommentsToItem', 'POST Comments/ManageComment',
             'GET OnlineStore/Reviews', 'POST OnlineStore/Reviews', 'GET OnlineStore/Products/{product}/Reviews',
+            'GET OnlineStore/Favorites', 'POST OnlineStore/Favorites/Toggle',
+            'POST OnlineStore/Coupons/Validate',
             'POST MainCategorys/GetAllShowMainCategories', 'POST SupCategorys/GetAllShowSupCategories',
             'POST Items/GetAllItemIsMoreSales', 'POST Items/GetAllItemByName',
             'POST Items/GetAllItemsShowByMainCategory', 'POST Items/GetItemById',
@@ -145,7 +148,7 @@ class LegacyStoreContractTest extends TestCase
             ->assertJsonStructure($this->userPayloadKeys())
             ->assertJsonPath('email', $registeredEmail)
             ->assertJsonPath('typeUser', 'User')
-            ->assertJsonPath('accountRoles', []);
+            ->assertJsonPath('accountRoles', ['customer']);
     }
 
     public function test_legacy_user_payload_exposes_only_authoritative_active_verified_account_roles(): void
@@ -363,6 +366,44 @@ class LegacyStoreContractTest extends TestCase
             ]);
         $this->postJson('/Cities/CalculateDeliveryFee')->assertStatus(400)
             ->assertExactJson(['message' => 'VillageRequired']);
+    }
+
+    public function test_store_favorites_and_coupon_preview_use_listing_identity_and_authoritative_pricing(): void
+    {
+        [$owner, , $token] = $this->linkedCustomerToken();
+        $product = $this->publishedLegacyProduct();
+        $listing = OnlineStoreListing::query()->where('product_id', $product->id)->firstOrFail();
+
+        $this->withToken($token)->postJson('/OnlineStore/Favorites/Toggle', [
+            'listing_id' => $listing->id,
+        ])->assertOk()
+            ->assertJsonPath('data.listing_id', $listing->id)
+            ->assertJsonPath('data.is_favorite', true);
+        $this->withToken($token)->getJson('/OnlineStore/Favorites')->assertOk()
+            ->assertJsonPath('data.listing_ids.0', $listing->id)
+            ->assertJsonPath('data.items.0.productId', $product->id);
+
+        app(CouponService::class)->save(OnlineStoreFixtureFactory::createAdminActor(), [
+            'code' => 'STORE15', 'discount_type' => 'fixed', 'discount_value' => 15,
+            'minimum_order' => 0, 'eligible_account_type' => 'customer',
+            'applies_to' => 'retail', 'scope' => 'global', 'is_active' => true, 'targets' => [],
+        ]);
+        $this->withToken($token)->postJson('/OnlineStore/Coupons/Validate', [
+            'coupon_code' => 'store15', 'account_role' => 'customer',
+            'items' => [[
+                'listing_id' => $listing->id, 'size_id' => null,
+                'size_color_id' => null, 'quantity' => 1,
+            ]],
+        ])->assertOk()
+            ->assertJsonPath('data.coupon.code', 'STORE15')
+            ->assertJsonPath('data.coupon.discount_type', 'fixed')
+            ->assertJsonPath('data.subtotal', 100)
+            ->assertJsonPath('data.coupon_discount', 15)
+            ->assertJsonPath('data.payable_before_delivery', 85);
+
+        $this->withToken($token)->postJson('/OnlineStore/Favorites/Toggle', [
+            'listing_id' => $listing->id,
+        ])->assertOk()->assertJsonPath('data.is_favorite', false);
     }
 
     public function test_legacy_order_create_history_empty_success_and_cancel_contracts_are_frozen(): void

@@ -94,6 +94,28 @@ class StorefrontCompatibilityAuthorityTest extends TestCase
         $this->postJson('/Items/GetItemById', ['itemId' => $listing->product_id])->assertNotFound();
     }
 
+    public function test_catalog_price_filters_and_sorting_are_applied_by_the_server(): void
+    {
+        $category = $this->category('Filtered Catalog', 0);
+        $low = $this->listing('Low price', 'published', 'complete', $category);
+        $high = $this->listing('High price', 'published', 'complete', $category);
+        $low->product->forceFill(['normailPrice' => 50])->save();
+        $high->product->forceFill(['normailPrice' => 150])->save();
+
+        $filtered = $this->postJson(
+            '/Items/GetAllItemsShowByMainCategory?MainCategory='.$category.'&minPrice=100&maxPrice=200&sort=price_desc'
+        )->assertOk();
+
+        $filtered->assertJsonCount(1, 'rows')
+            ->assertJsonPath('rows.0.listingId', $high->id)
+            ->assertJsonPath('rows.0.normailPrice', 150);
+
+        $sorted = $this->postJson(
+            '/Items/GetAllItemsShowByMainCategory?MainCategory='.$category.'&sort=price_asc'
+        )->assertOk();
+        $this->assertSame([$low->id, $high->id], collect($sorted->json('rows'))->pluck('listingId')->all());
+    }
+
     private function category(string $name, int $sortOrder, ?int $parentId = null, bool $active = true): int
     {
         return (int) DB::table('online_store_categories')->insertGetId([
