@@ -53,6 +53,27 @@ class StorePasswordResetSecurityTest extends TestCase
         $this->assertArrayNotHasKey('userId', $existing->json());
     }
 
+    public function test_development_mode_can_return_the_real_issued_otp(): void
+    {
+        Mail::fake();
+        config()->set('store.password_reset_expose_otp', true);
+        $user = OnlineStoreFixtureFactory::createStoreActor([
+            'email' => 'reset-development@example.invalid',
+        ]);
+
+        $response = $this->postJson('/Auth/ForgotPassword', [
+            ...self::VERSION,
+            'Email' => $user->email,
+        ])->assertOk();
+
+        $developmentOtp = (string) $response->json('developmentOtp');
+        $this->assertMatchesRegularExpression('/^\d{6}$/', $developmentOtp);
+        Mail::assertSent(ResetPasswordMail::class, function (ResetPasswordMail $mail) use ($developmentOtp, $user) {
+            return $mail->get_user_email === $user->email
+                && (string) $mail->validToken === $developmentOtp;
+        });
+    }
+
     public function test_otp_is_hashed_expiring_account_bound_and_issues_an_opaque_proof(): void
     {
         Mail::fake();

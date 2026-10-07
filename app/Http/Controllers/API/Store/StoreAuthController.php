@@ -75,8 +75,12 @@ class StoreAuthController extends StoreBaseController
                 ->first()
             : null;
 
+        $developmentOtp = null;
         if ($user) {
             $otp = $passwordResets->createChallenge($user);
+            if ($this->shouldExposeDevelopmentOtp()) {
+                $developmentOtp = $otp;
+            }
             try {
                 Mail::to($user->email)->send(new ResetPasswordMail($user->email, $otp));
             } catch (\Throwable) {
@@ -84,10 +88,18 @@ class StoreAuthController extends StoreBaseController
             }
         }
 
-        return response()->json([
+        $response = [
             'status' => 'success',
             'message' => 'success',
-        ]);
+        ];
+
+        if ($this->shouldExposeDevelopmentOtp()) {
+            // Keep the generic response shape for unknown or throttled identities.
+            // This placeholder is never stored and therefore cannot verify.
+            $response['developmentOtp'] = $developmentOtp ?? '000000';
+        }
+
+        return response()->json($response);
     }
 
     public function verifyForgotPasswordOtp(Request $request, StorePasswordResetService $passwordResets)
@@ -171,5 +183,11 @@ class StoreAuthController extends StoreBaseController
         }
 
         return null;
+    }
+
+    private function shouldExposeDevelopmentOtp(): bool
+    {
+        return ! app()->environment('production')
+            && (bool) config('store.password_reset_expose_otp', false);
     }
 }

@@ -13,6 +13,9 @@ return [
     'sync_stock_on_bill' => filter_var(env('STORE_SYNC_STOCK_ON_BILL', false), FILTER_VALIDATE_BOOLEAN),
     'sync_on_product_edit' => filter_var(env('STORE_SYNC_ON_PRODUCT_EDIT', false), FILTER_VALIDATE_BOOLEAN),
 
+    // Local-development helper only. Production is also blocked in the controller.
+    'password_reset_expose_otp' => filter_var(env('STORE_PASSWORD_RESET_EXPOSE_OTP', false), FILTER_VALIDATE_BOOLEAN),
+
     /**
      * أحجام افتراضية تظهر في قائمة الاختبار إضافةً إلى القيم المميزة من جدول sizes.
      * ليست مرتبطة بالتصنيف في Laravel — الحقل sizes.size نص حر لكل منتج (ومثل .NET ItemSize.Size).
