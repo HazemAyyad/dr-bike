@@ -59,7 +59,10 @@ class OnlineStoreCategoryTest extends TestCase
         $this->assertDatabaseHas('online_store_home_section_items', ['home_section_id' => $section['id'], 'target_type' => 'category', 'target_id' => $category['id']]);
 
         $unused = $this->postJson('/api/online-store/categories', ['name_translations' => ['en' => 'Unused']])->assertCreated()->json('data');
-        $this->deleteJson('/api/online-store/categories/'.$unused['id'])->assertOk()->assertJsonPath('data.disposition', 'deactivated');
-        $this->assertDatabaseHas('online_store_categories', ['id' => $unused['id'], 'is_active' => false]);
+        $this->deleteJson('/api/online-store/categories/'.$unused['id'])
+            ->assertOk()
+            ->assertJsonPath('data.disposition', 'deleted')
+            ->assertJsonPath('data.category', null);
+        $this->assertDatabaseMissing('online_store_categories', ['id' => $unused['id']]);
     }
 }

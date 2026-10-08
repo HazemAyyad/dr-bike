@@ -78,6 +78,26 @@ final class OnlineStoreCategoryService
                 throw ValidationException::withMessages(['category' => ['Move or remove child categories first.']]);
             }
 
+            $hasBusinessReferences = $category->memberships()->exists()
+                || DB::table('online_store_home_section_items')
+                    ->where('target_type', 'category')
+                    ->where('target_id', $category->getKey())
+                    ->exists()
+                || DB::table('online_store_promotion_targets')
+                    ->where('target_type', 'category')
+                    ->where('target_id', $category->getKey())
+                    ->exists()
+                || DB::table('online_store_coupon_targets')
+                    ->where('target_type', 'category')
+                    ->where('target_id', $category->getKey())
+                    ->exists();
+
+            if (! $hasBusinessReferences) {
+                $category->delete();
+
+                return 'deleted';
+            }
+
             $wasActive = $category->is_active;
             $category->forceFill(['is_active' => false, 'show_on_home' => false, 'updated_by' => $actor->getKey()])->save();
             if ($wasActive) {

@@ -53,7 +53,10 @@ class StorefrontContentController extends Controller
         $this->enforce($request, self::CATEGORIES_PERMISSION, true);
         $disposition = $service->delete($category, $request->user());
 
-        return response()->json(['data' => ['disposition' => $disposition, 'category' => $category->fresh()]]);
+        return response()->json(['data' => [
+            'disposition' => $disposition,
+            'category' => $disposition === 'deleted' ? null : $category->fresh(),
+        ]]);
     }
 
     public function replaceCategoryListings(Request $request, OnlineStoreCategory $category, OnlineStoreCategoryService $service)

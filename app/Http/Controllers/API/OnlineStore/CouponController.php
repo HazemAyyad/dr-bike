@@ -18,7 +18,18 @@ class CouponController extends Controller
     {
         $this->authorizeRequest($request);
 
-        return OnlineStoreCoupon::with(['targets', 'redemptions'])->orderByDesc('id')->paginate();
+        return OnlineStoreCoupon::query()
+            ->with('targets')
+            ->withCount([
+                'redemptions',
+                'redemptions as active_redemptions_count' => fn ($query) => $query->whereIn('status', ['reserved', 'applied']),
+                'redemptions as applied_redemptions_count' => fn ($query) => $query->where('status', 'applied'),
+            ])
+            ->withSum([
+                'redemptions as discount_total' => fn ($query) => $query->whereIn('status', ['reserved', 'applied']),
+            ], 'discount_amount')
+            ->orderByDesc('id')
+            ->paginate();
     }
 
     public function show(Request $request, OnlineStoreCoupon $coupon)
@@ -68,7 +79,40 @@ class CouponController extends Controller
     {
         $this->authorizeRequest($request, true);
 
-        return $coupon->redemptions()->with(['user', 'customer', 'seller', 'salesOrder'])->orderByDesc('id')->paginate();
+        $base = $coupon->redemptions();
+        $paginator = (clone $base)
+            ->with([
+                'user:id,name,email',
+                'customer',
+                'seller',
+                'salesOrder:id,serial_number,total,status',
+            ])
+            ->orderByDesc('id')
+            ->paginate();
+        $countable = (clone $base)->whereIn('status', ['reserved', 'applied']);
+
+        return response()->json([
+            'data' => $paginator->items(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+            'summary' => [
+                'total_records' => (clone $base)->count(),
+                'active_uses' => (clone $countable)->count(),
+                'applied_uses' => (clone $base)->where('status', 'applied')->count(),
+                'reserved_uses' => (clone $base)->where('status', 'reserved')->count(),
+                'released_uses' => (clone $base)->where('status', 'released')->count(),
+                'unique_users' => (clone $countable)->distinct()->count('user_id'),
+                'discount_total' => round((float) (clone $countable)->sum('discount_amount'), 2),
+                'total_usage_limit' => $coupon->total_usage_limit,
+                'remaining_uses' => $coupon->total_usage_limit === null
+                    ? null
+                    : max(0, $coupon->total_usage_limit - (clone $countable)->count()),
+            ],
+        ]);
     }
 
     private function authorizeRequest(Request $request, bool $resource = false): void

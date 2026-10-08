@@ -126,14 +126,17 @@ final class OnlineStoreReportService
     {
         return DB::table('sales_order_items as item')
             ->join('online_store_listings as listing', 'listing.product_id', '=', 'item.product_id')
+            ->join('products as product', 'product.id', '=', 'item.product_id')
             ->where('item.is_hidden', false)
             ->whereIn('item.sales_order_id', (clone $orders)->select('id'))
-            ->selectRaw('listing.id AS listing_id, item.product_id, SUM(item.quantity) AS quantity, SUM(item.line_total) AS revenue')
-            ->groupBy('listing.id', 'item.product_id')
+            ->selectRaw('listing.id AS listing_id, item.product_id, product.nameAr AS product_name_ar, product.nameEng AS product_name_en, product.product_code, SUM(item.quantity) AS quantity, SUM(item.line_total) AS revenue')
+            ->groupBy('listing.id', 'item.product_id', 'product.nameAr', 'product.nameEng', 'product.product_code')
             ->orderByDesc('quantity')->orderBy('listing.id')
             ->limit(20)->get()->map(fn ($row) => [
                 'listing_id' => (int) $row->listing_id,
                 'product_id' => (int) $row->product_id,
+                'product_name' => $row->product_name_ar ?: ($row->product_name_en ?: 'منتج #'.$row->product_id),
+                'product_code' => (string) ($row->product_code ?? ''),
                 'quantity' => (int) $row->quantity,
                 'revenue' => round((float) $row->revenue, 2),
             ])->all();
