@@ -132,6 +132,7 @@ class StoreAddressesController extends StoreBaseController
     private function validated(Request $request, bool $update = false): array
     {
         $sometimes = $update ? 'sometimes|' : '';
+        $shippingRequired = 'required|';
 
         return $request->validate([
             'address_id' => ($update ? 'required|' : 'nullable|').'integer|min:1',
@@ -139,10 +140,10 @@ class StoreAddressesController extends StoreBaseController
             'street_address' => $sometimes.'required|string|max:500',
             'phone' => 'nullable|string|max:50',
             'city_id' => 'nullable|integer|exists:cities,id',
-            'shiply_city_id' => 'nullable|integer|min:1',
-            'shiply_village_id' => 'nullable|integer|min:1',
-            'shiply_city_name' => 'nullable|string|max:255',
-            'shiply_village_name' => 'nullable|string|max:255',
+            'shiply_city_id' => $shippingRequired.'integer|min:1',
+            'shiply_village_id' => $shippingRequired.'integer|min:1',
+            'shiply_city_name' => $shippingRequired.'string|max:255',
+            'shiply_village_name' => $shippingRequired.'string|max:255',
             'delivery_notes' => 'nullable|string|max:2000',
             'is_default' => 'nullable|boolean',
         ]);

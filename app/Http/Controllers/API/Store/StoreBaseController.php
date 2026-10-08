@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\OnlineStore\StorefrontListingResource;
 use App\Models\OnlineStore\OnlineStoreCategory;
 use App\Models\OnlineStore\OnlineStoreListing;
-use App\Models\OnlineStore\OnlineStoreReview;
 use App\Models\Store\StoreCategory;
 use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreShiplyCity;
@@ -201,10 +200,10 @@ class StoreBaseController extends Controller
             : 0.0;
         $video = $media->first(fn (array $item) => ($item['media_metadata']['media_type'] ?? null) === 'video'
             || str_starts_with((string) ($item['media_metadata']['mime_type'] ?? ''), 'video/'));
-        $reviews = request()->is('Items/GetItemById')
-            ? OnlineStoreReview::query()->published()->where('product_id', $listing->product_id)
-                ->selectRaw('COUNT(*) as review_count, AVG(rating) as average_rating')->first()
-            : null;
+        $reviewCount = (int) ($listing->published_reviews_count ?? 0);
+        $averageRating = $reviewCount > 0
+            ? (float) ($listing->published_reviews_avg_rating ?? 0)
+            : 0.0;
 
         return [
             'id' => (int) $listing->product_id,
@@ -229,8 +228,8 @@ class StoreBaseController extends Controller
             'model' => (string) ($product->model ?? ''),
             'isNewItem' => (bool) $listing->is_new,
             'isMoreSales' => (bool) ($product->isMoreSales ?? false),
-            'rate' => (float) ($reviews?->average_rating ?? 0),
-            'reviewCount' => (int) ($reviews?->review_count ?? 0),
+            'rate' => $averageRating,
+            'reviewCount' => $reviewCount,
             'manufactureYear' => $product?->manufactureYear ? (int) $product->manufactureYear : null,
             'discount' => $discountPercent,
             'userIdAdd' => null,

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\API\Store;
 
 use App\Models\OnlineStore\OnlineStoreFavorite;
-use App\Models\OnlineStore\OnlineStoreListing;
 use App\Models\User;
 use App\Services\OnlineStore\StorefrontCatalogService;
 use Illuminate\Http\JsonResponse;
@@ -19,7 +18,9 @@ class StoreFavoritesController extends StoreBaseController
         $actor = $this->authenticatedUser($request);
         $favorites = OnlineStoreFavorite::query()
             ->where('user_id', $actor->getKey())
-            ->with('listing.product')
+            ->with(['listing' => fn ($query) => $query
+                ->withPublishedReviewSummary()
+                ->with('product')])
             ->latest('id')
             ->get()
             ->filter(fn (OnlineStoreFavorite $favorite) => $favorite->listing && $this->catalog->isEligible($favorite->listing))

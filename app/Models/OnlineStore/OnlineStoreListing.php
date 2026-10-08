@@ -4,7 +4,9 @@ namespace App\Models\OnlineStore;
 
 use App\Models\Product;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class OnlineStoreListing extends Model
 {
@@ -36,6 +38,19 @@ class OnlineStoreListing extends Model
     public function product()
     {
         return $this->belongsTo(Product::class)->withTrashed();
+    }
+
+    public function publishedReviews(): HasMany
+    {
+        return $this->hasMany(OnlineStoreReview::class, 'product_id', 'product_id')
+            ->published();
+    }
+
+    public function scopeWithPublishedReviewSummary(Builder $query): Builder
+    {
+        return $query
+            ->withCount('publishedReviews')
+            ->withAvg('publishedReviews', 'rating');
     }
 
     public function creator()

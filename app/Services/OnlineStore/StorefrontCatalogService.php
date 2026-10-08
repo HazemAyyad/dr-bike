@@ -16,6 +16,7 @@ final class StorefrontCatalogService
     public function eligibleQuery(): Builder
     {
         return OnlineStoreListing::query()
+            ->withPublishedReviewSummary()
             ->where('status', 'published')
             ->where('readiness_state', 'complete')
             ->whereHas('product', fn (Builder $query) => $query->whereNull('deleted_at'))
