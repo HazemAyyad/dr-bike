@@ -3,6 +3,7 @@
 namespace Tests\Unit\OnlineStore;
 
 use Database\Seeders\OnlineStoreHomeDemoSeeder;
+use Database\Seeders\OnlineStoreShowcaseSeeder;
 use PHPUnit\Framework\TestCase;
 
 class OnlineStoreHomeDemoSeederTest extends TestCase
@@ -47,5 +48,19 @@ class OnlineStoreHomeDemoSeederTest extends TestCase
         $this->assertStringContainsString("where('readiness_state', 'complete')", $source);
         $this->assertStringContainsString('OnlineStoreHomeDemoSeeder::class', $source);
         $this->assertStringNotContainsString('truncate', strtolower($source));
+    }
+
+    public function test_showcase_categories_use_dedicated_svg_icons(): void
+    {
+        $this->assertCount(7, OnlineStoreShowcaseSeeder::CATEGORY_ICON_PATHS);
+
+        foreach (OnlineStoreShowcaseSeeder::CATEGORY_ICON_PATHS as $path) {
+            $this->assertStringEndsWith('.svg', $path);
+            $this->assertFileExists(__DIR__.'/../../../public/'.$path);
+        }
+
+        $source = file_get_contents(__DIR__.'/../../../database/seeders/OnlineStoreShowcaseSeeder.php');
+        $this->assertStringContainsString('usesLegacyShowcaseImage', $source);
+        $this->assertStringContainsString("update(['image_path' => \$data['image_path']])", $source);
     }
 }

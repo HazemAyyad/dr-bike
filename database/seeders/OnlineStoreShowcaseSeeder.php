@@ -9,6 +9,16 @@ use Illuminate\Support\Facades\DB;
 
 class OnlineStoreShowcaseSeeder extends Seeder
 {
+    public const CATEGORY_ICON_PATHS = [
+        'images/online-store/categories/electric-bike.svg',
+        'images/online-store/categories/electric-scooter.svg',
+        'images/online-store/categories/battery-charger.svg',
+        'images/online-store/categories/helmet-protection.svg',
+        'images/online-store/categories/lighting-electrical.svg',
+        'images/online-store/categories/tires-brakes.svg',
+        'images/online-store/categories/parts-accessories.svg',
+    ];
+
     public function run(): void
     {
         // The existing home seeder is ownership-safe and skips administrator content.
@@ -34,6 +44,8 @@ class OnlineStoreShowcaseSeeder extends Seeder
                 if (! $category) {
                     $category = OnlineStoreCategory::query()->create($data);
                     $existing->push($category);
+                } elseif ($this->usesLegacyShowcaseImage($category)) {
+                    $category->update(['image_path' => $data['image_path']]);
                 }
 
                 return ['seed_order' => (int) $data['sort_order'], 'category' => $category];
@@ -60,17 +72,22 @@ class OnlineStoreShowcaseSeeder extends Seeder
 
     private function categories(): array
     {
-        $paths = OnlineStoreHomeDemoSeeder::BANNER_PATHS;
+        $icons = self::CATEGORY_ICON_PATHS;
 
         return [
-            $this->category('دراجات كهربائية', 'Electric bikes', 'אופניים חשמליים', 'دراجات كهربائية للتنقل والعمل والرحلات.', $paths[0], 0),
-            $this->category('سكوترات كهربائية', 'Electric scooters', 'קורקינטים חשמליים', 'سكوترات عملية للاستخدام اليومي داخل المدينة.', $paths[0], 1),
-            $this->category('بطاريات وشواحن', 'Batteries & chargers', 'סוללות ומטענים', 'بطاريات وشواحن وملحقات الطاقة.', $paths[1], 2),
-            $this->category('خوذ وحماية', 'Helmets & protection', 'קסדות ומיגון', 'خوذ ومعدات سلامة للقيادة الآمنة.', $paths[2], 3),
-            $this->category('إضاءة وكهرباء', 'Lighting & electrical', 'תאורה וחשמל', 'إضاءة وقطع كهربائية وتحكم.', $paths[2], 4),
-            $this->category('إطارات وفرامل', 'Tires & brakes', 'צמיגים ובלמים', 'إطارات وأنظمة فرامل وقطع حركة.', $paths[1], 5),
-            $this->category('قطع غيار وإكسسوارات', 'Parts & accessories', 'חלפים ואביזרים', 'قطع غيار وإكسسوارات مختارة للدراجة والسكوتر.', $paths[2], 6),
+            $this->category('دراجات كهربائية', 'Electric bikes', 'אופניים חשמליים', 'دراجات كهربائية للتنقل والعمل والرحلات.', $icons[0], 0),
+            $this->category('سكوترات كهربائية', 'Electric scooters', 'קורקינטים חשמליים', 'سكوترات عملية للاستخدام اليومي داخل المدينة.', $icons[1], 1),
+            $this->category('بطاريات وشواحن', 'Batteries & chargers', 'סוללות ומטענים', 'بطاريات وشواحن وملحقات الطاقة.', $icons[2], 2),
+            $this->category('خوذ وحماية', 'Helmets & protection', 'קסדות ומיגון', 'خوذ ومعدات سلامة للقيادة الآمنة.', $icons[3], 3),
+            $this->category('إضاءة وكهرباء', 'Lighting & electrical', 'תאורה וחשמל', 'إضاءة وقطع كهربائية وتحكم.', $icons[4], 4),
+            $this->category('إطارات وفرامل', 'Tires & brakes', 'צמיגים ובלמים', 'إطارات وأنظمة فرامل وقطع حركة.', $icons[5], 5),
+            $this->category('قطع غيار وإكسسوارات', 'Parts & accessories', 'חלפים ואביזרים', 'قطع غيار وإكسسوارات مختارة للدراجة والسكوتر.', $icons[6], 6),
         ];
+    }
+
+    private function usesLegacyShowcaseImage(OnlineStoreCategory $category): bool
+    {
+        return in_array((string) $category->image_path, OnlineStoreHomeDemoSeeder::BANNER_PATHS, true);
     }
 
     private function category(string $ar, string $en, string $he, string $description, string $image, int $order): array
