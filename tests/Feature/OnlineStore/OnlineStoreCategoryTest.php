@@ -65,4 +65,41 @@ class OnlineStoreCategoryTest extends TestCase
             ->assertJsonPath('data.category', null);
         $this->assertDatabaseMissing('online_store_categories', ['id' => $unused['id']]);
     }
+
+    public function test_deleting_category_requires_and_applies_product_destination(): void
+    {
+        $admin = OnlineStoreFixtureFactory::createAuthenticatedAdminActor();
+        $product = OnlineStoreFixtureFactory::createProduct(['descriptionEng' => 'Description']);
+        $listing = OnlineStoreListing::query()->forceCreate([
+            'product_id' => $product->id,
+            'status' => 'published',
+            'readiness_state' => 'complete',
+            'created_by' => $admin->id,
+        ]);
+        $source = $this->postJson('/api/online-store/categories', [
+            'name_translations' => ['en' => 'Source'],
+            'is_active' => true,
+        ])->assertCreated()->json('data');
+        $destination = $this->postJson('/api/online-store/categories', [
+            'name_translations' => ['en' => 'Destination'],
+            'is_active' => true,
+        ])->assertCreated()->json('data');
+        $this->putJson('/api/online-store/categories/'.$source['id'].'/listings', [
+            'items' => [['listing_id' => $listing->id, 'sort_order' => 0]],
+        ])->assertOk();
+
+        $this->deleteJson('/api/online-store/categories/'.$source['id'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('replacement_category_id');
+
+        $this->deleteJson('/api/online-store/categories/'.$source['id'], [
+            'replacement_category_id' => $destination['id'],
+        ])->assertOk()->assertJsonPath('data.disposition', 'deleted');
+
+        $this->assertDatabaseMissing('online_store_categories', ['id' => $source['id']]);
+        $this->assertDatabaseHas('online_store_category_listing', [
+            'online_store_category_id' => $destination['id'],
+            'online_store_listing_id' => $listing->id,
+        ]);
+    }
 }

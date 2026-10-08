@@ -24,7 +24,10 @@ class StorefrontContentController extends Controller
     {
         $this->enforce($request, self::CATEGORIES_PERMISSION);
 
-        return response()->json(['data' => OnlineStoreCategory::query()->with('parent')->orderBy('parent_id')->orderBy('sort_order')->orderBy('id')->get()]);
+        return response()->json(['data' => OnlineStoreCategory::query()
+            ->with('parent')
+            ->withCount(['memberships', 'children'])
+            ->orderBy('parent_id')->orderBy('sort_order')->orderBy('id')->get()]);
     }
 
     public function category(Request $request, OnlineStoreCategory $category)
@@ -51,7 +54,19 @@ class StorefrontContentController extends Controller
     public function deleteCategory(Request $request, OnlineStoreCategory $category, OnlineStoreCategoryService $service)
     {
         $this->enforce($request, self::CATEGORIES_PERMISSION, true);
-        $disposition = $service->delete($category, $request->user());
+        $data = $request->validate([
+            'replacement_category_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('online_store_categories', 'id'),
+                Rule::notIn([(int) $category->getKey()]),
+            ],
+        ]);
+        $disposition = $service->delete(
+            $category,
+            $request->user(),
+            isset($data['replacement_category_id']) ? (int) $data['replacement_category_id'] : null,
+        );
 
         return response()->json(['data' => [
             'disposition' => $disposition,

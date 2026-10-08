@@ -71,15 +71,42 @@ final class OnlineStoreCategoryService
         });
     }
 
-    public function delete(OnlineStoreCategory $category, User $actor): string
+    public function delete(OnlineStoreCategory $category, User $actor, ?int $replacementCategoryId = null): string
     {
-        return DB::transaction(function () use ($category, $actor) {
+        return DB::transaction(function () use ($category, $actor, $replacementCategoryId) {
             if ($category->children()->exists()) {
                 throw ValidationException::withMessages(['category' => ['Move or remove child categories first.']]);
             }
 
-            $hasBusinessReferences = $category->memberships()->exists()
-                || DB::table('online_store_home_section_items')
+            $listingIds = $category->memberships()
+                ->lockForUpdate()
+                ->pluck('online_store_listing_id')
+                ->map(fn ($id) => (int) $id);
+            if ($listingIds->isNotEmpty() && $replacementCategoryId === null) {
+                throw ValidationException::withMessages([
+                    'replacement_category_id' => ['Choose a destination category for the products first.'],
+                ]);
+            }
+            if ($replacementCategoryId !== null) {
+                $replacement = OnlineStoreCategory::query()->lockForUpdate()->find($replacementCategoryId);
+                if (! $replacement || ! $replacement->is_active) {
+                    throw ValidationException::withMessages([
+                        'replacement_category_id' => ['The destination category must be active.'],
+                    ]);
+                }
+                $nextOrder = (int) $replacement->memberships()->max('sort_order') + 1;
+                foreach ($listingIds as $listingId) {
+                    $replacement->memberships()->firstOrCreate(
+                        ['online_store_listing_id' => $listingId],
+                        ['sort_order' => $nextOrder++]
+                    );
+                }
+                $category->memberships()->delete();
+                OnlineStoreListing::query()->whereIn('id', $listingIds)->get()
+                    ->each(fn ($listing) => $this->lifecycle->refresh($listing, $actor));
+            }
+
+            $hasBusinessReferences = DB::table('online_store_home_section_items')
                     ->where('target_type', 'category')
                     ->where('target_id', $category->getKey())
                     ->exists()
