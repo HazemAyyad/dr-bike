@@ -8,7 +8,7 @@ class OnlineStoreHomeSection extends Model
 {
     protected $fillable = ['key', 'section_type', 'title_translations', 'selection_mode', 'selection_config', 'is_visible', 'sort_order'];
 
-    protected $casts = ['title_translations' => 'array', 'selection_config' => 'array', 'is_visible' => 'boolean', 'sort_order' => 'integer'];
+    protected $casts = ['title_translations' => 'array', 'selection_config' => 'array', 'is_visible' => 'boolean', 'sort_order' => 'integer', 'view_count' => 'integer'];
 
     public function items()
     {

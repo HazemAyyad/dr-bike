@@ -7,6 +7,7 @@ use App\Models\OnlineStore\OnlineStoreHomeSection;
 use App\Services\OnlineStore\BannerService;
 use App\Services\OnlineStore\StorefrontCatalogService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 
 class StoreHomeController extends StoreBaseController
 {
@@ -17,6 +18,15 @@ class StoreHomeController extends StoreBaseController
         $sections = OnlineStoreHomeSection::query()->where('is_visible', true)
             ->with('items')->orderBy('sort_order')->orderBy('id')->get()
             ->map(fn ($section) => $this->compose($section, $banners))->values();
+
+        $viewedSectionIds = $sections
+            ->filter(fn (array $section) => $section['section_type'] === 'maintenance' || count($section['items']) > 0)
+            ->pluck('id');
+        if ($viewedSectionIds->isNotEmpty()) {
+            DB::table('online_store_home_sections')
+                ->whereIn('id', $viewedSectionIds)
+                ->increment('view_count');
+        }
 
         return response()->json(['data' => ['sections' => $sections]]);
     }

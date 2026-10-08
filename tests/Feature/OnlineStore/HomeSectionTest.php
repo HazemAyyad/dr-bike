@@ -44,5 +44,7 @@ class HomeSectionTest extends TestCase
         $this->assertSame(['categories', 'offers', 'hero', 'maintenance', 'recent'], collect($response->json('data.sections'))->pluck('key')->all());
         $this->assertSame('category', $response->json('data.sections.0.items.0.target_type'));
         $this->assertSame('listing', $response->json('data.sections.1.items.0.target_type'));
+        $this->assertSame(1, (int) DB::table('online_store_home_sections')->where('id', $categories['id'])->value('view_count'));
+        $this->assertSame(0, (int) DB::table('online_store_home_sections')->where('key', 'hero')->value('view_count'));
     }
 }

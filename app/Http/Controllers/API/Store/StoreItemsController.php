@@ -5,6 +5,7 @@ namespace App\Http\Controllers\API\Store;
 use App\Services\OnlineStore\StorefrontCatalogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class StoreItemsController extends StoreBaseController
 {
@@ -76,6 +77,10 @@ class StoreItemsController extends StoreBaseController
         if (! $listing) {
             return response()->json(['message' => 'ThisItemNotFound'], 404);
         }
+
+        DB::table('online_store_listings')
+            ->where('id', $listing->getKey())
+            ->increment('view_count');
 
         return response()->json($this->storefrontListingPayload($listing));
     }

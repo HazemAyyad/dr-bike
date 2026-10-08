@@ -31,6 +31,7 @@ class OnlineStoreListing extends Model
         'show_as_offer' => 'boolean',
         'sort_order' => 'integer',
         'online_stock_limit' => 'integer',
+        'view_count' => 'integer',
         'published_at' => 'datetime',
         'hidden_at' => 'datetime',
     ];

@@ -76,6 +76,7 @@ class StorefrontCompatibilityAuthorityTest extends TestCase
 
         $this->postJson('/Items/GetItemById', ['itemId' => $draft->product_id])->assertNotFound();
         $this->postJson('/Items/GetItemById', ['itemId' => $visible->product_id])->assertOk()->assertJsonPath('listingId', $visible->id);
+        $this->assertSame(1, (int) $visible->fresh()->view_count);
     }
 
     public function test_soft_deleted_product_and_unpresented_media_are_never_exposed(): void

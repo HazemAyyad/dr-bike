@@ -36,6 +36,7 @@ class OnlineStoreListingResource extends JsonResource
             'show_on_home' => $this->show_on_home, 'show_as_offer' => $this->show_as_offer,
             'sort_order' => $this->sort_order,
             'online_stock_limit' => $this->online_stock_limit,
+            'view_count' => (int) $this->view_count,
             'product' => $product ? [
                 'id' => (int) $product->getKey(),
                 'code' => (string) ($product->product_code ?? ''),
