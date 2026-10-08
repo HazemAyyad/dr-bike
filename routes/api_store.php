@@ -15,6 +15,7 @@ use App\Http\Controllers\API\Store\StoreOrdersController;
 use App\Http\Controllers\API\Store\StoreSettingsController;
 use App\Http\Controllers\API\Store\StoreSupCategoryController;
 use App\Http\Controllers\API\Store\StoreUsersController;
+use App\Http\Middleware\RecordOnlineStoreAnalytics;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -43,13 +44,15 @@ Route::post('/Users/BlockUserAndNotActive', [StoreUsersController::class, 'block
 
 Route::post('/Settings/CheckSetting', [StoreSettingsController::class, 'checkSetting']);
 
-Route::get('/OnlineStore/Home', [StoreHomeController::class, 'index']);
-Route::post('/OnlineStore/Home', [StoreHomeController::class, 'index']);
+Route::get('/OnlineStore/Home', [StoreHomeController::class, 'index'])
+    ->middleware(RecordOnlineStoreAnalytics::class.':store_visits');
+Route::post('/OnlineStore/Home', [StoreHomeController::class, 'index'])
+    ->middleware(RecordOnlineStoreAnalytics::class.':store_visits');
 
 Route::post('/OnlineAds/GetAllAds', [StoreOnlineAdsController::class, 'getAllAds']);
 Route::post('/OnlineStore/Banners/{banner}/Click', [StoreOnlineAdsController::class, 'recordClick'])
     ->whereNumber('banner')
-    ->middleware('throttle:60,1');
+    ->middleware(['throttle:60,1', RecordOnlineStoreAnalytics::class.':banner_clicks']);
 Route::post('/Notifications/GetNotifications', [StoreNotificationsController::class, 'getNotifications']);
 Route::post('/Notifications/EditNotification', [StoreNotificationsController::class, 'editNotification']);
 Route::post('/Comments/GetAllCommentsToItem', [StoreCommentsController::class, 'getAllCommentsToItem']);
@@ -71,7 +74,8 @@ Route::post('/SupCategorys/GetAllShowSupCategories', [StoreSupCategoryController
 Route::post('/Items/GetAllItemIsMoreSales', [StoreItemsController::class, 'getAllItemIsMoreSales']);
 Route::post('/Items/GetAllItemByName', [StoreItemsController::class, 'getAllItemByName']);
 Route::post('/Items/GetAllItemsShowByMainCategory', [StoreItemsController::class, 'getAllItemsShowByMainCategory']);
-Route::post('/Items/GetItemById', [StoreItemsController::class, 'getItemById']);
+Route::post('/Items/GetItemById', [StoreItemsController::class, 'getItemById'])
+    ->middleware(RecordOnlineStoreAnalytics::class.':product_views');
 Route::post('/Items/GetAllShowItemsBySupCatId', [StoreItemsController::class, 'getAllShowItemsBySupCatId']);
 
 Route::post('/Cities/GetAllCities', [StoreCitiesController::class, 'getAllCities']);

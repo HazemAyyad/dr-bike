@@ -75,8 +75,9 @@ class StoreGovernanceController extends Controller
     public function dashboard(Request $request, OnlineStoreDashboardService $dashboard)
     {
         $this->authorizeGovernance($request, self::VIEW_PERMISSION);
+        $filters = $request->validate(['days' => 'nullable|integer|min:7|max:365']);
 
-        return ['data' => $dashboard->summary()];
+        return ['data' => $dashboard->summary((int) ($filters['days'] ?? 30))];
     }
 
     public function report(Request $request, OnlineStoreReportService $reports)

@@ -5,6 +5,7 @@ namespace App\Services\OnlineStore;
 use App\Models\OnlineStore\OnlineStoreListing;
 use App\Models\OnlineStore\OnlineStorePromotion;
 use App\Models\SalesOrder;
+use Carbon\CarbonPeriod;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -12,8 +13,9 @@ final class OnlineStoreDashboardService
 {
     public function __construct(private readonly OnlineStoreAvailabilityService $availability) {}
 
-    public function summary(): array
+    public function summary(int $days = 30): array
     {
+        $days = max(7, min(365, $days));
         $now = now();
         $listingStates = OnlineStoreListing::query()->selectRaw('status, COUNT(*) aggregate')->groupBy('status')->pluck('aggregate', 'status');
         $readinessStates = OnlineStoreListing::query()->selectRaw('readiness_state, COUNT(*) aggregate')->groupBy('readiness_state')->pluck('aggregate', 'readiness_state');
@@ -53,7 +55,135 @@ final class OnlineStoreDashboardService
                 ? ['available' => true, 'value' => DB::table('online_store_reviews')->where('status', 'pending')->count()]
                 : ['available' => false, 'value' => null],
             'debt_activity' => $this->storeDebtActivity(),
+            'analytics' => $this->analytics($days),
             'generated_at' => now()->toISOString(),
+        ];
+    }
+
+    private function analytics(int $days): array
+    {
+        $to = now()->endOfDay();
+        $from = now()->subDays($days - 1)->startOfDay();
+        $hasMetrics = Schema::hasTable('online_store_daily_metrics');
+        $hasVisitors = Schema::hasTable('online_store_daily_visitors');
+        $hasPromotionUsage = Schema::hasTable('online_store_promotion_redemptions');
+
+        $metricRows = $hasMetrics
+            ? DB::table('online_store_daily_metrics')
+                ->whereBetween('metric_date', [$from->toDateString(), $to->toDateString()])
+                ->get()->keyBy(fn ($row) => (string) $row->metric_date)
+            : collect();
+        $visitorRows = $hasVisitors
+            ? DB::table('online_store_daily_visitors')
+                ->selectRaw('visit_date, COUNT(*) aggregate')
+                ->whereBetween('visit_date', [$from->toDateString(), $to->toDateString()])
+                ->groupBy('visit_date')->pluck('aggregate', 'visit_date')
+            : collect();
+        $orderRows = SalesOrder::query()
+            ->where('origin', SalesOrder::ORIGIN_STORE)
+            ->whereBetween('created_at', [$from, $to])
+            ->selectRaw('DATE(created_at) metric_date, COUNT(*) orders_count, SUM(total) revenue')
+            ->groupByRaw('DATE(created_at)')->get()->keyBy('metric_date');
+        $couponRows = Schema::hasTable('online_store_coupon_redemptions')
+            ? DB::table('online_store_coupon_redemptions')
+                ->whereBetween('created_at', [$from, $to])
+                ->whereIn('status', ['reserved', 'applied'])
+                ->selectRaw('DATE(created_at) metric_date, COUNT(*) uses_count')
+                ->groupByRaw('DATE(created_at)')->pluck('uses_count', 'metric_date')
+            : collect();
+        $promotionRows = $hasPromotionUsage
+            ? DB::table('online_store_promotion_redemptions')
+                ->whereBetween('used_at', [$from, $to])
+                ->selectRaw('DATE(used_at) metric_date, COUNT(*) uses_count')
+                ->groupByRaw('DATE(used_at)')->pluck('uses_count', 'metric_date')
+            : collect();
+
+        $daily = collect(CarbonPeriod::create($from->toDateString(), $to->toDateString()))
+            ->map(function ($date) use ($metricRows, $visitorRows, $orderRows, $couponRows, $promotionRows) {
+                $key = $date->toDateString();
+                $metric = $metricRows->get($key);
+                $orders = $orderRows->get($key);
+
+                return [
+                    'date' => $key,
+                    'visits' => (int) ($metric->store_visits ?? 0),
+                    'unique_visitors' => (int) ($visitorRows[$key] ?? 0),
+                    'product_views' => (int) ($metric->product_views ?? 0),
+                    'section_views' => (int) ($metric->section_views ?? 0),
+                    'banner_clicks' => (int) ($metric->banner_clicks ?? 0),
+                    'orders' => (int) ($orders->orders_count ?? 0),
+                    'revenue' => round((float) ($orders->revenue ?? 0), 2),
+                    'coupon_uses' => (int) ($couponRows[$key] ?? 0),
+                    'promotion_uses' => (int) ($promotionRows[$key] ?? 0),
+                ];
+            })->values();
+
+        $storeOrders = SalesOrder::query()->where('origin', SalesOrder::ORIGIN_STORE);
+        $promotionUsage = $hasPromotionUsage ? DB::table('online_store_promotion_redemptions') : null;
+        $couponUsage = Schema::hasTable('online_store_coupon_redemptions')
+            ? DB::table('online_store_coupon_redemptions')->whereIn('status', ['reserved', 'applied'])
+            : null;
+
+        return [
+            'period_days' => $days,
+            'period_from' => $from->toDateString(),
+            'period_to' => $to->toDateString(),
+            'audience' => [
+                'visits' => $hasMetrics ? (int) DB::table('online_store_daily_metrics')->sum('store_visits') : 0,
+                'unique_visitors' => $hasVisitors ? (int) DB::table('online_store_daily_visitors')->distinct()->count('visitor_hash') : 0,
+                'registered_users' => (int) DB::table('users')->whereRaw('LOWER(type) = ?', ['user'])->count(),
+                'linked_users' => (int) DB::table('online_store_account_links')->where('status', 'active')->distinct()->count('user_id'),
+                'active_customer_links' => (int) DB::table('online_store_account_links')->where('status', 'active')->where('role', 'customer')->count(),
+                'active_seller_links' => (int) DB::table('online_store_account_links')->where('status', 'active')->where('role', 'seller')->count(),
+            ],
+            'engagement' => [
+                'product_views' => (int) DB::table('online_store_listings')->sum('view_count'),
+                'section_views' => (int) DB::table('online_store_home_sections')->sum('view_count'),
+                'banner_clicks' => (int) DB::table('online_store_banners')->sum('click_count'),
+            ],
+            'commerce' => [
+                'orders' => (clone $storeOrders)->count(),
+                'revenue' => round((float) (clone $storeOrders)->sum('total'), 2),
+                'average_order_value' => ($count = (clone $storeOrders)->count()) > 0
+                    ? round((float) (clone $storeOrders)->sum('total') / $count, 2) : 0.0,
+                'by_status' => (clone $storeOrders)->selectRaw('status, COUNT(*) aggregate')
+                    ->groupBy('status')->pluck('aggregate', 'status')->map(fn ($value) => (int) $value)->all(),
+            ],
+            'discounts' => [
+                'promotions' => [
+                    'uses' => $promotionUsage ? (clone $promotionUsage)->count() : 0,
+                    'discount_total' => $promotionUsage ? round((float) (clone $promotionUsage)->sum('discount_amount'), 2) : 0.0,
+                ],
+                'coupons' => [
+                    'uses' => $couponUsage ? (clone $couponUsage)->count() : 0,
+                    'discount_total' => $couponUsage ? round((float) (clone $couponUsage)->sum('discount_amount'), 2) : 0.0,
+                ],
+            ],
+            'catalog' => [
+                'categories' => (int) DB::table('online_store_categories')->count(),
+                'active_categories' => (int) DB::table('online_store_categories')->where('is_active', true)->count(),
+                'sections' => (int) DB::table('online_store_home_sections')->count(),
+                'visible_sections' => (int) DB::table('online_store_home_sections')->where('is_visible', true)->count(),
+                'banners' => (int) DB::table('online_store_banners')->count(),
+                'active_banners' => (int) DB::table('online_store_banners')->where('is_active', true)->count(),
+            ],
+            'reviews' => [
+                'total' => (int) DB::table('online_store_reviews')->count(),
+                'pending' => (int) DB::table('online_store_reviews')->where('status', 'pending')->count(),
+                'published' => (int) DB::table('online_store_reviews')->where('status', 'published')->count(),
+                'average_rating' => round((float) DB::table('online_store_reviews')->where('status', 'published')->avg('rating'), 2),
+            ],
+            'top_products' => DB::table('online_store_listings as listing')
+                ->join('products as product', 'product.id', '=', 'listing.product_id')
+                ->select(['listing.id', 'listing.product_id', 'product.nameAr as name', 'listing.view_count'])
+                ->orderByDesc('listing.view_count')->orderBy('listing.id')->limit(5)->get()->map(fn ($row) => (array) $row)->all(),
+            'top_sections' => DB::table('online_store_home_sections')
+                ->select(['id', 'title_translations', 'view_count'])
+                ->orderByDesc('view_count')->orderBy('id')->limit(5)->get()->map(function ($row) {
+                    $translations = json_decode((string) $row->title_translations, true) ?: [];
+                    return ['id' => (int) $row->id, 'name' => $translations['ar'] ?? $translations['en'] ?? '#'.$row->id, 'view_count' => (int) $row->view_count];
+                })->all(),
+            'daily' => $daily->all(),
         ];
     }
 

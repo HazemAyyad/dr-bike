@@ -119,6 +119,12 @@ class Kernel extends ConsoleKernel
             ->timezone('Asia/Hebron')
             ->withoutOverlapping();
 
+        $schedule->command('online-store:notify-low-stock')
+            ->hourly()
+            ->timezone('Asia/Hebron')
+            ->withoutOverlapping()
+            ->onOneServer();
+
         $schedule->command('stock-images:queue-work')
             ->everyMinute()
             ->timezone('Asia/Hebron')

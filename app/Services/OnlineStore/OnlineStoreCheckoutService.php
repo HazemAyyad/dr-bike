@@ -5,6 +5,7 @@ namespace App\Services\OnlineStore;
 use App\Models\City;
 use App\Models\Customer;
 use App\Models\OnlineStore\OnlineStoreListing;
+use App\Models\OnlineStore\OnlineStorePromotionRedemption;
 use App\Models\PartnerAddress;
 use App\Models\Product;
 use App\Models\SalesOrder;
@@ -97,9 +98,27 @@ final class OnlineStoreCheckoutService
             'product_id' => $item['product_id'], 'size_id' => $item['size_id'], 'size_color_id' => $item['size_color_id'],
             'quantity' => $item['quantity'], 'unit_price' => $item['unit_price'], 'is_hidden' => false,
         ])->all();
-        $reserveCoupon = $priced['coupon'] ? function (SalesOrder $order) use ($priced, $actor, $link): void {
-            $this->coupons->reserve($priced['coupon'], $order, $actor, $link, $priced['coupon_discount']);
-        } : null;
+        $recordDiscounts = function (SalesOrder $order) use ($priced, $actor, $link): void {
+            if ($priced['coupon']) {
+                $this->coupons->reserve($priced['coupon'], $order, $actor, $link, $priced['coupon_discount']);
+            }
+            collect($priced['items'])
+                ->filter(fn (array $item) => ! empty($item['promotion_id']) && (float) $item['promotion_discount'] > 0)
+                ->groupBy('promotion_id')
+                ->each(function ($items, $promotionId) use ($order, $actor, $link): void {
+                    OnlineStorePromotionRedemption::query()->create([
+                        'promotion_id' => (int) $promotionId,
+                        'sales_order_id' => (int) $order->getKey(),
+                        'user_id' => (int) $actor->getKey(),
+                        'customer_id' => $link->role === 'customer' ? (int) $link->customer_id : null,
+                        'seller_id' => $link->role === 'seller' ? (int) $link->seller_id : null,
+                        'items_count' => $items->count(),
+                        'quantity' => (int) $items->sum('quantity'),
+                        'discount_amount' => round((float) $items->sum('promotion_discount'), 2),
+                        'used_at' => now(),
+                    ]);
+                });
+        };
         $postFinancials = in_array($paymentType, ['credit', 'mixed'], true)
             ? fn (SalesOrder $order) => $this->fulfillment->postAcceptedOrderFinancials($order, $actor)
             : null;
@@ -119,7 +138,7 @@ final class OnlineStoreCheckoutService
         ]);
         $order = $this->orders->store($actor, $trusted, [
             'origin' => SalesOrder::ORIGIN_STORE, 'origin_user_id' => $actor->getKey(), 'client_request_id' => $requestId,
-            'before_creation_effects' => $reserveCoupon,
+            'before_creation_effects' => $recordDiscounts,
             'before_reservation_effects' => $postFinancials,
         ]);
 

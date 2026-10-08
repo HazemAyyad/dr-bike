@@ -35,6 +35,7 @@ final class NotificationCatalog
             'store_order_canceled' => self::item('إلغاء طلب متجر', 'store', 'high', 'urgent'),
             'store_customer_order_status' => self::item('تحديث طلب للعميل', 'store', 'high', 'sales_order'),
             'store_marketing_promotion' => self::item('عرض متجر للعملاء', 'store', 'normal', 'default'),
+            'online_store_low_stock' => self::item('انخفاض مخزون منتج في المتجر', 'store', 'high', 'urgent'),
             'sales_order_status' => self::item('تحديث حالة طلبية (عام)', 'sales_orders', 'high', 'sales_order'),
             'sales_order_status_unconfirmed' => self::item('طلبية جديدة غير مؤكدة', 'sales_orders', 'high', 'sales_order'),
             'sales_order_status_confirmed' => self::item('تأكيد الطلبية', 'sales_orders', 'high', 'sales_order'),

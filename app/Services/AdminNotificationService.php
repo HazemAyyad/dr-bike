@@ -83,6 +83,8 @@ class AdminNotificationService
 
     public const TYPE_STORE_MARKETING_PROMOTION = 'store_marketing_promotion';
 
+    public const TYPE_ONLINE_STORE_LOW_STOCK = 'online_store_low_stock';
+
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
 
     public const TYPE_NEGATIVE_INSTANT_SALE_STOCK = 'negative_instant_sale_stock';

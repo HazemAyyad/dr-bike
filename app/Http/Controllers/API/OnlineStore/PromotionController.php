@@ -21,7 +21,12 @@ class PromotionController extends Controller
     {
         $this->authorizeRequest($request);
 
-        return OnlineStorePromotion::with('targets')->orderByDesc('id')->paginate();
+        return OnlineStorePromotion::query()
+            ->with('targets')
+            ->withCount('redemptions')
+            ->withSum('redemptions as discount_total', 'discount_amount')
+            ->orderByDesc('id')
+            ->paginate();
     }
 
     public function show(Request $request, OnlineStorePromotion $promotion)
@@ -78,6 +83,41 @@ class PromotionController extends Controller
         unset($result['coupon']);
 
         return ['data' => $result];
+    }
+
+    public function redemptions(Request $request, OnlineStorePromotion $promotion)
+    {
+        $this->authorizeRequest($request, true);
+
+        $base = $promotion->redemptions();
+        $paginator = (clone $base)
+            ->with([
+                'user:id,name,email,profile_image_path',
+                'customer',
+                'seller',
+                'salesOrder:id,serial_number,total,status',
+            ])
+            ->orderByDesc('used_at')
+            ->orderByDesc('id')
+            ->paginate();
+
+        return response()->json([
+            'data' => $paginator->items(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+            'summary' => [
+                'uses' => (clone $base)->count(),
+                'unique_users' => (clone $base)->distinct()->count('user_id'),
+                'orders' => (clone $base)->distinct()->count('sales_order_id'),
+                'items_count' => (int) (clone $base)->sum('items_count'),
+                'quantity' => (int) (clone $base)->sum('quantity'),
+                'discount_total' => round((float) (clone $base)->sum('discount_amount'), 2),
+            ],
+        ]);
     }
 
     private function authorizeRequest(Request $request, bool $resource = false): void

@@ -182,6 +182,11 @@ class SalesOrder extends Model
         return $this->hasOne(\App\Models\OnlineStore\OnlineStoreCouponRedemption::class);
     }
 
+    public function promotionRedemptions(): HasMany
+    {
+        return $this->hasMany(\App\Models\OnlineStore\OnlineStorePromotionRedemption::class);
+    }
+
     public function deliveryCompany(): BelongsTo
     {
         return $this->belongsTo(DeliveryCompany::class);

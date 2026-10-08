@@ -16,6 +16,11 @@ class OnlineStorePromotion extends Model
         return $this->hasMany(OnlineStorePromotionTarget::class, 'promotion_id');
     }
 
+    public function redemptions()
+    {
+        return $this->hasMany(OnlineStorePromotionRedemption::class, 'promotion_id');
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

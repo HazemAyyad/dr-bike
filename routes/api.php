@@ -1766,6 +1766,7 @@ Route::prefix('online-store')
         Route::get('/promotions', [OnlineStorePromotionController::class, 'index']);
         Route::post('/promotions', [OnlineStorePromotionController::class, 'store']);
         Route::get('/promotions/{promotion}', [OnlineStorePromotionController::class, 'show']);
+        Route::get('/promotions/{promotion}/redemptions', [OnlineStorePromotionController::class, 'redemptions']);
         Route::patch('/promotions/{promotion}', [OnlineStorePromotionController::class, 'update']);
         Route::post('/promotions/{promotion}/activate', [OnlineStorePromotionController::class, 'activate']);
         Route::post('/promotions/{promotion}/deactivate', [OnlineStorePromotionController::class, 'deactivate']);

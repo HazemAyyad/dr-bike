@@ -17,7 +17,7 @@ class AccountLinkController extends Controller
         $search = trim((string) ($filters['search'] ?? ''));
 
         return User::query()
-            ->select(['id', 'name', 'email', 'phone', 'is_blocked'])
+            ->select(['id', 'name', 'email', 'phone', 'profile_image_path', 'is_blocked'])
             ->whereRaw('LOWER(type) = ?', ['user'])
             ->with(['onlineStoreAccountLinks' => function ($query) {
                 $query->select([
@@ -41,6 +41,9 @@ class AccountLinkController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'phone' => $user->phone,
+                'profile_image_url' => $user->profile_image_path
+                    ? asset('storage/'.ltrim($user->profile_image_path, '/'))
+                    : null,
                 'is_blocked' => (bool) $user->is_blocked,
                 'is_linkable' => ! (bool) $user->is_blocked,
                 'links' => $user->onlineStoreAccountLinks->map(fn (OnlineStoreAccountLink $link) => [
