@@ -34,7 +34,7 @@ class StoreHomeController extends StoreBaseController
     private function compose(OnlineStoreHomeSection $section, BannerService $banners): array
     {
         $items = match (true) {
-            $section->section_type === 'hero' => $banners->active()->map(fn ($banner) => $this->bannerPayload($banner))->all(),
+            $section->section_type === 'hero' => $banners->active()->map(fn ($banner) => $this->bannerPayload($banner, $banners))->all(),
             $section->section_type === 'maintenance' => [$section->selection_config],
             $section->selection_mode === 'manual' => $this->manualItems($section),
             $section->selection_mode === 'automatic' => $this->automaticItems($section),
@@ -119,7 +119,7 @@ class StoreHomeController extends StoreBaseController
         ])->all();
     }
 
-    private function bannerPayload($banner): array
+    private function bannerPayload($banner, BannerService $banners): array
     {
         return [
             'id' => (int) $banner->id,
@@ -128,6 +128,7 @@ class StoreHomeController extends StoreBaseController
             'content_translations' => (array) $banner->content_translations,
             'action_type' => (string) $banner->action_type,
             'action_target_id' => $banner->action_target_id === null ? null : (int) $banner->action_target_id,
+            'action_product_id' => $banners->actionProductId($banner),
             'action_url' => $banner->action_url,
         ];
     }

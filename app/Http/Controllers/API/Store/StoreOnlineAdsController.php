@@ -25,6 +25,7 @@ class StoreOnlineAdsController extends StoreBaseController
             'contentTranslations' => $banner->content_translations,
             'actionType' => (string) $banner->action_type,
             'actionTargetId' => $banner->action_target_id,
+            'actionProductId' => $banners->actionProductId($banner),
             'actionUrl' => $banner->action_url,
             'sortOrder' => (int) $banner->sort_order,
         ])->values();

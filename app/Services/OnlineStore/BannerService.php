@@ -3,6 +3,7 @@
 namespace App\Services\OnlineStore;
 
 use App\Models\OnlineStore\OnlineStoreBanner;
+use App\Models\OnlineStore\OnlineStoreListing;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -53,6 +54,19 @@ final class BannerService
                 OnlineStoreBanner::query()->whereKey($id)->update(['sort_order' => $order]);
             }
         });
+    }
+
+    public function actionProductId(OnlineStoreBanner $banner): ?int
+    {
+        if ($banner->action_type !== 'listing' || ! $banner->action_target_id) {
+            return null;
+        }
+
+        $productId = OnlineStoreListing::query()
+            ->whereKey((int) $banner->action_target_id)
+            ->value('product_id');
+
+        return $productId === null ? null : (int) $productId;
     }
 
     private function validateAction(array $data, CarbonImmutable $at): void
