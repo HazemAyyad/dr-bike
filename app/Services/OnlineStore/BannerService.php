@@ -18,6 +18,9 @@ final class BannerService
         $this->validateAction($merged, $at);
         $data = $this->normalizeDates($data);
         $banner ??= new OnlineStoreBanner;
+        if (! $banner->exists && ! array_key_exists('sort_order', $data)) {
+            $data['sort_order'] = ((int) OnlineStoreBanner::query()->max('sort_order')) + 1;
+        }
         $banner->fill($data);
         if (! $banner->exists) {
             $banner->created_by = $actorId;

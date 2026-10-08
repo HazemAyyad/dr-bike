@@ -21,6 +21,9 @@ final class HomeSectionService
     {
         $this->validateComposition($data['section_type'] ?? $section?->section_type, $data['selection_mode'] ?? $section?->selection_mode, $data['selection_config'] ?? $section?->selection_config);
         $section ??= new OnlineStoreHomeSection;
+        if (! $section->exists && ! array_key_exists('sort_order', $data)) {
+            $data['sort_order'] = ((int) OnlineStoreHomeSection::query()->max('sort_order')) + 1;
+        }
         $section->fill($data);
         if (! $section->exists) {
             $section->created_by = $actorId;

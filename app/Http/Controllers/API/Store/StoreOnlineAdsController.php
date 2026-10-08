@@ -2,11 +2,19 @@
 
 namespace App\Http\Controllers\API\Store;
 
+use App\Models\OnlineStore\OnlineStoreBanner;
 use App\Services\OnlineStore\BannerService;
 use Illuminate\Http\Request;
 
 class StoreOnlineAdsController extends StoreBaseController
 {
+    public function recordClick(OnlineStoreBanner $banner)
+    {
+        OnlineStoreBanner::query()->whereKey($banner->getKey())->increment('click_count');
+
+        return response()->noContent();
+    }
+
     public function getAllAds(Request $request, BannerService $banners)
     {
         $rows = $banners->active()->map(fn ($banner) => [

@@ -51,6 +51,10 @@ class BannerTest extends TestCase
 
         $ads = collect($this->postJson('/OnlineAds/GetAllAds')->assertOk()->json('rows'));
         $this->assertSame(['OnlineStore/Content/second.jpg', 'first.jpg'], $ads->pluck('imageUrl')->all());
+
+        $this->postJson('/OnlineStore/Banners/'.$first['id'].'/Click')->assertNoContent();
+        $this->postJson('/OnlineStore/Banners/'.$first['id'].'/Click')->assertNoContent();
+        $this->assertSame(2, OnlineStoreBanner::query()->findOrFail($first['id'])->click_count);
     }
 
     public function test_internal_targets_must_be_customer_visible_and_use_the_supplied_reference_time(): void

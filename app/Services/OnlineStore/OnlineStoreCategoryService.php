@@ -16,6 +16,13 @@ final class OnlineStoreCategoryService
     {
         return DB::transaction(function () use ($category, $data, $actor) {
             $category ??= new OnlineStoreCategory;
+            if (! $category->exists && ! array_key_exists('sort_order', $data)) {
+                $siblings = OnlineStoreCategory::query();
+                isset($data['parent_id'])
+                    ? $siblings->where('parent_id', $data['parent_id'])
+                    : $siblings->whereNull('parent_id');
+                $data['sort_order'] = ((int) $siblings->max('sort_order')) + 1;
+            }
             if (array_key_exists('parent_id', $data)) {
                 $this->assertNoCycle($category, $data['parent_id']);
             }
