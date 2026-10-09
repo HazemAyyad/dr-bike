@@ -45,6 +45,9 @@ class FirebaseService
     /** Sales order status change — church bell (res/raw/sales_order_church_bell). */
     public const SALES_ORDER_STATUS_CHANNEL_ID = 'dr_bike_sales_order_status';
 
+    /** Store customer notifications — must match the Store Flutter app. */
+    public const STORE_CHANNEL_ID = 'dr_bike_store_notifications';
+
     public const SALES_ORDER_STATUS_SOUND_ANDROID = 'sales_order_church_bell';
 
     public const SALES_ORDER_STATUS_SOUND_IOS = 'sales_order_church_bell.wav';
@@ -92,6 +95,14 @@ class FirebaseService
     /** @var list<string> */
     private const SALES_ORDER_STATUS_NOTIFICATION_TYPES = [
         'sales_order_status',
+    ];
+
+    /** @var list<string> */
+    private const STORE_NOTIFICATION_TYPES = [
+        'store_customer_order_status',
+        'store_marketing_promotion',
+        'store_popup_campaign',
+        'store_broadcast',
     ];
 
     /** @var list<string> */
@@ -629,6 +640,15 @@ class FirebaseService
                 'channel_id' => self::SALES_ORDER_STATUS_CHANNEL_ID,
                 'sound' => self::SALES_ORDER_STATUS_SOUND_ANDROID,
                 'ios_sound' => self::SALES_ORDER_STATUS_SOUND_IOS,
+                'priority' => 'high',
+            ];
+        }
+
+        if (in_array($type, self::STORE_NOTIFICATION_TYPES, true)) {
+            return [
+                'channel_id' => self::STORE_CHANNEL_ID,
+                'sound' => 'default',
+                'ios_sound' => 'default',
                 'priority' => 'high',
             ];
         }

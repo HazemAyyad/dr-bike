@@ -69,9 +69,17 @@ class SalesOrderNotificationService
                 (int) $order->id,
                 true
             );
-            $this->onlineStoreNotifications->notifyOrderStatus($order, $toStatus);
         } catch (\Throwable $e) {
             Log::error('Sales order notification failed: '.$e->getMessage(), [
+                'order_id' => $order->id,
+                'to_status' => $toStatus,
+            ]);
+        }
+
+        try {
+            $this->onlineStoreNotifications->notifyOrderStatus($order, $toStatus);
+        } catch (\Throwable $e) {
+            Log::error('Store customer order notification failed: '.$e->getMessage(), [
                 'order_id' => $order->id,
                 'to_status' => $toStatus,
             ]);

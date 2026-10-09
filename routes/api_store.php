@@ -41,6 +41,7 @@ Route::post('/Users/Register', [StoreUsersController::class, 'register']);
 Route::post('/Users/GetById', [StoreUsersController::class, 'getById']);
 Route::post('/Users/Edit', [StoreUsersController::class, 'edit']);
 Route::post('/Users/ProfileImage', [StoreUsersController::class, 'profileImage']);
+Route::post('/Users/FcmToken', [StoreUsersController::class, 'updateFcmToken']);
 Route::post('/Users/BlockUserAndNotActive', [StoreUsersController::class, 'blockUserAndNotActive']);
 
 Route::post('/Settings/CheckSetting', [StoreSettingsController::class, 'checkSetting']);

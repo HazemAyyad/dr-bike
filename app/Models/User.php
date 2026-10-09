@@ -104,6 +104,11 @@ class User extends Authenticatable
         return $this->hasMany(OnlineStoreAccountLink::class);
     }
 
+    public function originSalesOrders()
+    {
+        return $this->hasMany(SalesOrder::class, 'origin_user_id');
+    }
+
     /**
      * هل يحق لهذا المستخدم رؤية/تعديل سعر التكلفة؟
      * الأدمن دائماً مسموح، والموظف فقط إذا منحه الأدمن صلاحية "Cost Price".

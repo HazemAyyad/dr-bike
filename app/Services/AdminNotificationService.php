@@ -83,6 +83,10 @@ class AdminNotificationService
 
     public const TYPE_STORE_MARKETING_PROMOTION = 'store_marketing_promotion';
 
+    public const TYPE_STORE_POPUP_CAMPAIGN = 'store_popup_campaign';
+
+    public const TYPE_STORE_BROADCAST = 'store_broadcast';
+
     public const TYPE_ONLINE_STORE_LOW_STOCK = 'online_store_low_stock';
 
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
@@ -1334,13 +1338,21 @@ class AdminNotificationService
         }
 
         $destination = (string) ($data['destination_type'] ?? 'none');
-        if (! in_array($destination, ['none', 'order', 'listing', 'category', 'promotion', 'home'], true)) {
+        if (! in_array($destination, ['none', 'order', 'product', 'listing', 'category', 'promotion', 'home', 'url'], true)) {
             throw new \InvalidArgumentException('Unsupported Store notification destination.');
         }
         $destinationId = $data['destination_id'] ?? null;
-        if (($destination === 'none' && $destinationId !== null && $destinationId !== '')
-            || ($destination !== 'none' && (! is_numeric($destinationId) || (int) $destinationId < 1))) {
+        $withoutId = in_array($destination, ['none', 'home', 'url'], true);
+        if (($withoutId && $destinationId !== null && $destinationId !== '')
+            || (! $withoutId && (! is_numeric($destinationId) || (int) $destinationId < 1))) {
             throw new \InvalidArgumentException('Store notification destination metadata is invalid.');
+        }
+        if ($destination === 'url') {
+            $url = (string) ($data['destination_url'] ?? '');
+            $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+            if (! filter_var($url, FILTER_VALIDATE_URL) || ! in_array($scheme, ['http', 'https'], true)) {
+                throw new \InvalidArgumentException('Store notification URL is invalid.');
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\OnlineStore\OnlineStorePopupCampaign;
 use App\Models\User;
 use App\Policies\OnlineStore\OnlineStorePolicy;
+use App\Services\OnlineStore\OnlineStoreNotificationService;
 use App\Services\OnlineStore\PopupCampaignService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -34,18 +35,39 @@ class PopupCampaignController extends Controller
         return response()->json(['data' => $popupCampaign]);
     }
 
-    public function store(Request $request, PopupCampaignService $service)
-    {
+    public function store(
+        Request $request,
+        PopupCampaignService $service,
+        OnlineStoreNotificationService $notifications,
+    ) {
         $this->authorizeRequest($request);
 
-        return response()->json(['data' => $service->save(null, $this->validated($request), $request->user())], 201);
+        $campaign = $service->save(null, $this->validated($request), $request->user());
+        $delivery = null;
+        if ($request->boolean('send_push')) {
+            abort_unless($campaign->is_active, 422, 'فعّل الحملة قبل إرسال إشعارها.');
+            $delivery = $notifications->broadcastPopupCampaign($campaign, $request->user());
+        }
+
+        return response()->json(['data' => $campaign, 'notification_delivery' => $delivery], 201);
     }
 
-    public function update(Request $request, OnlineStorePopupCampaign $popupCampaign, PopupCampaignService $service)
-    {
+    public function update(
+        Request $request,
+        OnlineStorePopupCampaign $popupCampaign,
+        PopupCampaignService $service,
+        OnlineStoreNotificationService $notifications,
+    ) {
         $this->authorizeRequest($request, true);
 
-        return response()->json(['data' => $service->save($popupCampaign, $this->validated($request, true), $request->user())]);
+        $campaign = $service->save($popupCampaign, $this->validated($request, true), $request->user());
+        $delivery = null;
+        if ($request->boolean('send_push')) {
+            abort_unless($campaign->is_active, 422, 'فعّل الحملة قبل إرسال إشعارها.');
+            $delivery = $notifications->broadcastPopupCampaign($campaign, $request->user());
+        }
+
+        return response()->json(['data' => $campaign, 'notification_delivery' => $delivery]);
     }
 
     public function activate(Request $request, OnlineStorePopupCampaign $popupCampaign, PopupCampaignService $service)

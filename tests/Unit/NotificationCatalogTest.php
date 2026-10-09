@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Enums\SalesOrderStatus;
+use App\Services\AdminNotificationService;
 use App\Services\SalesOrderNotificationService;
 use App\Support\NotificationCatalog;
 use PHPUnit\Framework\TestCase;
@@ -74,5 +75,20 @@ class NotificationCatalogTest extends TestCase
         $this->assertArrayHasKey(SalesOrderNotificationService::TYPE_SHIPLY_HANDOVER, $types);
         $this->assertArrayHasKey(SalesOrderNotificationService::TYPE_SHIPLY_DELIVERED, $types);
         $this->assertArrayHasKey(SalesOrderNotificationService::TYPE_SHIPLY_STATUS, $types);
+    }
+
+    public function test_store_customer_push_types_are_available_in_the_catalog(): void
+    {
+        $types = NotificationCatalog::types();
+
+        foreach ([
+            AdminNotificationService::TYPE_STORE_CUSTOMER_ORDER_STATUS,
+            AdminNotificationService::TYPE_STORE_MARKETING_PROMOTION,
+            AdminNotificationService::TYPE_STORE_POPUP_CAMPAIGN,
+            AdminNotificationService::TYPE_STORE_BROADCAST,
+        ] as $type) {
+            $this->assertArrayHasKey($type, $types);
+            $this->assertSame('store', $types[$type]['category']);
+        }
     }
 }

@@ -88,6 +88,7 @@ use App\Http\Controllers\API\OnlineStore\StoreGovernanceController as OnlineStor
 use App\Http\Controllers\API\OnlineStore\ReviewController as OnlineStoreReviewController;
 use App\Http\Controllers\API\OnlineStore\NotificationController as OnlineStoreNotificationController;
 use App\Http\Controllers\API\OnlineStore\PopupCampaignController as OnlineStorePopupCampaignController;
+use App\Http\Controllers\API\OnlineStore\StoreNotificationBroadcastController as OnlineStoreNotificationBroadcastController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1771,6 +1772,8 @@ Route::prefix('online-store')
         Route::post('/popup-campaigns/{popupCampaign}/activate', [OnlineStorePopupCampaignController::class, 'activate'])->name('popup-campaigns.activate');
         Route::post('/popup-campaigns/{popupCampaign}/deactivate', [OnlineStorePopupCampaignController::class, 'deactivate'])->name('popup-campaigns.deactivate');
         Route::delete('/popup-campaigns/{popupCampaign}', [OnlineStorePopupCampaignController::class, 'destroy'])->name('popup-campaigns.destroy');
+        Route::get('/notification-broadcasts', [OnlineStoreNotificationBroadcastController::class, 'index'])->name('notification-broadcasts.index');
+        Route::post('/notification-broadcasts', [OnlineStoreNotificationBroadcastController::class, 'store'])->name('notification-broadcasts.store');
         Route::get('/promotions', [OnlineStorePromotionController::class, 'index']);
         Route::post('/promotions', [OnlineStorePromotionController::class, 'store']);
         Route::get('/promotions/{promotion}', [OnlineStorePromotionController::class, 'show']);

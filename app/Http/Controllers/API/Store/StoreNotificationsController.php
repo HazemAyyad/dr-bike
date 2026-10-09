@@ -20,15 +20,19 @@ class StoreNotificationsController extends StoreBaseController
             return response()->json(['rows' => [], 'total' => 0, 'totalNotFiltered' => 0]);
         }
         $this->rejectForeignSubmittedUser($request, $actor);
-        $rows = $notifications->notificationsFor($actor)->map(fn (AdminNotification $notification) => [
-            'id' => (int) $notification->getKey(),
-            'isRead' => (bool) $notification->is_read,
-            'title' => (string) $notification->title,
-            'content' => (string) $notification->body,
-            'toUser' => (string) $actor->getKey(),
-            'createdAt' => $this->dateString($notification->created_at),
-            'updatedAt' => $this->dateString($notification->updated_at),
-        ])->values();
+        $rows = $notifications->notificationsFor($actor)->map(function (AdminNotification $notification) use ($actor) {
+            return array_merge((array) $notification->data, [
+                'id' => (int) $notification->getKey(),
+                'isRead' => (bool) $notification->is_read,
+                'title' => (string) $notification->title,
+                'content' => (string) $notification->body,
+                'toUser' => (string) $actor->getKey(),
+                'type' => (string) $notification->type,
+                'category' => $notification->type === OnlineStoreNotificationService::TYPE_ORDER_STATUS ? 'order' : 'promotion',
+                'createdAt' => $this->dateString($notification->created_at),
+                'updatedAt' => $this->dateString($notification->updated_at),
+            ]);
+        })->values();
 
         return response()->json([
             'rows' => $rows,

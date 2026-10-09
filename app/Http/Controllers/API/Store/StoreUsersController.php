@@ -19,6 +19,7 @@ class StoreUsersController extends StoreBaseController
             'phoneNumber' => ['required', 'string'],
             'password' => ['required', 'string'],
             'confirmPassword' => ['required', 'same:password'],
+            'userToken' => ['nullable', 'string', 'max:512'],
         ]);
 
         $user = new StoreUser;
@@ -29,6 +30,7 @@ class StoreUsersController extends StoreBaseController
             'password' => Hash::make($data['password']),
             'type' => 'User',
             'is_blocked' => false,
+            'fcm_token' => filled($data['userToken'] ?? null) ? trim((string) $data['userToken']) : null,
         ])->save();
 
         $onboarding->ensureCustomerAccount($user);
@@ -101,6 +103,17 @@ class StoreUsersController extends StoreBaseController
         }
 
         return response()->json($this->userPayload($user->fresh()));
+    }
+
+    public function updateFcmToken(Request $request)
+    {
+        $user = $this->authenticatedStoreUser($request);
+        $data = $request->validate(['fcm_token' => ['required', 'string', 'max:512']]);
+        $token = trim((string) $data['fcm_token']);
+        abort_if($token === '', 422, 'FCM token is required.');
+        $user->forceFill(['fcm_token' => $token])->save();
+
+        return response()->json(['data' => true]);
     }
 
     private function authenticatedStoreUser(Request $request): StoreUser
