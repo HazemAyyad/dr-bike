@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Events\Support\SupportConversationRead;
 use App\Events\Support\SupportMessageCreated;
+use App\Events\Support\SupportTypingUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeSuggestion;
@@ -237,61 +238,41 @@ class SupportConversationController extends Controller
             'message or attachments are required'
         );
 
-        if ($conversation->source === SupportConversation::SOURCE_ONLINE_STORE) {
-            $existing = filled($validated['client_message_id'] ?? null)
-                ? SupportMessage::query()
-                    ->where('support_conversation_id', $conversation->getKey())
-                    ->where('client_message_id', $validated['client_message_id'])
-                    ->first()
-                : null;
-            $message = DB::transaction(fn () => $this->supportMessages->create(
-                $conversation,
-                $request->user(),
-                SupportMessage::SENDER_SUPPORT,
-                $validated['message'] ?? null,
-                $request->file('attachments', []),
-                $validated['client_message_id'] ?? null,
-            ), 3);
-            $conversation = $conversation->fresh()->loadCount('messages');
-            $messagePayload = $this->supportPayloads->message($message, (int) $request->user()->id);
-            $conversationPayload = $this->supportPayloads->conversation($conversation);
-            if (! $existing) {
-                event(SupportMessageCreated::fromPayloads($conversation, $messagePayload, $conversationPayload));
-                $this->storeSupportNotifications->afterMessage($conversation->load('requester'), $message);
-            }
-
-            return response()->json([
-                'status' => 'success',
-                'message' => 'تم إرسال الرسالة',
-                'support_message' => $messagePayload,
-                'conversation' => $conversationPayload,
-            ], $existing ? 200 : 201);
-        }
-
-        $message = DB::transaction(function () use ($request, $conversation, $validated) {
-            $message = $this->createMessage($request, $conversation, $validated['message'] ?? null);
-            $this->touchConversationAfterMessage($conversation, $message, $request);
-
-            return $message->fresh(['attachments', 'senderUser:id,name', 'reactions.user:id,name']);
-        });
-
-        $this->notifyAfterMessage($conversation->fresh(['employee.user']), $message);
-
-        $conversationPayload = $this->conversationPayload(
-            $conversation->fresh(['employee.user:id,name', 'assignee:id,name', 'suggestion:id,title,category,is_anonymous'])
-        );
-        event(SupportMessageCreated::fromPayloads(
+        $existing = filled($validated['client_message_id'] ?? null)
+            ? SupportMessage::query()
+                ->where('support_conversation_id', $conversation->getKey())
+                ->where('client_message_id', $validated['client_message_id'])
+                ->first()
+            : null;
+        $senderType = $this->canManageSupport($request)
+            ? SupportMessage::SENDER_SUPPORT
+            : SupportMessage::SENDER_EMPLOYEE;
+        $message = DB::transaction(fn () => $this->supportMessages->create(
             $conversation,
-            $this->messagePayload($message, (int) $request->user()->id),
-            $conversationPayload
-        ));
+            $request->user(),
+            $senderType,
+            $validated['message'] ?? null,
+            $request->file('attachments', []),
+            $validated['client_message_id'] ?? null,
+        ), 3);
+        $conversation = $conversation->fresh()->loadCount('messages');
+        $messagePayload = $this->messagePayload($message, (int) $request->user()->id);
+        $conversationPayload = $this->conversationPayload($conversation);
+        if (! $existing) {
+            event(SupportMessageCreated::fromPayloads($conversation, $messagePayload, $conversationPayload));
+            if ($conversation->source === SupportConversation::SOURCE_ONLINE_STORE) {
+                $this->storeSupportNotifications->afterMessage($conversation->load('requester'), $message);
+            } else {
+                $this->notifyAfterMessage($conversation->load('employee.user'), $message);
+            }
+        }
 
         return response()->json([
             'status' => 'success',
             'message' => 'تم إرسال الرسالة',
-            'support_message' => $this->messagePayload($message, (int) $request->user()->id),
+            'support_message' => $messagePayload,
             'conversation' => $conversationPayload,
-        ], 201);
+        ], $existing ? 200 : 201);
     }
 
     public function reactToMessage(Request $request, SupportConversation $conversation, SupportMessage $message)
@@ -356,6 +337,27 @@ class SupportConversationController extends Controller
             'status' => 'success',
             'conversation' => $payload,
         ]);
+    }
+
+    public function typing(Request $request, SupportConversation $conversation)
+    {
+        $this->authorizeConversation($request, $conversation);
+        $validated = $request->validate([
+            'is_typing' => ['required', 'boolean'],
+        ]);
+        $actorType = $this->canManageSupport($request)
+            ? SupportMessage::SENDER_SUPPORT
+            : SupportMessage::SENDER_EMPLOYEE;
+
+        event(new SupportTypingUpdated(
+            (int) $conversation->getKey(),
+            (string) $conversation->source,
+            $actorType,
+            (string) ($request->user()?->name ?? ''),
+            (bool) $validated['is_typing'],
+        ));
+
+        return response()->json(['status' => 'success']);
     }
 
     public function updateStatus(Request $request, SupportConversation $conversation)

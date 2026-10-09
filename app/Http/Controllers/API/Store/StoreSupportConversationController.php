@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API\Store;
 
 use App\Events\Support\SupportConversationRead;
 use App\Events\Support\SupportMessageCreated;
+use App\Events\Support\SupportTypingUpdated;
 use App\Http\Resources\OnlineStore\StorefrontListingResource;
 use App\Models\OnlineStore\OnlineStoreListing;
 use App\Models\SupportConversation;
@@ -219,6 +220,25 @@ final class StoreSupportConversationController extends StoreBaseController
         event(new SupportConversationRead((int) $conversation->getKey(), $payload));
 
         return response()->json(['status' => 'success', 'conversation' => $payload]);
+    }
+
+    public function typing(Request $request, SupportConversation $conversation)
+    {
+        $actor = $this->actor($request);
+        $this->authorizeOwner($conversation, $actor);
+        $validated = $request->validate([
+            'is_typing' => ['required', 'boolean'],
+        ]);
+
+        event(new SupportTypingUpdated(
+            (int) $conversation->getKey(),
+            (string) $conversation->source,
+            SupportMessage::SENDER_STORE_CUSTOMER,
+            (string) ($actor->name ?? ''),
+            (bool) $validated['is_typing'],
+        ));
+
+        return response()->json(['status' => 'success']);
     }
 
     public function unreadCount(Request $request)

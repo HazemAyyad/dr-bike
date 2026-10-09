@@ -17,6 +17,8 @@ class StoreSupportConversationTest extends TestCase
         $this->assertStringContainsString("where('requester_user_id', \$actor->getKey())", $controller);
         $this->assertStringContainsString('client_message_id', $controller);
         $this->assertStringContainsString('requester_unread_count', $controller);
+        $this->assertStringContainsString("'/OnlineStore/Support/Conversations/{conversation}/Typing'", $routes);
+        $this->assertStringContainsString('SupportTypingUpdated', $controller);
     }
 
     public function test_private_attachments_use_signed_download_contract(): void
