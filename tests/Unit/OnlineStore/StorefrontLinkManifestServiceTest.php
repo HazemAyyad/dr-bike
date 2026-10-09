@@ -33,13 +33,13 @@ class StorefrontLinkManifestServiceTest extends TestCase
     public function test_ios_manifest_uses_team_bundle_and_both_deployment_paths(): void
     {
         config()->set('storefront.links.ios_team_id', 'TEAM123');
-        config()->set('storefront.links.ios_bundle_id', 'com.nofa.doctorBike');
+        config()->set('storefront.links.ios_bundle_id', 'com.hazemAyad.doctorBike');
 
         $this->assertSame([
             'applinks' => [
                 'apps' => [],
                 'details' => [[
-                    'appID' => 'TEAM123.com.nofa.doctorBike',
+                    'appID' => 'TEAM123.com.hazemAyad.doctorBike',
                     'paths' => ['/store/products/*', '/public/store/products/*'],
                 ]],
             ],

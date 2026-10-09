@@ -8,6 +8,6 @@ return [
             explode(',', (string) env('STORE_ANDROID_SHA256_CERT_FINGERPRINTS', '')),
         ))),
         'ios_team_id' => env('STORE_IOS_TEAM_ID', ''),
-        'ios_bundle_id' => env('STORE_IOS_BUNDLE_ID', 'com.nofa.doctorBike'),
+        'ios_bundle_id' => env('STORE_IOS_BUNDLE_ID', 'com.hazemAyad.doctorBike'),
     ],
 ];
