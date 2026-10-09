@@ -196,6 +196,15 @@ foreach ($allowedCommands as $cmd) {
     if ($cmd['name'] === '__reverb_restart__') {
         echo ">>> Running: php artisan reverb:restart && reverb:start (background)\n";
 
+        $broadcastDriver = (string) config('broadcasting.default', 'null');
+        if ($broadcastDriver !== 'reverb') {
+            echo htmlspecialchars("   INFO  Reverb skipped; active broadcast driver: {$broadcastDriver}.\n", ENT_QUOTES, 'UTF-8');
+            echo "Exit code: 0\n";
+            echo "----------------------------------------\n";
+
+            continue;
+        }
+
         if (PHP_OS_FAMILY === 'Windows') {
             echo "   INFO  Background Reverb launch is only supported by this deploy script on Linux.\n";
             echo "Exit code: 0\n";
