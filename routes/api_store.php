@@ -14,6 +14,7 @@ use App\Http\Controllers\API\Store\StoreOnlineAdsController;
 use App\Http\Controllers\API\Store\StoreOrdersController;
 use App\Http\Controllers\API\Store\StorePopupCampaignController;
 use App\Http\Controllers\API\Store\StoreSettingsController;
+use App\Http\Controllers\API\Store\StoreSupportConversationController;
 use App\Http\Controllers\API\Store\StoreSupCategoryController;
 use App\Http\Controllers\API\Store\StoreUsersController;
 use App\Http\Middleware\RecordOnlineStoreAnalytics;
@@ -60,6 +61,17 @@ Route::post('/OnlineStore/PopupCampaigns/{popupCampaign}/Event', [StorePopupCamp
     ->middleware('throttle:120,1');
 Route::post('/Notifications/GetNotifications', [StoreNotificationsController::class, 'getNotifications']);
 Route::post('/Notifications/EditNotification', [StoreNotificationsController::class, 'editNotification']);
+Route::get('/OnlineStore/Support/Conversations/UnreadCount', [StoreSupportConversationController::class, 'unreadCount']);
+Route::get('/OnlineStore/Support/Conversations', [StoreSupportConversationController::class, 'index']);
+Route::post('/OnlineStore/Support/Conversations', [StoreSupportConversationController::class, 'store'])
+    ->middleware('throttle:20,1');
+Route::get('/OnlineStore/Support/Conversations/{conversation}', [StoreSupportConversationController::class, 'show'])
+    ->whereNumber('conversation');
+Route::post('/OnlineStore/Support/Conversations/{conversation}/Messages', [StoreSupportConversationController::class, 'sendMessage'])
+    ->whereNumber('conversation')
+    ->middleware('throttle:60,1');
+Route::post('/OnlineStore/Support/Conversations/{conversation}/Read', [StoreSupportConversationController::class, 'markRead'])
+    ->whereNumber('conversation');
 Route::post('/Comments/GetAllCommentsToItem', [StoreCommentsController::class, 'getAllCommentsToItem']);
 Route::post('/Comments/ManageComment', [StoreCommentsController::class, 'manageComment']);
 Route::get('/OnlineStore/Reviews', [StoreCommentsController::class, 'own']);

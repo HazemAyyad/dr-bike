@@ -87,6 +87,8 @@ class AdminNotificationService
 
     public const TYPE_STORE_BROADCAST = 'store_broadcast';
 
+    public const TYPE_STORE_SUPPORT_MESSAGE = 'store_support_message';
+
     public const TYPE_ONLINE_STORE_LOW_STOCK = 'online_store_low_stock';
 
     public const TYPE_SUPPORT_MESSAGE = 'support_message';
@@ -1223,7 +1225,9 @@ class AdminNotificationService
         ?string $relatedType = null,
         ?int $relatedId = null,
     ): ?AdminNotification {
-        if ($recipient->trashed() || $recipient->is_blocked || strcasecmp((string) $recipient->type, 'User') !== 0) {
+        if ((method_exists($recipient, 'trashed') && $recipient->trashed())
+            || $recipient->is_blocked
+            || strcasecmp((string) $recipient->type, 'User') !== 0) {
             return null;
         }
 
@@ -1250,7 +1254,7 @@ class AdminNotificationService
     public function pushToStoreUser(AdminNotification $notification, User $recipient): bool
     {
         if ((int) $notification->recipient_user_id !== (int) $recipient->getKey()
-            || $recipient->trashed()
+            || (method_exists($recipient, 'trashed') && $recipient->trashed())
             || $recipient->is_blocked
             || strcasecmp((string) $recipient->type, 'User') !== 0) {
             return false;
@@ -1338,7 +1342,7 @@ class AdminNotificationService
         }
 
         $destination = (string) ($data['destination_type'] ?? 'none');
-        if (! in_array($destination, ['none', 'order', 'product', 'listing', 'category', 'promotion', 'home', 'url'], true)) {
+        if (! in_array($destination, ['none', 'order', 'product', 'listing', 'category', 'promotion', 'support_conversation', 'home', 'url'], true)) {
             throw new \InvalidArgumentException('Unsupported Store notification destination.');
         }
         $destinationId = $data['destination_id'] ?? null;

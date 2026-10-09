@@ -37,6 +37,7 @@ final class NotificationCatalog
             'store_marketing_promotion' => self::item('عرض متجر للعملاء', 'store', 'normal', 'default'),
             'store_popup_campaign' => self::item('إعلان منبثق للعملاء', 'store', 'high', 'default'),
             'store_broadcast' => self::item('إشعار جماعي لعملاء المتجر', 'store', 'high', 'default'),
+            'store_support_message' => self::item('رد دعم المتجر', 'store', 'high', 'default'),
             'online_store_low_stock' => self::item('انخفاض مخزون منتج في المتجر', 'store', 'high', 'urgent'),
             'sales_order_status' => self::item('تحديث حالة طلبية (عام)', 'sales_orders', 'high', 'sales_order'),
             'sales_order_status_unconfirmed' => self::item('طلبية جديدة غير مؤكدة', 'sales_orders', 'high', 'sales_order'),

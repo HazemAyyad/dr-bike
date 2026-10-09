@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Events\Support\SupportConversationRead;
+use App\Events\Support\SupportMessageCreated;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
 use App\Models\EmployeeSuggestion;
@@ -10,6 +12,10 @@ use App\Models\SupportMessage;
 use App\Models\SupportMessageReaction;
 use App\Services\AdminNotificationService;
 use App\Services\EmployeeNotificationService;
+use App\Services\Support\StoreSupportNotificationService;
+use App\Services\Support\SupportAccessService;
+use App\Services\Support\SupportMessageManager;
+use App\Services\Support\SupportPayloadService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -28,19 +34,44 @@ class SupportConversationController extends Controller
 
     public function __construct(
         protected AdminNotificationService $adminNotifications,
-        protected EmployeeNotificationService $employeeNotifications
+        protected EmployeeNotificationService $employeeNotifications,
+        private readonly SupportAccessService $supportAccess,
+        private readonly SupportMessageManager $supportMessages,
+        private readonly SupportPayloadService $supportPayloads,
+        private readonly StoreSupportNotificationService $storeSupportNotifications,
     ) {}
 
     public function index(Request $request)
     {
         $query = SupportConversation::query()
-            ->with(['employee.user:id,name', 'assignee:id,name', 'suggestion:id,title,category,is_anonymous'])
+            ->with([
+                'employee.user:id,name',
+                'requester:id,name,email,phone',
+                'assignee:id,name',
+                'suggestion:id,title,category,is_anonymous',
+            ])
             ->withCount('messages')
             ->orderByDesc('last_message_at')
             ->orderByDesc('id');
 
-        if (! $this->canManageSupport($request)) {
+        $canManageEmployee = $request->user() && $this->supportAccess->canManageEmployee($request->user());
+        $canManageStore = $request->user() && $this->supportAccess->canManageStore($request->user());
+        if (! $canManageEmployee && ! $canManageStore) {
             $query->where('employee_id', $this->employeeId($request));
+        } elseif ($canManageEmployee xor $canManageStore) {
+            $query->where('source', $canManageStore
+                ? SupportConversation::SOURCE_ONLINE_STORE
+                : SupportConversation::SOURCE_EMPLOYEE);
+        }
+
+        if ($request->filled('source') && in_array($request->input('source'), SupportConversation::SOURCES, true)) {
+            $source = (string) $request->input('source');
+            abort_if(
+                ($source === SupportConversation::SOURCE_ONLINE_STORE && ! $canManageStore)
+                || ($source === SupportConversation::SOURCE_EMPLOYEE && ! $canManageEmployee),
+                403
+            );
+            $query->where('source', $source);
         }
 
         if ($request->filled('status') && in_array($request->input('status'), SupportConversation::STATUSES, true)) {
@@ -57,12 +88,33 @@ class SupportConversationController extends Controller
                 : $query->where('employee_unread_count', '>', 0);
         }
 
+        if ($request->boolean('needs_reply')) {
+            $query->whereNotNull('last_requester_message_at')
+                ->where(function ($builder) {
+                    $builder->whereNull('last_support_message_at')
+                        ->orWhereColumn('last_requester_message_at', '>', 'last_support_message_at');
+                });
+        }
+
+        if ($request->filled('assignment')) {
+            match ($request->input('assignment')) {
+                'mine' => $query->where('assigned_to_user_id', $request->user()->id),
+                'unassigned' => $query->whereNull('assigned_to_user_id'),
+                default => null,
+            };
+        }
+
         if ($request->filled('search')) {
             $search = trim((string) $request->input('search'));
             $query->where(function ($q) use ($search) {
                 $q->where('subject', 'like', "%{$search}%")
                     ->orWhere('last_message', 'like', "%{$search}%")
-                    ->orWhereHas('employee.user', fn ($user) => $user->where('name', 'like', "%{$search}%"));
+                    ->orWhereHas('employee.user', fn ($user) => $user->where('name', 'like', "%{$search}%"))
+                    ->orWhereHas('requester', function ($user) use ($search) {
+                        $user->where('name', 'like', "%{$search}%")
+                            ->orWhere('phone', 'like', "%{$search}%")
+                            ->orWhere('email', 'like', "%{$search}%");
+                    });
             });
         }
 
@@ -71,6 +123,8 @@ class SupportConversationController extends Controller
         return response()->json([
             'status' => 'success',
             'can_manage_support' => $this->canManageSupport($request),
+            'can_manage_employee_support' => $canManageEmployee,
+            'can_manage_store_support' => $canManageStore,
             'conversations' => $query->paginate($perPage)->through(fn ($conversation) => $this->conversationPayload($conversation)),
         ]);
     }
@@ -103,11 +157,17 @@ class SupportConversationController extends Controller
             422,
             'message or attachments are required'
         );
+        $requesterUserId = EmployeeDetail::query()
+            ->whereKey($employeeId)
+            ->value('user_id');
 
-        $conversation = DB::transaction(function () use ($request, $validated, $employeeId) {
+        $conversation = DB::transaction(function () use ($request, $validated, $employeeId, $requesterUserId) {
             $conversation = SupportConversation::create([
+                'source' => SupportConversation::SOURCE_EMPLOYEE,
                 'employee_id' => $employeeId,
                 'created_by_user_id' => $request->user()->id,
+                'requester_user_id' => $requesterUserId,
+                'context_type' => SupportConversation::CONTEXT_GENERAL,
                 'employee_suggestion_id' => $validated['employee_suggestion_id'] ?? null,
                 'subject' => $validated['subject'] ?? null,
                 'priority' => $validated['priority'] ?? SupportConversation::PRIORITY_NORMAL,
@@ -124,6 +184,11 @@ class SupportConversationController extends Controller
         $message = $conversation->messages->last();
         if ($message) {
             $this->notifyAfterMessage($conversation, $message);
+            event(SupportMessageCreated::fromPayloads(
+                $conversation,
+                $this->messagePayload($message, (int) $request->user()->id),
+                $this->conversationPayload($conversation)
+            ));
         }
 
         return response()->json([
@@ -161,6 +226,7 @@ class SupportConversationController extends Controller
 
         $validated = $request->validate([
             'message' => ['nullable', 'string', 'max:5000'],
+            'client_message_id' => ['nullable', 'uuid'],
             'attachments' => ['nullable', 'array', 'max:10'],
             'attachments.*' => ['file', 'max:'.self::ATTACHMENT_MAX_KB, 'mimes:'.self::ATTACHMENT_MIMES],
         ]);
@@ -171,6 +237,37 @@ class SupportConversationController extends Controller
             'message or attachments are required'
         );
 
+        if ($conversation->source === SupportConversation::SOURCE_ONLINE_STORE) {
+            $existing = filled($validated['client_message_id'] ?? null)
+                ? SupportMessage::query()
+                    ->where('support_conversation_id', $conversation->getKey())
+                    ->where('client_message_id', $validated['client_message_id'])
+                    ->first()
+                : null;
+            $message = DB::transaction(fn () => $this->supportMessages->create(
+                $conversation,
+                $request->user(),
+                SupportMessage::SENDER_SUPPORT,
+                $validated['message'] ?? null,
+                $request->file('attachments', []),
+                $validated['client_message_id'] ?? null,
+            ), 3);
+            $conversation = $conversation->fresh()->loadCount('messages');
+            $messagePayload = $this->supportPayloads->message($message, (int) $request->user()->id);
+            $conversationPayload = $this->supportPayloads->conversation($conversation);
+            if (! $existing) {
+                event(SupportMessageCreated::fromPayloads($conversation, $messagePayload, $conversationPayload));
+                $this->storeSupportNotifications->afterMessage($conversation->load('requester'), $message);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'تم إرسال الرسالة',
+                'support_message' => $messagePayload,
+                'conversation' => $conversationPayload,
+            ], $existing ? 200 : 201);
+        }
+
         $message = DB::transaction(function () use ($request, $conversation, $validated) {
             $message = $this->createMessage($request, $conversation, $validated['message'] ?? null);
             $this->touchConversationAfterMessage($conversation, $message, $request);
@@ -180,13 +277,20 @@ class SupportConversationController extends Controller
 
         $this->notifyAfterMessage($conversation->fresh(['employee.user']), $message);
 
+        $conversationPayload = $this->conversationPayload(
+            $conversation->fresh(['employee.user:id,name', 'assignee:id,name', 'suggestion:id,title,category,is_anonymous'])
+        );
+        event(SupportMessageCreated::fromPayloads(
+            $conversation,
+            $this->messagePayload($message, (int) $request->user()->id),
+            $conversationPayload
+        ));
+
         return response()->json([
             'status' => 'success',
             'message' => 'تم إرسال الرسالة',
             'support_message' => $this->messagePayload($message, (int) $request->user()->id),
-            'conversation' => $this->conversationPayload(
-                $conversation->fresh(['employee.user:id,name', 'assignee:id,name', 'suggestion:id,title,category,is_anonymous'])
-            ),
+            'conversation' => $conversationPayload,
         ], 201);
     }
 
@@ -245,24 +349,35 @@ class SupportConversationController extends Controller
             ? $conversation->update(['support_unread_count' => 0])
             : $conversation->update(['employee_unread_count' => 0]);
 
+        $payload = $this->conversationPayload($conversation->fresh(['employee.user:id,name', 'assignee:id,name']));
+        event(new SupportConversationRead((int) $conversation->getKey(), $payload));
+
         return response()->json([
             'status' => 'success',
-            'conversation' => $this->conversationPayload($conversation->fresh(['employee.user:id,name', 'assignee:id,name'])),
+            'conversation' => $payload,
         ]);
     }
 
     public function updateStatus(Request $request, SupportConversation $conversation)
     {
-        abort_unless($this->canManageSupport($request), 403);
+        abort_unless(
+            $conversation->source === SupportConversation::SOURCE_ONLINE_STORE
+                ? $this->supportAccess->canManageStore($request->user())
+                : $this->supportAccess->canManageEmployee($request->user()),
+            403
+        );
 
         $validated = $request->validate([
             'status' => ['required', 'string', Rule::in(SupportConversation::STATUSES)],
             'assigned_to_user_id' => ['nullable', 'integer', 'exists:users,id'],
+            'assign_to_me' => ['nullable', 'boolean'],
         ]);
 
         $payload = [
             'status' => $validated['status'],
-            'assigned_to_user_id' => $validated['assigned_to_user_id'] ?? $conversation->assigned_to_user_id,
+            'assigned_to_user_id' => ($validated['assign_to_me'] ?? false)
+                ? $request->user()->id
+                : ($validated['assigned_to_user_id'] ?? $conversation->assigned_to_user_id),
         ];
 
         if ($validated['status'] === SupportConversation::STATUS_CLOSED) {
@@ -287,6 +402,13 @@ class SupportConversationController extends Controller
         $query = SupportConversation::query();
 
         if ($this->canManageSupport($request)) {
+            $canEmployee = $this->supportAccess->canManageEmployee($request->user());
+            $canStore = $this->supportAccess->canManageStore($request->user());
+            if ($canEmployee xor $canStore) {
+                $query->where('source', $canStore
+                    ? SupportConversation::SOURCE_ONLINE_STORE
+                    : SupportConversation::SOURCE_EMPLOYEE);
+            }
             $count = (clone $query)->where('support_unread_count', '>', 0)->count();
             $total = (clone $query)->sum('support_unread_count');
         } else {
@@ -354,9 +476,16 @@ class SupportConversationController extends Controller
         if ($isSupport) {
             $updates['employee_unread_count'] = DB::raw('employee_unread_count + 1');
             $updates['support_unread_count'] = 0;
+            $updates['requester_unread_count'] = DB::raw('requester_unread_count + 1');
+            $updates['last_support_message_at'] = now();
+            if (! $conversation->first_support_response_at) {
+                $updates['first_support_response_at'] = now();
+            }
         } else {
             $updates['support_unread_count'] = DB::raw('support_unread_count + 1');
             $updates['employee_unread_count'] = 0;
+            $updates['requester_unread_count'] = 0;
+            $updates['last_requester_message_at'] = now();
         }
 
         $conversation->update($updates);
@@ -366,6 +495,7 @@ class SupportConversationController extends Controller
     {
         if ($message->sender_type === SupportMessage::SENDER_SUPPORT) {
             $this->notifyEmployeeOwner($conversation, $message);
+
             return;
         }
 
@@ -484,11 +614,7 @@ class SupportConversationController extends Controller
 
     private function authorizeConversation(Request $request, SupportConversation $conversation): void
     {
-        if ($this->canManageSupport($request)) {
-            return;
-        }
-
-        abort_unless((int) $conversation->employee_id === $this->employeeId($request), 403);
+        abort_unless($this->supportAccess->canAccess($request->user(), $conversation), 403);
     }
 
     private function canManageSupport(Request $request): bool
@@ -498,13 +624,7 @@ class SupportConversationController extends Controller
             return false;
         }
 
-        if ($user->type === 'admin') {
-            return true;
-        }
-
-        return (bool) $user->employee?->permissions()
-            ->whereHas('permission', fn ($q) => $q->where('name_en', self::PERMISSION))
-            ->exists();
+        return $this->supportAccess->canManageInbox($user);
     }
 
     private function employeeId(Request $request): int
@@ -569,70 +689,11 @@ class SupportConversationController extends Controller
 
     private function conversationPayload(SupportConversation $conversation): array
     {
-        $employeeName = (string) ($conversation->employee?->user?->name ?? '');
-        $suggestion = $conversation->suggestion;
-
-        return [
-            'id' => $conversation->id,
-            'employee_id' => $conversation->employee_id,
-            'employee_name' => $employeeName,
-            'subject' => $conversation->subject,
-            'status' => $conversation->status,
-            'priority' => $conversation->priority,
-            'last_message' => $conversation->last_message,
-            'last_message_at' => optional($conversation->last_message_at)->toIso8601String(),
-            'employee_unread_count' => (int) $conversation->employee_unread_count,
-            'support_unread_count' => (int) $conversation->support_unread_count,
-            'messages_count' => (int) ($conversation->messages_count ?? 0),
-            'assigned_to_user_id' => $conversation->assigned_to_user_id,
-            'assigned_to_name' => (string) ($conversation->assignee?->name ?? ''),
-            'employee_suggestion_id' => $conversation->employee_suggestion_id,
-            'suggestion_title' => $suggestion?->title,
-            'suggestion_category' => $suggestion?->category,
-            'created_at' => optional($conversation->created_at)->toIso8601String(),
-            'closed_at' => optional($conversation->closed_at)->toIso8601String(),
-        ];
+        return $this->supportPayloads->conversation($conversation);
     }
 
     private function messagePayload(SupportMessage $message, ?int $viewerUserId = null): array
     {
-        $message->loadMissing('reactions.user:id,name');
-        $reactions = $message->reactions;
-
-        return [
-            'id' => $message->id,
-            'conversation_id' => $message->support_conversation_id,
-            'sender_user_id' => $message->sender_user_id,
-            'sender_employee_id' => $message->sender_employee_id,
-            'sender_name' => (string) ($message->senderUser?->name ?? ''),
-            'sender_type' => $message->sender_type,
-            'message_type' => $message->message_type,
-            'body' => $message->body,
-            'attachments' => $message->attachments->map(fn ($attachment) => [
-                'id' => $attachment->id,
-                'type' => $attachment->attachment_type,
-                'url' => $attachment->url,
-                'path' => $attachment->path,
-                'original_name' => $attachment->original_name,
-                'mime_type' => $attachment->mime_type,
-                'size' => (int) $attachment->size,
-            ])->values(),
-            'reactions' => $reactions
-                ->groupBy('reaction')
-                ->map(fn ($items, $reaction) => [
-                    'reaction' => (string) $reaction,
-                    'count' => $items->count(),
-                    'reacted' => $viewerUserId !== null && $items->contains(fn ($item) => (int) $item->user_id === $viewerUserId),
-                    'users' => $items
-                        ->map(fn ($item) => (string) ($item->user?->name ?? ''))
-                        ->filter()
-                        ->values(),
-                ])
-                ->values(),
-            'my_reaction' => $viewerUserId === null
-                ? null
-                : optional($reactions->first(fn ($item) => (int) $item->user_id === $viewerUserId))->reaction,
-            'created_at' => optional($message->created_at)->toIso8601String(),
-        ];
+        return $this->supportPayloads->message($message, $viewerUserId);
     }
 }

@@ -45,6 +45,7 @@ use App\Http\Controllers\API\EmployeeRewardRuleController;
 use App\Http\Controllers\API\EmployeeRemindersController;
 use App\Http\Controllers\API\EmployeeSuggestionsController;
 use App\Http\Controllers\API\SupportConversationController;
+use App\Http\Controllers\API\SupportAttachmentController;
 use App\Http\Controllers\API\Employees\EmployeeData;
 use App\Http\Controllers\API\Employees\EmployeePerformanceController;
 use App\Http\Controllers\API\Employees\EmployeeOwnTasks;
@@ -152,6 +153,10 @@ use App\Http\Controllers\API\SmartSceneController;
     /** صور المتجر القديم (.NET) — بروكسي لـ Flutter Web (CORS) */
     Route::get('/legacy-store-image', [LegacyStoreImageController::class, 'show']);
     Route::get('/app/update-check', [AppUpdateController::class, 'check']);
+    Route::get('/support/attachments/{attachment}', [SupportAttachmentController::class, 'show'])
+        ->middleware('signed')
+        ->whereNumber('attachment')
+        ->name('support.attachments.download');
 
     // Fingerprint ADMS / Push receiver (public)
     Route::match(['GET', 'POST'], '/fingerprint/push/attendance', [FingerprintPushController::class, 'attendance']);

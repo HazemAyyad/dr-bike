@@ -25,6 +25,8 @@ final class OnlineStoreNotificationService
 
     public const TYPE_BROADCAST = AdminNotificationService::TYPE_STORE_BROADCAST;
 
+    public const TYPE_SUPPORT_MESSAGE = AdminNotificationService::TYPE_STORE_SUPPORT_MESSAGE;
+
     private const SUPPORTED_LOCALES = ['ar', 'en', 'he'];
 
     public function __construct(
@@ -340,6 +342,7 @@ final class OnlineStoreNotificationService
             self::TYPE_MARKETING_PROMOTION,
             self::TYPE_POPUP_CAMPAIGN,
             self::TYPE_BROADCAST,
+            self::TYPE_SUPPORT_MESSAGE,
         ];
     }
 

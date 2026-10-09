@@ -28,7 +28,11 @@ class StoreNotificationsController extends StoreBaseController
                 'content' => (string) $notification->body,
                 'toUser' => (string) $actor->getKey(),
                 'type' => (string) $notification->type,
-                'category' => $notification->type === OnlineStoreNotificationService::TYPE_ORDER_STATUS ? 'order' : 'promotion',
+                'category' => match ($notification->type) {
+                    OnlineStoreNotificationService::TYPE_ORDER_STATUS => 'order',
+                    OnlineStoreNotificationService::TYPE_SUPPORT_MESSAGE => 'support',
+                    default => 'promotion',
+                },
                 'createdAt' => $this->dateString($notification->created_at),
                 'updatedAt' => $this->dateString($notification->updated_at),
             ]);

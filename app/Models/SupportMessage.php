@@ -9,18 +9,28 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class SupportMessage extends Model
 {
     public const SENDER_EMPLOYEE = 'employee';
+
     public const SENDER_SUPPORT = 'support';
+
+    public const SENDER_STORE_CUSTOMER = 'store_customer';
+
     public const SENDER_SYSTEM = 'system';
 
     public const TYPE_TEXT = 'text';
+
     public const TYPE_IMAGE = 'image';
+
     public const TYPE_VIDEO = 'video';
+
     public const TYPE_AUDIO = 'audio';
+
     public const TYPE_DOCUMENT = 'document';
+
     public const TYPE_SYSTEM = 'system';
 
     protected $fillable = [
         'support_conversation_id',
+        'client_message_id',
         'sender_user_id',
         'sender_employee_id',
         'sender_type',

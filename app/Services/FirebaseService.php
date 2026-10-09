@@ -103,6 +103,7 @@ class FirebaseService
         'store_marketing_promotion',
         'store_popup_campaign',
         'store_broadcast',
+        'store_support_message',
     ];
 
     /** @var list<string> */
