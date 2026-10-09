@@ -57,6 +57,23 @@ class PublicStoreProductPageViewTest extends TestCase
         );
     }
 
+    public function test_public_product_page_contains_mobile_first_responsive_guards(): void
+    {
+        $product = $this->product();
+        $html = view('store.products.show', [
+            'product' => $product,
+            'relatedProducts' => [],
+            'structuredData' => $this->structuredData($product),
+        ])->render();
+
+        $this->assertStringContainsString('width=device-width, initial-scale=1', $html);
+        $this->assertStringContainsString('@media (max-width: 640px)', $html);
+        $this->assertStringContainsString('@media (max-width: 360px)', $html);
+        $this->assertStringContainsString('width: min(520px, calc(100% - 20px))', $html);
+        $this->assertStringContainsString('overflow-x: auto', $html);
+        $this->assertStringContainsString('aspect-ratio: 1 / 1', $html);
+    }
+
     private function product(array $overrides = []): array
     {
         return array_replace([
