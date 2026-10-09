@@ -34,6 +34,19 @@ final class StorefrontCatalogService
             ->values();
     }
 
+    public function findEligibleByProductId(int $productId): ?OnlineStoreListing
+    {
+        if ($productId <= 0) {
+            return null;
+        }
+
+        return $this->eligible(
+            $this->eligibleQuery()
+                ->where('product_id', $productId)
+                ->limit(1)
+        )->first();
+    }
+
     public function isEligible(OnlineStoreListing $listing): bool
     {
         if ($listing->status !== 'published' || $listing->readiness_state !== 'complete') {

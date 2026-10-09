@@ -14,9 +14,11 @@ use App\Http\Controllers\EmployeeNotificationWebController;
 use App\Http\Controllers\EmployeePointsCleanupWebController;
 use App\Http\Controllers\InventoryLegacyAuditWebController;
 use App\Http\Controllers\ProductEditTestController;
+use App\Http\Controllers\PublicStoreProductController;
 use App\Http\Controllers\SecurityCenterWebController;
 use App\Http\Controllers\SmsTestWebController;
 use App\Http\Controllers\StoreSyncTestController;
+use App\Http\Controllers\StorefrontLinkManifestController;
 use App\Http\Controllers\UserSessionsWebController;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
@@ -39,6 +41,15 @@ Route::get('/', function () {
 
 Route::view('/privacy-policy', 'legal.privacy-policy')->name('privacy-policy');
 Route::view('/data-deletion', 'legal.data-deletion')->name('data-deletion');
+
+Route::get('/store/products/{product}', [PublicStoreProductController::class, 'show'])
+    ->whereNumber('product')
+    ->name('store.products.show');
+Route::get('/.well-known/assetlinks.json', [StorefrontLinkManifestController::class, 'android'])
+    ->name('store.links.android');
+Route::get('/.well-known/apple-app-site-association', [StorefrontLinkManifestController::class, 'ios'])
+    ->name('store.links.ios');
+Route::get('/apple-app-site-association', [StorefrontLinkManifestController::class, 'ios']);
 
 Route::get('/inventory/legacy-audit', [InventoryLegacyAuditWebController::class, 'index'])
     ->name('inventory.legacy-audit');
