@@ -367,19 +367,20 @@ class DebtLedgerAccountingSafetyTest extends TestCase
     {
         $box = $this->box(500);
         $cases = [
-            ['amount' => 500, 'reason' => 'owner_contribution', 'counter' => 'owner_equity', 'cash_debit' => 500.0],
-            ['amount' => -200, 'reason' => 'owner_withdrawal', 'counter' => 'owner_equity', 'cash_debit' => 0.0],
-            ['amount' => 50, 'reason' => 'cash_overage', 'counter' => 'cash_overage_income', 'cash_debit' => 50.0],
-            ['amount' => -40, 'reason' => 'cash_shortage', 'counter' => 'cash_shortage_expense', 'cash_debit' => 0.0],
-            ['amount' => 10, 'reason' => 'accounting_correction', 'counter' => 'clearing', 'cash_debit' => 10.0],
+            ['amount' => 500, 'direction' => 'add', 'reason' => 'owner_contribution', 'counter' => 'owner_equity', 'cash_debit' => 500.0],
+            ['amount' => 200, 'direction' => 'subtract', 'reason' => 'owner_withdrawal', 'counter' => 'owner_equity', 'cash_debit' => 0.0],
+            ['amount' => 50, 'direction' => 'add', 'reason' => 'cash_overage', 'counter' => 'cash_overage_income', 'cash_debit' => 50.0],
+            ['amount' => 40, 'direction' => 'subtract', 'reason' => 'cash_shortage', 'counter' => 'cash_shortage_expense', 'cash_debit' => 0.0],
+            ['amount' => 10, 'direction' => 'add', 'reason' => 'accounting_correction', 'counter' => 'clearing', 'cash_debit' => 10.0],
         ];
 
         foreach ($cases as $case) {
             $this->postJson('/api/add/box/balance', [
                 'box_id' => $box->id,
                 'total' => $case['amount'],
+                'direction' => $case['direction'],
                 'reason_code' => $case['reason'],
-                'note' => in_array($case['reason'], ['owner_contribution', 'owner_withdrawal'], true) ? null : 'Reviewed count',
+                'note' => null,
             ])->assertJsonPath('status', 'success');
 
             $log = BoxLog::query()->latest('id')->firstOrFail();
@@ -392,9 +393,15 @@ class DebtLedgerAccountingSafetyTest extends TestCase
             $this->assertEqualsWithDelta($case['cash_debit'], (float) $cash->debit, 0.001);
         }
 
+        $this->assertEqualsWithDelta(820, (float) $box->fresh()->total, 0.001);
+
         $this->postJson('/api/add/box/balance', [
-            'box_id' => $box->id, 'total' => 10, 'reason_code' => 'accounting_correction',
-        ])->assertJsonPath('status', 'error');
+            'box_id' => $box->id,
+            'total' => 10,
+            'direction' => 'subtract',
+            'reason_code' => 'accounting_correction',
+        ])->assertJsonPath('status', 'success');
+        $this->assertEqualsWithDelta(810, (float) $box->fresh()->total, 0.001);
     }
 
     public function test_box_transfer_is_atomic_balanced_idempotent_and_rejects_insufficient_funds(): void

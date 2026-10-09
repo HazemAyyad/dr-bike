@@ -248,15 +248,21 @@ class Boxes extends Controller
         $request->validate([
             'box_id' => 'required|exists:boxes,id',
             'total' => 'required|numeric|not_in:0',
+            'direction' => 'nullable|string|in:add,subtract',
             'note' => 'nullable|string|max:2000',
             'reason_code' => 'required|string|in:owner_contribution,owner_withdrawal,cash_overage,cash_shortage,accounting_correction',
         ]);
-        $total = round((float) $request->total, 4);
-        if (abs($total) <= 0.0001) {
+        $rawTotal = round((float) $request->total, 4);
+        if (abs($rawTotal) <= 0.0001) {
             throw ValidationException::withMessages([
                 'total' => ['قيمة حركة الصندوق يجب أن تكون أكبر من صفر.'],
             ]);
         }
+        $total = match ($request->input('direction')) {
+            'add' => abs($rawTotal),
+            'subtract' => -abs($rawTotal),
+            default => $rawTotal,
+        };
         $reason = (string) $request->reason_code;
         $increaseReasons = ['owner_contribution', 'cash_overage'];
         $decreaseReasons = ['owner_withdrawal', 'cash_shortage'];
@@ -266,11 +272,6 @@ class Boxes extends Controller
                 'reason_code' => ['سبب حركة الصندوق لا يتوافق مع اتجاه المبلغ.'],
             ]);
         }
-        if (in_array($reason, ['cash_overage', 'cash_shortage', 'accounting_correction'], true)
-            && ! $request->filled('note')) {
-            throw ValidationException::withMessages(['note' => ['الملاحظة مطلوبة لهذا النوع من التسوية.']]);
-        }
-
         $msg = $total > 0 ? 'added' : 'deduct';
         DB::transaction(function () use ($request, $total, $reason) {
             $box = Box::query()->lockForUpdate()->findOrFail($request->box_id);
