@@ -17,13 +17,17 @@ class EmployeeNotificationWebController extends Controller
 {
     protected function expectedToken(): string
     {
-        return (string) env('EMPLOYEE_NOTIFY_WEB_TOKEN', env('ADMIN_NOTIFY_WEB_TOKEN', ''));
+        return trim((string) config('services.notification_test_web.employee_token', ''));
     }
 
     protected function authorizeRequest(Request $request): void
     {
         $expected = $this->expectedToken();
         if ($expected === '') {
+            if (app()->environment('production')) {
+                abort(403, 'صفحة اختبار الإشعارات معطلة حتى يتم ضبط EMPLOYEE_NOTIFY_WEB_TOKEN.');
+            }
+
             return;
         }
 

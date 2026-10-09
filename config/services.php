@@ -42,6 +42,15 @@ return [
         'api_key' => env('GOOGLE_CLOUD_VISION_API_KEY'),
     ],
 
+    'firebase' => [
+        'credentials' => env('FIREBASE_CREDENTIALS'),
+    ],
+
+    'notification_test_web' => [
+        'admin_token' => env('ADMIN_NOTIFY_WEB_TOKEN'),
+        'employee_token' => env('EMPLOYEE_NOTIFY_WEB_TOKEN') ?: env('ADMIN_NOTIFY_WEB_TOKEN'),
+    ],
+
     'tuya' => [
         'access_id' => env('TUYA_ACCESS_ID'),
         'access_secret' => env('TUYA_ACCESS_SECRET'),

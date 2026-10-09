@@ -11,13 +11,17 @@ class SmsTestWebController extends Controller
 {
     protected function expectedToken(): string
     {
-        return (string) env('ADMIN_NOTIFY_WEB_TOKEN', '');
+        return trim((string) config('services.notification_test_web.admin_token', ''));
     }
 
     protected function authorizeRequest(Request $request): void
     {
         $expected = $this->expectedToken();
         if ($expected === '') {
+            if (app()->environment('production')) {
+                abort(403, 'صفحة اختبار SMS معطلة حتى يتم ضبط ADMIN_NOTIFY_WEB_TOKEN.');
+            }
+
             return;
         }
 

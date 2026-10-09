@@ -175,7 +175,7 @@ class FirebaseService
 
     protected function envCredentialsPath(): ?string
     {
-        $path = env('FIREBASE_CREDENTIALS');
+        $path = config('services.firebase.credentials');
 
         if (! is_string($path)) {
             return null;
@@ -202,7 +202,6 @@ class FirebaseService
             $candidates[] = $envPath;
         }
 
-        $candidates[] = storage_path('doctorbike-c4078-firebase-adminsdk-fbsvc-e68cb873ed.json');
         $candidates[] = storage_path('app/firebase-credentials.json');
         $candidates[] = base_path('firebase-credentials.json');
 
@@ -743,7 +742,9 @@ class FirebaseService
     protected function isInvalidTokenError(Throwable $e): bool
     {
         $class = get_class($e);
-        if (str_contains($class, 'NotFound') || str_contains($class, 'InvalidArgument')) {
+        if (str_contains($class, 'NotFound')
+            || str_contains($class, 'InvalidArgument')
+            || str_contains($class, 'SenderIdMismatch')) {
             return true;
         }
 
@@ -752,6 +753,10 @@ class FirebaseService
         return str_contains($msg, 'not found')
             || str_contains($msg, 'requested entity was not found')
             || str_contains($msg, 'invalid registration')
-            || str_contains($msg, 'registration-token-not-registered');
+            || str_contains($msg, 'registration-token-not-registered')
+            || str_contains($msg, 'sender id mismatch')
+            || str_contains($msg, 'senderid mismatch')
+            || str_contains($msg, 'sender-id-mismatch')
+            || str_contains($msg, 'mismatched-credential');
     }
 }
