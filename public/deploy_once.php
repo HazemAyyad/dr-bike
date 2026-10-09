@@ -50,6 +50,14 @@ if (! config('app.debug')) {
 // وضع الرابط مبكراً يضمن إنشاء public/storage حتى عند فشل قاعدة البيانات.
 $allowedCommands = [
     ['name' => 'config:clear', 'params' => []],
+    [
+        'name' => 'tinker',
+        'params' => [
+            '--execute' => 'dump(app(App\\Services\\FirebaseService::class)->credentialsDiagnostics());',
+        ],
+        'display' => 'tinker --execute="dump(app(App\\Services\\FirebaseService::class)->credentialsDiagnostics());"',
+        'label' => '=== فحص اتصال Firebase Admin SDK ===',
+    ],
     ['name' => 'storage:link', 'params' => []],
     [
         'name' => 'migrate',
@@ -115,7 +123,8 @@ echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Deploy output</tit
  
 
 foreach ($allowedCommands as $cmd) {
-    $commandName = $cmd['name'].(isset($cmd['params']['--force']) ? ' --force' : '');
+    $commandName = $cmd['display']
+        ?? ($cmd['name'].(isset($cmd['params']['--force']) ? ' --force' : ''));
 
     if (! empty($cmd['label'])) {
         echo htmlspecialchars($cmd['label']."\n", ENT_QUOTES, 'UTF-8');
