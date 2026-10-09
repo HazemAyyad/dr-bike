@@ -111,6 +111,11 @@ $allowedCommands = [
     ['name' => 'cache:clear', 'params' => []],
     // Regenerate Composer autoload (e.g. after deploy) so classes like Kreait\Firebase\Factory are found
     ['name' => '__composer_dump_autoload__', 'params' => []],
+    [
+        'name' => '__reverb_restart__',
+        'params' => [],
+        'label' => '=== إعادة تشغيل Laravel Reverb في الخلفية ===',
+    ],
 ];
 
 $lines = [];
@@ -119,8 +124,6 @@ $lines[] = '';
 
 header('Content-Type: text/html; charset=UTF-8');
 echo '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Deploy output</title></head><body><pre>';
-
- 
 
 foreach ($allowedCommands as $cmd) {
     $commandName = $cmd['display']
@@ -145,7 +148,7 @@ foreach ($allowedCommands as $cmd) {
         $mode = (string) ($cmd['params']['--mode'] ?? 'test');
         $apiKey = trim((string) config("shiply.api_keys.{$mode}", ''));
         if ($apiKey === '') {
-            echo htmlspecialchars(">>> Skipping: SHIPLY_API_KEY_".strtoupper($mode)." is not set in .env\n", ENT_QUOTES, 'UTF-8');
+            echo htmlspecialchars('>>> Skipping: SHIPLY_API_KEY_'.strtoupper($mode)." is not set in .env\n", ENT_QUOTES, 'UTF-8');
             echo "Exit code: 0\n";
             echo "----------------------------------------\n";
 
@@ -182,6 +185,72 @@ foreach ($allowedCommands as $cmd) {
             @chdir($prevCwd);
             echo htmlspecialchars(implode("\n", $output), ENT_QUOTES, 'UTF-8');
             echo "\nExit code: {$exitCode}\n";
+        }
+        echo "----------------------------------------\n";
+
+        continue;
+    }
+
+    // Reverb is a long-running process, so launch it in the background instead of
+    // calling it through the console kernel and blocking this HTTP deploy request.
+    if ($cmd['name'] === '__reverb_restart__') {
+        echo ">>> Running: php artisan reverb:restart && reverb:start (background)\n";
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            echo "   INFO  Background Reverb launch is only supported by this deploy script on Linux.\n";
+            echo "Exit code: 0\n";
+            echo "----------------------------------------\n";
+
+            continue;
+        }
+
+        if (! function_exists('exec')) {
+            echo "   INFO  exec() is disabled on this server; skipped. Start Reverb using Supervisor or SSH.\n";
+            echo "Exit code: 0\n";
+            echo "----------------------------------------\n";
+
+            continue;
+        }
+
+        try {
+            // Ask any existing Reverb instance to exit gracefully before starting
+            // the replacement process, preventing duplicate listeners on the port.
+            $kernel->call('reverb:restart');
+            $restartOutput = trim($kernel->output());
+            if ($restartOutput !== '') {
+                echo htmlspecialchars($restartOutput."\n", ENT_QUOTES, 'UTF-8');
+            }
+            usleep(2_000_000);
+
+            $basePath = $app->basePath();
+            $host = (string) config('reverb.servers.reverb.host', '0.0.0.0');
+            $port = (int) config('reverb.servers.reverb.port', 8080);
+            $logPath = storage_path('logs/reverb.log');
+            $pidPath = storage_path('app/reverb.pid');
+            $command = sprintf(
+                "nohup 'php' artisan reverb:start --host=%s --port=%d >> %s 2>&1 < /dev/null & echo $!",
+                escapeshellarg($host),
+                $port,
+                escapeshellarg($logPath),
+            );
+            $output = [];
+            $exitCode = 0;
+            $prevCwd = getcwd();
+            @chdir($basePath);
+            @exec($command, $output, $exitCode);
+            @chdir($prevCwd);
+
+            $pid = trim((string) end($output));
+            if ($exitCode !== 0 || ! ctype_digit($pid)) {
+                throw new \RuntimeException('Reverb background process could not be started. Check exec/nohup permissions.');
+            }
+
+            file_put_contents($pidPath, $pid.PHP_EOL, LOCK_EX);
+            echo htmlspecialchars("   INFO  Reverb started with PID {$pid}; log: {$logPath}\n", ENT_QUOTES, 'UTF-8');
+            echo "Exit code: 0\n";
+        } catch (\Throwable $e) {
+            echo htmlspecialchars('ERROR: '.$e->getMessage()."\n", ENT_QUOTES, 'UTF-8');
+            echo "Exit code: 1\n";
         }
         echo "----------------------------------------\n";
 
