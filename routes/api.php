@@ -87,6 +87,7 @@ use App\Http\Controllers\API\OnlineStore\CreditPolicyController as OnlineStoreCr
 use App\Http\Controllers\API\OnlineStore\StoreGovernanceController as OnlineStoreGovernanceController;
 use App\Http\Controllers\API\OnlineStore\ReviewController as OnlineStoreReviewController;
 use App\Http\Controllers\API\OnlineStore\NotificationController as OnlineStoreNotificationController;
+use App\Http\Controllers\API\OnlineStore\PopupCampaignController as OnlineStorePopupCampaignController;
 use App\Http\Controllers\API\Logs;
 use App\Http\Controllers\API\MaintenanceAPI;
 use App\Http\Controllers\API\MaintenanceServiceController;
@@ -1763,6 +1764,13 @@ Route::prefix('online-store')
         Route::get('/banners/{banner}', [OnlineStoreContentController::class, 'banner'])->name('banners.show');
         Route::patch('/banners/{banner}', [OnlineStoreContentController::class, 'updateBanner'])->name('banners.update');
         Route::delete('/banners/{banner}', [OnlineStoreContentController::class, 'deleteBanner'])->name('banners.destroy');
+        Route::get('/popup-campaigns', [OnlineStorePopupCampaignController::class, 'index'])->name('popup-campaigns.index');
+        Route::post('/popup-campaigns', [OnlineStorePopupCampaignController::class, 'store'])->name('popup-campaigns.store');
+        Route::get('/popup-campaigns/{popupCampaign}', [OnlineStorePopupCampaignController::class, 'show'])->name('popup-campaigns.show');
+        Route::patch('/popup-campaigns/{popupCampaign}', [OnlineStorePopupCampaignController::class, 'update'])->name('popup-campaigns.update');
+        Route::post('/popup-campaigns/{popupCampaign}/activate', [OnlineStorePopupCampaignController::class, 'activate'])->name('popup-campaigns.activate');
+        Route::post('/popup-campaigns/{popupCampaign}/deactivate', [OnlineStorePopupCampaignController::class, 'deactivate'])->name('popup-campaigns.deactivate');
+        Route::delete('/popup-campaigns/{popupCampaign}', [OnlineStorePopupCampaignController::class, 'destroy'])->name('popup-campaigns.destroy');
         Route::get('/promotions', [OnlineStorePromotionController::class, 'index']);
         Route::post('/promotions', [OnlineStorePromotionController::class, 'store']);
         Route::get('/promotions/{promotion}', [OnlineStorePromotionController::class, 'show']);

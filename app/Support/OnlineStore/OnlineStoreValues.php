@@ -45,7 +45,7 @@ final class OnlineStoreValues
 
     public const AUDIT_ENTITY_TYPES = [
         'listing', 'category', 'media_presentation', 'promotion', 'coupon', 'home_section',
-        'banner', 'account_link', 'credit_policy', 'review', 'settings',
+        'banner', 'popup_campaign', 'account_link', 'credit_policy', 'review', 'settings',
     ];
 
     public const AUDIT_ACTION_TYPES = [

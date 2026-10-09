@@ -12,6 +12,7 @@ use App\Http\Controllers\API\Store\StoreMainCategoryController;
 use App\Http\Controllers\API\Store\StoreNotificationsController;
 use App\Http\Controllers\API\Store\StoreOnlineAdsController;
 use App\Http\Controllers\API\Store\StoreOrdersController;
+use App\Http\Controllers\API\Store\StorePopupCampaignController;
 use App\Http\Controllers\API\Store\StoreSettingsController;
 use App\Http\Controllers\API\Store\StoreSupCategoryController;
 use App\Http\Controllers\API\Store\StoreUsersController;
@@ -53,6 +54,9 @@ Route::post('/OnlineAds/GetAllAds', [StoreOnlineAdsController::class, 'getAllAds
 Route::post('/OnlineStore/Banners/{banner}/Click', [StoreOnlineAdsController::class, 'recordClick'])
     ->whereNumber('banner')
     ->middleware(['throttle:60,1', RecordOnlineStoreAnalytics::class.':banner_clicks']);
+Route::post('/OnlineStore/PopupCampaigns/{popupCampaign}/Event', [StorePopupCampaignController::class, 'event'])
+    ->whereNumber('popupCampaign')
+    ->middleware('throttle:120,1');
 Route::post('/Notifications/GetNotifications', [StoreNotificationsController::class, 'getNotifications']);
 Route::post('/Notifications/EditNotification', [StoreNotificationsController::class, 'editNotification']);
 Route::post('/Comments/GetAllCommentsToItem', [StoreCommentsController::class, 'getAllCommentsToItem']);

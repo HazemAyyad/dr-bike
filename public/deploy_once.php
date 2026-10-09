@@ -82,6 +82,14 @@ $allowedCommands = [
         'label' => '=== تجهيز تصنيفات وعرض الصفحة الرئيسية للمتجر بدون استبدال البيانات الحالية ===',
     ],
     [
+        'name' => 'db:seed',
+        'params' => [
+            '--class' => 'OnlineStorePopupCampaignSeeder',
+            '--force' => true,
+        ],
+        'label' => '=== تجهيز تصاميم الإعلانات المنبثقة للمتجر ===',
+    ],
+    [
         'name' => 'shiply:sync-addresses',
         'params' => ['--mode' => 'test', '--register-webhook' => true],
         'label' => '=== Shiply: مزامنة عناوين test + تسجيل webhook ===',

@@ -5,15 +5,17 @@ namespace App\Http\Controllers\API\Store;
 use App\Models\OnlineStore\OnlineStoreCategory;
 use App\Models\OnlineStore\OnlineStoreHomeSection;
 use App\Services\OnlineStore\BannerService;
+use App\Services\OnlineStore\PopupCampaignService;
 use App\Services\OnlineStore\StorefrontCatalogService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class StoreHomeController extends StoreBaseController
 {
     public function __construct(private readonly StorefrontCatalogService $catalog) {}
 
-    public function index(BannerService $banners): JsonResponse
+    public function index(Request $request, BannerService $banners, PopupCampaignService $popups): JsonResponse
     {
         $sections = OnlineStoreHomeSection::query()->where('is_visible', true)
             ->with('items')->orderBy('sort_order')->orderBy('id')->get()
@@ -28,7 +30,13 @@ class StoreHomeController extends StoreBaseController
                 ->increment('view_count');
         }
 
-        return response()->json(['data' => ['sections' => $sections]]);
+        $popup = $popups->eligible($request, $this->storeUserFromRequest($request));
+        $popupPayload = $popup ? $popups->storefrontPayload($popup) : null;
+        if ($popupPayload) {
+            $popupPayload['image_path'] = $this->storefrontMediaPath($popupPayload['image_path']);
+        }
+
+        return response()->json(['data' => ['sections' => $sections, 'popup_campaign' => $popupPayload]]);
     }
 
     private function compose(OnlineStoreHomeSection $section, BannerService $banners): array

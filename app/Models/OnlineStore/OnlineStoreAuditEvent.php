@@ -9,12 +9,12 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class OnlineStoreAuditEvent extends Model
 {
     public const ENTITY_TYPES = [
-        'listing', 'promotion', 'coupon', 'settings', 'account_link', 'credit_policy', 'review', 'pricing',
+        'listing', 'promotion', 'coupon', 'popup_campaign', 'settings', 'account_link', 'credit_policy', 'review', 'pricing',
     ];
 
     public const ACTIONS = [
         'created', 'updated', 'linked', 'approved', 'suspended', 'activated', 'deactivated',
-        'published', 'hidden', 'status_changed', 'moderated', 'previewed',
+        'published', 'hidden', 'status_changed', 'moderated', 'previewed', 'deleted',
     ];
 
     protected $fillable = [
