@@ -1619,6 +1619,9 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/support/conversations/{conversation}/typing', [SupportConversationController::class, 'typing'])
         ->whereNumber('conversation')
         ->middleware('throttle:120,1');
+    Route::post('/support/conversations/{conversation}/presence', [SupportConversationController::class, 'presence'])
+        ->whereNumber('conversation')
+        ->middleware('throttle:120,1');
     Route::put('/support/conversations/{conversation}/status', [SupportConversationController::class, 'updateStatus'])
         ->whereNumber('conversation');
 });

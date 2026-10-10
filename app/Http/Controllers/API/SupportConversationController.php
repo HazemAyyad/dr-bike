@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Events\Support\SupportConversationRead;
 use App\Events\Support\SupportMessageCreated;
+use App\Events\Support\SupportPresenceUpdated;
 use App\Events\Support\SupportTypingUpdated;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeDetail;
@@ -17,6 +18,7 @@ use App\Services\Support\StoreSupportNotificationService;
 use App\Services\Support\SupportAccessService;
 use App\Services\Support\SupportMessageManager;
 use App\Services\Support\SupportPayloadService;
+use App\Services\Support\SupportPresenceService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -39,6 +41,7 @@ class SupportConversationController extends Controller
         private readonly SupportAccessService $supportAccess,
         private readonly SupportMessageManager $supportMessages,
         private readonly SupportPayloadService $supportPayloads,
+        private readonly SupportPresenceService $supportPresence,
         private readonly StoreSupportNotificationService $storeSupportNotifications,
     ) {}
 
@@ -358,6 +361,25 @@ class SupportConversationController extends Controller
         ));
 
         return response()->json(['status' => 'success']);
+    }
+
+    public function presence(Request $request, SupportConversation $conversation)
+    {
+        $this->authorizeConversation($request, $conversation);
+        abort_unless(
+            $conversation->source === SupportConversation::SOURCE_ONLINE_STORE
+                && $this->supportAccess->canManageStore($request->user()),
+            403
+        );
+
+        $this->supportPresence->touch((int) $conversation->getKey());
+        $payload = $this->conversationPayload($conversation->fresh()->loadCount('messages'));
+        event(new SupportPresenceUpdated((int) $conversation->getKey(), $payload));
+
+        return response()->json([
+            'status' => 'success',
+            'conversation' => $payload,
+        ]);
     }
 
     public function updateStatus(Request $request, SupportConversation $conversation)

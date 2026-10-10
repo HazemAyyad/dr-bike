@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\URL;
 
 final class SupportPayloadService
 {
+    public function __construct(private readonly SupportPresenceService $presence) {}
+
     public function conversation(SupportConversation $conversation): array
     {
         $conversation->loadMissing([
@@ -32,6 +34,7 @@ final class SupportPayloadService
             'requester_image_url' => $this->profileImageUrl($conversation->requester?->profile_image_path),
             'requester_last_seen_at' => optional($conversation->requester?->last_seen_at)->toIso8601String(),
             'requester_is_online' => $conversation->requester?->last_seen_at?->gte(now()->subMinutes(2)) ?? false,
+            ...$this->presence->snapshot((int) $conversation->getKey()),
             'context_type' => (string) ($conversation->context_type ?: SupportConversation::CONTEXT_GENERAL),
             'online_store_listing_id' => $conversation->online_store_listing_id === null
                 ? null
