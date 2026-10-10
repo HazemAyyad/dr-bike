@@ -23,6 +23,19 @@ class SupportInboxContractTest extends TestCase
         $this->assertStringContainsString('assign_to_me', $controller);
     }
 
+    public function test_store_support_permission_is_assignable_from_employee_profile(): void
+    {
+        $employeeDetails = file_get_contents(app_path('Http/Controllers/API/EmployeeDetails.php'));
+        $migration = file_get_contents(database_path(
+            'migrations/2026_10_10_000002_ensure_online_store_support_permission_is_assignable.php'
+        ));
+
+        $this->assertStringContainsString("'Online Store Support'", $employeeDetails);
+        $this->assertStringContainsString("'communication'", $employeeDetails);
+        $this->assertStringContainsString("private const NAME_EN = 'Online Store Support'", $migration);
+        $this->assertStringContainsString("\$values['grant_policy'] = 'permissions_manage'", $migration);
+    }
+
     public function test_message_event_broadcasts_to_private_conversation_and_inbox_channels(): void
     {
         $this->assertTrue(is_subclass_of(SupportMessageCreated::class, ShouldBroadcast::class));

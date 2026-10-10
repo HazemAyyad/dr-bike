@@ -198,7 +198,8 @@ class EmployeeDetails extends Controller
             'Checks Incoming Create', 'Checks Outgoing Create' => 'checks',
             'Maintenance', 'Maintenance Services Settings' => 'maintenance',
             'Messages Section', 'Social Center WhatsApp', 'Social Center Facebook',
-            'Social Center Instagram', 'Technical Support', 'Notification Center Manage' => 'communication',
+            'Social Center Instagram', 'Technical Support', 'Online Store Support',
+            'Notification Center Manage' => 'communication',
             'Smart Home' => 'smart_home',
             default => 'general',
         };
