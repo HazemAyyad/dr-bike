@@ -12,9 +12,9 @@ use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreSubCategory;
 use App\Models\Store\StoreUser;
 use App\Services\OnlineStore\StoreIdentityService;
+use App\Services\OnlineStore\StoreActivityTracker;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Laravel\Sanctum\PersonalAccessToken;
 
 class StoreBaseController extends Controller
 {
@@ -33,24 +33,7 @@ class StoreBaseController extends Controller
 
     protected function storeUserFromRequest(Request $request): ?StoreUser
     {
-        $token = trim((string) $request->bearerToken());
-        if ($token === '') {
-            return null;
-        }
-
-        $accessToken = PersonalAccessToken::findToken($token);
-
-        if (! $accessToken || ($accessToken->expires_at && $accessToken->expires_at->isPast())) {
-            return null;
-        }
-        $expiration = config('sanctum.expiration');
-        if ($expiration !== null && $accessToken->created_at?->lte(now()->subMinutes((int) $expiration))) {
-            return null;
-        }
-
-        return $accessToken?->tokenable instanceof StoreUser
-            ? $accessToken->tokenable
-            : null;
+        return app(StoreActivityTracker::class)->actor($request);
     }
 
     protected function cityPayload(?int $shiplyId, ?string $fallbackName = null): array

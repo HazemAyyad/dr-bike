@@ -3,6 +3,7 @@
 namespace Tests\Feature\Support;
 
 use App\Events\Support\SupportMessageCreated;
+use App\Events\Support\SupportPresenceUpdated;
 use App\Events\Support\SupportTypingUpdated;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
@@ -52,5 +53,18 @@ class SupportInboxContractTest extends TestCase
         $this->assertStringContainsString("'client_message_id' => ['nullable', 'uuid']", $controller);
         $this->assertStringContainsString('$this->supportMessages->create(', $controller);
         $this->assertStringContainsString('$existing ? 200 : 201', $controller);
+    }
+
+    public function test_presence_event_and_payload_expose_real_store_customer_activity(): void
+    {
+        $this->assertTrue(is_subclass_of(SupportPresenceUpdated::class, ShouldBroadcastNow::class));
+        $payloads = file_get_contents(app_path('Services/Support/SupportPayloadService.php'));
+        $event = file_get_contents(app_path('Events/Support/SupportPresenceUpdated.php'));
+
+        $this->assertStringContainsString("return 'support.presence.updated'", $event);
+        $this->assertStringContainsString("'requester_image_url'", $payloads);
+        $this->assertStringContainsString("'requester_last_seen_at'", $payloads);
+        $this->assertStringContainsString("'requester_is_online'", $payloads);
+        $this->assertStringContainsString("'sender_image_url'", $payloads);
     }
 }

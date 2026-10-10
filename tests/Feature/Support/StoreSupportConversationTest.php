@@ -19,6 +19,8 @@ class StoreSupportConversationTest extends TestCase
         $this->assertStringContainsString('requester_unread_count', $controller);
         $this->assertStringContainsString("'/OnlineStore/Support/Conversations/{conversation}/Typing'", $routes);
         $this->assertStringContainsString('SupportTypingUpdated', $controller);
+        $this->assertStringContainsString("'/OnlineStore/Support/Conversations/{conversation}/Presence'", $routes);
+        $this->assertStringContainsString('SupportPresenceUpdated', $controller);
     }
 
     public function test_private_attachments_use_signed_download_contract(): void
@@ -31,5 +33,17 @@ class StoreSupportConversationTest extends TestCase
         $this->assertStringContainsString("'local'", $manager);
         $this->assertStringContainsString('temporarySignedRoute', $payloads);
         $this->assertStringContainsString("->middleware('signed')", $routes);
+    }
+
+    public function test_store_requests_track_last_seen_without_requerying_the_token(): void
+    {
+        $routes = file_get_contents(app_path('Providers/RouteServiceProvider.php'));
+        $tracker = file_get_contents(app_path('Services/OnlineStore/StoreActivityTracker.php'));
+        $migration = file_get_contents(database_path('migrations/2026_10_10_000001_add_last_seen_at_to_users_table.php'));
+
+        $this->assertStringContainsString('TrackOnlineStoreUserActivity::class', $routes);
+        $this->assertStringContainsString("'store_user_actor_resolved'", $tracker);
+        $this->assertStringContainsString("'last_seen_at' => now()", $tracker);
+        $this->assertStringContainsString("timestamp('last_seen_at')", $migration);
     }
 }

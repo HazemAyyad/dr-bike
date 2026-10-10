@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Http\Middleware\TrackOnlineStoreUserActivity;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvider;
 use Illuminate\Http\Request;
@@ -31,7 +32,7 @@ class RouteServiceProvider extends ServiceProvider
                 ->prefix('api')
                 ->group(base_path('routes/api.php'));
 
-            Route::middleware('api')
+            Route::middleware(['api', TrackOnlineStoreUserActivity::class])
                 ->group(base_path('routes/api_store.php'));
 
             Route::middleware('web')

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API\Store;
 
 use App\Events\Support\SupportConversationRead;
 use App\Events\Support\SupportMessageCreated;
+use App\Events\Support\SupportPresenceUpdated;
 use App\Events\Support\SupportTypingUpdated;
 use App\Http\Resources\OnlineStore\StorefrontListingResource;
 use App\Models\OnlineStore\OnlineStoreListing;
@@ -150,7 +151,7 @@ final class StoreSupportConversationController extends StoreBaseController
         ]);
         $perPage = (int) ($validated['per_page'] ?? 40);
         $query = $conversation->messages()
-            ->with(['attachments', 'senderUser:id,name', 'reactions.user:id,name'])
+            ->with(['attachments', 'senderUser:id,name,profile_image_path', 'reactions.user:id,name'])
             ->when($validated['before_id'] ?? null, fn ($builder, $id) => $builder->whereKey('<', $id))
             ->when($validated['after_id'] ?? null, fn ($builder, $id) => $builder->whereKey('>', $id))
             ->orderByDesc('id');
@@ -239,6 +240,22 @@ final class StoreSupportConversationController extends StoreBaseController
         ));
 
         return response()->json(['status' => 'success']);
+    }
+
+    public function presence(Request $request, SupportConversation $conversation)
+    {
+        $actor = $this->actor($request);
+        $this->authorizeOwner($conversation, $actor);
+        $conversationPayload = $this->payloads->conversation(
+            $conversation->fresh()->loadCount('messages')
+        );
+
+        event(new SupportPresenceUpdated((int) $conversation->getKey(), $conversationPayload));
+
+        return response()->json([
+            'status' => 'success',
+            'conversation' => $conversationPayload,
+        ]);
     }
 
     public function unreadCount(Request $request)

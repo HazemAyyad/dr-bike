@@ -47,7 +47,7 @@ class SupportConversationController extends Controller
         $query = SupportConversation::query()
             ->with([
                 'employee.user:id,name',
-                'requester:id,name,email,phone',
+                'requester:id,name,email,phone,profile_image_path,last_seen_at',
                 'assignee:id,name',
                 'suggestion:id,title,category,is_anonymous',
             ])
@@ -181,7 +181,7 @@ class SupportConversationController extends Controller
             return $conversation->fresh(['employee.user:id,name', 'assignee:id,name', 'suggestion:id,title,category,is_anonymous']);
         });
 
-        $conversation->load(['messages.attachments', 'messages.senderUser:id,name']);
+        $conversation->load(['messages.attachments', 'messages.senderUser:id,name,profile_image_path']);
         $message = $conversation->messages->last();
         if ($message) {
             $this->notifyAfterMessage($conversation, $message);
@@ -204,7 +204,7 @@ class SupportConversationController extends Controller
         $this->authorizeConversation($request, $conversation);
 
         $messages = $conversation->messages()
-            ->with(['attachments', 'senderUser:id,name', 'reactions.user:id,name'])
+            ->with(['attachments', 'senderUser:id,name,profile_image_path', 'reactions.user:id,name'])
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->paginate(min(max((int) $request->input('per_page', 30), 1), 100))
@@ -306,7 +306,7 @@ class SupportConversationController extends Controller
 
             $this->notifyAfterReaction(
                 $conversation->fresh(['employee.user:id,name']),
-                $message->fresh(['senderUser:id,name,type', 'senderEmployee.user:id,name']),
+                $message->fresh(['senderUser:id,name,type,profile_image_path', 'senderEmployee.user:id,name']),
                 $request,
                 $reaction
             );
@@ -316,7 +316,7 @@ class SupportConversationController extends Controller
             'status' => 'success',
             'message' => 'تم تحديث التفاعل',
             'support_message' => $this->messagePayload(
-                $message->fresh(['attachments', 'senderUser:id,name', 'reactions.user:id,name']),
+                $message->fresh(['attachments', 'senderUser:id,name,profile_image_path', 'reactions.user:id,name']),
                 $userId
             ),
         ]);
@@ -446,7 +446,7 @@ class SupportConversationController extends Controller
             }
         }
 
-        return $message->fresh(['attachments', 'senderUser:id,name']);
+        return $message->fresh(['attachments', 'senderUser:id,name,profile_image_path']);
     }
 
     private function storeAttachment(SupportConversation $conversation, SupportMessage $message, UploadedFile $file): void

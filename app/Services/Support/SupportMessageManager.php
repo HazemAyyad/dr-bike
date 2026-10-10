@@ -38,7 +38,7 @@ final class SupportMessageManager
                     ]);
                 }
 
-                return $existing->load(['attachments', 'senderUser:id,name', 'reactions.user:id,name']);
+                return $existing->load(['attachments', 'senderUser:id,name,profile_image_path', 'reactions.user:id,name']);
             }
         }
 
@@ -61,7 +61,7 @@ final class SupportMessageManager
 
         $this->touchConversation($conversation, $message, $senderType);
 
-        return $message->fresh(['attachments', 'senderUser:id,name', 'reactions.user:id,name']);
+        return $message->fresh(['attachments', 'senderUser:id,name,profile_image_path', 'reactions.user:id,name']);
     }
 
     private function storeAttachment(

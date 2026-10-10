@@ -20,5 +20,6 @@ class StoreUser extends Authenticatable
 
     protected $casts = [
         'ui_preferences' => 'array',
+        'last_seen_at' => 'datetime',
     ];
 }

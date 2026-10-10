@@ -75,6 +75,9 @@ Route::post('/OnlineStore/Support/Conversations/{conversation}/Read', [StoreSupp
 Route::post('/OnlineStore/Support/Conversations/{conversation}/Typing', [StoreSupportConversationController::class, 'typing'])
     ->whereNumber('conversation')
     ->middleware('throttle:120,1');
+Route::post('/OnlineStore/Support/Conversations/{conversation}/Presence', [StoreSupportConversationController::class, 'presence'])
+    ->whereNumber('conversation')
+    ->middleware('throttle:120,1');
 Route::post('/Comments/GetAllCommentsToItem', [StoreCommentsController::class, 'getAllCommentsToItem']);
 Route::post('/Comments/ManageComment', [StoreCommentsController::class, 'manageComment']);
 Route::get('/OnlineStore/Reviews', [StoreCommentsController::class, 'own']);

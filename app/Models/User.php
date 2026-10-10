@@ -44,6 +44,7 @@ class User extends Authenticatable
         'city',
         'address',
         'profile_image_path',
+        'last_seen_at',
         'type',
         'development_role',
         'is_blocked',
@@ -67,6 +68,7 @@ class User extends Authenticatable
      */
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'last_seen_at' => 'datetime',
         'is_blocked' => 'boolean',
         'ui_preferences' => 'array',
     ];
