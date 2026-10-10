@@ -8,6 +8,7 @@ use App\Models\SupportMessage;
 use App\Models\User;
 use App\Services\AdminNotificationService;
 use App\Services\EmployeeNotificationService;
+use App\Support\ProfileImageUrl;
 
 final class StoreSupportNotificationService
 {
@@ -49,7 +50,11 @@ final class StoreSupportNotificationService
             return;
         }
 
+        $conversation->loadMissing('requester:id,name,profile_image_path');
         $requesterName = (string) ($conversation->requester?->name ?? 'عميل المتجر');
+        $data['customer_image_url'] = ProfileImageUrl::resolve(
+            $conversation->requester?->profile_image_path
+        ) ?? '';
         $body = $requesterName.': '.$this->preview($message);
         $this->adminNotifications->create(
             AdminNotificationService::TYPE_SUPPORT_MESSAGE,

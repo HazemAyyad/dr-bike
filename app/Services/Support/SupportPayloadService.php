@@ -5,6 +5,7 @@ namespace App\Services\Support;
 use App\Models\SupportConversation;
 use App\Models\SupportMessage;
 use App\Models\SupportMessageAttachment;
+use App\Support\ProfileImageUrl;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 
@@ -31,7 +32,7 @@ final class SupportPayloadService
             'requester_name' => (string) ($conversation->requester?->name ?? $conversation->employee?->user?->name ?? ''),
             'requester_email' => (string) ($conversation->requester?->email ?? ''),
             'requester_phone' => (string) ($conversation->requester?->phone ?? ''),
-            'requester_image_url' => $this->profileImageUrl($conversation->requester?->profile_image_path),
+            'requester_image_url' => ProfileImageUrl::resolve($conversation->requester?->profile_image_path),
             'requester_last_seen_at' => optional($conversation->requester?->last_seen_at)->toIso8601String(),
             'requester_is_online' => $conversation->requester?->last_seen_at?->gte(now()->subMinutes(2)) ?? false,
             ...$this->presence->snapshot((int) $conversation->getKey()),
@@ -76,7 +77,7 @@ final class SupportPayloadService
             'sender_user_id' => $message->sender_user_id === null ? null : (int) $message->sender_user_id,
             'sender_employee_id' => $message->sender_employee_id === null ? null : (int) $message->sender_employee_id,
             'sender_name' => (string) ($message->senderUser?->name ?? ''),
-            'sender_image_url' => $this->profileImageUrl($message->senderUser?->profile_image_path),
+            'sender_image_url' => ProfileImageUrl::resolve($message->senderUser?->profile_image_path),
             'sender_type' => (string) $message->sender_type,
             'message_type' => (string) $message->message_type,
             'body' => $message->body,
@@ -113,18 +114,5 @@ final class SupportPayloadService
             now()->addMinutes(15),
             ['attachment' => $attachment->getKey()]
         );
-    }
-
-    private function profileImageUrl(?string $path): ?string
-    {
-        $path = trim((string) $path);
-        if ($path === '') {
-            return null;
-        }
-        if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
-            return $path;
-        }
-
-        return asset('storage/'.ltrim($path, '/'));
     }
 }

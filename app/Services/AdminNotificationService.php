@@ -17,6 +17,7 @@ use App\Models\StockImageExport;
 use App\Models\Store\StoreSalesOrder;
 use App\Models\User;
 use App\Support\EmployeePendingTasksForToday;
+use App\Support\ProfileImageUrl;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\App;
@@ -489,6 +490,7 @@ class AdminNotificationService
             $phone = (string) ($order->customer_phone ?? '');
             $city = (string) ($order->shiply_city_name ?? '');
             $total = number_format((float) ($order->total ?? 0), 2);
+            $customerImageUrl = $this->storeOrderCustomerImageUrl($order);
 
             return $this->create(
                 self::TYPE_STORE_ORDER_CREATED,
@@ -506,6 +508,7 @@ class AdminNotificationService
                     'order_id' => (string) $order->id,
                     'serial' => $serial,
                     'customer_name' => $customer,
+                    'customer_image_url' => $customerImageUrl ?? '',
                     'phone' => $phone,
                     'city' => $city,
                     'total' => $total,
@@ -526,6 +529,7 @@ class AdminNotificationService
             $serial = (string) ($order->serial_number ?: $order->id);
             $customer = (string) ($order->customer_name ?: __('messages.sales_order_unknown_customer'));
             $phone = (string) ($order->customer_phone ?? '');
+            $customerImageUrl = $this->storeOrderCustomerImageUrl($order);
 
             return $this->create(
                 self::TYPE_STORE_ORDER_CANCELED,
@@ -535,6 +539,7 @@ class AdminNotificationService
                     'order_id' => (string) $order->id,
                     'serial' => $serial,
                     'customer_name' => $customer,
+                    'customer_image_url' => $customerImageUrl ?? '',
                     'phone' => $phone,
                     'source' => 'store',
                     'status' => 'canceled',
@@ -546,6 +551,18 @@ class AdminNotificationService
                 true
             );
         });
+    }
+
+    private function storeOrderCustomerImageUrl(StoreSalesOrder $order): ?string
+    {
+        $originUserId = (int) ($order->origin_user_id ?? 0);
+        if ($originUserId <= 0) {
+            return null;
+        }
+
+        $path = User::query()->whereKey($originUserId)->value('profile_image_path');
+
+        return ProfileImageUrl::resolve(is_string($path) ? $path : null);
     }
 
     public function notifyPasswordResetOtp(\App\Models\User $user, string $code): AdminNotification

@@ -7,6 +7,7 @@ use App\Models\SalesOrder;
 use App\Models\SalesOrderShiplyEvent;
 use App\Models\User;
 use App\Services\OnlineStore\OnlineStoreNotificationService;
+use App\Support\ProfileImageUrl;
 use Illuminate\Support\Facades\Log;
 
 class SalesOrderNotificationService
@@ -52,6 +53,8 @@ class SalesOrderNotificationService
                 $body .= ' — '.$note;
             }
 
+            $customerImageUrl = $this->customerImageUrl($order);
+
             $this->adminNotifications->create(
                 self::typeForStatus($toStatus),
                 $title,
@@ -62,6 +65,7 @@ class SalesOrderNotificationService
                     'from_status' => (string) ($fromStatus ?? ''),
                     'to_status' => $toStatus,
                     'customer_name' => (string) ($order->customer_name ?? ''),
+                    'customer_image_url' => $customerImageUrl ?? '',
                     'actor_id' => $actor ? (string) $actor->id : '',
                 ],
                 null,
@@ -91,6 +95,17 @@ class SalesOrderNotificationService
         return SalesOrderStatus::tryFrom($status) !== null
             ? self::TYPE_STATUS_PREFIX.$status
             : self::TYPE_STATUS;
+    }
+
+    private function customerImageUrl(SalesOrder $order): ?string
+    {
+        if ($order->origin !== SalesOrder::ORIGIN_STORE || ! $order->origin_user_id) {
+            return null;
+        }
+
+        $order->loadMissing('originUser:id,profile_image_path');
+
+        return ProfileImageUrl::resolve($order->originUser?->profile_image_path);
     }
 
     public function notifyShiplyHandover(
