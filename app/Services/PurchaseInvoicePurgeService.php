@@ -47,7 +47,7 @@ class PurchaseInvoicePurgeService
     }
 
     /** @return array<string, mixed> */
-    public function purge(Bill $bill, User $actor, string $reason, bool $refreshPriceCache = true, ?string $expectedVersion = null): array
+    public function purge(Bill $bill, ?User $actor, string $reason, bool $refreshPriceCache = true, ?string $expectedVersion = null): array
     {
         $filesToDelete = [];
 
@@ -72,8 +72,9 @@ class PurchaseInvoicePurgeService
             $backup = $this->createBackup($bill, $actor, $reason, $attachments);
 
             $this->reverseAccountingEntries($bill);
-            $cashSummary = $this->reverseFinancialEffects($bill, (int) $actor->id);
-            $stockSummary = $this->reverseStockEffects($bill, $backup, (int) $actor->id);
+            $actorId = $actor ? (int) $actor->id : null;
+            $cashSummary = $this->reverseFinancialEffects($bill, $actorId);
+            $stockSummary = $this->reverseStockEffects($bill, $backup, $actorId);
 
             $sellerId = $bill->seller_id ? (int) $bill->seller_id : null;
             $productIds = $bill->items->pluck('product_id')->filter()->map(fn ($id) => (int) $id)->unique();
@@ -133,12 +134,12 @@ class PurchaseInvoicePurgeService
     }
 
     /** @return array<string, mixed> */
-    private function reverseFinancialEffects(Bill $bill, int $actorId): array
+    private function reverseFinancialEffects(Bill $bill, ?int $actorId): array
     {
         return $this->reversePaymentsAndReturns($bill->payments, $bill->purchaseReturns, $actorId, (int) $bill->id);
     }
 
-    private function reversePaymentsAndReturns(Collection $payments, Collection $returns, int $actorId, ?int $billId = null): array
+    private function reversePaymentsAndReturns(Collection $payments, Collection $returns, ?int $actorId, ?int $billId = null): array
     {
         $reversedCash = [];
         $deletedTransactions = [];
@@ -253,7 +254,7 @@ class PurchaseInvoicePurgeService
     }
 
     /** @return array<string, mixed> */
-    private function reverseStockEffects(Bill $bill, PurchaseInvoicePurgeBackup $backup, int $actorId): array
+    private function reverseStockEffects(Bill $bill, PurchaseInvoicePurgeBackup $backup, ?int $actorId): array
     {
         $purchaseLayerIds = $this->purchaseLayerIds($bill);
         $restoredReturnQuantity = $this->restoreReturnStock($bill->purchaseReturns, $backup, $actorId);
@@ -310,7 +311,7 @@ class PurchaseInvoicePurgeService
         ];
     }
 
-    private function restoreReturnStock(Collection $returns, PurchaseInvoicePurgeBackup $backup, int $actorId): float
+    private function restoreReturnStock(Collection $returns, PurchaseInvoicePurgeBackup $backup, ?int $actorId): float
     {
         $activeReturns = $returns->whereIn('status', self::ACTIVE_RETURN_STATUSES);
         $restoredReturnQuantity = 0.0;
@@ -338,18 +339,19 @@ class PurchaseInvoicePurgeService
     }
 
     /** Called inside the reset transaction, after its audit snapshot is saved. */
-    public function purgeUnlinkedRecords(PurchaseInvoicePurgeBackup $backup, User $actor): array
+    public function purgeUnlinkedRecords(PurchaseInvoicePurgeBackup $backup, ?User $actor): array
     {
+        $actorId = $actor ? (int) $actor->id : null;
         $payments = \App\Models\PurchasePayment::query()->whereDoesntHave('bill')->with('allocations')->lockForUpdate()->get();
         $returns = ReturnModel::query()->whereDoesntHave('bill')->with(['items', 'settlements'])->lockForUpdate()->get();
         foreach ($payments as $payment) {
-            $this->accounting->reverse('purchase_payment', (int) $payment->id, now(), $backup->reason, (int) $actor->id);
+            $this->accounting->reverse('purchase_payment', (int) $payment->id, now(), $backup->reason, $actorId);
         }
         foreach ($returns as $return) {
-            $this->accounting->reverse('purchase_return', (int) $return->id, now(), $backup->reason, (int) $actor->id);
+            $this->accounting->reverse('purchase_return', (int) $return->id, now(), $backup->reason, $actorId);
         }
-        $cash = $this->reversePaymentsAndReturns($payments, $returns, (int) $actor->id);
-        $restored = $this->restoreReturnStock($returns, $backup, (int) $actor->id);
+        $cash = $this->reversePaymentsAndReturns($payments, $returns, $actorId);
+        $restored = $this->restoreReturnStock($returns, $backup, $actorId);
         foreach ($returns as $return) {
             $return->delete();
         }
@@ -443,7 +445,7 @@ class PurchaseInvoicePurgeService
         return $ids === [] ? [-1] : $ids;
     }
 
-    private function createBackup(Bill $bill, User $actor, string $reason, Collection $attachments): PurchaseInvoicePurgeBackup
+    private function createBackup(Bill $bill, ?User $actor, string $reason, Collection $attachments): PurchaseInvoicePurgeBackup
     {
         $receiptIds = $bill->receipts->pluck('id');
         $paymentIds = $bill->payments->pluck('id');
@@ -497,7 +499,7 @@ class PurchaseInvoicePurgeService
                 'tables' => $tables,
                 'files' => $this->attachmentFiles($attachments),
             ],
-            'created_by' => $actor->id,
+            'created_by' => $actor?->id,
         ]);
     }
 

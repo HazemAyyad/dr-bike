@@ -51,6 +51,20 @@ class PurchaseDataResetService
         if ($actor->type !== 'admin' || $actor->is_blocked) {
             abort(403);
         }
+
+        return $this->performReset($fingerprint, $actor, $reason);
+    }
+
+    /** The web controller authorizes the security-center session before calling this. */
+    public function resetFromSecurityCenter(string $fingerprint, ?User $actor, string $reason): array
+    {
+        abort_unless(session()->get('security_center_authenticated', false), 403);
+
+        return $this->performReset($fingerprint, $actor, $reason);
+    }
+
+    private function performReset(string $fingerprint, ?User $actor, string $reason): array
+    {
         $this->ensureReady();
 
         return DB::transaction(function () use ($fingerprint, $actor, $reason) {
@@ -71,7 +85,7 @@ class PurchaseDataResetService
                 'workflow_status' => 'purchase_data_reset',
                 'reason' => $reason,
                 'payload' => ['version' => 1, 'scope' => 'all_purchase_data', 'tables' => $tables],
-                'created_by' => $actor->id,
+                'created_by' => $actor?->id,
             ]);
 
             // Remove independent allocations/returns first while their target bills still exist.

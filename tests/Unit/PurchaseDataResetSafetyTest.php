@@ -13,7 +13,6 @@ use App\Services\PurchaseInvoicePurgeService;
 use Illuminate\Database\DatabaseTransactionsManager;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -68,20 +67,21 @@ class PurchaseDataResetSafetyTest extends TestCase
         $service->reset(str_repeat('a', 64), new User(['type' => 'admin']), 'test reset');
     }
 
-    public function test_expired_preview_is_rejected_before_credentials_or_reset(): void
+    public function test_expired_preview_is_rejected_before_reset(): void
     {
         $session = Mockery::mock();
+        $session->shouldReceive('get')->with('security_center_authenticated', false)->once()->andReturn(true);
         $session->shouldReceive('get')->with('purchase_reset_preview')->once()->andReturn([
             'token' => str_repeat('a', 64), 'fingerprint' => 'test', 'expires_at' => now()->subMinute()->timestamp,
         ]);
         $request = Mockery::mock(Request::class);
         $request->shouldReceive('validate')->once()->andReturn([
-            'email' => 'admin@example.com', 'password' => 'unused', 'reason' => 'test',
-            'confirmed' => '1', 'preview_token' => str_repeat('a', 64),
+            'reason' => 'test', 'preview_token' => str_repeat('a', 64),
         ]);
-        $request->shouldReceive('session')->once()->andReturn($session);
+        $request->shouldReceive('session')->twice()->andReturn($session);
         $reset = Mockery::mock(PurchaseDataResetService::class);
         $reset->shouldNotReceive('reset');
+        $reset->shouldNotReceive('resetFromSecurityCenter');
         $this->expectException(ValidationException::class);
         (new PurchaseDataResetWebController)->destroy($request, $reset);
     }
@@ -123,7 +123,10 @@ class PurchaseDataResetSafetyTest extends TestCase
         ]];
         $html = view('purchase-data-reset', $data)->render();
         $this->assertStringContainsString('name="preview_token"', $html);
-        $this->assertStringContainsString('name="password"', $html);
+        $this->assertStringContainsString('name="reason"', $html);
+        $this->assertStringNotContainsString('name="email"', $html);
+        $this->assertStringNotContainsString('name="password"', $html);
+        $this->assertStringNotContainsString('name="confirmed"', $html);
         $this->assertStringContainsString('name="_token"', $html);
         $html = view('purchase-data-reset', ['errors' => new ViewErrorBag, 'missing' => ['bills'], 'preview' => null])->render();
         $this->assertStringNotContainsString('id="reset-form"', $html);
@@ -143,26 +146,23 @@ class PurchaseDataResetSafetyTest extends TestCase
     {
         $bill = new Bill;
         $bill->setRawAttributes(['id' => 42, 'final_total' => 150], true);
-        $actor = new User(['type' => 'admin']);
         $version = PurchaseInvoicePurgeService::invoiceVersion($bill);
         $request = Mockery::mock(Request::class);
-        $request->shouldReceive('validate')->once()->andReturn([
-            'email' => 'admin@example.com', 'password' => 'unused', 'reason' => '  test invoice  ',
-            'confirmed' => '1', 'bill_version' => $version,
+        $request->shouldReceive('validate')->with(Mockery::on(fn ($rules) => array_keys($rules) === ['reason', 'bill_version']))->once()->andReturn([
+            'reason' => '  test invoice  ', 'bill_version' => $version,
         ]);
         $session = Mockery::mock();
+        $session->shouldReceive('get')->with('security_center_authenticated', false)->once()->andReturn(true);
         $session->shouldReceive('forget')->with('purchase_reset_preview')->once();
-        $request->shouldReceive('session')->once()->andReturn($session);
-        $controller = Mockery::mock(PurchaseDataResetWebController::class)->makePartial()->shouldAllowMockingProtectedMethods();
-        $controller->shouldReceive('authenticatedAdmin')->once()->andReturn($actor);
-        Auth::shouldReceive('user')->once()->andReturn(null);
-        Auth::shouldReceive('setUser')->with($actor)->once();
-        Auth::shouldReceive('forgetUser')->once();
+        $request->shouldReceive('session')->twice()->andReturn($session);
+        $request->shouldReceive('user')->once()->andReturn(null);
+        $request->shouldReceive('ip')->once()->andReturn('127.0.0.1');
+        $controller = new PurchaseDataResetWebController;
         $reset = Mockery::mock(PurchaseDataResetService::class);
         $reset->shouldReceive('missingTables')->once()->andReturn([]);
         $reset->shouldNotReceive('reset');
         $purge = Mockery::mock(PurchaseInvoicePurgeService::class);
-        $purge->shouldReceive('purge')->with($bill, $actor, 'test invoice', true, $version)->once()->andReturn([
+        $purge->shouldReceive('purge')->with($bill, null, 'test invoice | حذف من مركز الأمان. IP: 127.0.0.1', true, $version)->once()->andReturn([
             'bill_id' => 42, 'backup_reference' => 'invoice-audit-test',
         ]);
         $response = $controller->destroyInvoice($request, $bill, $purge, $reset);
@@ -205,6 +205,9 @@ class PurchaseDataResetSafetyTest extends TestCase
             $this->assertStringContainsString('data-reference="PUR-'.$id.'"', $html);
         }
         $this->assertStringContainsString('name="bill_version"', $html);
+        $this->assertStringNotContainsString('name="email"', $html);
+        $this->assertStringNotContainsString('name="password"', $html);
+        $this->assertStringNotContainsString('name="confirmed"', $html);
         $this->assertStringContainsString('حذف الفاتورة المحددة', $html);
     }
 
@@ -216,6 +219,55 @@ class PurchaseDataResetSafetyTest extends TestCase
         $this->assertContains('throttle:5,1', $route->gatherMiddleware());
         $this->assertContains('web', $route->gatherMiddleware());
         $this->assertSame('[0-9]+', $route->wheres['bill']);
+    }
+
+    public function test_single_invoice_delete_rejects_requests_without_a_security_center_session(): void
+    {
+        $session = Mockery::mock();
+        $session->shouldReceive('get')->with('security_center_authenticated', false)->once()->andReturn(false);
+        $request = Mockery::mock(Request::class);
+        $request->shouldReceive('session')->once()->andReturn($session);
+        $request->shouldNotReceive('validate');
+        $purge = Mockery::mock(PurchaseInvoicePurgeService::class);
+        $purge->shouldNotReceive('purge');
+        $reset = Mockery::mock(PurchaseDataResetService::class);
+        $this->expectException(HttpException::class);
+        (new PurchaseDataResetWebController)->destroyInvoice($request, new Bill, $purge, $reset);
+    }
+
+    public function test_security_center_reset_service_rejects_an_unauthorized_session(): void
+    {
+        session()->forget('security_center_authenticated');
+        DB::shouldReceive('transaction')->never();
+        $service = new PurchaseDataResetService(Mockery::mock(PurchaseInvoicePurgeService::class));
+        $this->expectException(HttpException::class);
+        $service->resetFromSecurityCenter('test', null, 'test reason');
+    }
+
+    public function test_bulk_reset_accepts_reason_without_account_credentials(): void
+    {
+        $token = str_repeat('a', 64);
+        $session = Mockery::mock();
+        $session->shouldReceive('get')->with('security_center_authenticated', false)->once()->andReturn(true);
+        $session->shouldReceive('get')->with('purchase_reset_preview')->once()->andReturn([
+            'token' => $token, 'fingerprint' => 'reviewed-state', 'expires_at' => now()->addMinute()->timestamp,
+        ]);
+        $session->shouldReceive('forget')->with('purchase_reset_preview')->once();
+        $request = Mockery::mock(Request::class);
+        $request->shouldReceive('session')->times(3)->andReturn($session);
+        $request->shouldReceive('validate')->with(Mockery::on(fn ($rules) => array_keys($rules) === ['reason', 'preview_token']))->once()->andReturn([
+            'reason' => '  test reset  ', 'preview_token' => $token,
+        ]);
+        $request->shouldReceive('user')->once()->andReturn(null);
+        $request->shouldReceive('ip')->once()->andReturn('127.0.0.1');
+        $reset = Mockery::mock(PurchaseDataResetService::class);
+        $reset->shouldNotReceive('reset');
+        $reset->shouldReceive('resetFromSecurityCenter')
+            ->with('reviewed-state', null, 'test reset | حذف من مركز الأمان. IP: 127.0.0.1')->once()
+            ->andReturn(['counts' => ['bills' => 2], 'backup_reference' => 'reset-audit']);
+        $response = (new PurchaseDataResetWebController)->destroy($request, $reset);
+        $this->assertSame(route('security-center.purchase-reset.index'), $response->getTargetUrl());
+        $this->assertSame('reset-audit', session('purchase_reset_result.backup_reference'));
     }
 
     private function purgeService(): PurchaseInvoicePurgeService

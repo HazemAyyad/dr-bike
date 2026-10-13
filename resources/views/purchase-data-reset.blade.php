@@ -34,7 +34,7 @@
             @endforeach
         </div>
         @if($invoices ?? null)
-            <section class="card"><h2>حذف فاتورة واحدة</h2><p class="muted">اختر الفاتورة ثم أكّد حذفها بكلمة مرور الأدمن. يشمل الحذف استلامها ودفعاتها ومرتجعاتها المرتبطة، مع عكس آثارها وحفظ نسخة تدقيق. قد يصبح المخزون سالبًا إذا كانت كمياتها قد بيعت أو استُهلكت.</p>
+            <section class="card"><h2>حذف فاتورة واحدة</h2><p class="muted">اختر الفاتورة ثم أدخل سبب الحذف. يشمل الحذف استلامها ودفعاتها ومرتجعاتها المرتبطة، مع عكس آثارها وحفظ نسخة تدقيق. قد يصبح المخزون سالبًا إذا كانت كمياتها قد بيعت أو استُهلكت.</p>
                 <form method="GET" class="search"><input name="search" value="{{ $search ?? '' }}" maxlength="255" aria-label="البحث عن فاتورة" placeholder="رقم الفاتورة أو اسم المورد / الزبون"><button type="submit" class="secondary">بحث</button>@if($search ?? '')<a class="secondary" href="{{ route('security-center.purchase-reset.index') }}">عرض الكل</a>@endif</form>
                 @php($workflowLabels = ['draft'=>'مسودة', 'awaiting_receiving'=>'بانتظار الاستلام', 'partially_received'=>'استلام جزئي', 'received'=>'مستلمة', 'awaiting_approval'=>'بانتظار الاعتماد', 'finalized'=>'معتمدة', 'completed'=>'مكتملة', 'cancelled'=>'ملغاة', 'issues_pending'=>'ملاحظات معلقة', 'receiving_issues'=>'فروقات في الاستلام', 'unfinished'=>'غير مكتملة', 'finished'=>'مكتملة'])
                 @forelse($invoices as $invoice)
@@ -54,10 +54,7 @@
                 <form id="invoice-delete-form" method="POST" class="invoice-form">
                     @csrf
                     <input id="invoice-version" name="bill_version" type="hidden">
-                    <div><label for="invoice-email">البريد الإلكتروني للأدمن</label><input id="invoice-email" name="email" type="email" autocomplete="username" dir="ltr" required maxlength="255"></div>
-                    <div><label for="invoice-password">كلمة مرور حساب الأدمن</label><input id="invoice-password" name="password" type="password" autocomplete="current-password" required maxlength="255"></div>
                     <div><label for="invoice-reason">سبب الحذف</label><textarea id="invoice-reason" name="reason" minlength="3" maxlength="1000" rows="2" required>حذف فاتورة شراء تجريبية</textarea></div>
-                    <label class="check"><input name="confirmed" type="checkbox" value="1" required><span>أؤكد حذف الفاتورة المحددة وعكس آثارها المرتبطة.</span></label>
                     <button type="submit" class="danger" id="invoice-submit">حذف الفاتورة المحددة</button><p id="invoice-progress" class="muted" aria-live="polite"></p>
                 </form>
             </dialog>
@@ -67,14 +64,11 @@
             <section class="card"><h2>إجماليات الفواتير حسب العملة</h2><div class="table-wrap"><table><thead><tr><th>العملة</th><th>الإجمالي النهائي</th><th>المدفوع على الفواتير</th></tr></thead><tbody>@foreach($preview['totals'] as $currency=>$totals)<tr><td>{{ $currency }}</td><td>{{ number_format($totals['total'], 2) }}</td><td>{{ number_format($totals['paid'], 2) }}</td></tr>@endforeach</tbody></table></div></section>
         @endif
         @if(array_sum($preview['counts']) > 0)
-            <section class="card"><h2>تأكيد التصفير</h2><p class="muted">أدخل بيانات حساب أدمن فعّال. المعاينة صالحة لمدة 15 دقيقة؛ إذا تغيرت بيانات المشتريات ستحتاج إلى تحديثها.</p>
+            <section class="card"><h2>تأكيد التصفير</h2><p class="muted">أدخل سبب التصفير. المعاينة صالحة لمدة 15 دقيقة؛ إذا تغيرت بيانات المشتريات ستحتاج إلى تحديثها.</p>
                 <form id="reset-form" method="POST" action="{{ route('security-center.purchase-reset.destroy') }}" class="grid">
                     @csrf
                     <input type="hidden" name="preview_token" value="{{ $preview['token'] }}">
-                    <div><label for="email">البريد الإلكتروني للأدمن</label><input id="email" name="email" type="email" autocomplete="username" dir="ltr" required maxlength="255"></div>
-                    <div><label for="password">كلمة مرور حساب الأدمن</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="255"></div>
                     <div class="full"><label for="reason">سبب التصفير</label><textarea id="reason" name="reason" minlength="3" maxlength="1000" rows="2" required>حذف بيانات المشتريات التجريبية</textarea></div>
-                    <label class="full check"><input type="checkbox" name="confirmed" value="1" required><span>أؤكد حذف جميع المشتريات التجريبية وعكس آثارها على المخزون والديون والصناديق.</span></label>
                     <div class="full"><button id="reset-button" class="danger" type="submit">تصفير جميع المشتريات</button><p id="progress" class="muted" aria-live="polite"></p></div>
                 </form>
             </section>
