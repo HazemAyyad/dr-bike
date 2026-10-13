@@ -15,10 +15,11 @@ use App\Http\Controllers\EmployeePointsCleanupWebController;
 use App\Http\Controllers\InventoryLegacyAuditWebController;
 use App\Http\Controllers\ProductEditTestController;
 use App\Http\Controllers\PublicStoreProductController;
+use App\Http\Controllers\PurchaseDataResetWebController;
 use App\Http\Controllers\SecurityCenterWebController;
 use App\Http\Controllers\SmsTestWebController;
-use App\Http\Controllers\StoreSyncTestController;
 use App\Http\Controllers\StorefrontLinkManifestController;
+use App\Http\Controllers\StoreSyncTestController;
 use App\Http\Controllers\UserSessionsWebController;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
@@ -90,6 +91,10 @@ Route::middleware('security.center')->prefix('security-center')->name('security-
         ->middleware('throttle:2,1')
         ->name('employee-points.destroy-all');
     Route::get('/accounting', [AccountingIntegrityWebController::class, 'index'])->name('accounting.index');
+    Route::get('/purchases/reset', [PurchaseDataResetWebController::class, 'index'])->name('purchase-reset.index');
+    Route::post('/purchases/reset', [PurchaseDataResetWebController::class, 'destroy'])
+        ->middleware('throttle:2,1')
+        ->name('purchase-reset.destroy');
     Route::post('/accounting/inspect', [AccountingIntegrityWebController::class, 'inspect'])
         ->middleware('throttle:6,1')
         ->name('accounting.inspect');

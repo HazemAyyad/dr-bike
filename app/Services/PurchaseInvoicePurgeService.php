@@ -22,6 +22,11 @@ use Illuminate\Support\Str;
 
 class PurchaseInvoicePurgeService
 {
+    public const DEBT_SOURCES = [
+        'purchase_invoice', 'purchase_initial_payment', 'purchase_payment',
+        'purchase_account_payment', 'purchase_return', 'purchase_refund', 'purchase_settlement',
+    ];
+
     private const ACTIVE_RETURN_STATUSES = ['pending', 'confirmed', 'delivered', 'settled'];
 
     public function __construct(
@@ -31,11 +36,11 @@ class PurchaseInvoicePurgeService
     ) {}
 
     /** @return array<string, mixed> */
-    public function purge(Bill $bill, User $actor, string $reason): array
+    public function purge(Bill $bill, User $actor, string $reason, bool $refreshPriceCache = true): array
     {
         $filesToDelete = [];
 
-        $result = DB::transaction(function () use ($bill, $actor, $reason, &$filesToDelete) {
+        $result = DB::transaction(function () use ($bill, $actor, $reason, $refreshPriceCache, &$filesToDelete) {
             $bill = Bill::query()
                 ->with([
                     'items',
@@ -74,8 +79,10 @@ class PurchaseInvoicePurgeService
             $billId = (int) $bill->id;
             $bill->delete();
 
-            foreach ($productIds as $productId) {
-                $this->refreshLatestPriceCache($sellerId, $productId);
+            if ($refreshPriceCache) {
+                foreach ($productIds as $productId) {
+                    $this->refreshLatestPriceCache($sellerId, $productId);
+                }
             }
 
             $summary = [
@@ -92,13 +99,7 @@ class PurchaseInvoicePurgeService
             return $summary;
         }, 3);
 
-        foreach ($filesToDelete as $file) {
-            try {
-                Storage::disk($file['disk'])->delete($file['path']);
-            } catch (\Throwable $exception) {
-                report($exception);
-            }
-        }
+        $this->deleteFilesAfterCommit($filesToDelete);
 
         return $result;
     }
@@ -119,13 +120,18 @@ class PurchaseInvoicePurgeService
     /** @return array<string, mixed> */
     private function reverseFinancialEffects(Bill $bill, int $actorId): array
     {
+        return $this->reversePaymentsAndReturns($bill->payments, $bill->purchaseReturns, $actorId, (int) $bill->id);
+    }
+
+    private function reversePaymentsAndReturns(Collection $payments, Collection $returns, int $actorId, ?int $billId = null): array
+    {
         $reversedCash = [];
         $deletedTransactions = [];
 
-        foreach ($bill->purchaseReturns as $return) {
+        foreach ($returns as $return) {
             foreach ($return->settlements as $settlement) {
                 if ($settlement->type === 'bill_allocation' && $settlement->bill_id
-                    && (int) $settlement->bill_id !== (int) $bill->id) {
+                    && (int) $settlement->bill_id !== $billId) {
                     $targetBill = Bill::query()->lockForUpdate()->find($settlement->bill_id);
                     if ($targetBill) {
                         $paid = max(0, round((float) $targetBill->paid_amount - (float) $settlement->amount, 4));
@@ -156,13 +162,13 @@ class PurchaseInvoicePurgeService
             }
         }
 
-        foreach ($bill->payments as $payment) {
+        foreach ($payments as $payment) {
             $transactionIds = collect([$payment->debt_transaction_id])
                 ->filter()
                 ->merge(
                     DebtTransaction::query()
                         ->active()
-                        ->whereIn('source', ['purchase_initial_payment', 'purchase_payment'])
+                        ->whereIn('source', ['purchase_initial_payment', 'purchase_payment', 'purchase_account_payment'])
                         ->where('source_id', $payment->id)
                         ->pluck('id')
                 )
@@ -173,10 +179,10 @@ class PurchaseInvoicePurgeService
             }
         }
 
-        $invoiceTransactions = DebtTransaction::query()
+        $invoiceTransactions = $billId === null ? collect() : DebtTransaction::query()
             ->active()
             ->where('source', 'purchase_invoice')
-            ->where('source_id', $bill->id)
+            ->where('source_id', $billId)
             ->lockForUpdate()
             ->get();
         foreach ($invoiceTransactions as $transaction) {
@@ -235,27 +241,7 @@ class PurchaseInvoicePurgeService
     private function reverseStockEffects(Bill $bill, PurchaseInvoicePurgeBackup $backup, int $actorId): array
     {
         $purchaseLayerIds = $this->purchaseLayerIds($bill);
-        $activeReturns = $bill->purchaseReturns->whereIn('status', self::ACTIVE_RETURN_STATUSES);
-        $restoredReturnQuantity = 0.0;
-        foreach ($activeReturns as $return) {
-            foreach ($return->items as $returnItem) {
-                $product = Product::withTrashed()->lockForUpdate()->findOrFail($returnItem->product_id);
-                $restored = $this->costing->reverseOwnedStockConsumption(
-                    product: $product,
-                    quantity: (float) $returnItem->quantity,
-                    originalReferenceType: 'purchase_return',
-                    originalReferenceId: (int) $return->id,
-                    movementType: ProductStockMovement::TYPE_PURCHASE_INVOICE_DELETE_RETURN_RESTORE,
-                    reversalReferenceType: 'purchase_invoice_delete',
-                    reversalReferenceId: (int) $backup->id,
-                    sizeColorId: $returnItem->size_color_id ? (int) $returnItem->size_color_id : null,
-                    sizeId: $returnItem->size_id ? (int) $returnItem->size_id : null,
-                    userId: $actorId,
-                    note: 'عكس مرتجع مرتبط قبل حذف فاتورة PUR-'.$bill->id,
-                );
-                $restoredReturnQuantity += (float) $restored['quantity'];
-            }
-        }
+        $restoredReturnQuantity = $this->restoreReturnStock($bill->purchaseReturns, $backup, $actorId);
 
         $rows = [];
         $totalQuantity = 0.0;
@@ -307,6 +293,91 @@ class PurchaseInvoicePurgeService
             'pending_cost_quantity' => round($pendingCostQuantity, 4),
             'items' => $rows,
         ];
+    }
+
+    private function restoreReturnStock(Collection $returns, PurchaseInvoicePurgeBackup $backup, int $actorId): float
+    {
+        $activeReturns = $returns->whereIn('status', self::ACTIVE_RETURN_STATUSES);
+        $restoredReturnQuantity = 0.0;
+        foreach ($activeReturns as $return) {
+            foreach ($return->items as $returnItem) {
+                $product = Product::withTrashed()->lockForUpdate()->findOrFail($returnItem->product_id);
+                $restored = $this->costing->reverseOwnedStockConsumption(
+                    product: $product,
+                    quantity: (float) $returnItem->quantity,
+                    originalReferenceType: 'purchase_return',
+                    originalReferenceId: (int) $return->id,
+                    movementType: ProductStockMovement::TYPE_PURCHASE_INVOICE_DELETE_RETURN_RESTORE,
+                    reversalReferenceType: 'purchase_invoice_delete',
+                    reversalReferenceId: (int) $backup->id,
+                    sizeColorId: $returnItem->size_color_id ? (int) $returnItem->size_color_id : null,
+                    sizeId: $returnItem->size_id ? (int) $returnItem->size_id : null,
+                    userId: $actorId,
+                    note: 'عكس مرتجع شراء: '.$backup->bill_reference,
+                );
+                $restoredReturnQuantity += (float) $restored['quantity'];
+            }
+        }
+
+        return round($restoredReturnQuantity, 4);
+    }
+
+    /** Called inside the reset transaction, after its audit snapshot is saved. */
+    public function purgeUnlinkedRecords(PurchaseInvoicePurgeBackup $backup, User $actor): array
+    {
+        $payments = \App\Models\PurchasePayment::query()->whereDoesntHave('bill')->with('allocations')->lockForUpdate()->get();
+        $returns = ReturnModel::query()->whereDoesntHave('bill')->with(['items', 'settlements'])->lockForUpdate()->get();
+        foreach ($payments as $payment) {
+            $this->accounting->reverse('purchase_payment', (int) $payment->id, now(), $backup->reason, (int) $actor->id);
+        }
+        foreach ($returns as $return) {
+            $this->accounting->reverse('purchase_return', (int) $return->id, now(), $backup->reason, (int) $actor->id);
+        }
+        $cash = $this->reversePaymentsAndReturns($payments, $returns, (int) $actor->id);
+        $restored = $this->restoreReturnStock($returns, $backup, (int) $actor->id);
+        foreach ($returns as $return) {
+            $return->delete();
+        }
+        foreach ($payments as $payment) {
+            $payment->delete();
+        }
+
+        return ['payments_deleted' => $payments->count(), 'returns_deleted' => $returns->count(), 'return_quantity_restored' => $restored, 'cash' => $cash];
+    }
+
+    public function deleteFilesAfterCommit(array $files): void
+    {
+        DB::afterCommit(function () use ($files) {
+            foreach ($files as $file) {
+                try {
+                    Storage::disk($file['disk'])->delete($file['path']);
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            }
+        });
+    }
+
+    /** Reverse reviewed legacy purchase debts whose source record no longer exists. */
+    public function purgeRemainingPurchaseDebts(array $ids): array
+    {
+        $cash = [];
+        $deleted = [];
+        foreach (array_chunk($ids, 500) as $chunk) {
+            $transactions = DebtTransaction::query()->active()->whereIn('id', $chunk)
+                ->whereIn('source', self::DEBT_SOURCES)->orderBy('id')->lockForUpdate()->get();
+            foreach ($transactions as $transaction) {
+                if ($transaction->source === 'purchase_invoice') {
+                    $this->accounting->reverse('debt_transaction', (int) $transaction->id, now(), 'تصفير بيانات المشتريات', auth()->id());
+                    $this->ledger->deleteTransaction($transaction, true, true);
+                    $deleted[] = (int) $transaction->id;
+                } else {
+                    $this->reverseLinkedTransaction((int) $transaction->id, $cash, $deleted);
+                }
+            }
+        }
+
+        return ['debt_transactions_deleted' => $deleted, 'reversed_box_movements' => $cash];
     }
 
     /** @return array<int, int> */
