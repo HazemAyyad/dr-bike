@@ -17,7 +17,8 @@ class ProductStockMovement extends Model
 
     public const TYPE_PURCHASE_INVOICE_DELETE = 'purchase_invoice_delete';
 
-    public const TYPE_PURCHASE_INVOICE_DELETE_RETURN_RESTORE = 'purchase_invoice_delete_return_restore';
+    // Fits the existing VARCHAR(32) column; the deletion reference retains the invoice audit link.
+    public const TYPE_PURCHASE_INVOICE_DELETE_RETURN_RESTORE = 'purchase_delete_return_restore';
 
     public const TYPE_MAINTENANCE = 'maintenance';
 
