@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class PurchaseInvoicePurgeService
 {
@@ -35,12 +36,22 @@ class PurchaseInvoicePurgeService
         private readonly AccountingService $accounting,
     ) {}
 
+    /** Ignore list-only counts when comparing the stored invoice row. */
+    public static function invoiceVersion(Bill $bill): string
+    {
+        $attributes = $bill->getRawOriginal();
+        unset($attributes['items_count']);
+        ksort($attributes);
+
+        return hash('sha256', json_encode($attributes, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE));
+    }
+
     /** @return array<string, mixed> */
-    public function purge(Bill $bill, User $actor, string $reason, bool $refreshPriceCache = true): array
+    public function purge(Bill $bill, User $actor, string $reason, bool $refreshPriceCache = true, ?string $expectedVersion = null): array
     {
         $filesToDelete = [];
 
-        $result = DB::transaction(function () use ($bill, $actor, $reason, $refreshPriceCache, &$filesToDelete) {
+        $result = DB::transaction(function () use ($bill, $actor, $reason, $refreshPriceCache, $expectedVersion, &$filesToDelete) {
             $bill = Bill::query()
                 ->with([
                     'items',
@@ -51,6 +62,10 @@ class PurchaseInvoicePurgeService
                 ])
                 ->lockForUpdate()
                 ->findOrFail($bill->id);
+
+            if ($expectedVersion !== null && ! hash_equals($expectedVersion, self::invoiceVersion($bill))) {
+                throw ValidationException::withMessages(['bill_version' => 'تغيرت الفاتورة بعد عرضها. حدّث الصفحة وراجع بياناتها قبل الحذف.']);
+            }
 
             $attachments = $this->attachmentsFor($bill);
             $filesToDelete = $this->attachmentFiles($attachments);

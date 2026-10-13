@@ -95,6 +95,10 @@ Route::middleware('security.center')->prefix('security-center')->name('security-
     Route::post('/purchases/reset', [PurchaseDataResetWebController::class, 'destroy'])
         ->middleware('throttle:2,1')
         ->name('purchase-reset.destroy');
+    Route::post('/purchases/reset/invoices/{bill}/delete', [PurchaseDataResetWebController::class, 'destroyInvoice'])
+        ->whereNumber('bill')
+        ->middleware('throttle:5,1')
+        ->name('purchase-reset.invoices.destroy');
     Route::post('/accounting/inspect', [AccountingIntegrityWebController::class, 'inspect'])
         ->middleware('throttle:6,1')
         ->name('accounting.inspect');

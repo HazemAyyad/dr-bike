@@ -2,8 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Bill;
 use App\Models\User;
 use App\Services\PurchaseDataResetService;
+use App\Services\PurchaseInvoicePurgeService;
+use Closure;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -16,9 +19,12 @@ class PurchaseDataResetWebController extends Controller
 {
     public function index(Request $request, PurchaseDataResetService $reset): View
     {
+        $data = $request->validate(['search' => ['nullable', 'string', 'max:255']]);
         $request->session()->forget('purchase_reset_preview');
         $missing = $reset->missingTables();
         $preview = null;
+        $invoices = null;
+        $search = trim((string) ($data['search'] ?? ''));
         if ($missing === []) {
             $preview = $reset->preview();
             $preview['token'] = Str::random(64);
@@ -27,9 +33,21 @@ class PurchaseDataResetWebController extends Controller
                 'fingerprint' => $preview['fingerprint'],
                 'expires_at' => now()->addMinutes(15)->timestamp,
             ]);
+            $invoices = Bill::query()->with(['seller:id,name', 'customer:id,name'])->withCount('items')
+                ->when($search !== '', function ($query) use ($search) {
+                    $query->where(function ($query) use ($search) {
+                        $reference = preg_replace('/^PUR-/i', '', $search);
+                        if (ctype_digit($reference)) {
+                            $query->where('id', $reference);
+                        } else {
+                            $query->whereHas('seller', fn ($party) => $party->where('name', 'like', '%'.$search.'%'))
+                                ->orWhereHas('customer', fn ($party) => $party->where('name', 'like', '%'.$search.'%'));
+                        }
+                    });
+                })->latest('id')->paginate(20)->withQueryString();
         }
 
-        return view('purchase-data-reset', compact('preview', 'missing'));
+        return view('purchase-data-reset', compact('preview', 'missing', 'invoices', 'search'));
     }
 
     public function destroy(Request $request, PurchaseDataResetService $reset): RedirectResponse
@@ -47,16 +65,57 @@ class PurchaseDataResetWebController extends Controller
             throw ValidationException::withMessages(['preview' => 'انتهت المعاينة أو تغيرت الصفحة. حدّث المعاينة قبل التصفير.']);
         }
 
+        $actor = $this->authenticatedAdmin($data);
+        $result = $this->executeAsAdmin($actor, fn () => $reset->reset($preview['fingerprint'], $actor, trim($data['reason'])));
+        $request->session()->forget('purchase_reset_preview');
+
+        return redirect()->route('security-center.purchase-reset.index')->with('purchase_reset_result', [
+            'counts' => $result['counts'],
+            'backup_reference' => $result['backup_reference'],
+        ]);
+    }
+
+    public function destroyInvoice(Request $request, Bill $bill, PurchaseInvoicePurgeService $purge, PurchaseDataResetService $reset): RedirectResponse
+    {
+        $data = $request->validate([
+            'email' => ['required', 'email', 'max:255'],
+            'password' => ['required', 'string', 'max:255'],
+            'reason' => ['required', 'string', 'min:3', 'max:1000'],
+            'confirmed' => ['required', 'accepted'],
+            'bill_version' => ['required', 'string', 'size:64'],
+        ]);
+        if ($reset->missingTables() !== []) {
+            throw ValidationException::withMessages(['schema' => 'جداول المشتريات والتدقيق غير مكتملة. طبّق ترحيلات السيرفر أولًا.']);
+        }
+        $actor = $this->authenticatedAdmin($data);
+        $result = $this->executeAsAdmin($actor, fn () => $purge->purge(
+            $bill, $actor, trim($data['reason']), expectedVersion: $data['bill_version'],
+        ));
+        $request->session()->forget('purchase_reset_preview');
+
+        return redirect()->route('security-center.purchase-reset.index')->with('purchase_invoice_deleted', [
+            'bill_id' => $result['bill_id'],
+            'backup_reference' => $result['backup_reference'],
+        ]);
+    }
+
+    protected function authenticatedAdmin(array $data): User
+    {
         $actor = User::query()->where('email', $data['email'])->where('type', 'admin')->first();
         if (! $actor || $actor->is_blocked || ! Hash::check($data['password'], $actor->password)) {
             throw ValidationException::withMessages(['email' => 'بيانات حساب الأدمن غير صحيحة أو الحساب محظور.']);
         }
 
+        return $actor;
+    }
+
+    private function executeAsAdmin(User $actor, Closure $action): array
+    {
         // Existing accounting services use auth()->id() for their audit entries.
         $previousUser = Auth::user();
         Auth::setUser($actor);
         try {
-            $result = $reset->reset($preview['fingerprint'], $actor, trim($data['reason']));
+            return $action();
         } catch (ValidationException $exception) {
             throw $exception;
         } catch (\Throwable $exception) {
@@ -69,11 +128,5 @@ class PurchaseDataResetWebController extends Controller
                 Auth::forgetUser();
             }
         }
-        $request->session()->forget('purchase_reset_preview');
-
-        return redirect()->route('security-center.purchase-reset.index')->with('purchase_reset_result', [
-            'counts' => $result['counts'],
-            'backup_reference' => $result['backup_reference'],
-        ]);
     }
 }

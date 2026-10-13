@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Http\Controllers\PurchaseDataResetWebController;
+use App\Models\Bill;
 use App\Models\User;
 use App\Services\AccountingService;
 use App\Services\DebtLedgerService;
@@ -11,6 +12,8 @@ use App\Services\PurchaseDataResetService;
 use App\Services\PurchaseInvoicePurgeService;
 use Illuminate\Database\DatabaseTransactionsManager;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -134,6 +137,85 @@ class PurchaseDataResetSafetyTest extends TestCase
         $this->assertContains('security.center', $route->gatherMiddleware());
         $this->assertContains('throttle:2,1', $route->gatherMiddleware());
         $this->assertContains('web', $route->gatherMiddleware());
+    }
+
+    public function test_single_invoice_delete_calls_only_the_selected_invoice_purge(): void
+    {
+        $bill = new Bill;
+        $bill->setRawAttributes(['id' => 42, 'final_total' => 150], true);
+        $actor = new User(['type' => 'admin']);
+        $version = PurchaseInvoicePurgeService::invoiceVersion($bill);
+        $request = Mockery::mock(Request::class);
+        $request->shouldReceive('validate')->once()->andReturn([
+            'email' => 'admin@example.com', 'password' => 'unused', 'reason' => '  test invoice  ',
+            'confirmed' => '1', 'bill_version' => $version,
+        ]);
+        $session = Mockery::mock();
+        $session->shouldReceive('forget')->with('purchase_reset_preview')->once();
+        $request->shouldReceive('session')->once()->andReturn($session);
+        $controller = Mockery::mock(PurchaseDataResetWebController::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $controller->shouldReceive('authenticatedAdmin')->once()->andReturn($actor);
+        Auth::shouldReceive('user')->once()->andReturn(null);
+        Auth::shouldReceive('setUser')->with($actor)->once();
+        Auth::shouldReceive('forgetUser')->once();
+        $reset = Mockery::mock(PurchaseDataResetService::class);
+        $reset->shouldReceive('missingTables')->once()->andReturn([]);
+        $reset->shouldNotReceive('reset');
+        $purge = Mockery::mock(PurchaseInvoicePurgeService::class);
+        $purge->shouldReceive('purge')->with($bill, $actor, 'test invoice', true, $version)->once()->andReturn([
+            'bill_id' => 42, 'backup_reference' => 'invoice-audit-test',
+        ]);
+        $response = $controller->destroyInvoice($request, $bill, $purge, $reset);
+        $this->assertSame(route('security-center.purchase-reset.index'), $response->getTargetUrl());
+        $this->assertSame(42, session('purchase_invoice_deleted.bill_id'));
+        $this->assertSame('invoice-audit-test', session('purchase_invoice_deleted.backup_reference'));
+    }
+
+    public function test_invoice_version_ignores_list_counts_and_detects_changed_totals(): void
+    {
+        $bill = new Bill;
+        $bill->setRawAttributes(['id' => 42, 'final_total' => '150.0000'], true);
+        $original = PurchaseInvoicePurgeService::invoiceVersion($bill);
+        $bill->setRawAttributes(['items_count' => 3, 'final_total' => '150.0000', 'id' => 42], true);
+        $this->assertSame($original, PurchaseInvoicePurgeService::invoiceVersion($bill));
+        $bill->setRawAttributes(['id' => 42, 'final_total' => '200.0000'], true);
+        $this->assertNotSame($original, PurchaseInvoicePurgeService::invoiceVersion($bill));
+    }
+
+    public function test_invoice_list_has_a_separate_target_for_each_invoice(): void
+    {
+        $invoices = [];
+        foreach ([42, 99] as $id) {
+            $bill = new Bill;
+            $bill->setRawAttributes([
+                'id' => $id, 'final_total' => 150, 'paid_amount' => 0, 'currency' => 'شيكل',
+                'workflow_status' => 'draft', 'items_count' => 2,
+            ], true);
+            $bill->setRelation('seller', null);
+            $bill->setRelation('customer', null);
+            $invoices[] = $bill;
+        }
+        $html = view('purchase-data-reset', [
+            'errors' => new ViewErrorBag, 'missing' => [], 'search' => '',
+            'invoices' => new LengthAwarePaginator($invoices, 2, 20),
+            'preview' => ['token' => str_repeat('a', 64), 'counts' => array_fill_keys(PurchaseDataResetService::TABLES, 1), 'totals' => []],
+        ])->render();
+        foreach ([42, 99] as $id) {
+            $this->assertStringContainsString('data-action="'.route('security-center.purchase-reset.invoices.destroy', $id).'"', $html);
+            $this->assertStringContainsString('data-reference="PUR-'.$id.'"', $html);
+        }
+        $this->assertStringContainsString('name="bill_version"', $html);
+        $this->assertStringContainsString('حذف الفاتورة المحددة', $html);
+    }
+
+    public function test_invoice_delete_route_is_protected_and_requires_a_numeric_bill(): void
+    {
+        $route = app('router')->getRoutes()->getByName('security-center.purchase-reset.invoices.destroy');
+        $this->assertSame(['POST'], $route->methods());
+        $this->assertContains('security.center', $route->gatherMiddleware());
+        $this->assertContains('throttle:5,1', $route->gatherMiddleware());
+        $this->assertContains('web', $route->gatherMiddleware());
+        $this->assertSame('[0-9]+', $route->wheres['bill']);
     }
 
     private function purgeService(): PurchaseInvoicePurgeService
