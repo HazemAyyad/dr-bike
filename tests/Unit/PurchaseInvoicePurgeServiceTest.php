@@ -14,7 +14,6 @@ use App\Services\PurchaseInvoicePurgeService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Mockery;
 use Tests\TestCase;
@@ -150,10 +149,8 @@ class PurchaseInvoicePurgeServiceTest extends TestCase
         });
     }
 
-    public function test_purge_controller_rejects_a_wrong_current_account_password(): void
+    public function test_purge_controller_rejects_an_unauthenticated_request(): void
     {
-        $user = User::query()->create(['name' => 'Admin', 'type' => 'admin']);
-        $user->forceFill(['password' => Hash::make('correct-password')])->save();
         $bill = Bill::query()->create([
             'total' => 5,
             'final_total' => 5,
@@ -165,10 +162,9 @@ class PurchaseInvoicePurgeServiceTest extends TestCase
         ]);
         $request = Request::create('/api/purchase/purge', 'POST', [
             'bill_id' => $bill->id,
-            'password' => 'wrong-password',
             'reason' => 'اختبار حماية الحذف',
         ]);
-        $request->setUserResolver(fn () => $user);
+        $request->setUserResolver(fn () => null);
         $purgeService = Mockery::mock(PurchaseInvoicePurgeService::class);
         $purgeService->shouldNotReceive('purge');
 
@@ -176,7 +172,7 @@ class PurchaseInvoicePurgeServiceTest extends TestCase
 
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame('error', $response->getData(true)['status']);
-        $this->assertSame('كلمة مرور الحساب غير صحيحة', $response->getData(true)['message']);
+        $this->assertSame('يجب تسجيل الدخول لحذف فاتورة الشراء', $response->getData(true)['message']);
         $this->assertDatabaseHas('bills', ['id' => $bill->id]);
     }
 

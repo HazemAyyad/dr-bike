@@ -30,7 +30,6 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class Bills extends Controller
@@ -328,14 +327,13 @@ class Bills extends Controller
         try {
             $data = $request->validate([
                 'bill_id' => ['required', 'integer', 'exists:bills,id'],
-                'password' => ['required', 'string'],
                 'reason' => ['required', 'string', 'min:3', 'max:1000'],
             ]);
             $user = $request->user();
-            if (! $user || ! Hash::check($data['password'], $user->password)) {
+            if (! $user) {
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'كلمة مرور الحساب غير صحيحة',
+                    'message' => 'يجب تسجيل الدخول لحذف فاتورة الشراء',
                 ], 200);
             }
 
