@@ -13,7 +13,9 @@ use App\Support\OnlineStore\OnlineStoreValues;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class SalesOrdersController extends Controller
@@ -96,7 +98,7 @@ class SalesOrdersController extends Controller
     public function store(Request $request)
     {
         try {
-            $order = $this->service->store($request->user(), $request);
+            $order = $this->saveWithNoteImages($request, fn () => $this->service->store($request->user(), $request));
             $this->logSalesOrderActivity($request, $order, 'created_sales_order', 'إنشاء طلبية مبيعات');
 
             return response()->json([
@@ -187,11 +189,11 @@ class SalesOrdersController extends Controller
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
             ]);
 
-            $order = $this->service->update(
+            $order = $this->saveWithNoteImages($request, fn () => $this->service->update(
                 $request->user(),
                 (int) $data['sales_order_id'],
                 $request
-            );
+            ));
             $this->logSalesOrderActivity($request, $order, 'updated_sales_order', 'تعديل طلبية مبيعات');
 
             return response()->json([
@@ -223,16 +225,25 @@ class SalesOrdersController extends Controller
         try {
             $data = $request->validate([
                 'sales_order_id' => 'required|integer|exists:sales_orders,id',
+                'force' => 'sometimes|boolean',
+                'reason' => 'required_if:force,1,true|nullable|string|max:1000',
+                'password' => 'required_if:force,1,true|nullable|string',
             ]);
+            $force = $request->boolean('force');
+            if ($force && ($request->user()->type !== 'admin' || ! Hash::check((string) ($data['password'] ?? ''), $request->user()->password))) {
+                throw ValidationException::withMessages(['password' => ['الحذف الإجباري للأدمن فقط، ويتطلب كلمة مرور صحيحة.']]);
+            }
             $order = $this->service->deleteUnconfirmed(
                 $request->user(),
-                (int) $data['sales_order_id']
+                (int) $data['sales_order_id'],
+                $force,
+                $data['reason'] ?? null,
             );
             $this->logSalesOrderActivity(
                 $request,
                 $order,
-                'deleted_unconfirmed_sales_order',
-                'حذف طلبية مبيعات غير مؤكدة'
+                $force ? 'force_deleted_unconfirmed_sales_order' : 'deleted_unconfirmed_sales_order',
+                $force ? 'حذف إجباري لطلبية مبيعات غير مؤكدة' : 'حذف طلبية مبيعات غير مؤكدة'
             );
 
             return response()->json([
@@ -242,14 +253,53 @@ class SalesOrdersController extends Controller
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.validation_failed'),
+                'message' => collect($e->errors())->flatten()->first() ?? __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            \Log::error('sales_orders.delete_failed', ['order_id' => $request->input('sales_order_id'), 'message' => $e->getMessage()]);
+
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.something_wrong'),
+                'message' => 'تعذر حذف الطلبية. تم تسجيل سبب الخطأ للمراجعة؛ لم تكتمل عملية الحذف.',
             ], 200);
+        }
+    }
+
+    public function deletionPreview(Request $request)
+    {
+        $data = $request->validate(['sales_order_id' => 'required|integer|exists:sales_orders,id']);
+
+        return response()->json(['status' => 'success', 'data' => $this->purgeService->deletionPreview((int) $data['sales_order_id'])]);
+    }
+
+    public function addNote(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'sales_order_id' => 'required|integer|exists:sales_orders,id',
+                'scope' => 'required|in:internal,external',
+                'note' => 'nullable|string|max:2000',
+                'images' => 'nullable|array|max:5',
+                'images.*' => 'required|image|mimes:jpg,jpeg,png,webp|max:8192',
+            ]);
+            $images = $request->file('images', []);
+            if (trim((string) ($data['note'] ?? '')) === '' && $images === []) {
+                throw ValidationException::withMessages(['note' => ['أضف نص الملاحظة أو صورة واحدة على الأقل.']]);
+            }
+            app(\App\Services\SalesOrderNotesService::class)->add(
+                $request->user(), (int) $data['sales_order_id'], $data['scope'], $data['note'] ?? null, $images,
+            );
+            $order = $this->service->show((int) $data['sales_order_id']);
+            $this->logSalesOrderActivity($request, $order, 'added_sales_order_note', 'إضافة ملاحظة على طلبية مبيعات');
+
+            return response()->json(['status' => 'success', 'sales_order' => $this->service->formatDetail($order)]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error', 'message' => collect($e->errors())->flatten()->first(), 'errors' => $e->errors()]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json(['status' => 'error', 'message' => 'تعذر حفظ الملاحظة وصورها. أعد المحاولة.']);
         }
     }
 
@@ -985,6 +1035,42 @@ class SalesOrdersController extends Controller
                     ? $e->getMessage()
                     : __('messages.something_wrong'),
             ], 200);
+        }
+    }
+
+    private function saveWithNoteImages(Request $request, callable $save): \App\Models\SalesOrder
+    {
+        if ($request->has('order_data')) {
+            $request->validate(['order_data' => 'required|json']);
+            $payload = json_decode($request->input('order_data'), true);
+            if (! is_array($payload) || array_is_list($payload)) {
+                throw ValidationException::withMessages(['order_data' => ['بيانات الطلبية غير صالحة.']]);
+            }
+            unset($payload['sales_order_id'], $payload['note_images']);
+            $request->merge($payload);
+        }
+        $request->validate([
+            'note_images' => 'nullable|array|max:5',
+            'note_images.*' => 'required|image|mimes:jpg,jpeg,png,webp|max:8192',
+        ]);
+        $paths = [];
+        try {
+            return DB::transaction(function () use ($request, $save, &$paths) {
+                $order = $save();
+                $images = $request->file('note_images', []);
+                if ($images !== []) {
+                    $note = app(\App\Services\SalesOrderNotesService::class)->add(
+                        $request->user(), (int) $order->id, 'internal', null, $images,
+                    );
+                    $paths = $note->media->pluck('path')->all();
+                    $order->unsetRelation('noteLog');
+                }
+
+                return $order;
+            });
+        } catch (\Throwable $e) {
+            Storage::disk('public')->delete($paths);
+            throw $e;
         }
     }
 

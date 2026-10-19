@@ -23,7 +23,6 @@ use App\Support\ProductImageResolver;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class SalesOrderService
@@ -719,35 +718,9 @@ class SalesOrderService
         });
     }
 
-    public function deleteUnconfirmed(User $user, int $orderId): SalesOrder
+    public function deleteUnconfirmed(User $user, int $orderId, bool $force = false, ?string $reason = null): SalesOrder
     {
-        $order = SalesOrder::query()->with('media')->findOrFail($orderId);
-        if ($order->statusEnum() !== SalesOrderStatus::Unconfirmed) {
-            throw ValidationException::withMessages([
-                'order' => [__('messages.sales_order_delete_unconfirmed_only')],
-            ]);
-        }
-
-        $mediaPaths = $order->media
-            ->pluck('path')
-            ->filter(fn ($path) => is_string($path) && $path !== '')
-            ->values()
-            ->all();
-
-        $deleted = DB::transaction(function () use ($user, $order) {
-            $this->stockService->releaseOrder($order);
-            $order->updated_by = $user->id;
-            $order->save();
-            $order->delete();
-
-            return $order;
-        });
-
-        if ($mediaPaths !== []) {
-            Storage::disk('public')->delete($mediaPaths);
-        }
-
-        return $deleted;
+        return app(SalesOrderPurgeService::class)->deleteUnconfirmed($user, $orderId, $force, $reason);
     }
 
     public function postpone(User $user, int $orderId, string $until, ?string $reason = null): SalesOrder
@@ -845,6 +818,17 @@ class SalesOrderService
             'postponed_until' => $order->postponed_until?->toDateTimeString(),
             'postpone_reason' => $order->postpone_reason,
             'notes' => $order->notes,
+            'note_log' => $order->noteLog->map(fn ($note) => [
+                'id' => $note->id,
+                'scope' => $note->scope,
+                'note' => $note->note,
+                'user_name' => $note->creator?->name ?? '—',
+                'created_at' => $note->created_at?->toDateTimeString(),
+                'images' => $note->media->map(fn ($image) => [
+                    'id' => $image->id,
+                    'url' => url('storage/'.$image->path),
+                ])->values()->all(),
+            ])->values()->all(),
             'stuck_previous_status' => $order->stuck_previous_status,
             'stuck_type' => $order->stuck_type,
             'stuck_reason' => $order->stuck_reason,
@@ -928,7 +912,7 @@ class SalesOrderService
                 'user_name' => $log->user?->name,
                 'created_at' => $log->created_at?->toDateTimeString(),
             ])->values()->all(),
-            'media' => $order->media->map(fn ($media) => [
+            'media' => $order->media->whereNull('sales_order_note_id')->map(fn ($media) => [
                 'id' => $media->id,
                 'type' => $media->type,
                 'category' => $media->category ?? 'general',
@@ -1032,6 +1016,8 @@ class SalesOrderService
             'statusLogs.user:id,name',
             'deliveryCompany:id,name,code,delivery_type',
             'media',
+            'noteLog.creator:id,name',
+            'noteLog.media',
             'deliveries',
             'childOrders:id,parent_order_id,serial_number,status,total,created_at',
             'createdByUser:id,name',

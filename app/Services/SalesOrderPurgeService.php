@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Enums\SalesOrderStatus;
 use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\DebtTransaction;
@@ -13,6 +14,7 @@ use App\Models\SalesOrder;
 use App\Models\SalesOrderPurgeBackup;
 use App\Models\SalesOrderSettlement;
 use App\Models\User;
+use App\Support\SalesOrderDeletionPolicy;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -27,11 +29,85 @@ class SalesOrderPurgeService
 
     public const MODE_ORDERS_ONLY_RESET = 'orders_only_reset';
 
+    public const MODE_UNCONFIRMED_DELETE = 'unconfirmed_delete';
+
     public function __construct(
         private readonly ProductStockService $stockService,
         private readonly InventoryCostingService $costingService,
         private readonly DebtLedgerService $debtLedgerService,
     ) {}
+
+    public function deletionPreview(int $orderId): array
+    {
+        $order = SalesOrder::query()->findOrFail($orderId);
+        [$invoices, $returns] = $this->purgeBlockers(collect([$orderId]));
+        $related = [];
+        foreach (['online_store_coupon_redemptions', 'online_store_promotion_redemptions', 'online_store_legacy_checkout_attempts'] as $table) {
+            $related[$table] = Schema::hasTable($table)
+                ? DB::table($table)->where('sales_order_id', $orderId)->count() : 0;
+        }
+        $hasEffects = $order->stock_deducted_at !== null || $order->financial_posted_at !== null
+            || $order->debt_id !== null
+            || $this->currentDebtTransactions(collect([$order]))->isNotEmpty()
+            || $this->orderBoxLogs($order)->isNotEmpty()
+            || SalesOrderSettlement::query()->where('sales_order_id', $orderId)->exists()
+            || $this->stockEffects($order)->isNotEmpty();
+
+        return SalesOrderDeletionPolicy::assess($order->status, $hasEffects, $invoices, $returns, $order->childOrders()->exists()) + [
+            'id' => $orderId,
+            'serial_number' => $order->serial_number,
+            'linked_invoices' => $invoices,
+            'financial_returns' => $returns,
+            'related' => $related,
+        ];
+    }
+
+    /** Delete exactly one draft, preserving its files and a restorable snapshot. */
+    public function deleteUnconfirmed(User $user, int $orderId, bool $force = false, ?string $reason = null): SalesOrder
+    {
+        if ($force && ($user->type !== 'admin' || trim((string) $reason) === '')) {
+            throw ValidationException::withMessages(['force' => ['الحذف الإجباري يحتاج صلاحية الأدمن وسبب الحذف.']]);
+        }
+
+        return DB::transaction(function () use ($user, $orderId, $force, $reason) {
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
+            if ($order->status !== SalesOrderStatus::Unconfirmed->value) {
+                throw ValidationException::withMessages(['order' => [__('messages.sales_order_delete_unconfirmed_only')]]);
+            }
+            $preview = $this->deletionPreview($orderId);
+            if (! $preview['can_delete'] || ($preview['requires_force'] && ! $force)) {
+                throw ValidationException::withMessages(['order' => [$preview['message']]]);
+            }
+            $orders = collect([$order]);
+            $mode = $force ? self::MODE_WITH_EFFECTS : self::MODE_UNCONFIRMED_DELETE;
+            $backup = $this->createBackup($orders, $user, now(), $orderId, $mode);
+            $payload = $backup->payload;
+            $payload['deletion_reason'] = trim((string) $reason);
+            $backup->update(['payload' => $payload]);
+
+            if ($force) {
+                $settlements = SalesOrderSettlement::query()->where('sales_order_id', $orderId)->lockForUpdate()->get();
+                $this->hardDeleteDebtEntries($orders);
+                $this->deleteRelatedLogs($orders);
+                $this->reverseStockImpact($order, (int) $user->id, Str::limit('حذف إجباري للطلبية '.$order->serial_number.': '.$reason, 200));
+                $this->reverseCashImpact($order, $settlements);
+            }
+            foreach (['online_store_coupon_redemptions', 'online_store_promotion_redemptions', 'online_store_legacy_checkout_attempts'] as $table) {
+                if (Schema::hasTable($table)) {
+                    DB::table($table)->where('sales_order_id', $orderId)->delete();
+                }
+            }
+            DB::table('sales_order_items')->where('sales_order_id', $orderId)->update(['reserved_qty' => 0]);
+            $order->delete();
+            if ($force) {
+                $expenseIds = $settlements->pluck('carrier_fee_expense_id')->filter()->all();
+                Expense::query()->whereIn('id', $expenseIds)->delete();
+                $this->refreshSettlementBatches($settlements->pluck('delivery_company_settlement_batch_id')->filter()->unique()->all());
+            }
+
+            return $order;
+        }, 3);
+    }
 
     /** @return array<string, mixed> */
     public function preview(
@@ -264,6 +340,15 @@ class SalesOrderPurgeService
                 ]);
             }
             $this->assertOrdersCanBeRestored($orderRows);
+            $this->assertCouponRestoreCapacity($this->tablePayloadRows($tables, 'online_store_coupon_redemptions'));
+            if ($restoredMode === self::MODE_UNCONFIRMED_DELETE) {
+                $items = collect($this->tablePayloadRows($tables, 'sales_order_items'));
+                Product::query()->whereIn('id', $items->pluck('product_id'))->orderBy('id')->lockForUpdate()->get();
+                $variantIds = $items->pluck('size_color_id')->filter();
+                if ($variantIds->isNotEmpty()) {
+                    DB::table('size_colors')->whereIn('id', $variantIds)->orderBy('id')->lockForUpdate()->get();
+                }
+            }
 
             if ($restoredMode === self::MODE_WITH_EFFECTS) {
                 $this->restoreRowsIfMissing('delivery_company_settlement_batches', $this->tablePayloadRows($tables, 'delivery_company_settlement_batches'));
@@ -272,8 +357,17 @@ class SalesOrderPurgeService
             $this->restoreSelfReferencingRows('sales_orders', $orderRows, ['parent_order_id', 'root_order_id']);
             $this->restoreRows('sales_order_packages', $this->tablePayloadRows($tables, 'sales_order_packages'));
             $this->restoreRows('sales_order_items', $this->tablePayloadRows($tables, 'sales_order_items'));
+            if ($restoredMode === self::MODE_UNCONFIRMED_DELETE) {
+                foreach ($orderRows as $row) {
+                    app(SalesOrderStockService::class)->reserveOrder(SalesOrder::query()->findOrFail($row['id']));
+                }
+            }
             $this->restoreRows('sales_order_status_logs', $this->tablePayloadRows($tables, 'sales_order_status_logs'));
+            $this->restoreRows('sales_order_notes', $this->tablePayloadRows($tables, 'sales_order_notes'));
             $this->restoreRows('sales_order_media', $this->tablePayloadRows($tables, 'sales_order_media'));
+            foreach (['online_store_coupon_redemptions', 'online_store_promotion_redemptions', 'online_store_legacy_checkout_attempts'] as $table) {
+                $this->restoreRows($table, $this->tablePayloadRows($tables, $table));
+            }
             $this->restoreRows('sales_order_deliveries', $this->tablePayloadRows($tables, 'sales_order_deliveries'));
             $this->restoreRows('sales_order_shiply_events', $this->tablePayloadRows($tables, 'sales_order_shiply_events'));
             if ($restoredMode === self::MODE_WITH_EFFECTS) {
@@ -305,7 +399,7 @@ class SalesOrderPurgeService
                     ->values()
                     ->all();
                 $this->refreshSettlementBatches($batchIds);
-            } else {
+            } elseif ($restoredMode === self::MODE_ORDERS_ONLY_RESET) {
                 $this->restoreSalesOrderSerialCounter($payload['sales_order_serial_counter'] ?? null);
             }
 
@@ -360,6 +454,10 @@ class SalesOrderPurgeService
             'sales_order_packages' => $this->rowsWhereIn('sales_order_packages', 'sales_order_id', $orderIds),
             'sales_order_items' => $this->rowsWhereIn('sales_order_items', 'sales_order_id', $orderIds),
             'sales_order_status_logs' => $this->rowsWhereIn('sales_order_status_logs', 'sales_order_id', $orderIds),
+            'sales_order_notes' => $this->rowsWhereIn('sales_order_notes', 'sales_order_id', $orderIds),
+            'online_store_coupon_redemptions' => $this->rowsWhereIn('online_store_coupon_redemptions', 'sales_order_id', $orderIds),
+            'online_store_promotion_redemptions' => $this->rowsWhereIn('online_store_promotion_redemptions', 'sales_order_id', $orderIds),
+            'online_store_legacy_checkout_attempts' => $this->rowsWhereIn('online_store_legacy_checkout_attempts', 'sales_order_id', $orderIds),
             'sales_order_media' => $this->rowsWhereIn('sales_order_media', 'sales_order_id', $orderIds),
             'sales_order_deliveries' => $this->rowsWhereIn('sales_order_deliveries', 'sales_order_id', $orderIds),
             'sales_order_shiply_events' => $this->rowsWhereIn('sales_order_shiply_events', 'sales_order_id', $orderIds),
@@ -514,16 +612,16 @@ class SalesOrderPurgeService
         return [(int) $linkedInstantSales, (int) $financialReturns];
     }
 
-    private function reverseStockImpact(SalesOrder $order, int $userId): void
+    private function reverseStockImpact(SalesOrder $order, int $userId, ?string $deletionNote = null): void
     {
-        $this->stockEffects($order)->each(function (array $effect) use ($order, $userId) {
+        $this->stockEffects($order)->each(function (array $effect) use ($order, $userId, $deletionNote) {
             $netQuantity = (int) $effect['net_quantity'];
             $product = Product::withTrashed()->find($effect['product_id']);
             if (! $product || $netQuantity === 0) {
                 return;
             }
 
-            $note = 'تنظيف طلبية تجريبية '.($order->serial_number ?? '#'.$order->id);
+            $note = $deletionNote ?? 'تنظيف طلبية تجريبية '.($order->serial_number ?? '#'.$order->id);
             if ($netQuantity < 0) {
                 $quantity = abs($netQuantity);
                 $unitCost = $effect['unit_cost'];
@@ -790,6 +888,26 @@ class SalesOrderPurgeService
     }
 
     /** @param list<array<string, mixed>> $rows */
+    private function assertCouponRestoreCapacity(array $rows): void
+    {
+        $active = collect($rows)->whereIn('status', ['reserved', 'applied']);
+        foreach ($active->groupBy('coupon_id')->sortKeys() as $couponId => $redemptions) {
+            $coupon = DB::table('online_store_coupons')->where('id', $couponId)->lockForUpdate()->first();
+            if (! $coupon) {
+                throw ValidationException::withMessages(['backup' => ['الكوبون المرتبط بالنسخة لم يعد موجوداً.']]);
+            }
+            $usage = DB::table('online_store_coupon_redemptions')->where('coupon_id', $couponId)->whereIn('status', ['reserved', 'applied']);
+            if ($coupon->total_usage_limit !== null && (clone $usage)->count() + $redemptions->count() > $coupon->total_usage_limit) {
+                throw ValidationException::withMessages(['backup' => ['لا يمكن استرجاع حجز الكوبون بعد استنفاد عدد استخداماته.']]);
+            }
+            foreach ($redemptions->groupBy('user_id') as $userId => $userRows) {
+                if ($coupon->per_user_usage_limit !== null && (clone $usage)->where('user_id', $userId)->count() + $userRows->count() > $coupon->per_user_usage_limit) {
+                    throw ValidationException::withMessages(['backup' => ['لا يمكن استرجاع الكوبون بعد استنفاد استخدامات الزبون.']]);
+                }
+            }
+        }
+    }
+
     private function restoreRows(string $table, array $rows): void
     {
         if ($rows === [] || ! Schema::hasTable($table)) {

@@ -681,6 +681,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::post('/sales/order/ready', [SalesOrdersController::class, 'markReady']);
       Route::post('/sales/order/cancel', [SalesOrdersController::class, 'cancel']);
       Route::post('/sales/order/delete', [SalesOrdersController::class, 'destroy']);
+      Route::get('/sales/order/delete-preview', [SalesOrdersController::class, 'deletionPreview']);
+      Route::post('/sales/order/note', [SalesOrdersController::class, 'addNote']);
       Route::post('/sales/order/revert', [SalesOrdersController::class, 'revertStatus']);
       Route::post('/sales/order/postpone', [SalesOrdersController::class, 'postpone']);
       Route::post('/sales/order/handover', [SalesOrdersController::class, 'handover']);

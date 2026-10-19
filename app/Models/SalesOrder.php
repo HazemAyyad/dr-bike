@@ -162,6 +162,11 @@ class SalesOrder extends Model
         return $this->hasMany(SalesOrderMedia::class);
     }
 
+    public function noteLog(): HasMany
+    {
+        return $this->hasMany(SalesOrderNote::class)->orderBy('id');
+    }
+
     public function deliveries(): HasMany
     {
         return $this->hasMany(SalesOrderDelivery::class);
