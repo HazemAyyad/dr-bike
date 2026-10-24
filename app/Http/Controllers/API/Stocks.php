@@ -2839,6 +2839,7 @@ class Stocks extends Controller
     public function createPurchaseProduct(Request $request, ProductFormService $productFormService)
     {
         $request->merge([
+            'purchase_context' => true,
             'opening_stock' => false,
             'opening_quantity' => null,
             'opening_unit_cost' => null,

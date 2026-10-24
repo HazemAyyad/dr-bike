@@ -39,6 +39,10 @@ class ProductFormService
      */
     public function validateForm(Request $request, bool $forEdit): array
     {
+        $purchaseCreate = ! $forEdit
+            && $request->boolean('purchase_context')
+            && ! $this->wantsStoreSync($request);
+
         $rules = [
             'nameAr' => ['required', 'string', 'max:500'],
             'nameEng' => ['nullable', 'string', 'max:500'],
@@ -65,7 +69,7 @@ class ProductFormService
             'opening_unit_cost' => ['nullable', 'numeric', 'min:0'],
             'opening_currency' => ['nullable', 'string', 'max:10'],
             'opening_notes' => ['nullable', 'string', 'max:1000'],
-            'category_id' => ['required', 'integer', 'exists:categories,id'],
+            'category_id' => [$purchaseCreate ? 'nullable' : 'required', 'integer', 'exists:categories,id'],
             'sub_categories' => ['nullable', 'array'],
             'sub_categories.*' => ['integer', 'exists:sub_categories,id'],
             'sizes' => ['nullable', 'array'],
@@ -126,7 +130,7 @@ class ProductFormService
         $nameAbree = ! empty($validated['nameAbree'] ?? null) ? $validated['nameAbree'] : $nameAr;
 
         $insert = [
-            'category_id' => (int) $validated['category_id'],
+            'category_id' => isset($validated['category_id']) ? (int) $validated['category_id'] : null,
             'nameAr' => $nameAr,
             'nameEng' => $nameEng,
             'nameAbree' => $nameAbree,
