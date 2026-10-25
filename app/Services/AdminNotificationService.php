@@ -1147,7 +1147,9 @@ class AdminNotificationService
                 ->whereIn('development_role', $policy->recipient_roles ?: []));
         }
 
-        $devices = $tokensQuery->get();
+        // Global admin notifications can contain data from any section.
+        $devices = $tokensQuery->with('user')->get()
+            ->filter(fn ($device) => $device->user?->isFullAdmin());
         $tokenCount = $devices->count();
 
         Log::info('Admin FCM broadcast start', [

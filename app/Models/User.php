@@ -71,9 +71,20 @@ class User extends Authenticatable
         'last_seen_at' => 'datetime',
         'is_blocked' => 'boolean',
         'ui_preferences' => 'array',
+        'admin_sections' => 'array',
     ];
 
     public const DEVELOPMENT_ROLE_NONE = 'none';
+
+    public function isFullAdmin(): bool
+    {
+        return $this->type === 'admin' && $this->admin_sections === null;
+    }
+
+    public function canAccessAdminSection(string $section): bool
+    {
+        return $this->type === 'admin' && ($this->isFullAdmin() || in_array($section, $this->admin_sections ?? [], true));
+    }
     public const DEVELOPMENT_ROLE_OWNER = 'owner';
     public const DEVELOPMENT_ROLE_DEVELOPER = 'developer';
 

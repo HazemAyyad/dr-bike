@@ -1564,6 +1564,8 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::post('/admin/impersonate-employee/{employeeId}', [\App\Http\Controllers\API\AdminImpersonationController::class, 'impersonate']);
 
     Route::get('/admin/users', [\App\Http\Controllers\API\AdminUsersController::class, 'index']);
+    Route::get('/admin/users/{id}/sections', [\App\Http\Controllers\API\AdminSectionPermissionsController::class, 'show'])->whereNumber('id');
+    Route::put('/admin/users/{id}/sections', [\App\Http\Controllers\API\AdminSectionPermissionsController::class, 'update'])->whereNumber('id');
     Route::post('/admin/users', [\App\Http\Controllers\API\AdminUsersController::class, 'store']);
     Route::post('/admin/users/{id}/edit', [\App\Http\Controllers\API\AdminUsersController::class, 'update'])->whereNumber('id');
     Route::post('/admin/users/{id}/development-role', [\App\Http\Controllers\API\AdminUsersController::class, 'updateDevelopmentRole'])->whereNumber('id');

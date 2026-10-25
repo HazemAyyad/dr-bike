@@ -52,7 +52,7 @@ final class SupportAccessService
     private function hasPermission(User $user, string $permission): bool
     {
         if ($user->type === 'admin') {
-            return true;
+            return $user->canAccessAdminSection($permission === self::STORE_PERMISSION ? 'store_support' : 'support');
         }
 
         return (bool) $user->employee?->permissions()

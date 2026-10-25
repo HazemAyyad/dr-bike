@@ -27,5 +27,9 @@ Broadcast::channel('support.conversation.{conversationId}', function ($user, $co
 });
 
 Broadcast::channel('support.inbox', function ($user) {
+    if ($user instanceof \App\Models\User && $user->type === 'admin' && ! $user->isFullAdmin()) {
+        return false;
+    }
+
     return app(SupportAccessService::class)->canManageInbox($user);
 });
