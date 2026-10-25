@@ -11,6 +11,7 @@ use App\Models\EmployeeDetail;
 use App\Models\EmployeeDeviceMapping;
 use App\Models\FingerprintDeviceUser;
 use App\Models\FingerprintRawLog;
+use App\Support\AttendanceSettings;
 use App\Support\AttendanceWorkDateResolver;
 use App\Services\EmployeeAttendanceOvertimeService;
 use App\Support\FingerprintAttendanceLogFilter;

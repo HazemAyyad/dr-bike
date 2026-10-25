@@ -1,0 +1,16 @@
+# Install at the domain's public_html/.htaccess, above the dr-bike checkout.
+# Keep Hostinger Force HTTPS enabled until this file has been deployed.
+RewriteEngine On
+
+# Only ADMS GET/POST requests may use HTTP. THE_REQUEST retains the original
+# path across the internal rewrites to dr-bike/public and Laravel index.php.
+RewriteCond %{HTTPS} !=on
+RewriteCond %{THE_REQUEST} !^(GET|POST)\s/+iclock/(cdata|getrequest|devicecmd)([?\s])
+RewriteRule ^ https://dr-bike.shop%{REQUEST_URI} [R=307,L,NE]
+
+RewriteCond %{REQUEST_URI} !^/dr-bike/public/
+RewriteRule ^(.*)$ dr-bike/public/$1 [L]
+
+<FilesMatch "^(\.env|composer\.(json|lock)|.*\.sql(\.gz)?)$">
+    Require all denied
+</FilesMatch>
