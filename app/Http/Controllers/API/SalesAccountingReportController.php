@@ -18,6 +18,12 @@ class SalesAccountingReportController extends Controller
             'include_returns' => ['nullable', 'boolean'],
             'person_key' => ['nullable', 'string', 'max:255'],
             'sort' => ['nullable', Rule::in(['sales_desc', 'sales_asc', 'label'])],
+            'currency' => ['nullable', Rule::in(['شيكل', 'دولار', 'دينار'])],
+            'cash_only' => ['nullable', 'boolean'],
+            'include_other_currencies' => ['nullable', 'boolean'],
+            'representative_id' => ['nullable', 'integer', 'exists:users,id'],
+            'min_amount' => ['nullable', 'numeric', 'min:0'],
+            'max_amount' => ['nullable', 'numeric', 'min:0', Rule::when($request->filled('min_amount'), ['gte:min_amount'])],
         ]);
 
         return response()->json(['status' => 'success', 'data' => $reports->report($filters)]);

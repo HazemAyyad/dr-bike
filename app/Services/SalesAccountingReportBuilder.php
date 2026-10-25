@@ -7,8 +7,10 @@ use Carbon\Carbon;
 class SalesAccountingReportBuilder
 {
     /** Sales amounts are persisted AFTER invoice discounts; return amounts are actual refunds. */
-    public function build(iterable $sales, iterable $returns, string $groupBy, bool $includeReturns, string $sort = 'sales_desc'): array
+    public function build(iterable $sales, iterable $returns, string $groupBy, bool $includeReturns, string $sort = 'sales_desc', array $filters = []): array
     {
+        $sales = $this->select($sales, $filters);
+        $returns = $this->select($returns, $filters);
         $groups = [];
         foreach ($sales as $sale) {
             $key = $this->key($sale, $groupBy);
@@ -75,6 +77,8 @@ class SalesAccountingReportBuilder
         return [
             'key' => $key,
             'label' => $groupBy === 'customer' ? $source['person_name'] : $key,
+            'year' => $groupBy === 'month' ? (int) substr($key, 0, 4) : null,
+            'month' => $groupBy === 'month' ? (int) substr($key, 5, 2) : null,
             'person_type' => $groupBy === 'customer' ? ($source['person_type'] ?? 'unknown') : null,
             'invoice_count' => 0,
             'return_count' => 0,
@@ -84,6 +88,64 @@ class SalesAccountingReportBuilder
             'return_discount' => 0.0,
             'return_discount_complete' => true,
         ];
+    }
+
+    public function normalizeCurrency(?string $currency): string
+    {
+        return match (mb_strtolower(trim((string) $currency))) {
+            'usd', 'dollar', '$', 'دولار' => 'دولار',
+            'jod', 'dinar', 'دينار' => 'دينار',
+            'ils', 'nis', 'shekel', 'شيكل', '' => 'شيكل',
+            default => (string) $currency,
+        };
+    }
+
+    /** Each currency owns its totals and percentage denominators. No conversion. */
+    public function byCurrency(array $sales, array $returns, array $filters): array
+    {
+        $currencies = [$filters['currency'] ?? 'شيكل'];
+        if (! empty($filters['include_other_currencies'])) {
+            foreach (array_merge($sales, $returns) as $row) {
+                $currencies[] = $this->normalizeCurrency($row['currency'] ?? null);
+            }
+        }
+        $reports = [];
+        foreach (array_unique($currencies) as $currency) {
+            $report = $this->build($sales, $returns, $filters['group_by'] ?? 'customer',
+                (bool) ($filters['include_returns'] ?? false), $filters['sort'] ?? 'label',
+                array_merge($filters, ['currency' => $currency]));
+            if ($currency === $currencies[0] || $report['rows'] !== []) {
+                $reports[] = array_merge($report, ['currency' => $currency]);
+            }
+        }
+
+        return $reports;
+    }
+
+    /** Value limits apply to each saved invoice/refund before aggregation. */
+    public function select(iterable $rows, array $filters): array
+    {
+        $selected = [];
+        foreach ($rows as $row) {
+            if (! empty($filters['representative_id']) && (string) ($row['representative_id'] ?? '') !== (string) $filters['representative_id']) {
+                continue;
+            }
+            if (! empty($filters['cash_only']) && ! ($row['cash_only'] ?? false)) {
+                continue;
+            }
+            if ($this->normalizeCurrency($row['currency'] ?? null) !== ($filters['currency'] ?? 'شيكل')) {
+                continue;
+            }
+            if (isset($filters['min_amount']) && $row['total'] < $filters['min_amount']) {
+                continue;
+            }
+            if (isset($filters['max_amount']) && $row['total'] > $filters['max_amount']) {
+                continue;
+            }
+            $selected[] = $row;
+        }
+
+        return $selected;
     }
 
     private function percentage(float $numerator, float $denominator): ?float
