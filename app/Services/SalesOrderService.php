@@ -144,6 +144,10 @@ class SalesOrderService
                 'createdByUser:id,name',
                 'deliveryCompany:id,name,code,delivery_type',
             ])
+            ->withCount([
+                'noteLog as internal_notes_count' => fn ($query) => $query->where('scope', 'internal'),
+                'noteLog as external_notes_count' => fn ($query) => $query->where('scope', 'external'),
+            ])
             ->orderByDesc('created_at')
             ->orderByDesc('id');
 
@@ -823,10 +827,15 @@ class SalesOrderService
                 'scope' => $note->scope,
                 'note' => $note->note,
                 'user_name' => $note->creator?->name ?? '—',
-                'created_at' => $note->created_at?->toDateTimeString(),
-                'images' => $note->media->map(fn ($image) => [
+                'created_at' => $note->created_at?->toIso8601String(),
+                'images' => $note->media->where('type', 'image')->map(fn ($image) => [
                     'id' => $image->id,
                     'url' => url('storage/'.$image->path),
+                ])->values()->all(),
+                'attachments' => $note->media->map(fn ($media) => [
+                    'id' => $media->id,
+                    'type' => $media->type,
+                    'url' => url('storage/'.$media->path),
                 ])->values()->all(),
             ])->values()->all(),
             'stuck_previous_status' => $order->stuck_previous_status,
@@ -995,6 +1004,8 @@ class SalesOrderService
                 ? $order->deliveryCompany->operationalType()
                 : null,
             'reserves_stock' => (bool) $order->reserves_stock,
+            'internal_notes_count' => (int) $order->internal_notes_count + (trim((string) $order->notes) !== '' ? 1 : 0),
+            'external_notes_count' => (int) $order->external_notes_count,
         ];
     }
 

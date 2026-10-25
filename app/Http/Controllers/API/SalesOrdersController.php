@@ -281,11 +281,11 @@ class SalesOrdersController extends Controller
                 'scope' => 'required|in:internal,external',
                 'note' => 'nullable|string|max:2000',
                 'images' => 'nullable|array|max:5',
-                'images.*' => 'required|image|mimes:jpg,jpeg,png,webp|max:8192',
+                'images.*' => ['required', 'file', new \App\Rules\SalesOrderNoteAttachment],
             ]);
             $images = $request->file('images', []);
             if (trim((string) ($data['note'] ?? '')) === '' && $images === []) {
-                throw ValidationException::withMessages(['note' => ['أضف نص الملاحظة أو صورة واحدة على الأقل.']]);
+                throw ValidationException::withMessages(['note' => ['أضف نص الملاحظة أو مرفقًا واحدًا على الأقل.']]);
             }
             app(\App\Services\SalesOrderNotesService::class)->add(
                 $request->user(), (int) $data['sales_order_id'], $data['scope'], $data['note'] ?? null, $images,
@@ -299,7 +299,7 @@ class SalesOrdersController extends Controller
         } catch (\Throwable $e) {
             report($e);
 
-            return response()->json(['status' => 'error', 'message' => 'تعذر حفظ الملاحظة وصورها. أعد المحاولة.']);
+            return response()->json(['status' => 'error', 'message' => 'تعذر حفظ الملاحظة ومرفقاتها. أعد المحاولة.']);
         }
     }
 
@@ -1051,7 +1051,7 @@ class SalesOrdersController extends Controller
         }
         $request->validate([
             'note_images' => 'nullable|array|max:5',
-            'note_images.*' => 'required|image|mimes:jpg,jpeg,png,webp|max:8192',
+            'note_images.*' => ['required', 'file', new \App\Rules\SalesOrderNoteAttachment],
         ]);
         $paths = [];
         try {

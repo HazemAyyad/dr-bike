@@ -27,14 +27,14 @@ class SalesOrderNotesService
                 foreach ($images as $image) {
                     $path = $image->store("sales-orders/{$orderId}/notes", 'public');
                     if (! $path) {
-                        throw new \RuntimeException('Could not store sales order note image.');
+                        throw new \RuntimeException('Could not store sales order note attachment.');
                     }
                     $paths[] = $path;
                     SalesOrderMedia::query()->create([
                         'sales_order_id' => $orderId,
                         'sales_order_note_id' => $note->id,
                         'category' => 'note',
-                        'type' => 'image',
+                        'type' => str_starts_with((string) $image->getMimeType(), 'video/') ? 'video' : 'image',
                         'path' => $path,
                         'mime' => $image->getMimeType(),
                         'size_bytes' => $image->getSize(),
