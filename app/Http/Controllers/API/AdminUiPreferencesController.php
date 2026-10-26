@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Support\DebtLedgerLabels;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -26,10 +27,7 @@ class AdminUiPreferencesController extends Controller
                         ? ($preferences['admin_dashboard']['show_attention_section'] ?? false) : false,
                     'hidden_section_keys' => $preferences['admin_dashboard']['hidden_section_keys'] ?? ['overview'],
                 ],
-                'debt_ledger' => [
-                    'taken_label' => $preferences['debt_ledger']['taken_label'] ?? 'أخذت',
-                    'given_label' => $preferences['debt_ledger']['given_label'] ?? 'أعطيت',
-                ],
+                'debt_ledger' => DebtLedgerLabels::normalize($preferences['debt_ledger'] ?? []),
             ],
         ], 200);
     }
@@ -50,6 +48,10 @@ class AdminUiPreferencesController extends Controller
                 'debt_ledger' => ['sometimes', 'array'],
                 'debt_ledger.taken_label' => ['sometimes', 'string', 'max:30'],
                 'debt_ledger.given_label' => ['sometimes', 'string', 'max:30'],
+                'debt_ledger.by_type' => ['sometimes', 'array:customers,sellers,private'],
+                'debt_ledger.by_type.*' => ['nullable', 'array:taken_label,given_label'],
+                'debt_ledger.by_type.*.taken_label' => ['sometimes', 'string', 'max:30'],
+                'debt_ledger.by_type.*.given_label' => ['sometimes', 'string', 'max:30'],
             ]);
 
             $user = $request->user();
@@ -77,10 +79,23 @@ class AdminUiPreferencesController extends Controller
 
             if (array_key_exists('debt_ledger', $data)) {
                 $debtLedger = $preferences['debt_ledger'] ?? [];
-                $preferences['debt_ledger'] = [
-                    'taken_label' => trim($data['debt_ledger']['taken_label'] ?? ($debtLedger['taken_label'] ?? 'أخذت')) ?: 'أخذت',
-                    'given_label' => trim($data['debt_ledger']['given_label'] ?? ($debtLedger['given_label'] ?? 'أعطيت')) ?: 'أعطيت',
-                ];
+                foreach (['taken_label', 'given_label'] as $key) {
+                    if (array_key_exists($key, $data['debt_ledger'])) {
+                        $debtLedger[$key] = trim($data['debt_ledger'][$key])
+                            ?: ($key === 'taken_label' ? 'أخذت' : 'أعطيت');
+                    }
+                }
+                foreach ($data['debt_ledger']['by_type'] ?? [] as $scope => $labels) {
+                    if ($labels === null) {
+                        unset($debtLedger['by_type'][$scope]);
+                        continue;
+                    }
+                    $debtLedger['by_type'][$scope] = array_replace(
+                        $debtLedger['by_type'][$scope] ?? [],
+                        $labels,
+                    );
+                }
+                $preferences['debt_ledger'] = $debtLedger;
             }
 
             $user->forceFill(['ui_preferences' => $preferences])->save();
@@ -95,10 +110,7 @@ class AdminUiPreferencesController extends Controller
                         'show_attention_section' => false,
                         'hidden_section_keys' => ['overview'],
                     ],
-                    'debt_ledger' => $preferences['debt_ledger'] ?? [
-                        'taken_label' => 'أخذت',
-                        'given_label' => 'أعطيت',
-                    ],
+                    'debt_ledger' => DebtLedgerLabels::normalize($preferences['debt_ledger'] ?? []),
                 ],
             ], 200);
         } catch (ValidationException $e) {

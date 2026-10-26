@@ -19,24 +19,46 @@ use App\Models\PurchaseReceipt;
 use App\Models\SalesOrder;
 use App\Models\Seller;
 use App\Models\User;
+use App\Support\DebtLedgerLabels;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
 class DebtLedgerService
 {
-    public function takenLabel(?array $preferences = null): string
+    public function takenLabel(?array $preferences = null, ?string $scope = null): string
     {
         $preferences ??= auth()->user()?->ui_preferences ?? [];
 
-        return trim((string) ($preferences['debt_ledger']['taken_label'] ?? 'أخذت')) ?: 'أخذت';
+        return DebtLedgerLabels::forScope($preferences['debt_ledger'] ?? [], $scope)['taken_label'];
     }
 
-    public function givenLabel(?array $preferences = null): string
+    public function givenLabel(?array $preferences = null, ?string $scope = null): string
     {
         $preferences ??= auth()->user()?->ui_preferences ?? [];
 
-        return trim((string) ($preferences['debt_ledger']['given_label'] ?? 'أعطيت')) ?: 'أعطيت';
+        return DebtLedgerLabels::forScope($preferences['debt_ledger'] ?? [], $scope)['given_label'];
+    }
+
+    private array $personLabelScopes = [];
+
+    public function labelScopeForPerson(?int $customerId, ?int $sellerId): string
+    {
+        if (! $customerId && ! $sellerId) {
+            return 'general';
+        }
+        $key = $customerId ? 'customer:'.$customerId : 'seller:'.$sellerId;
+
+        if (isset($this->personLabelScopes[$key])) {
+            return $this->personLabelScopes[$key];
+        }
+        $isPrivate = ContactCategoryAssignment::query()
+            ->where($customerId ? 'customer_id' : 'seller_id', $customerId ?: $sellerId)
+            ->whereHas('category', fn ($query) => $query->where('name', 'خاص'))
+            ->exists();
+
+        return $this->personLabelScopes[$key] = $isPrivate
+            ? 'private' : ($customerId ? 'customers' : 'sellers');
     }
 
     public const CURRENCIES = ['شيكل', 'دولار', 'دينار'];
@@ -717,7 +739,9 @@ class DebtLedgerService
         return [
             'id' => $transaction->id,
             'type' => $transaction->type,
-            'type_label' => $transaction->type === 'taken' ? $this->takenLabel() : $this->givenLabel(),
+            'type_label' => $transaction->type === 'taken'
+                ? $this->takenLabel(scope: $this->labelScopeForPerson($transaction->customer_id, $transaction->seller_id))
+                : $this->givenLabel(scope: $this->labelScopeForPerson($transaction->customer_id, $transaction->seller_id)),
             'source_label' => $sourceLabel,
             'amount' => (float) $transaction->amount,
             'currency' => $currency,
@@ -1449,6 +1473,10 @@ class DebtLedgerService
             'name' => $person->name,
             'phone' => $person->phone,
             'person_type' => $personType,
+            'label_scope' => $this->labelScopeForPerson(
+                $personType === 'customer' ? $person->id : null,
+                $personType === 'seller' ? $person->id : null,
+            ),
             'notes' => $person->notes,
             'collection_reminder_at' => $person->collection_reminder_at?->format('Y-m-d'),
         ];
@@ -1582,6 +1610,15 @@ class DebtLedgerService
         }
 
         $people = $peopleQuery->orderBy('name')->get();
+        $privateIds = ContactCategoryAssignment::query()
+            ->whereIn($foreignKey, $people->pluck('id'))
+            ->whereHas('category', fn ($query) => $query->where('name', 'خاص'))
+            ->pluck($foreignKey)->flip();
+        foreach ($people as $person) {
+            $key = ($isCustomers ? 'customer:' : 'seller:').$person->id;
+            $this->personLabelScopes[$key] = $privateIds->has($person->id)
+                ? 'private' : ($isCustomers ? 'customers' : 'sellers');
+        }
         $result = [];
 
         foreach ($people as $person) {
@@ -1643,7 +1680,9 @@ class DebtLedgerService
                 'last_transaction' => $lastTransaction ? [
                     'id' => $lastTransaction->id,
                     'type' => $lastTransaction->type,
-                    'type_label' => $lastTransaction->type === 'taken' ? $this->takenLabel() : $this->givenLabel(),
+                    'type_label' => $lastTransaction->type === 'taken'
+                        ? $this->takenLabel(scope: $this->labelScopeForPerson($isCustomers ? $person->id : null, $isCustomers ? null : $person->id))
+                        : $this->givenLabel(scope: $this->labelScopeForPerson($isCustomers ? $person->id : null, $isCustomers ? null : $person->id)),
                     'amount' => (float) $lastTransaction->amount,
                     'currency' => $this->normalizeCurrency($lastTransaction->currency),
                     'transaction_date' => $lastTransaction->transaction_date?->format('Y-m-d'),

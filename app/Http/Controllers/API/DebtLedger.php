@@ -669,6 +669,7 @@ class DebtLedger extends Controller
             }
 
             $token = Str::uuid()->toString();
+            $labelScope = $this->ledger->labelScopeForPerson($request->customer_id, $request->seller_id);
             Cache::put('debt_ledger_share:' . $token, [
                 'customer_id' => $request->customer_id,
                 'seller_id' => $request->seller_id,
@@ -676,8 +677,8 @@ class DebtLedger extends Controller
                 'end_date' => $endDate,
                 'currency' => $this->ledger->normalizeCurrency($request->currency),
                 'report_detail_level' => $request->input('report_detail_level', 'summary'),
-                'taken_label' => $this->ledger->takenLabel(),
-                'given_label' => $this->ledger->givenLabel(),
+                'taken_label' => $this->ledger->takenLabel(scope: $labelScope),
+                'given_label' => $this->ledger->givenLabel(scope: $labelScope),
             ], now()->addDays(90));
 
             return response()->json([
@@ -1031,8 +1032,9 @@ class DebtLedger extends Controller
             $periodLabel = $this->formatPeriodLabel($request->period, $startDate, $endDate);
             $periodLabel = $periodLabel.' — '.$displayCurrency;
             $sourceDetails = $this->reportSourceDetails($transactions, $detailLevel);
-            $takenLabel = $this->ledger->takenLabel();
-            $givenLabel = $this->ledger->givenLabel();
+            $labelScope = $this->ledger->labelScopeForPerson($request->customer_id, $request->seller_id);
+            $takenLabel = $this->ledger->takenLabel(scope: $labelScope);
+            $givenLabel = $this->ledger->givenLabel(scope: $labelScope);
 
             if ($request->boolean('json_response')) {
                 return response()->json([
