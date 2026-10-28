@@ -35,6 +35,23 @@ use Illuminate\Validation\ValidationException;
 class Bills extends Controller
 {
 
+    public function createPurchaseVariant(Request $request, \App\Services\PurchaseVariantService $variants)
+    {
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'size' => ['required', 'string', 'max:50'],
+            'color' => ['required', 'string', 'max:100'],
+            'retail_price' => ['required', 'numeric', 'min:0'],
+        ]);
+        $variant = $variants->create((int) $data['product_id'], $data['size'], $data['color'], (float) $data['retail_price']);
+
+        return response()->json([
+            'status' => 'success',
+            'size' => ['id' => $variant->size->id, 'size' => $variant->size->size],
+            'variant' => $variant->withoutRelations()->toArray(),
+        ]);
+    }
+
     public function purchaseProductOptions()
     {
         return response()->json([
