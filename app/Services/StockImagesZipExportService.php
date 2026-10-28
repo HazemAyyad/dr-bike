@@ -7,11 +7,11 @@ use App\Models\StockImageExport;
 use App\Support\ApiImageUrl;
 use App\Support\ProductImageResolver;
 use App\Support\ProductSearchFilter;
+use App\Support\ProductInventoryCostStatusFilter;
 use App\Support\ProductStockStatusFilter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use ZipArchive;
 
 class StockImagesZipExportService
@@ -118,23 +118,7 @@ class StockImagesZipExportService
         }
 
         if ($admin && ! empty($filters['cost_price_status'])) {
-            $status = (string) $filters['cost_price_status'];
-            if (! Schema::hasTable('inventory_cost_layers')) {
-                if ($status === 'with') {
-                    $query->whereRaw('1 = 0');
-                }
-            } else {
-                $costLayerExists = fn ($subQuery) => $subQuery
-                    ->selectRaw('1')
-                    ->from('inventory_cost_layers')
-                    ->whereColumn('inventory_cost_layers.product_id', 'products.id')
-                    ->where('inventory_cost_layers.remaining_quantity', '>', 0);
-                if ($status === 'with') {
-                    $query->whereExists($costLayerExists);
-                } elseif ($status === 'without') {
-                    $query->whereNotExists($costLayerExists);
-                }
-            }
+            ProductInventoryCostStatusFilter::apply($query, (string) $filters['cost_price_status']);
         }
 
         if (! empty($filters['date_from'])) {

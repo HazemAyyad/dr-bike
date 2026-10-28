@@ -27,6 +27,7 @@ use App\Services\StoreManageItemService;
 use App\Support\ApiImageUrl;
 use App\Support\ProductImageResolver;
 use App\Support\ProductSearchFilter;
+use App\Support\ProductInventoryCostStatusFilter;
 use App\Support\ProductStockStatusFilter;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
@@ -322,6 +323,9 @@ class Stocks extends Controller
                 'الموديل',
                 'رقم الدوران',
                 'الشروة / المشروع',
+                'عملة تكلفة المخزون',
+                'التكلفة المرجعية',
+                'عملة التكلفة المرجعية',
             ];
 
             $sizeHeaders = [
@@ -337,6 +341,10 @@ class Stocks extends Controller
                 'سعر الجملة',
                 'الخصم',
                 'الكمية',
+                'سعر تكلفة المخزون',
+                'عملة تكلفة المخزون',
+                'التكلفة المرجعية',
+                'عملة التكلفة المرجعية',
             ];
 
             $sheet->fromArray($headers, null, 'A1');
@@ -396,6 +404,8 @@ class Stocks extends Controller
                 ->orderBy($sortColumn, $sortDirection)
                 ->chunk(100, function ($products) use ($sheet, $sizesSheet, &$row, &$sizesRow, &$temporaryImages, &$thumbnailCache) {
                     foreach ($products as $product) {
+                        $inventory = app(InventoryCostingService::class)->productSummary($product, true, 0);
+                        $variantInventory = collect($inventory['variants'] ?? [])->keyBy('size_color_id');
                         $sheet->fromArray([[
                             $product->id,
                             $product->product_code,
@@ -411,8 +421,7 @@ class Stocks extends Controller
                             $product->storeSection?->name,
                             $product->normailPrice,
                             $product->wholesalePrice,
-                            app(InventoryCostingService::class)
-                                ->productSummary($product, true, 0)['average_inventory_unit_cost'] ?? 0,
+                            $inventory['average_inventory_unit_cost'] ?? 0,
                             $product->price,
                             $product->min_sale_price,
                             $product->stock,
@@ -427,6 +436,9 @@ class Stocks extends Controller
                             $product->model,
                             $product->rotation_date,
                             $product->purchase?->name,
+                            $inventory['currency'] ?? null,
+                            $inventory['reference_unit_cost'] ?? null,
+                            $inventory['reference_cost_currency'] ?? null,
                         ]], null, 'A'.$row);
 
                         $this->addImageToSheet($sheet, $this->preferredProductImagePath($product), 'D'.$row, $temporaryImages, $thumbnailCache);
@@ -435,6 +447,7 @@ class Stocks extends Controller
 
                         foreach ($product->sizes as $size) {
                             foreach ($size->colorSizes as $color) {
+                                $identity = $variantInventory->get((int) $color->id, []);
                                 $sizesSheet->fromArray([[
                                     $product->id,
                                     $product->product_code,
@@ -448,6 +461,10 @@ class Stocks extends Controller
                                     $color->wholesalePrice,
                                     $color->discount,
                                     $color->stock,
+                                    $identity['average_inventory_unit_cost'] ?? null,
+                                    $identity['currency'] ?? null,
+                                    $identity['reference_unit_cost'] ?? null,
+                                    $identity['reference_cost_currency'] ?? null,
                                 ]], null, 'A'.$sizesRow);
 
                                 $this->addImageToSheet($sizesSheet, $this->localImagePathFromUrl($color->image_url ?? null), 'H'.$sizesRow, $temporaryImages, $thumbnailCache);
@@ -997,8 +1014,9 @@ class Stocks extends Controller
             'AA' => 18,
             'AB' => 18,
             'AC' => 24,
-            'AD' => 72,
-            'AE' => 16,
+            'AD' => 18,
+            'AE' => 22,
+            'AF' => 18,
         ];
 
         foreach ($widths as $column => $width) {
@@ -1054,6 +1072,10 @@ class Stocks extends Controller
             'J' => 14,
             'K' => 12,
             'L' => 12,
+            'M' => 18,
+            'N' => 18,
+            'O' => 22,
+            'P' => 18,
         ];
 
         foreach ($widths as $column => $width) {
@@ -1882,49 +1904,7 @@ class Stocks extends Controller
 
     private function applyInventoryCostStatusFilter($query, string $status): void
     {
-        if (! Schema::hasTable('inventory_cost_layers')) {
-            if ($status === 'with') {
-                $query->whereRaw('1 = 0');
-            }
-
-            return;
-        }
-
-        $callback = fn ($subQuery) => $subQuery
-            ->selectRaw('1')
-            ->from('inventory_cost_layers')
-            ->whereColumn('inventory_cost_layers.product_id', 'products.id')
-            ->where('inventory_cost_layers.remaining_quantity', '>', 0);
-
-        $hasCost = function ($scope) use ($callback) {
-            $scope->whereExists($callback);
-            if (Schema::hasTable('inventory_adjustments')) {
-                $scope->orWhereExists(function ($reference) {
-                    $reference->selectRaw('1')->from('inventory_adjustments as cost_reference')
-                        ->leftJoin('size_colors as reference_variant', 'reference_variant.id', '=', 'cost_reference.size_color_id')
-                        ->leftJoin('sizes as reference_size', 'reference_size.id', '=', 'reference_variant.sizeId')
-                        ->whereColumn('cost_reference.product_id', 'products.id')
-                        ->where('cost_reference.adjustment_type', InventoryAdjustment::TYPE_COST_REFERENCE)
-                        ->where('cost_reference.new_unit_cost', '>', 0)
-                        ->when(Schema::hasColumn('inventory_adjustments', 'reversed_at'), fn ($q) => $q->whereNull('cost_reference.reversed_at'))
-                        ->where(function ($identity) {
-                            $identity->where(function ($simple) {
-                                $simple->whereNull('cost_reference.size_color_id')->where('products.stock', 0)
-                                    ->whereNotExists(fn ($variants) => $variants->selectRaw('1')->from('sizes')
-                                        ->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
-                                        ->whereColumn('sizes.itemId', 'products.id'));
-                            })->orWhere(function ($variant) {
-                                $variant->whereColumn('reference_size.itemId', 'products.id')->where('reference_variant.stock', 0);
-                            });
-                        });
-                });
-            }
-        };
-        if ($status === 'with') {
-            $query->where($hasCost);
-        } elseif ($status === 'without') {
-            $query->whereNot($hasCost);
-        }
+        ProductInventoryCostStatusFilter::apply($query, $status);
     }
 
     private function isAdminRequest(Request $request): bool

@@ -672,6 +672,102 @@ class MissingSaleCostServiceTest extends TestCase
         $this->assertEquals(0, $rows[$child->id]['sale_unit_price']);
     }
 
+    public function test_spreadsheet_and_image_cost_filters_agree_for_zero_stock_reference(): void
+    {
+        $this->reference();
+        $images = new \App\Services\StockImagesZipExportService;
+        $reflection = new \ReflectionClass(\App\Http\Controllers\API\Stocks::class);
+        $controller = $reflection->newInstanceWithoutConstructor();
+        foreach (['with' => [962], 'without' => []] as $status => $expected) {
+            $filters = ['cost_price_status' => $status, 'stock_status' => 'zero'];
+            $request = \Illuminate\Http\Request::create('/', 'GET', $filters);
+            $request->setUserResolver(fn () => $this->actor);
+            $sheetQuery = Product::query();
+            $reflection->getMethod('applyProductExportFilters')->invoke($controller, $sheetQuery, $request);
+            $imageQuery = Product::query();
+            $images->applyFilters($imageQuery, $images->filtersFromRequest($request));
+            $this->assertEquals($expected, $sheetQuery->pluck('id')->all());
+            $this->assertEquals($expected, $imageQuery->pluck('id')->all());
+        }
+    }
+
+    public function test_real_export_keeps_inventory_cost_and_reference_cost_in_separate_columns(): void
+    {
+        if (! class_exists(\ZipArchive::class)) {
+            $this->markTestSkipped('Reading the generated XLSX requires the PHP zip extension.');
+        }
+        Schema::table('products', function (Blueprint $table) {
+            foreach (['category_id', 'store_section_id', 'project_id', 'nameEng', 'nameAbree', 'descriptionAr',
+                'descriptionEng', 'descriptionAbree', 'normailPrice', 'wholesalePrice', 'price', 'min_sale_price',
+                'min_stock', 'discount', 'isShow', 'isNewItem', 'isMoreSales', 'is_sold_with_paper', 'rate',
+                'manufactureYear', 'model', 'rotation_date'] as $column) {
+                $table->string($column)->nullable();
+            }
+        });
+        Schema::table('size_colors', function (Blueprint $table) {
+            foreach (['colorEn', 'colorAbbr', 'normailPrice', 'wholesalePrice', 'discount', 'image_url'] as $column) {
+                $table->string($column)->nullable();
+            }
+        });
+        foreach ([new \App\Models\NormalImageProduct, new \App\Models\ViewImageProduct, new \App\Models\Image3dProduct] as $model) {
+            Schema::create($model->getTable(), function (Blueprint $table) {
+                $table->id();
+                $table->unsignedBigInteger('itemId');
+                $table->string('imageUrl')->nullable();
+            });
+        }
+        Schema::create((new \App\Models\SubCategoryProduct)->getTable(), function (Blueprint $table) {
+            $table->id();
+            $table->unsignedBigInteger('product_id');
+            $table->unsignedBigInteger('sub_category_id');
+        });
+        $this->reference();
+        $positive = Product::withoutEvents(fn () => Product::create(['id' => 963, 'nameAr' => 'مخزون فعلي',
+            'product_code' => '963', 'stock' => 3]));
+        InventoryCostLayer::create(['product_id' => $positive->id, 'quantity' => 3, 'remaining_quantity' => 3,
+            'unit_cost' => 11, 'currency' => 'شيكل', 'source_type' => 'purchase_receipt_item']);
+        $variantProduct = Product::withoutEvents(fn () => Product::create(['id' => 964, 'nameAr' => 'متغير بلا رصيد',
+            'product_code' => '964', 'stock' => 0]));
+        Size::create(['id' => 50, 'itemId' => 964, 'size' => 'كبير']);
+        SizeColor::create(['id' => 60, 'sizeId' => 50, 'colorAr' => 'أسود']);
+        app(InventoryAdjustmentService::class)->setReferenceCost($variantProduct, 412, 'سعر مرجعي', null, 'دولار', 60, $this->actor->id);
+        $request = \Illuminate\Http\Request::create('/', 'GET', ['cost_price_status' => 'with']);
+        $request->setUserResolver(fn () => $this->actor);
+        $response = app(\App\Http\Controllers\API\Stocks::class)->exportProductsCsv($request);
+        $this->assertEquals(200, $response->getStatusCode());
+        ob_start();
+        try {
+            ($response->getCallback())();
+            $bytes = ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+        $path = tempnam(sys_get_temp_dir(), 'doctorbike-cost-export-');
+        try {
+            file_put_contents($path, $bytes);
+            $workbook = \PhpOffice\PhpSpreadsheet\IOFactory::load($path);
+            $sheet = $workbook->getSheetByName('Products');
+            $this->assertEquals('سعر التكلفة', $sheet->getCell('O1')->getValue());
+            $this->assertEquals('التكلفة المرجعية', $sheet->getCell('AE1')->getValue());
+            $rows = collect(array_slice($sheet->toArray(), 1))->keyBy(fn ($row) => (int) $row[0]);
+            $this->assertCount(3, $rows);
+            $this->assertEquals(280, $rows[962][30]);
+            $this->assertEquals('شيكل', $rows[962][31]);
+            $this->assertEquals(0, (float) $rows[962][14]);
+            $this->assertEquals(11, $rows[963][14]);
+            $this->assertEmpty($rows[963][30]);
+            $colors = $workbook->getSheetByName('Sizes & Colors');
+            $this->assertEquals('التكلفة المرجعية', $colors->getCell('O1')->getValue());
+            $this->assertEquals(412, $colors->getCell('O2')->getValue());
+            $this->assertEquals('دولار', $colors->getCell('P2')->getValue());
+            $workbook->disconnectWorksheets();
+        } finally {
+            unlink($path);
+        }
+        $this->assertEquals(3, $positive->fresh()->stock);
+        $this->assertEquals(3, InventoryCostLayer::sum('remaining_quantity'));
+    }
+
     private function enableLedger(): void
     {
         // This test owns an in-memory SQLite connection; production is never used.
