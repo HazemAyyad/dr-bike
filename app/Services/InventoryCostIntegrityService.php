@@ -371,7 +371,20 @@ class InventoryCostIntegrityService
                 ->orderBy('id')
                 ->get();
             if ($movements->isEmpty()) {
-                $issues[] = $this->issue('missing_stock_movement', 'No outbound stock movement exists for the cost allocation.', $context);
+                $manualEvidence = ProductStockMovement::query()
+                    ->where('reference_type', $referenceType)->where('reference_id', $referenceId)
+                    ->where('product_id', $productId)->where('type', ProductStockMovement::TYPE_SALE_COST_CORRECTION)
+                    ->when($sizeColorId !== null, fn ($q) => $q->where('size_color_id', $sizeColorId), fn ($q) => $q->whereNull('size_color_id'))
+                    ->where('quantity', 0)->latest('id')->first();
+                $audit = $referenceType === 'instant_sale' && Schema::hasTable('instant_sale_revisions')
+                    ? \App\Models\InstantSaleRevision::query()->where('instant_sale_id', $referenceId)
+                        ->where('action', 'missing_cost_initialized')->latest('id')->first()
+                    : null;
+                if (! $manualEvidence || ! $audit
+                    || abs((float) ($audit->after_snapshot['inventory_total_cost'] ?? -1) - $allocatedCost) > 0.001
+                    || abs((float) $manualEvidence->total_cost - $allocatedCost) > 0.001) {
+                    $issues[] = $this->issue('missing_stock_movement', 'No outbound stock movement exists for the cost allocation.', $context);
+                }
             } elseif ($movements->contains(fn (ProductStockMovement $movement) => $movement->total_cost === null)) {
                 $issues[] = $this->issue('missing_movement_cost', 'Outbound stock movement has no reliable total cost.', array_merge($context, [
                     'movement_ids' => $movements->whereNull('total_cost')->pluck('id')->map(fn ($id) => (int) $id)->all(),

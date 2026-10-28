@@ -276,6 +276,47 @@ class ProductStockController extends Controller
         }
     }
 
+    public function missingSalesCostPreview(Request $request, \App\Services\MissingSaleCostService $service)
+    {
+        return $this->missingSalesCost($request, $service, false);
+    }
+
+    public function initializeSalesCost(Request $request, \App\Services\MissingSaleCostService $service)
+    {
+        return $this->missingSalesCost($request, $service, true);
+    }
+
+    private function missingSalesCost(Request $request, \App\Services\MissingSaleCostService $service, bool $apply)
+    {
+        try {
+            $rules = [
+                'product_id' => ['required', 'integer', 'exists:products,id'],
+                'size_color_id' => ['nullable', 'integer', 'exists:size_colors,id'],
+                'unit_cost' => ['required', 'numeric', 'gt:0'],
+                'currency' => ['required', 'string', 'max:20'],
+            ];
+            if ($apply) {
+                $rules += ['sale_ids' => ['required', 'array', 'min:1', 'max:500'],
+                    'sale_ids.*' => ['required', 'integer', 'distinct'],
+                    'review_token' => ['required', 'string', 'size:64'],
+                    'reason' => ['required', 'string', 'max:190']];
+            }
+            $data = $request->validate($rules);
+            $args = [$request->user(), (int) $data['product_id'],
+                isset($data['size_color_id']) ? (int) $data['size_color_id'] : null,
+                (float) $data['unit_cost'], $data['currency']];
+            $result = $apply
+                ? $service->apply(...array_merge($args, [$data['sale_ids'], $data['review_token'], $data['reason']]))
+                : $service->preview(...$args);
+
+            return response()->json(['status' => 'success', 'result' => $result,
+                'message' => $apply ? 'تم تسجيل تكلفة المبيعات المحددة دون تغيير المخزون أو المدفوعات.' : null]);
+        } catch (ValidationException $e) {
+            return response()->json(['status' => 'error',
+                'message' => collect($e->errors())->flatten()->first(), 'errors' => $e->errors()], 422);
+        }
+    }
+
     public function movements(Request $request)
     {
         try {
@@ -310,6 +351,7 @@ class ProductStockController extends Controller
                     ProductStockMovement::TYPE_OPENING_STOCK,
                     ProductStockMovement::TYPE_COST_REVALUATION,
                     ProductStockMovement::TYPE_COST_INITIALIZATION,
+                    ProductStockMovement::TYPE_SALE_COST_CORRECTION,
                 ])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);

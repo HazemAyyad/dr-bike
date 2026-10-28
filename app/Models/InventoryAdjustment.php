@@ -7,8 +7,12 @@ use Illuminate\Database\Eloquent\Model;
 class InventoryAdjustment extends Model
 {
     public const TYPE_QUANTITY = 'quantity';
+
     public const TYPE_COST_REVALUATION = 'cost_revaluation';
+
     public const TYPE_COST_INITIALIZATION = 'cost_initialization';
+
+    public const TYPE_SALE_COST_INITIALIZATION = 'sale_cost_initialization';
 
     protected $fillable = [
         'reference', 'product_id', 'size_id', 'size_color_id', 'adjustment_type',
