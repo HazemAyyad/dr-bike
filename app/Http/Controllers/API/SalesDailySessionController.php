@@ -415,6 +415,40 @@ class SalesDailySessionController extends Controller
         }
     }
 
+    public function correctTransfer(Request $request, \App\Services\SalesDailyTransferCorrectionService $corrections)
+    {
+        if (! $this->canReviewClosing($request->user())) {
+            return response()->json(['status' => 'error', 'message' => __('messages.unauthorized')], 403);
+        }
+        try {
+            $data = $request->validate([
+                'closing_request_id' => 'required|integer|exists:sales_daily_closing_requests,id',
+                'action' => 'required|in:redirect,return_to_review',
+                'reason' => 'required|string|max:1000',
+                'transfers' => 'required_if:action,redirect|array',
+                'transfers.*.currency' => 'required|string|distinct',
+                'transfers.*.to_box_id' => 'required|integer|exists:boxes,id',
+            ]);
+            $replacement = $corrections->correct(
+                $request->user(), (int) $data['closing_request_id'], $data['action'],
+                $data['transfers'] ?? [], $data['reason'],
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'message' => $data['action'] === 'redirect'
+                    ? 'تم تصحيح وجهة الترحيل وحفظ الحركة في السجل.'
+                    : 'تم عكس الترحيل وإعادة طلب الإغلاق للمراجعة.',
+                'closing_request_id' => $replacement->id,
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error', 'message' => collect($e->errors())->flatten()->first(),
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
     public function directClose(Request $request)
     {
         try {

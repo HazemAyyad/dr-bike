@@ -2195,6 +2195,9 @@ class SalesDailySessionService
             'sales_orders_count' => count($ordersLog),
             'sales_orders' => $ordersLog,
             'closing_requests' => $closingRequests,
+            'can_correct_transfers' => $session->isClosed() && $this->canReviewAllSessions($viewer),
+            'can_return_to_review' => $session->isClosed() && $this->canReviewAllSessions($viewer)
+                && app(SalesDailyTransferCorrectionService::class)->canReturnToReview($session),
             'config' => [
                 'variance_alert_threshold' => SalesDailySettings::varianceAlertThreshold(),
                 'max_float' => SalesDailySettings::maxFloatMap(),
@@ -2506,6 +2509,9 @@ class SalesDailySessionService
             'instant_sales' => [],
             'profit_sales' => [],
         ];
+        $transferBoxNames = Box::query()->whereIn('id', collect($request->transfers ?? [])
+            ->flatMap(fn (array $row) => [$row['from_box_id'] ?? 0, $row['to_box_id'] ?? 0])
+            ->unique()->all())->pluck('name', 'id');
 
         return [
             'id' => $request->id,
@@ -2521,7 +2527,12 @@ class SalesDailySessionService
             'profit_sales_count' => $request->profit_sales_count,
             'cash_counts' => $request->cash_counts,
             'sales_orders_cash_counts' => $request->sales_orders_cash_counts,
-            'transfers' => $request->transfers,
+            'transfers' => array_map(function (array $transfer) use ($transferBoxNames) {
+                return array_merge($transfer, [
+                    'from_box_name' => $transferBoxNames->get($transfer['from_box_id'] ?? 0),
+                    'to_box_name' => $transferBoxNames->get($transfer['to_box_id'] ?? 0),
+                ]);
+            }, $request->transfers ?? []),
             'is_late_close' => $isLateClose,
             'late_close_reason' => $request->late_close_reason,
             'business_date' => $businessDate,
