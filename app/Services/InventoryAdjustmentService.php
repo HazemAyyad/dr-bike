@@ -339,6 +339,50 @@ class InventoryAdjustmentService
         });
     }
 
+    public function setReferenceCost(
+        Product $product,
+        float $unitCost,
+        string $reason,
+        ?string $notes,
+        string $currency,
+        ?int $sizeColorId,
+        ?int $userId,
+    ): InventoryAdjustment {
+        if (! is_finite($unitCost) || $unitCost <= 0 || trim($reason) === '') {
+            throw ValidationException::withMessages(['unit_cost' => ['أدخل تكلفة أكبر من صفر وسبب تسجيلها.']]);
+        }
+        $currency = $this->costing->normalizeCurrency($currency);
+
+        return DB::transaction(function () use ($product, $unitCost, $reason, $notes, $currency, $sizeColorId, $userId) {
+            $product = Product::query()->lockForUpdate()->findOrFail($product->id);
+            $sizeId = $this->validateIdentity($product, $sizeColorId);
+            $quantity = $this->stock->resolveAvailableStock($product, $sizeColorId);
+            if ($quantity !== 0) {
+                throw ValidationException::withMessages(['inventory' => ['تغير رصيد الصنف؛ التكلفة المرجعية متاحة فقط عندما يكون الرصيد صفرًا. أعد فتح المراجعة.']]);
+            }
+            $old = $this->costing->referenceCost((int) $product->id, $sizeColorId);
+            $adjustment = InventoryAdjustment::create([
+                'reference' => $this->reference('REF'), 'product_id' => $product->id,
+                'size_id' => $sizeId, 'size_color_id' => $sizeColorId,
+                'adjustment_type' => InventoryAdjustment::TYPE_COST_REFERENCE,
+                'stock_before' => 0, 'stock_after' => 0, 'quantity_difference' => 0,
+                'old_unit_cost' => $old?->new_unit_cost, 'new_unit_cost' => $unitCost,
+                'old_value' => 0, 'new_value' => 0, 'value_difference' => 0,
+                'currency' => $currency, 'costing_method' => $this->costing->currentMethod(),
+                'reason' => trim($reason), 'notes' => $notes, 'created_by' => $userId,
+            ]);
+            $this->stock->logMovement(
+                productId: (int) $product->id, sizeId: $sizeId, sizeColorId: $sizeColorId,
+                type: ProductStockMovement::TYPE_COST_REFERENCE, quantity: 0, stockBefore: 0, stockAfter: 0,
+                referenceType: 'inventory_adjustment', referenceId: (int) $adjustment->id,
+                note: $notes, userId: $userId, unitCost: $unitCost, totalCost: 0,
+                costingMethod: $adjustment->costing_method, reason: trim($reason),
+            );
+
+            return $adjustment;
+        });
+    }
+
     private function validateIdentity(Product $product, ?int $sizeColorId): ?int
     {
         if ($sizeColorId === null || $sizeColorId <= 0) {

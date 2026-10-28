@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AppSetting;
+use App\Models\InventoryAdjustment;
 use App\Models\InventoryCostAllocation;
 use App\Models\InventoryCostBalance;
 use App\Models\InventoryCostLayer;
@@ -23,9 +24,7 @@ class InventoryCostingService
 
     private const EPSILON = 0.0001;
 
-    public function __construct(private ProductStockService $stockService)
-    {
-    }
+    public function __construct(private ProductStockService $stockService) {}
 
     public function currentMethod(): string
     {
@@ -777,6 +776,9 @@ class InventoryCostingService
             ])->all()
             : [];
 
+        $reference = $includeCost && abs($physical) <= self::EPSILON
+            ? $this->referenceCost((int) $product->id, $sizeColorId) : null;
+
         return [
             'product_id' => (int) $product->id,
             'size_id' => $sizeId,
@@ -792,10 +794,26 @@ class InventoryCostingService
             'average_inventory_unit_cost' => $includeCost ? round($average, 6) : null,
             'next_fifo_unit_cost' => $includeCost && $method === self::METHOD_FIFO && $next ? (float) $next->unit_cost : null,
             'next_fifo_effective_at' => $includeCost && $method === self::METHOD_FIFO && $next ? optional($next->effective_at)->toIso8601String() : null,
+            'reference_unit_cost' => $reference?->new_unit_cost,
+            'reference_cost_currency' => $reference?->currency,
             'cost_coverage_complete' => abs($physical - $costedQuantity) <= self::EPSILON
                 && $pendingNegativeCostQuantity <= self::EPSILON,
             'cost_layers' => $layers,
         ];
+    }
+
+    /** A quoted reference is separate from owned stock and its FIFO layers. */
+    public function referenceCost(int $productId, ?int $sizeColorId): ?InventoryAdjustment
+    {
+        if (! Schema::hasTable('inventory_adjustments')) {
+            return null;
+        }
+
+        return InventoryAdjustment::query()->where('product_id', $productId)
+            ->where('adjustment_type', InventoryAdjustment::TYPE_COST_REFERENCE)
+            ->when($sizeColorId !== null, fn ($q) => $q->where('size_color_id', $sizeColorId), fn ($q) => $q->whereNull('size_color_id'))
+            ->when(Schema::hasColumn('inventory_adjustments', 'reversed_at'), fn ($q) => $q->whereNull('reversed_at'))
+            ->latest('id')->first();
     }
 
     /**

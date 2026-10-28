@@ -13,6 +13,8 @@ use App\Models\ProductStockMovement;
 use App\Models\Size;
 use App\Models\SizeColor;
 use App\Models\User;
+use App\Services\InventoryAdjustmentService;
+use App\Services\InventoryCostingService;
 use App\Services\InventoryCostIntegrityService;
 use App\Services\MissingSaleCostService;
 use Illuminate\Database\Schema\Blueprint;
@@ -105,6 +107,8 @@ class MissingSaleCostServiceTest extends TestCase
             $t->double('payment_box_value')->default(0);
             $t->double('cost')->default(0);
             $t->double('total_cost')->default(0);
+            $t->double('discount')->nullable();
+            $t->unsignedBigInteger('offer_package_id')->nullable();
             $t->double('quantity');
             $t->string('inventory_cost_method')->nullable();
             $t->double('inventory_unit_cost')->nullable();
@@ -125,6 +129,20 @@ class MissingSaleCostServiceTest extends TestCase
             $t->unsignedBigInteger('source_id')->nullable();
             $t->string('idempotency_key')->nullable()->unique();
             $t->timestamp('effective_at')->nullable();
+            $t->timestamps();
+        });
+        Schema::create('inventory_cost_balances', function (Blueprint $t) {
+            $t->id();
+            $t->unsignedBigInteger('product_id');
+            $t->unsignedBigInteger('size_id')->nullable();
+            $t->unsignedBigInteger('size_color_id')->nullable();
+            $t->string('identity_key')->unique();
+            $t->double('quantity')->default(0);
+            $t->double('inventory_value')->default(0);
+            $t->double('moving_average_unit_cost')->default(0);
+            $t->string('currency');
+            $t->boolean('needs_review')->default(false);
+            $t->string('review_reason')->nullable();
             $t->timestamps();
         });
         Schema::create('inventory_cost_allocations', function (Blueprint $t) {
@@ -496,6 +514,162 @@ class MissingSaleCostServiceTest extends TestCase
         $this->assertNull($child->fresh()->inventory_total_cost);
         $this->assertSame(0, InventoryAdjustment::count());
         $this->assertSame(0, InventoryCostLayer::count());
+    }
+
+    public function test_review_separates_product_selling_price_from_whole_invoice_total(): void
+    {
+        $root = $this->sale(['cost' => 50, 'quantity' => 2, 'total_cost' => 150, 'discount' => 25]);
+        $child = $this->sale(['cost' => 25, 'quantity' => 3, 'total_cost' => 75, 'parent_id' => $root->id]);
+        $rows = collect($this->preview()['sales'])->keyBy('id');
+        $this->assertEquals(2, $rows[$root->id]['quantity']);
+        $this->assertEquals(50, $rows[$root->id]['sale_unit_price']);
+        $this->assertEquals(100, $rows[$root->id]['sale_line_total']);
+        $this->assertEquals(150, $rows[$root->id]['invoice_total']);
+        $this->assertEquals(25, $rows[$root->id]['invoice_discount']);
+        $this->assertEquals(25, $rows[$child->id]['sale_unit_price']);
+        $this->assertEquals(75, $rows[$child->id]['sale_line_total']);
+        $this->assertEquals(150, $rows[$child->id]['invoice_total']);
+        $this->assertEquals(25, $rows[$child->id]['invoice_discount']);
+    }
+
+    private function reference(float $cost = 280, ?int $variant = null): InventoryAdjustment
+    {
+        return app(InventoryAdjustmentService::class)->setReferenceCost($this->product, $cost,
+            'تسجيل سعر مرجعي', null, 'شيكل', $variant, $this->actor->id);
+    }
+
+    public function test_zero_stock_without_sales_can_save_reference_without_inventory_or_ledger_changes(): void
+    {
+        $this->enableLedger();
+        $adjustment = $this->reference();
+        $summary = app(InventoryCostingService::class)->productSummary($this->product->fresh());
+        $this->assertEquals(280, $summary['reference_unit_cost']);
+        $this->assertSame('شيكل', $summary['reference_cost_currency']);
+        $this->assertEquals(0, $summary['quantity_on_hand']);
+        $this->assertEquals(0, $summary['inventory_value']);
+        $this->assertEquals(0, $summary['average_inventory_unit_cost']);
+        $this->assertNull($summary['next_fifo_unit_cost']);
+        $this->assertSame(0, InventoryCostLayer::count());
+        $this->assertSame(0, InventoryCostAllocation::count());
+        $this->assertSame(0, InstantSale::count());
+        $this->assertSame(0, \App\Models\InventoryCostBalance::count());
+        $this->assertSame(0, \App\Models\AccountingJournalEntry::count());
+        $this->assertEquals(0, $adjustment->quantity_difference);
+        $this->assertEquals(0, $adjustment->value_difference);
+        $this->assertEquals(0, ProductStockMovement::sole()->quantity);
+        $this->assertEquals($this->actor->id, $adjustment->created_by);
+        $this->assertNull(app(InventoryCostingService::class)->productSummary($this->product->fresh(), false)['reference_unit_cost']);
+    }
+
+    public function test_reference_updates_preserve_audit_and_do_not_recost_existing_sales(): void
+    {
+        $sale = $this->sale();
+        $this->reference();
+        $latest = $this->reference(300);
+        $this->assertEquals(280, $latest->old_unit_cost);
+        $this->assertEquals(300, $latest->new_unit_cost);
+        $this->assertEquals(2, InventoryAdjustment::count());
+        $this->assertNull($sale->fresh()->inventory_total_cost);
+        $this->assertSame(0, InstantSaleRevision::count());
+        $this->assertEquals(300, app(InventoryCostingService::class)->productSummary($this->product->fresh())['reference_unit_cost']);
+    }
+
+    public function test_reference_cannot_be_saved_after_quantity_changes_to_positive_or_negative(): void
+    {
+        foreach ([1, -1] as $quantity) {
+            DB::table('products')->where('id', 962)->update(['stock' => $quantity]);
+            try {
+                $this->reference();
+                $this->fail('Reference accepted for nonzero stock');
+            } catch (ValidationException) {
+            }
+        }
+        $this->assertSame(0, InventoryAdjustment::count());
+    }
+
+    public function test_reference_is_variant_specific_and_rejects_unselected_or_foreign_variants(): void
+    {
+        $size = Size::create(['id' => 50, 'itemId' => 962, 'size' => 'كبير']);
+        $variant = SizeColor::create(['id' => 60, 'sizeId' => $size->id, 'colorAr' => 'أسود']);
+        $other = SizeColor::create(['id' => 61, 'sizeId' => $size->id, 'colorAr' => 'أبيض']);
+        $this->reference(280, $variant->id);
+        $summary = app(InventoryCostingService::class)->productSummary($this->product->fresh());
+        $rows = collect($summary['variants'])->keyBy('size_color_id');
+        $this->assertEquals(280, $rows[$variant->id]['reference_unit_cost']);
+        $this->assertNull($rows[$other->id]['reference_unit_cost']);
+        try {
+            $this->reference();
+            $this->fail('Variant was not selected');
+        } catch (ValidationException) {
+        }
+        Size::create(['id' => 51, 'itemId' => 1, 'size' => 'آخر']);
+        SizeColor::create(['id' => 62, 'sizeId' => 51, 'colorAr' => 'أحمر']);
+        try {
+            $this->reference(280, 62);
+            $this->fail('Foreign variant accepted');
+        } catch (ValidationException) {
+        }
+        $this->assertSame(1, InventoryAdjustment::count());
+    }
+
+    private function filteredProducts(string $status): array
+    {
+        $reflection = new \ReflectionClass(\App\Http\Controllers\API\Stocks::class);
+        $controller = $reflection->newInstanceWithoutConstructor();
+        $query = Product::query();
+        $reflection->getMethod('applyInventoryCostStatusFilter')->invoke($controller, $query, $status);
+
+        return $query->pluck('id')->all();
+    }
+
+    public function test_cost_filter_recognizes_reference_only_while_identity_is_zero(): void
+    {
+        $this->assertEquals([962], $this->filteredProducts('without'));
+        $this->reference();
+        $this->assertEquals([], $this->filteredProducts('without'));
+        $this->assertEquals([962], $this->filteredProducts('with'));
+        DB::table('products')->where('id', 962)->update(['stock' => 1]);
+        $this->assertEquals([962], $this->filteredProducts('without'));
+        $this->assertEquals([], $this->filteredProducts('with'));
+        InventoryCostLayer::create(['product_id' => 962, 'quantity' => 1, 'remaining_quantity' => 1,
+            'unit_cost' => 300, 'currency' => 'شيكل', 'source_type' => 'purchase_receipt_item']);
+        $this->assertEquals([962], $this->filteredProducts('with'));
+    }
+
+    public function test_initialize_api_requires_explicit_reference_mode_for_zero_stock(): void
+    {
+        $controller = app(\App\Http\Controllers\API\ProductStockController::class);
+        $data = ['product_id' => 962, 'unit_cost' => 280, 'currency' => 'شيكل', 'reason' => 'سعر مرجعي'];
+        $request = \Illuminate\Http\Request::create('/', 'POST', $data);
+        $request->setUserResolver(fn () => $this->actor);
+        $this->assertSame('error', $controller->initializeCost($request)->getData(true)['status']);
+        $request = \Illuminate\Http\Request::create('/', 'POST', $data + ['reference_only' => true]);
+        $request->setUserResolver(fn () => $this->actor);
+        $response = $controller->initializeCost($request)->getData(true);
+        $this->assertSame('success', $response['status']);
+        $this->assertEquals(280, $response['inventory']['reference_unit_cost']);
+        $this->assertSame(InventoryAdjustment::TYPE_COST_REFERENCE, InventoryAdjustment::sole()->adjustment_type);
+    }
+
+    public function test_variant_reference_filter_does_not_cover_positive_uncosted_stock(): void
+    {
+        Size::create(['id' => 50, 'itemId' => 962, 'size' => 'كبير']);
+        SizeColor::create(['id' => 60, 'sizeId' => 50, 'colorAr' => 'أسود']);
+        $this->reference(280, 60);
+        $this->assertEquals([962], $this->filteredProducts('with'));
+        $this->assertEquals([], $this->filteredProducts('without'));
+        DB::table('size_colors')->where('id', 60)->update(['stock' => 2]);
+        $this->assertEquals([], $this->filteredProducts('with'));
+        $this->assertEquals([962], $this->filteredProducts('without'));
+    }
+
+    public function test_package_component_price_is_explicit_in_review(): void
+    {
+        $root = $this->sale(['offer_package_id' => 10]);
+        $child = $this->sale(['cost' => 0, 'parent_id' => $root->id]);
+        $rows = collect($this->preview()['sales'])->keyBy('id');
+        $this->assertTrue($rows[$child->id]['sale_price_included_in_package']);
+        $this->assertEquals(0, $rows[$child->id]['sale_unit_price']);
     }
 
     private function enableLedger(): void

@@ -247,12 +247,14 @@ class ProductStockController extends Controller
                 'product_id' => ['required', 'integer', 'exists:products,id'],
                 'size_color_id' => ['nullable', 'integer', 'exists:size_colors,id'],
                 'unit_cost' => ['required', 'numeric', 'gt:0'],
+                'reference_only' => ['sometimes', 'boolean'],
                 'currency' => ['nullable', 'string', 'max:10'],
                 'reason' => ['required', 'string', 'max:120'],
                 'notes' => ['nullable', 'string', 'max:1000'],
             ]);
             $product = Product::query()->findOrFail($data['product_id']);
-            $adjustment = $this->adjustments->initializeMissingCost(
+            $operation = ($data['reference_only'] ?? false) ? 'setReferenceCost' : 'initializeMissingCost';
+            $adjustment = $this->adjustments->{$operation}(
                 product: $product,
                 unitCost: (float) $data['unit_cost'],
                 reason: $data['reason'],
@@ -352,6 +354,7 @@ class ProductStockController extends Controller
                     ProductStockMovement::TYPE_COST_REVALUATION,
                     ProductStockMovement::TYPE_COST_INITIALIZATION,
                     ProductStockMovement::TYPE_SALE_COST_CORRECTION,
+                    ProductStockMovement::TYPE_COST_REFERENCE,
                 ])],
                 'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             ]);

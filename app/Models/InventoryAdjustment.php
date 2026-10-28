@@ -14,6 +14,8 @@ class InventoryAdjustment extends Model
 
     public const TYPE_SALE_COST_INITIALIZATION = 'sale_cost_initialization';
 
+    public const TYPE_COST_REFERENCE = 'cost_reference';
+
     protected $fillable = [
         'reference', 'product_id', 'size_id', 'size_color_id', 'adjustment_type',
         'stock_before', 'stock_after', 'quantity_difference', 'old_unit_cost',
