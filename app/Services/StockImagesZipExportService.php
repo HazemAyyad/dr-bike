@@ -7,6 +7,7 @@ use App\Models\StockImageExport;
 use App\Support\ApiImageUrl;
 use App\Support\ProductImageResolver;
 use App\Support\ProductSearchFilter;
+use App\Support\ProductStockStatusFilter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -72,6 +73,7 @@ class StockImagesZipExportService
             'tag_id' => $request->input('tag_id'),
             'store_section_id' => $request->input('store_section_id'),
             'cost_price_status' => $request->input('cost_price_status'),
+            'stock_status' => $request->input('stock_status'),
             'date_from' => $request->input('date_from'),
             'date_to' => $request->input('date_to'),
             'sort_by' => $request->input('sort_by'),
@@ -82,6 +84,7 @@ class StockImagesZipExportService
     public function applyFilters($query, array $filters, bool $admin = true): void
     {
         ProductSearchFilter::apply($query, $filters['search'] ?? null);
+        ProductStockStatusFilter::apply($query, $filters['stock_status'] ?? null);
 
         if (! empty($filters['category_id'])) {
             $query->where('category_id', (int) $filters['category_id']);

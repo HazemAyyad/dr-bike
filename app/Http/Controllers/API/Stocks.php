@@ -27,6 +27,7 @@ use App\Services\StoreManageItemService;
 use App\Support\ApiImageUrl;
 use App\Support\ProductImageResolver;
 use App\Support\ProductSearchFilter;
+use App\Support\ProductStockStatusFilter;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -116,6 +117,7 @@ class Stocks extends Controller
                 ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at');
 
             ProductSearchFilter::apply($query, $request->input('search'));
+            ProductStockStatusFilter::apply($query, $request->input('stock_status'));
 
             if ($request->filled('category_id')) {
                 $query->where('category_id', (int) $request->input('category_id'));
@@ -1062,6 +1064,7 @@ class Stocks extends Controller
     private function applyProductExportFilters($query, Request $request): void
     {
         ProductSearchFilter::apply($query, $request->input('search'));
+        ProductStockStatusFilter::apply($query, $request->input('stock_status'));
 
         if ($request->filled('category_id')) {
             $query->where('category_id', (int) $request->input('category_id'));
