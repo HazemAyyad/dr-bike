@@ -13,7 +13,6 @@ use App\Services\SalesOrderFulfillmentService;
 use App\Services\SalesOrderService;
 use App\Services\SalesOrderShiplyTrackingService;
 use App\Services\ShiplyService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Mockery;
 use Tests\Support\OnlineStoreCreditFixture;
@@ -27,7 +26,7 @@ class OnlineStoreEndToEndTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_cash_checkout_replay_and_cancellation_reconcile_order_stock_and_finance(): void

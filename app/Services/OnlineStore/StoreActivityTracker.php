@@ -34,6 +34,10 @@ final class StoreActivityTracker
         }
 
         $user = $accessToken->tokenable;
+        if ($user->is_blocked || strcasecmp((string) $user->type, 'User') !== 0) {
+            return $this->remember($request, null);
+        }
+        $user->withAccessToken($accessToken);
         if (! $user->last_seen_at || $user->last_seen_at->lt(now()->subSeconds(30))) {
             $user->forceFill(['last_seen_at' => now()])->saveQuietly();
         }

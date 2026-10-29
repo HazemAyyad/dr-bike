@@ -299,7 +299,7 @@ class AccountLinkTest extends TestCase
         $this->assertFalse($accounts->firstWhere('id', $blocked->id)['is_linkable']);
 
         $this->assertSame(
-            ['id', 'name', 'email', 'phone', 'is_blocked', 'is_linkable', 'links'],
+            ['id', 'name', 'email', 'phone', 'profile_image_url', 'is_blocked', 'is_linkable', 'links'],
             array_keys($accounts->firstWhere('id', $customerUser->id)),
         );
         $this->assertSame(

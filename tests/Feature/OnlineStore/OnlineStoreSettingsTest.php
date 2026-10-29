@@ -4,7 +4,6 @@ namespace Tests\Feature\OnlineStore;
 
 use App\Models\OnlineStore\OnlineStoreSettings;
 use App\Services\OnlineStore\OnlineStoreSettingsService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -17,7 +16,7 @@ class OnlineStoreSettingsTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_singleton_typed_settings_and_operating_precedence_are_deterministic(): void

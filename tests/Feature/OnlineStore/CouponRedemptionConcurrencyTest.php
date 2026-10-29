@@ -11,7 +11,6 @@ use App\Services\OnlineStore\OnlineStoreCheckoutService;
 use App\Services\OnlineStore\StoreIdentityService;
 use App\Services\SalesOrderService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\OnlineStoreFixtureFactory;
@@ -25,7 +24,7 @@ class CouponRedemptionConcurrencyTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_last_use_is_reserved_once_and_released_on_cancellation_policy(): void

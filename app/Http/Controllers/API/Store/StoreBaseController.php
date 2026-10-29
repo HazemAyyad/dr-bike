@@ -11,8 +11,8 @@ use App\Models\Store\StoreProduct;
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreSubCategory;
 use App\Models\Store\StoreUser;
-use App\Services\OnlineStore\StoreIdentityService;
 use App\Services\OnlineStore\StoreActivityTracker;
+use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -93,7 +93,7 @@ class StoreBaseController extends Controller
             'phoneNumber2' => $user->sub_phone,
             'typeUser' => $user->type ?: 'User',
             'accountRoles' => app(StoreIdentityService::class)->activeRoles($user),
-            'userToken' => $user->fcm_token ?? '',
+            'userToken' => '',
             'dateAdd' => $this->dateString($user->created_at),
             'userUpdate' => '',
             'dateUpdate' => $this->dateString($user->updated_at),
@@ -235,14 +235,16 @@ class StoreBaseController extends Controller
     {
         $priceByVariant = collect($prices['variants'] ?? [])->keyBy('id');
         $availabilityByVariant = collect($availability['variants'] ?? [])->keyBy('size_color_id');
-        $rows = DB::table('sizes')
-            ->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
-            ->where('sizes.itemId', $listing->product_id)
-            ->orderBy('sizes.id')->orderBy('size_colors.id')
-            ->get([
-                'sizes.id as size_id', 'sizes.size', 'sizes.description',
-                'size_colors.id as color_id', 'size_colors.colorAr', 'size_colors.colorEn', 'size_colors.colorAbbr',
-            ]);
+        $rows = $listing->product->relationLoaded('sizes')
+            ? \App\Services\OnlineStore\StorefrontReadBatch::variantRows($listing->product)
+            : DB::table('sizes')
+                ->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
+                ->where('sizes.itemId', $listing->product_id)
+                ->orderBy('sizes.id')->orderBy('size_colors.id')
+                ->get([
+                    'sizes.id as size_id', 'sizes.size', 'sizes.description',
+                    'size_colors.id as color_id', 'size_colors.colorAr', 'size_colors.colorEn', 'size_colors.colorAbbr',
+                ]);
 
         $listingAvailable = max(0, (int) ($availability['available_qty'] ?? 0));
 

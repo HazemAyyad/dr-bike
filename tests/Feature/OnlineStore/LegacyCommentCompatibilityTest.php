@@ -7,7 +7,6 @@ use App\Models\Store\StoreUser;
 use App\Services\OnlineStore\OnlineStoreReviewService;
 use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -20,7 +19,7 @@ class LegacyCommentCompatibilityTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_frozen_empty_result_and_route_contract_are_preserved(): void

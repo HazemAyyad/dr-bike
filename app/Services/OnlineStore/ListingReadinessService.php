@@ -31,9 +31,13 @@ final class ListingReadinessService
         if (! $listing || ! $this->hasUsableMainMedia($listing, $product)) {
             $issues[] = 'missing_main_media';
         }
-        if (! $listing || ! DB::table('online_store_category_listing as membership')
-            ->join('online_store_categories as category', 'category.id', '=', 'membership.online_store_category_id')
-            ->where('membership.online_store_listing_id', $listing->getKey())->where('category.is_active', true)->exists()) {
+        $batch = app(StorefrontReadBatch::class);
+        $hasCategory = $listing && ($batch->hasListing((int) $listing->getKey())
+            ? $batch->categories((int) $listing->getKey()) !== []
+            : DB::table('online_store_category_listing as membership')
+                ->join('online_store_categories as category', 'category.id', '=', 'membership.online_store_category_id')
+                ->where('membership.online_store_listing_id', $listing->getKey())->where('category.is_active', true)->exists());
+        if (! $hasCategory) {
             $issues[] = 'missing_active_category';
         }
         if (! $this->hasAuthoritativePrice($product)) {
@@ -60,6 +64,10 @@ final class ListingReadinessService
             return true;
         }
 
+        if ($product->relationLoaded('sizes') && $product->sizes->every(fn ($size) => $size->relationLoaded('colorSizes'))) {
+            return StorefrontReadBatch::variantRows($product)->contains(fn ($variant) => $variant->normailPrice > 0 || $variant->wholesalePrice > 0);
+        }
+
         return DB::table('sizes')->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
             ->where('sizes.itemId', $product->getKey())
             ->where(fn ($query) => $query->where('size_colors.normailPrice', '>', 0)->orWhere('size_colors.wholesalePrice', '>', 0))
@@ -68,6 +76,12 @@ final class ListingReadinessService
 
     private function hasUsableMainMedia(OnlineStoreListing $listing, Product $product): bool
     {
+        $batch = app(StorefrontReadBatch::class);
+        if ($batch->hasListing((int) $listing->getKey())) {
+            return $listing->mediaPresentations->contains(fn ($item) => $item->is_main && $item->is_visible
+                && ($item->source_type === 'store_specific' ? filled($item->store_media_path)
+                    : $batch->sourcePath($item->source_type, (int) $item->source_id, (int) $product->getKey()) !== null));
+        }
         $media = DB::table('online_store_media_presentations')
             ->where('online_store_listing_id', $listing->getKey())->where('is_main', true)->where('is_visible', true)->get();
 

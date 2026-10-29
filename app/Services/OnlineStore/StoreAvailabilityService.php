@@ -15,7 +15,9 @@ final class StoreAvailabilityService
         if (! $product || ! $product->exists || $product->trashed()) {
             return ['visible' => false, 'purchasable' => false, 'available_qty' => 0, 'physical_stock' => 0, 'reserved_qty' => 0, 'variants' => []];
         }
-        $rows = collect($this->stock->bulkAvailability([(int) $product->getKey()]));
+        $batch = app(StorefrontReadBatch::class);
+        $rows = collect($batch->hasProduct((int) $product->getKey())
+            ? $batch->stock((int) $product->getKey()) : $this->stock->bulkAvailability([(int) $product->getKey()]));
         $aggregate = $rows->firstWhere('is_aggregate', true) ?? $rows->firstWhere('size_color_id', null);
         $variants = $rows->whereNotNull('size_color_id')->map(fn ($row) => [
             'size_color_id' => $row['size_color_id'], 'physical_stock' => $row['physical_stock'],

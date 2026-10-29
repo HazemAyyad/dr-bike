@@ -17,7 +17,7 @@ class StoreUsersController extends StoreBaseController
         $data = $request->validate([
             'email' => ['required', 'email', 'unique:users,email'],
             'phoneNumber' => ['required', 'string'],
-            'password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:8', 'max:128'],
             'confirmPassword' => ['required', 'same:password'],
             'userToken' => ['nullable', 'string', 'max:512'],
         ]);

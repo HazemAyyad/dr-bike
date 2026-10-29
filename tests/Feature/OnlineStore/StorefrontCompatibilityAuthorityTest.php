@@ -19,7 +19,7 @@ class StorefrontCompatibilityAuthorityTest extends TestCase
     {
         parent::setUp();
         if (! filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
-            Artisan::call('migrate:fresh', ['--force' => true]);
+            $this->refreshStoreSchema();
         }
     }
 

@@ -96,7 +96,9 @@ final class MediaPresentationService
         if (! $listing->product || $listing->product->trashed()) {
             return [];
         }
-        $resolved = $listing->mediaPresentations()->where('is_visible', true)->get()->map(function ($item) use ($listing) {
+        $items = $listing->relationLoaded('mediaPresentations') ? $listing->mediaPresentations->where('is_visible', true)
+            : $listing->mediaPresentations()->where('is_visible', true)->get();
+        $resolved = $items->map(function ($item) use ($listing) {
             $url = $this->resolvePath($listing, $item);
             if ($url === null) {
                 return null;
@@ -195,6 +197,10 @@ final class MediaPresentationService
         }
         if ($item->source_type === 'store_specific') {
             return filled($item->store_media_path) ? $item->store_media_path : null;
+        }
+        $batch = app(StorefrontReadBatch::class);
+        if ($batch->hasListing((int) $listing->getKey())) {
+            return $batch->sourcePath($item->source_type, (int) $item->source_id, (int) $listing->product_id);
         }
         if (isset(self::SOURCE_TABLES[$item->source_type])) {
             return DB::table(self::SOURCE_TABLES[$item->source_type])->where('id', $item->source_id)->where('itemId', $listing->product_id)->value('imageUrl') ?: null;

@@ -3,7 +3,6 @@
 namespace Tests\Feature\OnlineStore;
 
 use App\Models\OnlineStore\OnlineStoreListing;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -16,7 +15,7 @@ class HomeSectionTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_typed_target_matrix_and_server_owned_automatic_configuration(): void
@@ -27,8 +26,10 @@ class HomeSectionTest extends TestCase
         $this->putJson('/api/online-store/home-sections/'.$categories['id'].'/items', ['items' => [['target_type' => 'category', 'target_id' => $category['id'], 'sort_order' => 0]]])->assertOk();
         $this->putJson('/api/online-store/home-sections/'.$categories['id'].'/items', ['items' => [['target_type' => 'App\\Models\\Product', 'target_id' => 1, 'sort_order' => 0]]])->assertUnprocessable();
 
-        $product = OnlineStoreFixtureFactory::createProduct();
+        $product = OnlineStoreFixtureFactory::createProduct(['descriptionEng' => 'Complete fixture']);
         $listing = OnlineStoreListing::query()->forceCreate(['product_id' => $product->id, 'status' => 'published', 'readiness_state' => 'complete']);
+        DB::table('online_store_media_presentations')->insert(['online_store_listing_id' => $listing->id,
+            'source_type' => 'store_specific', 'store_media_path' => 'fixtures/home.jpg', 'is_main' => true, 'is_visible' => true]);
         DB::table('online_store_category_listing')->insert(['online_store_category_id' => $category['id'], 'online_store_listing_id' => $listing->id, 'sort_order' => 0, 'created_at' => now(), 'updated_at' => now()]);
         $offers = $this->postJson('/api/online-store/home-sections', ['key' => 'offers', 'section_type' => 'offers', 'selection_mode' => 'manual'])->assertCreated()->json('data');
         $this->putJson('/api/online-store/home-sections/'.$offers['id'].'/items', ['items' => [['target_type' => 'listing', 'target_id' => $listing->id, 'sort_order' => 0]]])->assertOk();

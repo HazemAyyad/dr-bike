@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
+#[\PHPUnit\Framework\Attributes\Group('schema')]
 class OnlineStoreSchemaMigrationTest extends TestCase
 {
     protected function setUp(): void
@@ -124,7 +125,7 @@ class OnlineStoreSchemaMigrationTest extends TestCase
         $productId = 1900000001;
         DB::table('products')->insert([
             'id' => $productId,
-            'product_code' => 'PHASE2-ROLLBACK-PRODUCT',
+            'product_code' => '990001',
             'nameAr' => 'Phase 2 rollback fixture',
             'created_at' => now(),
             'updated_at' => now(),
@@ -158,7 +159,13 @@ class OnlineStoreSchemaMigrationTest extends TestCase
 
     private function freshSchema(): void
     {
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        \Illuminate\Foundation\Testing\RefreshDatabaseState::$migrated = false;
+        // This suite tests the phase-two boundary. Later store migrations add
+        // dependent foreign keys and must not be present when rolling it back.
+        $paths = collect(glob(database_path('migrations/*.php')))
+            ->filter(fn ($file) => basename($file) <= '2026_10_01_000005_create_online_store_account_governance_tables.php')
+            ->map(fn ($file) => 'database/migrations/'.basename($file))->sort()->values()->all();
+        Artisan::call('migrate:fresh', ['--force' => true, '--path' => $paths]);
     }
 
     private function applyPhaseTwo(): void

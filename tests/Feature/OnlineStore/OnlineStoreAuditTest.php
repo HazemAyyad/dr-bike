@@ -3,7 +3,6 @@
 namespace Tests\Feature\OnlineStore;
 
 use App\Services\OnlineStore\OnlineStoreAuditService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -16,7 +15,7 @@ class OnlineStoreAuditTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_governance_boundaries_capture_actor_entity_time_changes_and_redact_secrets_and_pii(): void

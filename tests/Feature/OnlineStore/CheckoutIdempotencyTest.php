@@ -8,7 +8,6 @@ use App\Models\SalesOrder;
 use App\Services\OnlineStore\OnlineStoreCheckoutService;
 use App\Services\OnlineStore\StoreCheckoutIdempotencyService;
 use App\Services\OnlineStore\StoreIdentityService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -20,7 +19,7 @@ class CheckoutIdempotencyTest extends TestCase
         parent::setUp();
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
-        } Artisan::call('migrate:fresh', ['--force' => true]);
+        } $this->refreshStoreSchema();
     }
 
     public function test_same_actor_retry_returns_one_order_and_cross_actor_same_id_is_isolated(): void

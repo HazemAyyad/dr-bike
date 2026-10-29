@@ -11,7 +11,6 @@ use App\Services\OnlineStore\StoreIdentityService;
 use App\Services\SalesOrderNotificationService;
 use App\Support\NotificationCatalog;
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Facades\Artisan;
 use Mockery;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -24,7 +23,7 @@ class OnlineStoreNotificationTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_order_lifecycle_targets_only_the_owned_eligible_store_account(): void
@@ -166,7 +165,7 @@ class OnlineStoreNotificationTest extends TestCase
         $this->addSellerLink($suspendedCustomer);
 
         [$unverifiedCustomer, , $unverifiedLink] = $this->linkedCustomer();
-        $unverifiedLink->update(['verified_at' => null]);
+        $unverifiedLink->forceFill(['verified_at' => null])->save();
         $this->addSellerLink($unverifiedCustomer);
 
         [$canceledCustomer, $canceledParty] = $this->linkedCustomer();

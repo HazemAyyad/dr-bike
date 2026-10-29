@@ -4,7 +4,7 @@ namespace App\Http\Controllers\API\Store;
 
 use App\Models\Store\StoreShiplyCity;
 use App\Models\Store\StoreShiplyVillage;
-use App\Services\ShiplyService;
+use App\Services\OnlineStore\StoreDeliveryQuoteService;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
 
@@ -69,25 +69,13 @@ class StoreCitiesController extends StoreBaseController
             return response()->json(['message' => 'VillageRequired'], 400);
         }
 
-        try {
-            $quote = app(ShiplyService::class)->calculateDeliveryCost((int) $villageId, max(0, $price), $mode);
-            $delivery = round((float) ($quote['delivery_cost'] ?? 0), 2);
+        $quote = app(StoreDeliveryQuoteService::class)->quote((int) $villageId, max(0, $price), $mode);
+        $delivery = round((float) $quote['delivery_cost'], 2);
 
-            return response()->json([
-                'deliveryCost' => $delivery,
-                'priceDelivery' => $delivery,
-                'fees' => $quote,
-            ]);
-        } catch (\Throwable) {
-            return response()->json([
-                'deliveryCost' => 0.0,
-                'priceDelivery' => 0.0,
-                'fees' => [
-                    'delivery_cost' => 0.0,
-                    'extra_price' => 0.0,
-                    'returned_extra_price' => 0.0,
-                ],
-            ]);
-        }
+        return response()->json([
+            'deliveryCost' => $delivery,
+            'priceDelivery' => $delivery,
+            'fees' => $quote,
+        ]);
     }
 }

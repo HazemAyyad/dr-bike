@@ -1,0 +1,47 @@
+name: Store server quality
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  store:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: testing
+          MYSQL_DATABASE: doctor_bike_store_hardening_test
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping -h localhost -ptesting" --health-interval=10s --health-timeout=5s --health-retries=10
+    env:
+      APP_ENV: testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: doctor_bike_store_hardening_test
+      DB_USERNAME: root
+      DB_PASSWORD: testing
+      ONLINE_STORE_DISPOSABLE_DB: 'true'
+      ONLINE_STORE_DISPOSABLE_DB_NAME: doctor_bike_store_hardening_test
+      CACHE_DRIVER: array
+      SESSION_DRIVER: array
+      QUEUE_CONNECTION: sync
+      MAIL_MAILER: array
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_mysql, mbstring, gd, zip, bcmath, intl
+          coverage: none
+      - run: composer install --no-interaction --prefer-dist
+      - run: php vendor/bin/phpunit --no-coverage --exclude-group performance,schema tests/Unit/OnlineStore tests/Feature/OnlineStore
+      - name: Schema migration and rollback checks
+        run: php vendor/bin/phpunit --no-coverage --group schema tests/Feature/OnlineStore
+      - name: Catalog and administration performance
+        run: php vendor/bin/phpunit --no-coverage --group performance tests/Feature/OnlineStore

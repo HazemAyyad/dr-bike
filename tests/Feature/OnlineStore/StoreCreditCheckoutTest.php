@@ -14,7 +14,6 @@ use App\Services\OnlineStore\StoreCreditService;
 use App\Services\SalesDailySessionService;
 use App\Services\SalesOrderNotificationService;
 use App\Services\SalesOrderService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Mockery;
 use RuntimeException;
@@ -29,7 +28,7 @@ class StoreCreditCheckoutTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     /** @dataProvider partyProvider */

@@ -10,8 +10,6 @@ use App\Models\ShiplyVillage;
 use App\Support\SalesOrderMediaCategory;
 use App\Support\ShiplyPhoneFormatter;
 use App\Support\ShiplySettings;
-use Intervention\Image\Drivers\Gd\Driver;
-use Intervention\Image\ImageManager;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\DB;
@@ -21,6 +19,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Intervention\Image\Drivers\Gd\Driver;
+use Intervention\Image\ImageManager;
 use Mpdf\Mpdf;
 use setasign\Fpdi\PdfParser\StreamReader;
 
@@ -508,8 +508,7 @@ class ShiplyService
     private function firstPageOnlyPdf(
         string $sourcePdf,
         string $requestedSize = 'A4'
-    ): string
-    {
+    ): string {
         $tempDir = storage_path('framework/cache/mpdf');
         File::ensureDirectoryExists($tempDir);
         $pdf = new Mpdf([
@@ -828,6 +827,11 @@ HTML;
             'village_id' => $villageId,
             'price' => max(0, $parcelPrice),
         ], $mode);
+
+        if (! array_key_exists('delivery_cost', $response) || ! is_numeric($response['delivery_cost'])
+            || ! is_finite((float) $response['delivery_cost']) || (float) $response['delivery_cost'] < 0) {
+            throw new \App\Exceptions\DeliveryQuoteUnavailableException;
+        }
 
         return [
             'delivery_cost' => (float) ($response['delivery_cost'] ?? 0),
@@ -1496,7 +1500,7 @@ HTML;
         return null;
     }
 
-    /// ترجمة رسائل Shiply المعروفة إلى رسائل عربية واضحة للمبيعات.
+    // / ترجمة رسائل Shiply المعروفة إلى رسائل عربية واضحة للمبيعات.
     private function localizeShiplyMessage(string $message): string
     {
         $normalized = mb_strtolower($message);

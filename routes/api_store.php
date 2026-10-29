@@ -1,7 +1,7 @@
 <?php
 
-use App\Http\Controllers\API\Store\StoreAuthController;
 use App\Http\Controllers\API\Store\StoreAddressesController;
+use App\Http\Controllers\API\Store\StoreAuthController;
 use App\Http\Controllers\API\Store\StoreCitiesController;
 use App\Http\Controllers\API\Store\StoreCommentsController;
 use App\Http\Controllers\API\Store\StoreCouponsController;
@@ -14,8 +14,8 @@ use App\Http\Controllers\API\Store\StoreOnlineAdsController;
 use App\Http\Controllers\API\Store\StoreOrdersController;
 use App\Http\Controllers\API\Store\StorePopupCampaignController;
 use App\Http\Controllers\API\Store\StoreSettingsController;
-use App\Http\Controllers\API\Store\StoreSupportConversationController;
 use App\Http\Controllers\API\Store\StoreSupCategoryController;
+use App\Http\Controllers\API\Store\StoreSupportConversationController;
 use App\Http\Controllers\API\Store\StoreUsersController;
 use App\Http\Middleware\RecordOnlineStoreAnalytics;
 use Illuminate\Support\Facades\Route;
@@ -33,6 +33,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::post('/Auth/login', [StoreAuthController::class, 'login']);
 Route::post('/Auth/CheckUser', [StoreAuthController::class, 'checkUser']);
+Route::post('/Auth/Logout', [StoreAuthController::class, 'logout']);
 Route::post('/Auth/ForgotPassword', [StoreAuthController::class, 'forgotPassword']);
 Route::post('/Auth/VerifyForgotPasswordOtp', [StoreAuthController::class, 'verifyForgotPasswordOtp']);
 Route::post('/Auth/ChangePassword', [StoreAuthController::class, 'changePassword']);
@@ -49,6 +50,7 @@ Route::post('/Settings/CheckSetting', [StoreSettingsController::class, 'checkSet
 
 Route::get('/OnlineStore/Home', [StoreHomeController::class, 'index'])
     ->middleware(RecordOnlineStoreAnalytics::class.':store_visits');
+Route::get('/OnlineStore/Catalog', [StoreItemsController::class, 'catalog']);
 Route::post('/OnlineStore/Home', [StoreHomeController::class, 'index'])
     ->middleware(RecordOnlineStoreAnalytics::class.':store_visits');
 

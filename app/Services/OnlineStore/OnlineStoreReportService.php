@@ -69,10 +69,10 @@ final class OnlineStoreReportService
     private function applyOrderFilters($query, array $filters, ?CarbonImmutable $from, ?CarbonImmutable $to): void
     {
         if ($from) {
-            $query->where('created_at', '>=', $from);
+            $query->where('created_at', '>=', $from->setTimezone(config('app.timezone')));
         }
         if ($to) {
-            $query->where('created_at', '<=', $to);
+            $query->where('created_at', '<=', $to->setTimezone(config('app.timezone')));
         }
         if (! empty($filters['origin'])) {
             $query->where('origin', $filters['origin']);
@@ -162,10 +162,10 @@ final class OnlineStoreReportService
         $query = DB::table('debt_transactions')->whereNull('archived_at')->whereNull('deleted_at')
             ->where('source', 'sales_order')->whereIn('source_id', $orderIds);
         if ($from) {
-            $query->where('transaction_date', '>=', $from->toDateString());
+            $query->where('transaction_date', '>=', $from->setTimezone(config('app.timezone'))->toDateString());
         }
         if ($to) {
-            $query->where('transaction_date', '<=', $to->toDateString());
+            $query->where('transaction_date', '<=', $to->setTimezone(config('app.timezone'))->toDateString());
         }
         $given = round((float) (clone $query)->where('type', 'given')->sum('amount'), 2);
         $taken = round((float) (clone $query)->where('type', 'taken')->sum('amount'), 2);
@@ -184,10 +184,10 @@ final class OnlineStoreReportService
     private function applyRange(Builder $query, ?CarbonImmutable $from, ?CarbonImmutable $to): void
     {
         if ($from) {
-            $query->where('created_at', '>=', $from);
+            $query->where('created_at', '>=', $from->setTimezone(config('app.timezone')));
         }
         if ($to) {
-            $query->where('created_at', '<=', $to);
+            $query->where('created_at', '<=', $to->setTimezone(config('app.timezone')));
         }
     }
 }

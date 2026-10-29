@@ -8,6 +8,17 @@ use Tests\Support\RequiresDisposableDatabase;
 abstract class TestCase extends BaseTestCase
 {
     use CreatesApplication;
+    use \Tests\Support\StoreTestSchema;
+
+    protected function refreshApplication(): void
+    {
+        parent::refreshApplication();
+        // This runs before Laravel invokes RefreshDatabase in setUpTraits.
+        if (str_contains(static::class, '\\OnlineStore\\')) {
+            $this->requireDisposableDatabase();
+            \Illuminate\Support\Facades\Http::preventStrayRequests();
+        }
+    }
 
     protected function setUp(): void
     {

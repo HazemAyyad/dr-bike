@@ -7,7 +7,6 @@ use App\Models\EmployeePermission;
 use App\Models\NormalImageProduct;
 use App\Models\OnlineStore\OnlineStoreListing;
 use App\Models\Permission;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Support\OnlineStoreFixtureFactory;
@@ -21,7 +20,7 @@ class ListingManagementTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Listing tests cannot alter a restored dump-derived schema.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_exact_permission_is_required_and_inaccessible_listing_is_not_disclosed(): void
@@ -38,6 +37,7 @@ class ListingManagementTest extends TestCase
         $detail = EmployeeDetail::query()->forceCreate(['user_id' => $employee->id]);
         $permission = Permission::query()->firstOrCreate(['name_en' => 'Online Store Products Manage'], ['name' => 'Online Store Products Manage']);
         EmployeePermission::query()->create(['employee_id' => $detail->id, 'permission_id' => $permission->id]);
+        Sanctum::actingAs($employee->fresh());
         $this->getJson('/api/online-store/listings/'.$listing['id'])->assertOk();
     }
 
@@ -85,7 +85,7 @@ class ListingManagementTest extends TestCase
         $this->postJson('/api/online-store/listings/'.$listing['id'].'/transition', ['status' => 'published'])->assertUnprocessable();
         $this->getJson('/api/online-store/products/'.$product->id.'/store-readiness')
             ->assertOk()->assertJsonPath('data.product_id', $product->id)
-            ->assertJsonPath('data.availability.stock', 5);
+            ->assertJsonPath('data.availability.physical_stock', 5);
     }
 
     public function test_listing_with_soft_deleted_product_serializes_as_incomplete_without_restoring_product(): void
@@ -100,7 +100,7 @@ class ListingManagementTest extends TestCase
         $this->getJson('/api/online-store/listings/'.$listing['id'])
             ->assertOk()
             ->assertJsonPath('data.readiness_state', 'incomplete')
-            ->assertJsonPath('data.readiness_issues.0', 'missing_product')
+            ->assertJsonPath('data.readiness_issues', fn ($issues) => in_array('missing_product', $issues, true))
             ->assertJsonPath('data.product_archived', true)
             ->assertJsonPath('data.base_prices.retail', null)
             ->assertJsonPath('data.availability.purchasable', false);

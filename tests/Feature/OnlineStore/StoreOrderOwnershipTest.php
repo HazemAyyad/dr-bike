@@ -20,7 +20,7 @@ class StoreOrderOwnershipTest extends TestCase
         parent::setUp();
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
-        } Artisan::call('migrate:fresh', ['--force' => true]);
+        } $this->refreshStoreSchema();
     }
 
     public function test_cross_account_order_lookup_is_not_disclosed(): void

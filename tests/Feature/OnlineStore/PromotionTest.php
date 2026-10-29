@@ -4,7 +4,6 @@ namespace Tests\Feature\OnlineStore;
 
 use App\Models\OnlineStore\OnlineStoreListing;
 use App\Services\OnlineStore\PromotionService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -16,7 +15,7 @@ class PromotionTest extends TestCase
         parent::setUp();
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
-        } Artisan::call('migrate:fresh', ['--force' => true]);
+        } $this->refreshStoreSchema();
     }
 
     public function test_active_windows_are_inclusive_and_highest_priority_then_lowest_id_wins(): void

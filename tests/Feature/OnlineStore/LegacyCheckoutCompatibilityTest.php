@@ -9,7 +9,6 @@ use App\Models\SalesOrder;
 use App\Services\OnlineStore\LegacyCheckoutDeduplicationService;
 use App\Services\OnlineStore\OnlineStoreCheckoutService;
 use App\Services\OnlineStore\StoreIdentityService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -21,7 +20,7 @@ class LegacyCheckoutCompatibilityTest extends TestCase
         parent::setUp();
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
-        } Artisan::call('migrate:fresh', ['--force' => true]);
+        } $this->refreshStoreSchema();
     }
 
     public function test_fingerprint_ignores_client_prices_totals_timestamps_and_identity(): void

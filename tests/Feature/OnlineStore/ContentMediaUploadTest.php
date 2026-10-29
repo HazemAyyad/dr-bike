@@ -12,7 +12,6 @@ use App\Models\Permission;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Routing\Route;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Route as RouteFacade;
 use Illuminate\Support\Str;
@@ -34,7 +33,7 @@ class ContentMediaUploadTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
 
         File::ensureDirectoryExists($this->testPublicPath);
         app()->usePublicPath($this->testPublicPath);

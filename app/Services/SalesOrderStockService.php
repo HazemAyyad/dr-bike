@@ -333,14 +333,28 @@ class SalesOrderStockService
     {
         $productIds = array_values(array_unique(array_filter(array_map('intval', $productIds))));
         $rows = [];
+        $products = Product::query()->with(['sizes.colorSizes'])->whereIn('id', $productIds)->get()->keyBy('id');
+        $net = $this->reservationNetSql();
+        $current = $excludeOrderId ? 'CASE WHEN sales_orders.id <> '.(int) $excludeOrderId." THEN {$net} ELSE 0 END" : $net;
+        $reservations = DB::table('sales_order_items')->join('sales_orders', 'sales_orders.id', '=', 'sales_order_items.sales_order_id')
+            ->whereIn('sales_order_items.product_id', $productIds)->where('sales_orders.reserves_stock', true)
+            ->whereIn('sales_orders.status', $this->reservingStatuses())
+            ->groupBy('sales_order_items.product_id', 'sales_order_items.size_color_id', 'sales_order_items.is_hidden')
+            ->select('sales_order_items.product_id', 'sales_order_items.size_color_id', 'sales_order_items.is_hidden')
+            ->selectRaw("SUM({$net}) as total_reserved, SUM({$current}) as current_reserved")
+            ->get()->groupBy('product_id');
 
         foreach ($productIds as $productId) {
-            $product = Product::query()->with(['sizes.colorSizes'])->find($productId);
+            $product = $products->get($productId);
             if (! $product) {
                 continue;
             }
 
             $hasVariants = $this->productStockService->productHasVariants($product);
+            $productRows = $reservations->get($productId, collect());
+            $visible = $productRows->where('is_hidden', false);
+            $productReserved = (int) $visible->sum('current_reserved');
+            $totalProductReserved = (int) $visible->sum('total_reserved');
 
             if ($hasVariants) {
                 $totalPhysical = 0;
@@ -350,8 +364,9 @@ class SalesOrderStockService
                     foreach ($size->colorSizes ?? [] as $variant) {
                         $sizeColorId = (int) $variant->id;
                         $physical = (int) $variant->stock;
-                        $reserved = $this->reservedQuantity($productId, $sizeColorId, $excludeOrderId);
-                        $variantTotalReserved = $this->reservedQuantity($productId, $sizeColorId, null);
+                        $variantRows = $productRows->where('size_color_id', $sizeColorId);
+                        $reserved = (int) $variantRows->sum('current_reserved');
+                        $variantTotalReserved = (int) $variantRows->sum('total_reserved');
                         $totalPhysical += $physical;
                         $totalReserved += $reserved;
 
@@ -366,8 +381,7 @@ class SalesOrderStockService
                     }
                 }
 
-                $productReserved = $this->reservedQuantityForProduct($productId, $excludeOrderId);
-                $totalReserved = $this->reservedQuantityForProduct($productId, null);
+                $totalReserved = $totalProductReserved;
 
                 $rows[] = [
                     'product_id' => $productId,
@@ -380,8 +394,8 @@ class SalesOrderStockService
                 ];
             } else {
                 $physical = $this->productStockService->resolveAvailableStock($product, null);
-                $reserved = $this->reservedQuantityForProduct($productId, $excludeOrderId);
-                $totalReserved = $this->reservedQuantityForProduct($productId, null);
+                $reserved = $productReserved;
+                $totalReserved = $totalProductReserved;
 
                 $rows[] = [
                     'product_id' => $productId,
@@ -395,6 +409,17 @@ class SalesOrderStockService
         }
 
         return $rows;
+    }
+
+    /** Shared by catalog filtering and authoritative stock reads. */
+    public function reservationNetSql(): string
+    {
+        $unconfirmed = SalesOrderStatus::Unconfirmed->value;
+
+        return "GREATEST(GREATEST(CAST(sales_order_items.reserved_qty AS SIGNED),
+            CASE WHEN sales_orders.status = '{$unconfirmed}' AND CAST(sales_order_items.reserved_qty AS SIGNED) = 0
+            THEN CAST(sales_order_items.quantity AS SIGNED) ELSE CAST(sales_order_items.reserved_qty AS SIGNED) END)
+            - CAST(sales_order_items.dispatched_qty AS SIGNED), 0)";
     }
 
     public function reserveOrder(SalesOrder $order, bool $allowNegative = false): void

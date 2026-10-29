@@ -12,13 +12,14 @@
             <directory suffix="Test.php">./tests/Feature</directory>
         </testsuite>
     </testsuites>
-    <coverage>
+    <source>
         <include>
             <directory suffix=".php">./app</directory>
         </include>
-    </coverage>
+    </source>
     <php>
         <env name="APP_ENV" value="testing"/>
+        <env name="STORE_PASSWORD_RESET_EXPOSE_OTP" value="false" force="true"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_DRIVER" value="array"/>
         <!-- <env name="DB_CONNECTION" value="sqlite"/> -->

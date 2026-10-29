@@ -9,6 +9,34 @@ use Illuminate\Support\Facades\DB;
 
 class StoreItemsController extends StoreBaseController
 {
+    public function catalog(Request $request, \App\Services\OnlineStore\StoreCatalogQuery $catalogQuery)
+    {
+        $filters = $request->validate([
+            'q' => 'nullable|string|max:200', 'category_id' => 'nullable|integer|min:1',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:48',
+            'minPrice' => 'nullable|numeric|min:0', 'maxPrice' => 'nullable|numeric|min:0',
+            'availableOnly' => 'nullable|in:true,false,1,0', 'onSale' => 'nullable|in:true,false,1,0',
+            'sort' => 'nullable|in:recommended,newest,price_asc,price_desc,name',
+        ]);
+        $query = $catalogQuery->build($filters);
+        $total = $catalogQuery->count($query, $filters);
+        $perPage = (int) ($filters['per_page'] ?? 24);
+        $pageNumber = (int) ($filters['page'] ?? 1);
+        $page = new \Illuminate\Pagination\LengthAwarePaginator($query->forPage($pageNumber, $perPage)->get(), $total, $perPage, $pageNumber);
+        $batch = app(\App\Services\OnlineStore\StorefrontReadBatch::class);
+        $batch->prepare($page->getCollection());
+        try {
+            return response()->json([
+                'rows' => $page->getCollection()->filter(fn ($listing) => $this->catalog->isEligible($listing))
+                    ->map(fn ($listing) => $this->storefrontListingPayload($listing))->values(),
+                'paginationInfo' => ['page' => $page->currentPage(), 'pageSize' => $page->perPage(),
+                    'totalRowsCount' => $page->total(), 'totalPagesCount' => $page->lastPage(), 'hasMore' => $page->hasMorePages()],
+            ]);
+        } finally {
+            $batch->clear();
+        }
+    }
+
     public function __construct(private readonly StorefrontCatalogService $catalog) {}
 
     public function getAllItemIsMoreSales(Request $request)
@@ -95,7 +123,13 @@ class StoreItemsController extends StoreBaseController
 
     private function catalogResponse(Collection $listings, Request $request)
     {
-        $rows = $listings->map(fn ($listing) => $this->storefrontListingPayload($listing));
+        $batch = app(\App\Services\OnlineStore\StorefrontReadBatch::class);
+        $batch->prepare($listings);
+        try {
+            $rows = $listings->map(fn ($listing) => $this->storefrontListingPayload($listing));
+        } finally {
+            $batch->clear();
+        }
         $minimum = $this->numberInput($request, 'minPrice', 'min_price');
         $maximum = $this->numberInput($request, 'maxPrice', 'max_price');
         if ($minimum !== null) {

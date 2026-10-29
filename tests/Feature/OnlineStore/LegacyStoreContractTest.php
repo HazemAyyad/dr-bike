@@ -125,7 +125,7 @@ class LegacyStoreContractTest extends TestCase
         $this->assertSame((string) $owner->id, $login->json('user.id'));
         $token = (string) $login->json('token');
 
-        $this->postJson('/Auth/CheckUser?UserId='.$owner->id)
+        $this->withToken($token)->postJson('/Auth/CheckUser?UserId='.$owner->id)
             ->assertOk()->assertJsonStructure($this->userPayloadKeys())
             ->assertJsonPath('id', (string) $owner->id);
         $this->withToken($token)->postJson('/Users/GetById', ['id' => $owner->id])
@@ -181,7 +181,7 @@ class LegacyStoreContractTest extends TestCase
             'role' => 'seller', 'seller_id' => OnlineStoreFixtureFactory::createSeller()->id,
             'account_source' => 'store_app', 'status' => 'active',
         ]);
-        $this->postJson('/Auth/CheckUser?UserId='.$sellerUser->id)->assertOk()
+        $this->withToken(StoreUser::findOrFail($sellerUser->id)->createToken('seller')->plainTextToken)->postJson('/Auth/CheckUser?UserId='.$sellerUser->id)->assertOk()
             ->assertJsonPath('typeUser', 'User')
             ->assertJsonPath('accountRoles', ['seller']);
 
@@ -194,7 +194,7 @@ class LegacyStoreContractTest extends TestCase
             'role' => 'customer', 'customer_id' => OnlineStoreFixtureFactory::createCustomer()->id,
             'account_source' => 'store_app', 'status' => 'active',
         ]);
-        $this->postJson('/Auth/CheckUser?UserId='.$dualUser->id)->assertOk()
+        $this->withToken(StoreUser::findOrFail($dualUser->id)->createToken('dual')->plainTextToken)->postJson('/Auth/CheckUser?UserId='.$dualUser->id)->assertOk()
             ->assertJsonPath('accountRoles', ['customer', 'seller']);
 
         $pendingUser = OnlineStoreFixtureFactory::createStoreActor();
@@ -202,7 +202,7 @@ class LegacyStoreContractTest extends TestCase
             'role' => 'customer', 'customer_id' => OnlineStoreFixtureFactory::createCustomer()->id,
             'account_source' => 'store_app', 'status' => 'pending',
         ]);
-        $this->postJson('/Auth/CheckUser?UserId='.$pendingUser->id)->assertOk()
+        $this->withToken(StoreUser::findOrFail($pendingUser->id)->createToken('pending')->plainTextToken)->postJson('/Auth/CheckUser?UserId='.$pendingUser->id)->assertOk()
             ->assertJsonPath('accountRoles', []);
 
         $canceledUser = OnlineStoreFixtureFactory::createStoreActor();
@@ -212,7 +212,7 @@ class LegacyStoreContractTest extends TestCase
             'account_source' => 'store_app', 'status' => 'active',
         ]);
         $canceledSeller->forceFill(['is_canceled' => true])->save();
-        $this->postJson('/Auth/CheckUser?UserId='.$canceledUser->id)->assertOk()
+        $this->withToken(StoreUser::findOrFail($canceledUser->id)->createToken('canceled')->plainTextToken)->postJson('/Auth/CheckUser?UserId='.$canceledUser->id)->assertOk()
             ->assertJsonPath('accountRoles', []);
     }
 
@@ -243,7 +243,7 @@ class LegacyStoreContractTest extends TestCase
             ->assertOk();
         $this->assertSame(['rows', 'total', 'totalNotFiltered'], array_keys($response->json()));
         $this->assertSame(
-            ['id', 'isRead', 'title', 'content', 'toUser', 'createdAt', 'updatedAt'],
+            ['destination_id', 'destination_type', 'id', 'isRead', 'title', 'content', 'toUser', 'type', 'category', 'createdAt', 'updatedAt'],
             array_keys($response->json('rows.0'))
         );
         $this->assertSame($notification->id, $response->json('rows.0.id'));
@@ -463,7 +463,7 @@ class LegacyStoreContractTest extends TestCase
     private function publishedLegacyProduct(): \App\Models\Product
     {
         $product = OnlineStoreFixtureFactory::createProduct([
-            'nameAr' => 'Legacy order product', 'normailPrice' => 100, 'stock' => 5,
+            'nameAr' => 'Legacy order product', 'descriptionEng' => 'Legacy fixture description', 'normailPrice' => 100, 'stock' => 5,
         ]);
         $listing = OnlineStoreListing::query()->forceCreate([
             'product_id' => $product->id, 'status' => 'published', 'readiness_state' => 'complete',

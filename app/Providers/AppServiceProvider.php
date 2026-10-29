@@ -51,6 +51,7 @@ class AppServiceProvider extends ServiceProvider
         // A request/job-scoped queue prevents recursion and never leaks timeline
         // reprojection state across concurrent requests or Octane workers.
         $this->app->scoped(PartyAccountingTimelineService::class);
+        $this->app->scoped(\App\Services\OnlineStore\StorefrontReadBatch::class);
     }
 
     /**

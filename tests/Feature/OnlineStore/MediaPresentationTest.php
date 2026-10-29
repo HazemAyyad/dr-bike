@@ -5,7 +5,6 @@ namespace Tests\Feature\OnlineStore;
 use App\Models\Image3dProduct;
 use App\Models\NormalImageProduct;
 use App\Models\ViewImageProduct;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -18,7 +17,7 @@ class MediaPresentationTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_first_listing_initializes_valid_media_in_application_priority_once(): void

@@ -4,7 +4,6 @@ namespace Tests\Feature\OnlineStore;
 
 use App\Services\OnlineStore\OnlineStoreDashboardService;
 use App\Services\OnlineStore\OnlineStoreReportService;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -16,9 +15,10 @@ class OnlineStorePerformanceTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
+    #[\PHPUnit\Framework\Attributes\Group('performance')]
     public function test_ten_thousand_listing_dashboard_and_report_have_bounded_queries_and_two_second_p95(): void
     {
         $now = now();
@@ -30,7 +30,7 @@ class OnlineStorePerformanceTest extends TestCase
                 $index = ($chunk * 500) + $offset;
                 $productId = $baseId + $index;
                 $products[] = [
-                    'id' => $productId, 'product_code' => (string) $productId,
+                    'id' => $productId, 'product_code' => str_pad((string) $index, 6, '0', STR_PAD_LEFT),
                     'nameAr' => 'Performance '.$index, 'nameEng' => 'Performance '.$index,
                     'isShow' => true, 'normailPrice' => 100, 'wholesalePrice' => 80,
                     'stock' => $index % 5, 'created_at' => $now, 'updated_at' => $now,
@@ -59,6 +59,7 @@ class OnlineStorePerformanceTest extends TestCase
         }
         sort($durations);
         $p95 = $durations[(int) ceil(count($durations) * 0.95) - 1];
+        fwrite(STDOUT, sprintf("\nDashboard/report 10k: p95=%.3fs; queries=%d; samples=%d\n", $p95, (int) ceil($queries / 20), count($durations)));
 
         $this->assertLessThanOrEqual(30, (int) ceil($queries / 20), 'Aggregate query budget regressed.');
         $this->assertLessThanOrEqual(2.0, $p95, '95th percentile dashboard/report response exceeded two seconds.');

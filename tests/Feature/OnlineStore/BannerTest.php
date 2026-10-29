@@ -6,7 +6,6 @@ use App\Models\OnlineStore\OnlineStoreBanner;
 use App\Models\OnlineStore\OnlineStoreListing;
 use App\Services\OnlineStore\BannerService;
 use Carbon\CarbonImmutable;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -19,7 +18,7 @@ class BannerTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-10-02 12:00:00', config('app.timezone')));
     }
 

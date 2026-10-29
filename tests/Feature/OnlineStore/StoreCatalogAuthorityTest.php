@@ -10,7 +10,6 @@ use App\Models\SalesOrder;
 use App\Models\SalesOrderItem;
 use App\Services\OnlineStore\StoreAvailabilityService;
 use App\Services\OnlineStore\StorePriceResolver;
-use Illuminate\Support\Facades\Artisan;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
 
@@ -22,7 +21,7 @@ class StoreCatalogAuthorityTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_prices_and_mixed_variant_availability_are_authoritative_and_reservation_aware(): void

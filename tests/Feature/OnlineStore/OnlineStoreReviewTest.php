@@ -12,7 +12,6 @@ use App\Models\SalesOrderItem;
 use App\Services\OnlineStore\OnlineStoreReviewService;
 use App\Services\OnlineStore\StoreIdentityService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\Sanctum;
 use Tests\Support\OnlineStoreFixtureFactory;
@@ -26,7 +25,7 @@ class OnlineStoreReviewTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_rating_state_and_ownership_are_server_enforced(): void

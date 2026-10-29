@@ -5,7 +5,6 @@ namespace Tests\Feature\OnlineStore;
 use App\Models\NormalImageProduct;
 use App\Models\OnlineStore\OnlineStoreListing;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Str;
@@ -21,7 +20,7 @@ class ProductDetailPresentationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
         $this->originalPublicPath = public_path();
         $this->testPublicPath = sys_get_temp_dir().DIRECTORY_SEPARATOR.'doctor-bike-product-detail-'.Str::uuid();
         File::ensureDirectoryExists($this->testPublicPath);

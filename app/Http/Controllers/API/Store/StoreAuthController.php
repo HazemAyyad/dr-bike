@@ -5,8 +5,8 @@ namespace App\Http\Controllers\API\Store;
 use App\Mail\ResetPasswordMail;
 use App\Models\Store\StoreUser;
 use App\Models\User;
-use App\Services\OnlineStore\StorePasswordResetService;
 use App\Services\OnlineStore\StoreCustomerOnboardingService;
+use App\Services\OnlineStore\StorePasswordResetService;
 use App\Support\AppUpdateSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -49,14 +49,26 @@ class StoreAuthController extends StoreBaseController
 
     public function checkUser(Request $request)
     {
+        $user = $this->storeUserFromRequest($request);
+        abort_unless($user, 401, 'Unauthenticated.');
         $userId = $request->query('UserId', $request->input('UserId'));
-        $user = StoreUser::query()->find($userId);
-
-        if (! $user || (bool) ($user->is_blocked ?? false)) {
-            return response()->json(['message' => 'UserNotActive'], 400);
-        }
+        abort_if($userId !== null && (! ctype_digit((string) $userId) || (int) $userId !== (int) $user->getKey()), 404);
 
         return response()->json($this->userPayload($user));
+    }
+
+    public function logout(Request $request)
+    {
+        $user = $this->storeUserFromRequest($request);
+        abort_unless($user, 401, 'Unauthenticated.');
+        $data = $request->validate(['fcm_token' => ['nullable', 'string', 'max:512']]);
+        $deviceToken = trim((string) ($data['fcm_token'] ?? ''));
+        if ($deviceToken !== '') {
+            StoreUser::query()->whereKey($user->getKey())->where('fcm_token', $deviceToken)->update(['fcm_token' => null]);
+        }
+        $user->currentAccessToken()->delete();
+
+        return response()->noContent();
     }
 
     public function forgotPassword(Request $request, StorePasswordResetService $passwordResets)
@@ -133,7 +145,7 @@ class StoreAuthController extends StoreBaseController
         $data = $request->validate([
             'userId' => ['nullable'],
             'oldPassword' => ['required', 'string'],
-            'newPassword' => ['required', 'string'],
+            'newPassword' => ['required', 'string', 'min:8', 'max:128'],
             'confirmPassword' => ['required', 'same:newPassword'],
         ]);
 
@@ -157,7 +169,7 @@ class StoreAuthController extends StoreBaseController
 
         $data = $request->validate([
             'resetProof' => ['required', 'string', 'min:40', 'max:255'],
-            'newPassword' => ['required', 'string', 'min:8'],
+            'newPassword' => ['required', 'string', 'min:8', 'max:128'],
             'confirmPassword' => ['required', 'same:newPassword'],
         ]);
 

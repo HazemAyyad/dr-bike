@@ -245,14 +245,15 @@ final class OnlineStoreCheckoutService
         if ($legacy && ! $village && $villageQuery) {
             $village = $villageQuery->orderBy('name')->first();
         }
-        $deliveryFee = round((float) ($city?->currentDeliveryFee() ?? 0), 2);
-        if ($deliveryFee <= 0 && $village) {
-            try {
-                $deliveryFee = round((float) ($this->shiply->calculateDeliveryCost((int) $village->shiply_id, max(0, $parcelPrice), $mode)['delivery_cost'] ?? 0), 2);
-            } catch (\Throwable) {
-                $deliveryFee = 0.0;
+        $deliveryFee = $city?->currentDeliveryFee();
+        if ($village) {
+            $deliveryFee = app(StoreDeliveryQuoteService::class)->quote((int) $village->shiply_id, $parcelPrice, $mode, $city)['delivery_cost'];
+        } elseif ($shiplyId || $cityId || $villageId) {
+            if ($deliveryFee === null) {
+                throw new \App\Exceptions\DeliveryQuoteUnavailableException;
             }
         }
+        $deliveryFee = round((float) ($deliveryFee ?? 0), 2);
 
         return ['customer_address' => trim((string) ($payload[$legacy ? 'address' : 'customer_address'] ?? '')), 'city_id' => $city?->getKey(),
             'shiply_city_id' => $shiplyId, 'shiply_village_id' => $village?->shiply_id, 'shiply_city_name' => $shiplyCity?->name,

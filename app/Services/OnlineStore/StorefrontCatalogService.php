@@ -13,13 +13,13 @@ final class StorefrontCatalogService
         private readonly StoreAvailabilityService $availability,
     ) {}
 
-    public function eligibleQuery(): Builder
+    public function eligibleQuery(bool $checkProduct = true): Builder
     {
         return OnlineStoreListing::query()
             ->withPublishedReviewSummary()
             ->where('status', 'published')
             ->where('readiness_state', 'complete')
-            ->whereHas('product', fn (Builder $query) => $query->whereNull('deleted_at'))
+            ->when($checkProduct, fn ($query) => $query->whereHas('product', fn (Builder $product) => $product->whereNull('deleted_at')))
             ->whereExists(fn ($query) => $query->selectRaw('1')
                 ->from('online_store_category_listing as membership')
                 ->join('online_store_categories as category', 'category.id', '=', 'membership.online_store_category_id')
@@ -29,9 +29,14 @@ final class StorefrontCatalogService
 
     public function eligible(Builder $query): Collection
     {
-        return $query->with('product')->get()
-            ->filter(fn (OnlineStoreListing $listing) => $this->isEligible($listing))
-            ->values();
+        $listings = $query->with('product')->get();
+        $batch = app(StorefrontReadBatch::class);
+        $batch->prepare($listings);
+        try {
+            return $listings->filter(fn (OnlineStoreListing $listing) => $this->isEligible($listing))->values();
+        } finally {
+            $batch->clear();
+        }
     }
 
     public function findEligibleByProductId(int $productId): ?OnlineStoreListing

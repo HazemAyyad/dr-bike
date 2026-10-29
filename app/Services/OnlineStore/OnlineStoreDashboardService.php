@@ -16,57 +16,52 @@ final class OnlineStoreDashboardService
     public function summary(int $days = 30): array
     {
         $days = max(7, min(365, $days));
-        $now = now();
-        $listingStates = OnlineStoreListing::query()->selectRaw('status, COUNT(*) aggregate')->groupBy('status')->pluck('aggregate', 'status');
-        $readinessStates = OnlineStoreListing::query()->selectRaw('readiness_state, COUNT(*) aggregate')->groupBy('readiness_state')->pluck('aggregate', 'readiness_state');
-        $storeOrders = SalesOrder::query()->where('origin', SalesOrder::ORIGIN_STORE);
-        $storeTotal = (float) (clone $storeOrders)->sum('total');
-        $storeCount = (clone $storeOrders)->count();
+        $tables = Schema::getTableListing();
+        $metrics = app(StoreDashboardMetrics::class)->read($tables);
+        $storeTotal = (float) $metrics->store_total;
+        $storeCount = (int) $metrics->store_orders;
 
         return [
             'listings' => [
-                'published' => (int) ($listingStates['published'] ?? 0),
-                'draft' => (int) ($listingStates['draft'] ?? 0),
-                'hidden' => (int) ($listingStates['hidden'] ?? 0),
-                'incomplete' => (int) ($readinessStates['incomplete'] ?? 0),
+                'published' => (int) $metrics->published,
+                'draft' => (int) $metrics->draft,
+                'hidden' => (int) $metrics->hidden,
+                'incomplete' => (int) $metrics->incomplete,
                 'out_of_stock' => $this->availability->outOfStockPublishedCount(),
             ],
             'orders' => [
                 'origins' => [
-                    'admin' => SalesOrder::query()->where('origin', SalesOrder::ORIGIN_ADMIN)->count(),
+                    'admin' => (int) $metrics->admin_orders,
                     'store' => $storeCount,
                 ],
                 'store_count' => $storeCount,
                 'store_total' => round($storeTotal, 2),
                 'average_order_value' => $storeCount > 0 ? round($storeTotal / $storeCount, 2) : 0.0,
-                'retail_count' => (clone $storeOrders)->where(fn ($query) => $query->where('partner_type', 'customer')
-                    ->orWhere(fn ($legacy) => $legacy->whereNull('partner_type')->whereNotNull('customer_id')))->count(),
-                'wholesale_count' => (clone $storeOrders)->where('partner_type', 'seller')->count(),
+                'retail_count' => (int) $metrics->retail_orders,
+                'wholesale_count' => (int) $metrics->wholesale_orders,
             ],
-            'active_promotions' => OnlineStorePromotion::query()->where('is_active', true)
-                ->where(fn ($q) => $q->whereNull('starts_at')->orWhere('starts_at', '<=', $now))
-                ->where(fn ($q) => $q->whereNull('ends_at')->orWhere('ends_at', '>=', $now))->count(),
+            'active_promotions' => (int) $metrics->active_promotions,
             'coupons' => [
-                'active' => DB::table('online_store_coupons')->where('is_active', true)->count(),
-                'reserved' => DB::table('online_store_coupon_redemptions')->where('status', 'reserved')->count(),
-                'applied' => DB::table('online_store_coupon_redemptions')->where('status', 'applied')->count(),
+                'active' => (int) $metrics->active_coupons,
+                'reserved' => (int) ($metrics->reserved_coupons ?? 0),
+                'applied' => (int) ($metrics->applied_coupons ?? 0),
             ],
-            'pending_reviews' => Schema::hasTable('online_store_reviews')
-                ? ['available' => true, 'value' => DB::table('online_store_reviews')->where('status', 'pending')->count()]
+            'pending_reviews' => in_array('online_store_reviews', $tables, true)
+                ? ['available' => true, 'value' => (int) $metrics->reviews_pending]
                 : ['available' => false, 'value' => null],
-            'debt_activity' => $this->storeDebtActivity(),
-            'analytics' => $this->analytics($days),
+            'debt_activity' => $this->storeDebtActivity($tables),
+            'analytics' => $this->analytics($days, $tables, $metrics),
             'generated_at' => now()->toISOString(),
         ];
     }
 
-    private function analytics(int $days): array
+    private function analytics(int $days, array $tables, object $metrics): array
     {
         $to = now()->endOfDay();
         $from = now()->subDays($days - 1)->startOfDay();
-        $hasMetrics = Schema::hasTable('online_store_daily_metrics');
-        $hasVisitors = Schema::hasTable('online_store_daily_visitors');
-        $hasPromotionUsage = Schema::hasTable('online_store_promotion_redemptions');
+        $hasMetrics = in_array('online_store_daily_metrics', $tables, true);
+        $hasVisitors = in_array('online_store_daily_visitors', $tables, true);
+        $hasPromotionUsage = in_array('online_store_promotion_redemptions', $tables, true);
 
         $metricRows = $hasMetrics
             ? DB::table('online_store_daily_metrics')
@@ -84,7 +79,7 @@ final class OnlineStoreDashboardService
             ->whereBetween('created_at', [$from, $to])
             ->selectRaw('DATE(created_at) metric_date, COUNT(*) orders_count, SUM(total) revenue')
             ->groupByRaw('DATE(created_at)')->get()->keyBy('metric_date');
-        $couponRows = Schema::hasTable('online_store_coupon_redemptions')
+        $couponRows = in_array('online_store_coupon_redemptions', $tables, true)
             ? DB::table('online_store_coupon_redemptions')
                 ->whereBetween('created_at', [$from, $to])
                 ->whereIn('status', ['reserved', 'applied'])
@@ -119,59 +114,55 @@ final class OnlineStoreDashboardService
             })->values();
 
         $storeOrders = SalesOrder::query()->where('origin', SalesOrder::ORIGIN_STORE);
-        $promotionUsage = $hasPromotionUsage ? DB::table('online_store_promotion_redemptions') : null;
-        $couponUsage = Schema::hasTable('online_store_coupon_redemptions')
-            ? DB::table('online_store_coupon_redemptions')->whereIn('status', ['reserved', 'applied'])
-            : null;
 
         return [
             'period_days' => $days,
             'period_from' => $from->toDateString(),
             'period_to' => $to->toDateString(),
             'audience' => [
-                'visits' => $hasMetrics ? (int) DB::table('online_store_daily_metrics')->sum('store_visits') : 0,
-                'unique_visitors' => $hasVisitors ? (int) DB::table('online_store_daily_visitors')->distinct()->count('visitor_hash') : 0,
-                'registered_users' => (int) DB::table('users')->whereRaw('LOWER(type) = ?', ['user'])->count(),
-                'linked_users' => (int) DB::table('online_store_account_links')->where('status', 'active')->distinct()->count('user_id'),
-                'active_customer_links' => (int) DB::table('online_store_account_links')->where('status', 'active')->where('role', 'customer')->count(),
-                'active_seller_links' => (int) DB::table('online_store_account_links')->where('status', 'active')->where('role', 'seller')->count(),
+                'visits' => (int) ($metrics->visits ?? 0),
+                'unique_visitors' => (int) ($metrics->unique_visitors ?? 0),
+                'registered_users' => (int) $metrics->registered_users,
+                'linked_users' => (int) $metrics->linked_users,
+                'active_customer_links' => (int) $metrics->active_customer_links,
+                'active_seller_links' => (int) $metrics->active_seller_links,
             ],
             'engagement' => [
-                'product_views' => (int) DB::table('online_store_listings')->sum('view_count'),
-                'section_views' => (int) DB::table('online_store_home_sections')->sum('view_count'),
-                'banner_clicks' => (int) DB::table('online_store_banners')->sum('click_count'),
+                'product_views' => (int) $metrics->product_views,
+                'section_views' => (int) $metrics->section_views,
+                'banner_clicks' => (int) $metrics->banner_clicks,
             ],
             'commerce' => [
-                'orders' => (clone $storeOrders)->count(),
-                'revenue' => round((float) (clone $storeOrders)->sum('total'), 2),
-                'average_order_value' => ($count = (clone $storeOrders)->count()) > 0
-                    ? round((float) (clone $storeOrders)->sum('total') / $count, 2) : 0.0,
+                'orders' => (int) $metrics->store_orders,
+                'revenue' => round((float) $metrics->store_total, 2),
+                'average_order_value' => $metrics->store_orders > 0
+                    ? round((float) $metrics->store_total / $metrics->store_orders, 2) : 0.0,
                 'by_status' => (clone $storeOrders)->selectRaw('status, COUNT(*) aggregate')
                     ->groupBy('status')->pluck('aggregate', 'status')->map(fn ($value) => (int) $value)->all(),
             ],
             'discounts' => [
                 'promotions' => [
-                    'uses' => $promotionUsage ? (clone $promotionUsage)->count() : 0,
-                    'discount_total' => $promotionUsage ? round((float) (clone $promotionUsage)->sum('discount_amount'), 2) : 0.0,
+                    'uses' => (int) ($metrics->promotion_uses ?? 0),
+                    'discount_total' => round((float) ($metrics->promotion_discount ?? 0), 2),
                 ],
                 'coupons' => [
-                    'uses' => $couponUsage ? (clone $couponUsage)->count() : 0,
-                    'discount_total' => $couponUsage ? round((float) (clone $couponUsage)->sum('discount_amount'), 2) : 0.0,
+                    'uses' => (int) ($metrics->coupon_uses ?? 0),
+                    'discount_total' => round((float) ($metrics->coupon_discount ?? 0), 2),
                 ],
             ],
             'catalog' => [
-                'categories' => (int) DB::table('online_store_categories')->count(),
-                'active_categories' => (int) DB::table('online_store_categories')->where('is_active', true)->count(),
-                'sections' => (int) DB::table('online_store_home_sections')->count(),
-                'visible_sections' => (int) DB::table('online_store_home_sections')->where('is_visible', true)->count(),
-                'banners' => (int) DB::table('online_store_banners')->count(),
-                'active_banners' => (int) DB::table('online_store_banners')->where('is_active', true)->count(),
+                'categories' => (int) $metrics->categories,
+                'active_categories' => (int) $metrics->active_categories,
+                'sections' => (int) $metrics->sections,
+                'visible_sections' => (int) $metrics->visible_sections,
+                'banners' => (int) $metrics->banners,
+                'active_banners' => (int) $metrics->active_banners,
             ],
             'reviews' => [
-                'total' => (int) DB::table('online_store_reviews')->count(),
-                'pending' => (int) DB::table('online_store_reviews')->where('status', 'pending')->count(),
-                'published' => (int) DB::table('online_store_reviews')->where('status', 'published')->count(),
-                'average_rating' => round((float) DB::table('online_store_reviews')->where('status', 'published')->avg('rating'), 2),
+                'total' => (int) ($metrics->reviews_total ?? 0),
+                'pending' => (int) ($metrics->reviews_pending ?? 0),
+                'published' => (int) ($metrics->reviews_published ?? 0),
+                'average_rating' => round((float) ($metrics->reviews_average ?? 0), 2),
             ],
             'top_products' => DB::table('online_store_listings as listing')
                 ->join('products as product', 'product.id', '=', 'listing.product_id')
@@ -187,17 +178,18 @@ final class OnlineStoreDashboardService
         ];
     }
 
-    private function storeDebtActivity(): array
+    private function storeDebtActivity(array $tables): array
     {
-        if (! Schema::hasTable('debt_transactions')) {
+        if (! in_array('debt_transactions', $tables, true)) {
             return ['available' => false, 'given' => null, 'taken' => null, 'net_exposure' => null];
         }
 
         $query = DB::table('debt_transactions')->whereNull('archived_at')->whereNull('deleted_at')
             ->where('source', 'sales_order')
             ->whereIn('source_id', SalesOrder::query()->where('origin', SalesOrder::ORIGIN_STORE)->select('id'));
-        $given = round((float) (clone $query)->where('type', 'given')->sum('amount'), 2);
-        $taken = round((float) (clone $query)->where('type', 'taken')->sum('amount'), 2);
+        $totals = $query->selectRaw("SUM(CASE WHEN type = 'given' THEN amount ELSE 0 END) given_total, SUM(CASE WHEN type = 'taken' THEN amount ELSE 0 END) taken_total")->first();
+        $given = round((float) $totals->given_total, 2);
+        $taken = round((float) $totals->taken_total, 2);
 
         return ['available' => true, 'given' => $given, 'taken' => $taken, 'net_exposure' => max(0, round($given - $taken, 2))];
     }

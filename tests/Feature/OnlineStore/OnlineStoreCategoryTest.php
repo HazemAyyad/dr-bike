@@ -3,7 +3,6 @@
 namespace Tests\Feature\OnlineStore;
 
 use App\Models\OnlineStore\OnlineStoreListing;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\OnlineStoreFixtureFactory;
 use Tests\TestCase;
@@ -16,7 +15,7 @@ class OnlineStoreCategoryTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_hierarchy_cycle_membership_inactive_consequence_and_complete_sibling_reorder(): void

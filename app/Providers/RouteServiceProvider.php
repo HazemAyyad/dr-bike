@@ -32,7 +32,7 @@ class RouteServiceProvider extends ServiceProvider
                 ->prefix('api')
                 ->group(base_path('routes/api.php'));
 
-            Route::middleware(['api', TrackOnlineStoreUserActivity::class])
+            Route::middleware(['api', \App\Http\Middleware\TraceStoreRequests::class, TrackOnlineStoreUserActivity::class])
                 ->group(base_path('routes/api_store.php'));
 
             Route::middleware('web')

@@ -50,6 +50,17 @@ final class PromotionService
     public function winner(OnlineStoreListing $listing, string $priceContext, ?CarbonInterface $at = null, bool $lock = false): ?OnlineStorePromotion
     {
         $at ??= now();
+        $batch = app(StorefrontReadBatch::class);
+        if (! $lock && $batch->hasListing((int) $listing->getKey())) {
+            $categoryIds = $batch->categories((int) $listing->getKey());
+
+            return $batch->promotions()->first(fn ($promotion) => in_array($promotion->applies_to, [$priceContext, 'both'], true)
+                && (! $promotion->starts_at || $promotion->starts_at->lte($at))
+                && (! $promotion->ends_at || $promotion->ends_at->gte($at))
+                && ($promotion->scope === 'global' ? $promotion->targets->isEmpty()
+                    : $promotion->targets->contains(fn ($target) => ($target->target_type === 'listing' && (int) $target->target_id === (int) $listing->getKey())
+                        || ($target->target_type === 'category' && in_array((int) $target->target_id, $categoryIds, true)))));
+        }
         $categoryIds = DB::table('online_store_category_listing as membership')
             ->join('online_store_categories as category', 'category.id', '=', 'membership.online_store_category_id')
             ->where('membership.online_store_listing_id', $listing->getKey())->where('category.is_active', true)

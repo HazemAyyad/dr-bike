@@ -19,7 +19,7 @@ class MediaPresentationServiceTest extends TestCase
         if (filter_var(env('ONLINE_STORE_DUMP_DERIVED_SCHEMA_READY', false), FILTER_VALIDATE_BOOL)) {
             $this->markTestSkipped('Fresh-schema tests cannot alter restored dump-derived state.');
         }
-        Artisan::call('migrate:fresh', ['--force' => true]);
+        $this->refreshStoreSchema();
     }
 
     public function test_replace_enforces_ownership_exclusivity_main_and_never_mutates_source_media(): void
@@ -30,7 +30,7 @@ class MediaPresentationServiceTest extends TestCase
         $listing = OnlineStoreListing::query()->forceCreate(['product_id' => $product->id]);
         $source = NormalImageProduct::query()->forceCreate(['id' => 71, 'itemId' => $product->id, 'imageUrl' => 'source.jpg']);
         $foreign = NormalImageProduct::query()->forceCreate(['id' => 72, 'itemId' => $other->id, 'imageUrl' => 'foreign.jpg']);
-        $snapshot = $source->getAttributes();
+        $snapshot = $source->fresh()->getAttributes();
         $service = app(MediaPresentationService::class);
 
         $this->expectValidation(fn () => $service->replace($listing, [['source_type' => 'normal_image', 'source_id' => $foreign->id, 'is_main' => true, 'is_visible' => true]], $actor));
