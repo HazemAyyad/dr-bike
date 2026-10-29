@@ -834,7 +834,7 @@ class EmployeeDetails extends Controller
             $startedAt = $open->started_at ?: $reportedAt;
             $open->update([
                 'last_seen_at' => $reportedAt,
-                'duration_seconds' => max(0, $startedAt->diffInSeconds($reportedAt)),
+                'duration_seconds' => max(0, (int) ($startedAt->diffInSeconds($reportedAt, true))),
             ]);
             return;
         }
@@ -844,7 +844,7 @@ class EmployeeDetails extends Controller
             $startedAt = $open->started_at ?: $endAt;
             $open->update([
                 'ended_at' => $endAt,
-                'duration_seconds' => max(0, $startedAt->diffInSeconds($endAt)),
+                'duration_seconds' => max(0, (int) ($startedAt->diffInSeconds($endAt, true))),
             ]);
         }
 
@@ -971,7 +971,7 @@ class EmployeeDetails extends Controller
             $logs = $query->limit($limit)->get()->map(function ($log) {
                 $durationSeconds = (int) $log->duration_seconds;
                 if ($log->ended_at === null && $log->started_at !== null) {
-                    $durationSeconds = max(0, $log->started_at->diffInSeconds(Carbon::now()));
+                    $durationSeconds = max(0, (int) ($log->started_at->diffInSeconds(Carbon::now(), true)));
                 }
 
                 return [
@@ -1412,7 +1412,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
             $allowedStart = Carbon::parse($dateStr.' '.$employee->start_work_time)->addMinutes(15);
             if (Carbon::parse($firstCheckIn)->gt($allowedStart)) {
                 $lateDays++;
-                $delayMinutes += $allowedStart->diffInMinutes(Carbon::parse($firstCheckIn));
+                $delayMinutes += (int) ($allowedStart->diffInMinutes(Carbon::parse($firstCheckIn), true));
             }
         }
     }
@@ -2719,14 +2719,14 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                         $segments[] = AttendanceScanPresenter::segmentToApi(
                             $pendingIn,
                             $s,
-                            Carbon::parse($pendingIn->scanned_at)->diffInMinutes(Carbon::parse($s->scanned_at)),
+                            (int) (Carbon::parse($pendingIn->scanned_at)->diffInMinutes(Carbon::parse($s->scanned_at), true)),
                         );
                         $pendingIn = null;
                     }
                 }
                 if ($pendingIn !== null) {
                     $openMinutes = $useLiveMinutes
-                        ? Carbon::parse($pendingIn->scanned_at)->diffInMinutes($nowTz)
+                        ? (int) (Carbon::parse($pendingIn->scanned_at)->diffInMinutes($nowTz, true))
                         : null;
                     $segments[] = AttendanceScanPresenter::segmentToApi(
                         $pendingIn,
@@ -2747,7 +2747,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 if ($currentlyIn && $dateStr === $todayStr && $legacy->arrived_at) {
                     $workedMinutes = max(
                         $workedMinutes,
-                        Carbon::parse($dateStr.' '.$legacy->arrived_at)->diffInMinutes($nowTz)
+                        (int) (Carbon::parse($dateStr.' '.$legacy->arrived_at)->diffInMinutes($nowTz, true))
                     );
                 }
                 if ($legacy->arrived_at && $legacy->left_at) {
@@ -2766,7 +2766,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 : null;
             $overtimeGraceMinutes = $salaryService->overtimeGraceMinutesForDate($dateStr);
             if ($actualLastCheckOut && $calculatedLastCheckOut && ! $calculatedLastCheckOut->equalTo($actualLastCheckOut)) {
-                $workedMinutes = max(0, $workedMinutes - $calculatedLastCheckOut->diffInMinutes($actualLastCheckOut));
+                $workedMinutes = max(0, $workedMinutes - (int) ($calculatedLastCheckOut->diffInMinutes($actualLastCheckOut, true)));
             }
 
             $onTime = null;
@@ -2782,7 +2782,7 @@ private function getEmployeeMonthlyFinancialData($employeeId, ?string $monthValu
                 : null;
             $overtimeGraceMinutes = $salaryService->overtimeGraceMinutesForDate($dateStr);
             if ($actualLastCheckOut && $calculatedLastCheckOut && ! $calculatedLastCheckOut->equalTo($actualLastCheckOut)) {
-                $workedMinutes = max(0, $workedMinutes - $calculatedLastCheckOut->diffInMinutes($actualLastCheckOut));
+                $workedMinutes = max(0, $workedMinutes - (int) ($calculatedLastCheckOut->diffInMinutes($actualLastCheckOut, true)));
             }
 
             $financialBaseAttendance = $legacy;

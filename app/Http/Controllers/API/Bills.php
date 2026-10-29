@@ -742,7 +742,7 @@ class Bills extends Controller
                     'status' => $row->status,
                     'negotiated_unit_price' => $row->negotiated_unit_price,
                     'received_at' => optional($row->created_at)->toDateTimeString(),
-                    'age_days' => $row->created_at ? $row->created_at->diffInDays(now()) : null,
+                    'age_days' => $row->created_at ? (int) ($row->created_at->diffInDays(now(), true)) : null,
                     'notes' => $row->notes,
                 ];
             });

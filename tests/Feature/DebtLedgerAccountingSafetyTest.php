@@ -476,6 +476,14 @@ class DebtLedgerAccountingSafetyTest extends TestCase
             'source' => 'legacy_test',
             'source_id' => 700,
         ]);
+        DB::table('delivery_companies')->insert([
+            'id' => 88,
+            'name' => 'Reconciliation fixture carrier',
+            'code' => 'fixture_carrier',
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
         DB::table('sales_orders')->insert([
             'serial_number' => 'CARRIER-1',
             'delivery_company_id' => 88,

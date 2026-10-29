@@ -31,7 +31,7 @@ class StoreCreditCheckoutTest extends TestCase
         $this->refreshStoreSchema();
     }
 
-    /** @dataProvider partyProvider */
+    #[\PHPUnit\Framework\Attributes\DataProvider('partyProvider')]
     public function test_two_thousand_total_with_five_hundred_paid_posts_exact_party_reconciliation(string $role): void
     {
         $fixture = OnlineStoreCreditFixture::create($role);

@@ -517,7 +517,7 @@ class AttendanceSalaryService
             return $actualCheckoutAt;
         }
 
-        $lateMinutes = $scheduledEnd->diffInMinutes($actualCheckoutAt);
+        $lateMinutes = (int) ($scheduledEnd->diffInMinutes($actualCheckoutAt, true));
         $graceMinutes = $this->overtimeGraceMinutesForDate($workDate);
 
         return $lateMinutes <= $graceMinutes

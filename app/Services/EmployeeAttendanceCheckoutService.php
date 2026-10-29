@@ -52,7 +52,7 @@ class EmployeeAttendanceCheckoutService
             throw new \InvalidArgumentException(__('messages.checkout_time_before_check_in'));
         }
 
-        $segmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes($checkoutAt));
+        $segmentMinutes = max(0, (int) (Carbon::parse($lastIn->scanned_at)->diffInMinutes($checkoutAt, true)));
 
         $scan = EmployeeAttendanceScan::create([
             'employee_id' => $employeeId,
@@ -75,7 +75,7 @@ class EmployeeAttendanceCheckoutService
 
         $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
         $countedCheckoutAt = $this->salaryService->countedCheckoutAt($employee, $workDate, $checkoutAt);
-        $countedSegmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes($countedCheckoutAt));
+        $countedSegmentMinutes = max(0, (int) (Carbon::parse($lastIn->scanned_at)->diffInMinutes($countedCheckoutAt, true)));
         if (! $countedCheckoutAt->equalTo($checkoutAt)) {
             $totalWorked = max(0, $totalWorked - ($segmentMinutes - $countedSegmentMinutes));
         }

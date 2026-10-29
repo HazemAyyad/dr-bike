@@ -7,7 +7,7 @@ use Tests\TestCase;
 
 class FinancialAffairsPermissionRoutesTest extends TestCase
 {
-    /** @dataProvider protectedRouteProvider */
+    #[\PHPUnit\Framework\Attributes\DataProvider('protectedRouteProvider')]
     public function test_financial_route_uses_the_expected_detailed_permission(
         string $method,
         string $uri,

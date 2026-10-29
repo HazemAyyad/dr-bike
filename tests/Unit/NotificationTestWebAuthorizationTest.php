@@ -12,7 +12,7 @@ use Tests\TestCase;
 
 class NotificationTestWebAuthorizationTest extends TestCase
 {
-    /** @dataProvider protectedControllers */
+    #[\PHPUnit\Framework\Attributes\DataProvider('protectedControllers')]
     public function test_test_pages_fail_closed_in_production_without_a_token(
         string $controllerClass
     ): void {

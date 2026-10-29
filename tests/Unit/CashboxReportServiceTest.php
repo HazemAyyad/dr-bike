@@ -120,7 +120,7 @@ class CashboxReportServiceTest extends TestCase
             'is_shown' => false,
             'currency' => 'شيكل',
         ]);
-        BoxLog::create([
+        BoxLog::forceCreate([
             'box_id' => $main->id,
             'type' => 'add',
             'value' => 50,
@@ -128,7 +128,7 @@ class CashboxReportServiceTest extends TestCase
             'created_at' => '2026-09-10 09:00:00',
             'updated_at' => '2026-09-10 09:00:00',
         ]);
-        BoxLog::create([
+        BoxLog::forceCreate([
             'box_id' => $main->id,
             'type' => 'minus',
             'value' => 30,

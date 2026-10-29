@@ -4,7 +4,7 @@ namespace Tests\Unit;
 
 use App\Models\ProductStockMovement;
 use App\Services\ProductStockService;
-use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
@@ -45,10 +45,12 @@ class ProductStockMovementStorageContractTest extends TestCase
     {
         Schema::shouldReceive('hasTable')->with('product_stock_movements')->once()->andReturn(true);
         Schema::shouldReceive('hasColumn')->andReturn(true);
-        $connection = Mockery::mock(ConnectionInterface::class);
+        $connection = Mockery::mock(Connection::class);
         $connection->shouldReceive('getName')->andReturn('mock-no-database');
-        $connection->shouldReceive('getQueryGrammar')->andReturn(new MySqlGrammar);
-        $query = Mockery::mock(Builder::class, [$connection, new MySqlGrammar, new Processor])->makePartial();
+        $connection->shouldReceive('getTablePrefix')->andReturn('');
+        $grammar = new MySqlGrammar($connection);
+        $connection->shouldReceive('getQueryGrammar')->andReturn($grammar);
+        $query = Mockery::mock(Builder::class, [$connection, $grammar, new Processor])->makePartial();
         $stored = null;
         $query->shouldReceive('insertGetId')->once()->andReturnUsing(function (array $payload) use (&$stored) {
             if (strlen($payload['type']) > self::TYPE_COLUMN_LENGTH) {

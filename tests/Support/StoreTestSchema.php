@@ -21,7 +21,7 @@ trait StoreTestSchema
         }
 
         $connection = DB::connection();
-        $manager = new DatabaseTransactionsManager;
+        $manager = new DatabaseTransactionsManager([config('database.default')]);
         $this->app->instance('db.transactions', $manager);
         $connection->setTransactionManager($manager);
         $dispatcher = $connection->getEventDispatcher();

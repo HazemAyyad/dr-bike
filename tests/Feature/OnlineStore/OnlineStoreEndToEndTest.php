@@ -76,7 +76,7 @@ class OnlineStoreEndToEndTest extends TestCase
         $this->assertSame(0, DB::table('debt_transactions')->where('source', 'sales_order')->where('source_id', $order->id)->whereNull('deleted_at')->count());
     }
 
-    /** @dataProvider partyProvider */
+    #[\PHPUnit\Framework\Attributes\DataProvider('partyProvider')]
     public function test_mixed_checkout_reconciles_customer_and_seller_financial_effects_once(string $role): void
     {
         $fixture = OnlineStoreCreditFixture::create($role);

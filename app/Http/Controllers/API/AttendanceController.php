@@ -241,7 +241,7 @@ class AttendanceController extends Controller
             }
 
             $lastIn = $scans->last();
-            $segmentMinutes = max(0, Carbon::parse($lastIn->scanned_at)->diffInMinutes($scanAt));
+            $segmentMinutes = max(0, (int) (Carbon::parse($lastIn->scanned_at)->diffInMinutes($scanAt, true)));
 
             $scan = EmployeeAttendanceScan::create([
                 'employee_id' => $employee_id,

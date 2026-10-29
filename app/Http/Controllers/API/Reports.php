@@ -423,7 +423,7 @@ class Reports extends Controller
         [$from, $to, $period] = $this->resolveReportPeriod($request);
         $from = $from->copy()->startOfDay();
         $to = $to->copy()->endOfDay();
-        $duration = $from->diffInSeconds($to) + 1;
+        $duration = (int) ($from->diffInSeconds($to, true)) + 1;
         $previousTo = $from->copy()->subSecond();
         $previousFrom = $previousTo->copy()->subSeconds($duration - 1);
 
@@ -644,7 +644,7 @@ class Reports extends Controller
 
     private function analyticsSeries(Carbon $from, Carbon $to)
     {
-        $days = max($from->diffInDays($to), 1);
+        $days = max((int) ($from->diffInDays($to, true)), 1);
         $format = $days > 120 ? 'Y-m' : 'Y-m-d';
         $labelFormat = $days > 120 ? 'm/Y' : 'd/m';
         $cursor = $from->copy()->startOfDay();

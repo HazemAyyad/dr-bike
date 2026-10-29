@@ -22,6 +22,11 @@ abstract class TestCase extends BaseTestCase
 
     protected function setUp(): void
     {
+        // Export actions may set a request timeout. Do not leak it into the
+        // next fixture's bootstrap or disposable-schema setup in the CLI suite.
+        if (PHP_SAPI === 'cli') {
+            set_time_limit(0);
+        }
         parent::setUp();
 
         if (str_starts_with(static::class, 'Tests\\Feature\\OnlineStore\\')) {

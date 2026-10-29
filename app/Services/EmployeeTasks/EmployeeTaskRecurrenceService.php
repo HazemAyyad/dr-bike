@@ -221,7 +221,7 @@ class EmployeeTaskRecurrenceService
             ? Carbon::parse($config['anchor_date'])->startOfDay()
             : $template->created_at?->startOfDay() ?? now()->startOfDay();
         $interval = max(1, (int) ($config['interval'] ?? 1));
-        $diff = $anchor->diffInDays($date->copy()->startOfDay());
+        $diff = (int) ($anchor->diffInDays($date->copy()->startOfDay(), true));
 
         return $diff % $interval === 0;
     }

@@ -22,7 +22,7 @@ class FirebaseServiceConfigurationTest extends TestCase
         );
     }
 
-    /** @dataProvider staleProjectTokenErrors */
+    #[\PHPUnit\Framework\Attributes\DataProvider('staleProjectTokenErrors')]
     public function test_project_mismatch_errors_invalidate_stale_tokens(string $message): void
     {
         $method = new ReflectionMethod(FirebaseService::class, 'isInvalidTokenError');

@@ -6,7 +6,7 @@ use App\Http\Controllers\API\Bills;
 use App\Models\Bill;
 use App\Models\User;
 use App\Services\PurchaseInvoicePurgeService;
-use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Connection;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
@@ -32,11 +32,13 @@ class PurchaseInvoicePurgeApiContractTest extends TestCase
             'فاتورة تجريبية',
         )->once()->andReturn(['backup_reference' => 'audit-test']);
         Schema::shouldReceive('hasColumn')->with('logs', 'source_type')->once()->andReturn(false);
-        $connection = Mockery::mock(ConnectionInterface::class);
+        $connection = Mockery::mock(Connection::class);
         $connection->shouldReceive('getName')->andReturn('mock-no-database');
-        $connection->shouldReceive('getQueryGrammar')->andReturn(new MySqlGrammar);
-        $connection->shouldReceive('query')->andReturnUsing(function () use ($connection) {
-            $query = Mockery::mock(Builder::class, [$connection, new MySqlGrammar, new Processor])->makePartial();
+        $connection->shouldReceive('getTablePrefix')->andReturn('');
+        $grammar = new MySqlGrammar($connection);
+        $connection->shouldReceive('getQueryGrammar')->andReturn($grammar);
+        $connection->shouldReceive('query')->andReturnUsing(function () use ($connection, $grammar) {
+            $query = Mockery::mock(Builder::class, [$connection, $grammar, new Processor])->makePartial();
             $query->shouldReceive('get')->andReturnUsing(function () use ($query) {
                 $this->assertSame('bills', $query->from);
 
