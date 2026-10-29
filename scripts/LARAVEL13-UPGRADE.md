@@ -138,8 +138,8 @@ Local changes are committed independently: fresh-schema repair `95e6a9f`,
 framework upgrade `f0bf0ee`, catalog page optimization `b0eb051`. The primary
 Laravel checkout and production have not been advanced to this upgrade branch.
 
-Outstanding acceptance: website PHP 8.3/sodium activation, hosting Reverb and
-notification delivery, user-owned APK/phone checks, Apple validation, production
+Outstanding acceptance: website PHP 8.3/sodium activation, controlled event and
+notification delivery through the selected broadcaster, user-owned APK/phone checks, Apple validation, production
 backup/restore and the separately authorized release observation window.
 Read-only hosting inspection and remote CI results are recorded below.
 
@@ -159,7 +159,10 @@ purging, store low-stock notification, fingerprint processing and Shiply address
 synchronization. No scheduled command was executed. This proves local runtime
 registration, not that production cron/workers or external delivery are healthy.
 
-The remaining Reverb gate is the hosting WebSocket/proxy/worker environment.
+The installed Reverb candidate passed locally. Production currently selects
+Pusher, as verified below; preserve that existing broadcaster during release.
+Hosting a Reverb server/proxy/worker requires a separate decision to switch
+broadcasters, rather than being a prerequisite for retaining Pusher.
 The local result is recorded in the task's `reverb-local-result.json`.
 
 ### Hosting inspection, 29 October 2026
@@ -183,8 +186,7 @@ access was unavailable. No credentials were copied into the repository or shown.
   sodium signing functions are available under the tested PHP 8.3 invocation.
 - `crontab -l` is unavailable in this SSH environment (exit 127). This does not
   show whether hPanel's cron jobs exist or run; inspect their entries and logs in
-  hPanel before release. The hosting WebSocket proxy/worker was not started or
-  reconfigured during this read-only inspection.
+  hPanel before release. No broadcaster or worker was started or reconfigured.
 
 Before any separately authorized release, select PHP 8.3 and enable sodium for
 the website's PHP runtime. Configure scheduler/worker/Composer commands to use
@@ -217,3 +219,37 @@ releasable. Do not copy its PHP 8.2 workflow setting onto Laravel 13.
 
 These checks do not establish production, phone, final APK or external delivery
 acceptance. See [the staged release checklist](STORE-RELEASE.md) for remaining gates.
+
+### Hosted services: read-only acceptance on 29 October 2026
+
+The deployed broadcast driver is `pusher`, with an existing application key.
+Its configured official cluster accepted a TLS-verified WebSocket connection:
+HTTP 101, a valid WebSocket accept header, and a
+`pusher:connection_established` event. No channel was subscribed, event published,
+scheduled command executed, or notification sent. This proves connection
+acceptance only; private-channel authorization and end-to-end application events
+still require controlled acceptance. No key or secret is included in the record.
+
+The initial probe used a non-semantic library version and received Pusher error
+4006. Correcting the probe to version `1.0.0` produced the connection-established
+event; the first result was a probe error, not a production failure. See the
+[official protocol](https://pusher.com/docs/channels/library_auth_reference/pusher-websockets-protocol/).
+
+A PDO read-only transaction inspected only command names, statuses and times in
+the latest 200 `cron_job_logs` rows. The newest observed task entry started on
+20 October at 17:50:04 (database timestamp). No failed status was present in the
+allowlisted command summaries for that bounded sample. This is stale evidence
+and does not prove the scheduler is currently healthy, stopped, or that every
+scheduled command writes this table. A point-in-time process observation found
+no Reverb, queue or scheduler process with this application root as its working
+directory; a minute scheduler need not be visible between executions.
+
+Metadata inspection found 120 `*-complete.sql` files in the configured backup
+directory under application storage, with newest modification time
+20 October 2026 20:04:29 UTC. Their contents were not downloaded or inspected;
+freshness, consistency and restore acceptance have not been established.
+Before release, inspect the hPanel cron configuration and recent execution logs,
+then obtain and verify a fresh backup under separate authorization. Do not run
+scheduled jobs or repair live scheduling automatically from these observations.
+
+The task-local sanitized record is `store-audit/hosting-services-readonly-result.json`.

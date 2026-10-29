@@ -10,8 +10,8 @@ the APK; no APK build or workflow dispatch is part of this verification.
 | Stage | Revision / branch | Prerequisite |
 | --- | --- | --- |
 | Compatible server security, shipping and catalog changes | `09bdc1c8a74e2085514882cba720fc3e094c17ed`, `codex/store-hardening-verified` | Existing Laravel 10 / PHP 8.2 runtime; verified backup and old-client smoke checks |
-| Store app | `d937cd83ea701f43ba9977896e546773e778ecbe`, `codex/store-hardening` in `dr-bike-store` | Compatible server additions first; user-built APK and physical upgrade acceptance |
-| Framework upgrade | `codex/laravel13-store` in `dr-bike` | Separate release: PHP 8.3 with sodium, matching vendor artifact, shared administration acceptance and hosting worker/proxy checks |
+| Store app | `4c1227da9c5c9d6138a0bd9858f4956ef81f1bed`, `codex/store-hardening` in `dr-bike-store` | Compatible server additions first; user-built APK and physical upgrade acceptance |
+| Framework upgrade | `codex/laravel13-store` in `dr-bike` | Separate release: PHP 8.3 with sodium, matching vendor artifact, shared administration acceptance and selected broadcaster/scheduler checks |
 
 Keep the urgent server release independent of the framework upgrade. The
 framework branch includes the compatible store changes but is not the initial
@@ -61,9 +61,15 @@ The remaining acceptance evidence is:
 - Hosting PHP 8.3 and sodium for web, Composer, scheduler and workers before
   deploying the framework candidate. Do not switch the live Laravel 10 runtime
   as a standalone preparatory change: its locked mPDF release targets PHP 8.2.
-- Existing hPanel scheduler entries and run logs, and actual hosting Reverb
-  WebSocket proxy/worker behavior. `crontab -l` being unavailable over SSH proves
-  neither success nor absence. A local Reverb delivery test already passed.
+- Existing hPanel scheduler entries and recent run logs. `crontab -l` being
+  unavailable over SSH proves neither success nor absence. The latest observed
+  cron rows and backup-file timestamps were from 20 October when checked on
+  29 October; fresh execution and backup evidence are required.
+- Preserve the existing Pusher broadcaster: its hosted TLS WebSocket connection
+  and connection-established event passed a read-only check. Controlled private
+  authorization and application event delivery remain pending. A local Reverb
+  delivery test also passed, but deploying Reverb and its proxy/worker requires a
+  separate decision to change the broadcaster.
 - Authorized production backup/restore verification, APK URL, limited pilot,
   48-hour observation, and separately approved expansion/version enforcement.
 
