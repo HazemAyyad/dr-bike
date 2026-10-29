@@ -127,7 +127,7 @@ class EmployeeTaskCancellationServiceTest extends TestCase
         $this->assertDatabaseHas('employee_task_occurrences', ['id' => $unrelatedId, 'is_canceled' => 0]);
 
         $recurrence = new EmployeeTaskRecurrenceService(
-            $this->createMock(EmployeeTaskTimelineService::class)
+            $this->createStub(EmployeeTaskTimelineService::class)
         );
         $template = EmployeeTaskTemplate::findOrFail($templateId);
 
@@ -151,6 +151,7 @@ class EmployeeTaskCancellationServiceTest extends TestCase
 
     public function test_canceling_legacy_child_cancels_parent_and_all_siblings_only(): void
     {
+        $this->travelTo(Carbon::parse('2026-09-01 09:00:00', 'Asia/Hebron'));
         $parentId = $this->insertLegacyTask();
         $firstChildId = $this->insertLegacyTask(parentId: $parentId);
         $secondChildId = $this->insertLegacyTask(parentId: $parentId);

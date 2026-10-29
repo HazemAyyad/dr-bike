@@ -312,7 +312,7 @@ class AccountingReportService
                     if ($charge['remaining'] <= 0.0001) {
                         continue;
                     }
-                    $days = $charge['due_date']->diffInDays($asOf, false);
+                    $days = (int) ($charge['due_date']->diffInDays($asOf, false));
                     $bucket = $days <= 0 ? 'current' : ($days <= 30 ? '1_30' : ($days <= 60 ? '31_60' : ($days <= 90 ? '61_90' : 'over_90')));
                     $buckets[$bucket] += $charge['remaining'];
                 }

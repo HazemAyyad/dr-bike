@@ -47,7 +47,7 @@ class EmployeeAttendanceScan extends Model
             if ($s->direction === 'in') {
                 $pendingIn = $s->scanned_at;
             } elseif ($s->direction === 'out' && $pendingIn !== null) {
-                $total += Carbon::parse($pendingIn)->diffInMinutes(Carbon::parse($s->scanned_at));
+                $total += (int) (Carbon::parse($pendingIn)->diffInMinutes(Carbon::parse($s->scanned_at), true));
                 $pendingIn = null;
             }
         }
@@ -66,7 +66,7 @@ class EmployeeAttendanceScan extends Model
             if ($s->direction === 'in') {
                 $pendingIn = $s->scanned_at;
             } elseif ($s->direction === 'out' && $pendingIn !== null) {
-                $total += Carbon::parse($pendingIn)->diffInMinutes(Carbon::parse($s->scanned_at));
+                $total += (int) (Carbon::parse($pendingIn)->diffInMinutes(Carbon::parse($s->scanned_at), true));
                 $pendingIn = null;
             }
         }
@@ -74,7 +74,7 @@ class EmployeeAttendanceScan extends Model
         if ($pendingIn !== null) {
             $inAt = Carbon::parse($pendingIn);
             if ($asOf->gt($inAt)) {
-                $total += $inAt->diffInMinutes($asOf);
+                $total += (int) ($inAt->diffInMinutes($asOf, true));
             }
         }
 
@@ -89,7 +89,7 @@ class EmployeeAttendanceScan extends Model
             if ($s->direction === 'out') {
                 $pendingOut = $s->scanned_at;
             } elseif ($s->direction === 'in' && $pendingOut !== null) {
-                $total += Carbon::parse($pendingOut)->diffInMinutes(Carbon::parse($s->scanned_at));
+                $total += (int) (Carbon::parse($pendingOut)->diffInMinutes(Carbon::parse($s->scanned_at), true));
                 $pendingOut = null;
             }
         }

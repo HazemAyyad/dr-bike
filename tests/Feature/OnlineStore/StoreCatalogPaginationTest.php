@@ -100,6 +100,30 @@ class StoreCatalogPaginationTest extends TestCase
         $this->getJson('/OnlineStore/Catalog')->assertOk()->assertJsonCount(24, 'rows')->assertJsonPath('paginationInfo.totalRowsCount', 27);
     }
 
+    public function test_page_hydration_preserves_sort_order_and_only_published_review_summaries(): void
+    {
+        $this->seedCatalog(4);
+        $customer = OnlineStoreFixtureFactory::createCustomer();
+        $user = OnlineStoreFixtureFactory::createStoreActor();
+        foreach ([[800000004, 5, 'published'], [800000004, 3, 'published'], [800000004, 1, 'pending'], [800000003, 2, 'published']] as [$productId, $rating, $status]) {
+            DB::table('online_store_reviews')->insert([
+                'product_id' => $productId, 'customer_id' => $customer->id, 'user_id' => $user->id,
+                'rating' => $rating, 'status' => $status, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+        $filters = ['sort' => 'price_desc'];
+        $catalog = app(\App\Services\OnlineStore\StoreCatalogQuery::class);
+        $page = $catalog->page($catalog->build($filters), $filters, 1, 2);
+
+        $this->assertSame([800000004, 800000003], $page->pluck('product_id')->map(fn ($id) => (int) $id)->all());
+        $this->assertSame(2, (int) $page[0]->published_reviews_count);
+        $this->assertSame(4.0, (float) $page[0]->published_reviews_avg_rating);
+        $this->assertSame(1, (int) $page[1]->published_reviews_count);
+        $this->assertSame(2.0, (float) $page[1]->published_reviews_avg_rating);
+        $this->getJson('/OnlineStore/Catalog?sort=price_desc&per_page=2')->assertOk()
+            ->assertJsonPath('rows.0.productId', 800000004)->assertJsonPath('rows.1.productId', 800000003);
+    }
+
     #[\PHPUnit\Framework\Attributes\Group('performance')]
     public function test_ten_thousand_products_have_bounded_queries_and_two_second_p95(): void
     {

@@ -8,6 +8,7 @@ use App\Models\SalesOrderSettlement;
 use App\Models\User;
 use App\Services\SalesDailySessionService;
 use App\Services\SalesOrderService;
+use App\Services\InventoryCostingService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -20,7 +21,10 @@ class SalesOrderConfirmationDailyBoxTest extends TestCase
     public function test_draft_payment_is_deferred_until_confirmation_with_an_open_drawer(): void
     {
         $user = User::factory()->create(['type' => 'admin']);
-        $product = $this->product(stock: 10);
+        $product = $this->product(stock: 0);
+        app(InventoryCostingService::class)->addOwnedStock(
+            $product, 10, 30, 'NIS', 'opening_stock', $product->id, userId: $user->id,
+        );
         $service = app(SalesOrderService::class);
         $this->closeOpenSalesOrderSessions();
 

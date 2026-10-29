@@ -32,7 +32,7 @@ class PurchaseProductFormValidationTest extends TestCase
         ], $overrides);
 
         $factory = new Factory(new Translator(new ArrayLoader, 'en'));
-        $presence = $this->createMock(PresenceVerifierInterface::class);
+        $presence = $this->createStub(PresenceVerifierInterface::class);
         $presence->method('getCount')->willReturnCallback(
             fn ($table, $column, $value) => $table === 'store_sections' && (int) $value === 7 ? 1 : 0
         );

@@ -198,4 +198,7 @@ return [
 
     'same_site' => 'lax',
 
+    // Preserve existing admin web sessions during the framework upgrade.
+    'serialization' => 'php',
+
 ];

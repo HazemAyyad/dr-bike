@@ -27,7 +27,7 @@ class CronJobLogger
         $log->update([
             'status' => 'success',
             'finished_at' => $finishedAt,
-            'duration_seconds' => max(0, $finishedAt->diffInSeconds($log->started_at)),
+            'duration_seconds' => max(0, (int) ($finishedAt->diffInSeconds($log->started_at, true))),
             'output' => $output,
             'error_message' => null,
         ]);
@@ -41,7 +41,7 @@ class CronJobLogger
         $log->update([
             'status' => 'failed',
             'finished_at' => $finishedAt,
-            'duration_seconds' => max(0, $finishedAt->diffInSeconds($log->started_at)),
+            'duration_seconds' => max(0, (int) ($finishedAt->diffInSeconds($log->started_at, true))),
             'output' => $output,
             'error_message' => $message,
         ]);

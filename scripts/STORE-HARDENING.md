@@ -1,10 +1,10 @@
 # Store verification and rollout
 
-PHP 8.3 and MySQL 8.4 are used for current verification. Laravel remains on version 10 until its separate upgrade and administration regressions pass.
+PHP 8.3 and MySQL 8.4 are used for current verification. This branch contains a separate Laravel 13 candidate; see [its acceptance record](LARAVEL13-UPGRADE.md). The store hardening release remains independently available at `51521bc`.
 
 ## Disposable database
 
-Create an empty local `doctor_bike_store_hardening_test` database. Never point tests at development or production. `scripts/test-store.ps1` sets a fixed local test connection, explicit disposable opt-in, array mail/cache/session and synchronous queue. The base guard checks the resolved database before Laravel's database setup traits run. Laravel HTTP calls are denied unless explicitly faked.
+Create an empty local `doctor_bike_laravel13_test` database for this upgrade branch. Never point tests at development or production. `scripts/test-store.ps1` sets a fixed local test connection, explicit disposable opt-in, array mail/cache/session and synchronous queue. The base guard checks the resolved database before Laravel's database setup traits run. Laravel HTTP calls are denied unless explicitly faked.
 
 ```powershell
 ./scripts/test-store.ps1 -ExcludeGroup 'performance,schema'

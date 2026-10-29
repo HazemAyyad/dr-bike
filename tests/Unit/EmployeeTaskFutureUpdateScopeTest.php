@@ -157,7 +157,7 @@ class EmployeeTaskFutureUpdateScopeTest extends TestCase
         $currentId = $this->occurrence($templateId, '2026-09-01');
         $startedId = $this->occurrence($templateId, '2026-09-02', ['started_at' => now()]);
 
-        $service = new EmployeeTaskRecurrenceService($this->createMock(EmployeeTaskTimelineService::class));
+        $service = new EmployeeTaskRecurrenceService($this->createStub(EmployeeTaskTimelineService::class));
         $updated = $service->syncCurrentAndFutureOccurrences(EmployeeTaskTemplate::findOrFail($templateId));
 
         $this->assertSame(1, $updated);
@@ -195,7 +195,7 @@ class EmployeeTaskFutureUpdateScopeTest extends TestCase
         $assignees = app(EmployeeTaskAssigneeService::class);
         $assignees->syncForTemplate(EmployeeTaskTemplate::findOrFail($templateId), [20, 30]);
 
-        $recurrence = new EmployeeTaskRecurrenceService($this->createMock(EmployeeTaskTimelineService::class));
+        $recurrence = new EmployeeTaskRecurrenceService($this->createStub(EmployeeTaskTimelineService::class));
         $recurrence->ensureActiveTemplateOccurrences(30);
 
         $occurrences = EmployeeTaskOccurrence::where('template_id', $templateId)->get();
@@ -217,7 +217,7 @@ class EmployeeTaskFutureUpdateScopeTest extends TestCase
         $assignees->syncForTemplate($template, [20]);
         $assignees->syncForOccurrence(EmployeeTaskOccurrence::findOrFail($occurrenceId), [30, 40]);
 
-        $recurrence = new EmployeeTaskRecurrenceService($this->createMock(EmployeeTaskTimelineService::class));
+        $recurrence = new EmployeeTaskRecurrenceService($this->createStub(EmployeeTaskTimelineService::class));
         $recurrence->ensureOccurrences($template->fresh());
 
         $this->assertSame(
@@ -241,7 +241,7 @@ class EmployeeTaskFutureUpdateScopeTest extends TestCase
         $template->update(['employee_id' => 30]);
         $assignees->syncForTemplate($template->fresh(), [30, 40]);
 
-        $recurrence = new EmployeeTaskRecurrenceService($this->createMock(EmployeeTaskTimelineService::class));
+        $recurrence = new EmployeeTaskRecurrenceService($this->createStub(EmployeeTaskTimelineService::class));
         $recurrence->syncCurrentAndFutureOccurrences($template->fresh());
 
         $this->assertSame([20], $assignees->idsForOccurrence(EmployeeTaskOccurrence::findOrFail($pastId)));

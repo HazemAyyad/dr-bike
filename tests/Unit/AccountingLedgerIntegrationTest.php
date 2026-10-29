@@ -541,6 +541,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         (require database_path('migrations/2026_09_24_100000_add_payment_stage_to_maintenance_payments.php'))->up();
         (require database_path('migrations/2026_09_24_100000_add_reason_code_to_box_logs.php'))->up();
         (require database_path('migrations/2026_09_24_100100_add_cash_difference_accounts.php'))->up();
+        (require database_path('migrations/2026_08_23_091500_create_purchase_issue_resolutions_table.php'))->up();
     }
 
     protected function tearDown(): void
@@ -2268,7 +2269,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         ], applyBox: false, logActivity: false);
         $purchaseDebt = $ledger->createTransaction([
             'seller_id' => $seller->id, 'type' => 'taken', 'amount' => 150, 'currency' => 'شيكل',
-            'transaction_date' => '2026-09-10', 'source' => 'purchase_invoice', 'source_id' => 100,
+            'transaction_date' => '2026-09-10', 'source' => 'purchase_receipt', 'source_id' => $receipt->id,
         ], applyBox: false, logActivity: false);
         $entry = app(AccountingProjectionService::class)->syncOrFail($receipt->fresh());
         $this->assertEqualsWithDelta(100, $this->partyAccountAmount($entry->id, 'accounts_receivable', 'credit'), 0.0001);
@@ -2677,6 +2678,7 @@ class AccountingLedgerIntegrationTest extends TestCase
         $directory = public_path('OutgoingChecksImages');
         $before = File::isDirectory($directory) ? File::files($directory) : [];
         $beforePaths = collect($before)->map(fn ($file) => $file->getPathname())->sort()->values()->all();
+        $image = UploadedFile::fake()->image('rollback.png');
 
         $this->withoutMiddleware()->post('/api/add/transaction', [
             'type' => 'payment',
@@ -2688,10 +2690,15 @@ class AccountingLedgerIntegrationTest extends TestCase
                 'check_currency' => 'شيكل',
                 'check_id' => 'UNIT-FILE-ROLLBACK',
                 'bank_name' => 'Unit Bank',
-                'img' => UploadedFile::fake()->image('rollback.png'),
+                'img' => $image,
             ]],
         ])->assertOk()->assertJsonPath('status', 'error');
 
+        // Windows keeps a deleted upload's directory entry while the fake's
+        // tmpfile handle remains open. Release it before checking cleanup.
+        if (is_resource($image->tempFile)) {
+            fclose($image->tempFile);
+        }
         $after = File::isDirectory($directory) ? File::files($directory) : [];
         $afterPaths = collect($after)->map(fn ($file) => $file->getPathname())->sort()->values()->all();
         $this->assertSame($beforePaths, $afterPaths);

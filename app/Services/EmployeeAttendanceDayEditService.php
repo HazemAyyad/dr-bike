@@ -92,7 +92,7 @@ class EmployeeAttendanceDayEditService
             $totalWorked = EmployeeAttendanceScan::computeWorkedMinutes($allScans);
             $countedCheckOutAt = $this->salaryService->countedCheckoutAt($employee, $workDate, $checkOutAt);
             if ($checkOutAt !== null && $countedCheckOutAt !== null && ! $countedCheckOutAt->equalTo($checkOutAt)) {
-                $totalWorked = max(0, $checkInAt->diffInMinutes($countedCheckOutAt));
+                $totalWorked = max(0, (int) ($checkInAt->diffInMinutes($countedCheckOutAt, true)));
             }
 
             $attendance = EmployeeAttendance::firstOrNew([

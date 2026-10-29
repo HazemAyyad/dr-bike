@@ -22,7 +22,7 @@ class StoreItemsController extends StoreBaseController
         $total = $catalogQuery->count($query, $filters);
         $perPage = (int) ($filters['per_page'] ?? 24);
         $pageNumber = (int) ($filters['page'] ?? 1);
-        $page = new \Illuminate\Pagination\LengthAwarePaginator($query->forPage($pageNumber, $perPage)->get(), $total, $perPage, $pageNumber);
+        $page = new \Illuminate\Pagination\LengthAwarePaginator($catalogQuery->page($query, $filters, $pageNumber, $perPage), $total, $perPage, $pageNumber);
         $batch = app(\App\Services\OnlineStore\StorefrontReadBatch::class);
         $batch->prepare($page->getCollection());
         try {

@@ -18,7 +18,7 @@ class EmployeePerformanceService
     {
         [$start, $end] = $this->range($period);
         $current = $this->calculate($employee, $start, $end);
-        $days = $start->diffInDays($end) + 1;
+        $days = (int) ($start->diffInDays($end, true)) + 1;
         $previousEnd = $start->copy()->subSecond();
         $previousStart = $previousEnd->copy()->subDays($days - 1)->startOfDay();
         $previous = $this->calculate($employee, $previousStart, $previousEnd);
@@ -452,7 +452,7 @@ class EmployeePerformanceService
                 ->where('created_at', '<=', $firstOutgoing->created_at)
                 ->latest('created_at')->value('created_at');
             if ($inboundAt) {
-                $responseMinutes->push(Carbon::parse($inboundAt)->diffInMinutes(Carbon::parse($firstOutgoing->created_at)));
+                $responseMinutes->push((int) (Carbon::parse($inboundAt)->diffInMinutes(Carbon::parse($firstOutgoing->created_at), true)));
             }
         }
 

@@ -16,7 +16,7 @@ final class OnlineStoreDashboardService
     public function summary(int $days = 30): array
     {
         $days = max(7, min(365, $days));
-        $tables = Schema::getTableListing();
+        $tables = Schema::getTableListing(schemaQualified: false);
         $metrics = app(StoreDashboardMetrics::class)->read($tables);
         $storeTotal = (float) $metrics->store_total;
         $storeCount = (int) $metrics->store_orders;

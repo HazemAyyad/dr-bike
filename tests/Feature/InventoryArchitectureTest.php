@@ -373,6 +373,7 @@ class InventoryArchitectureTest extends TestCase
     {
         $employeeUser = User::factory()->create(['type' => 'employee']);
         $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $this->grantInventorySection($employee);
         $costPermission = Permission::query()->firstOrCreate(
             ['name_en' => 'View Inventory Cost'],
             ['name' => 'عرض تكلفة المخزون'],
@@ -530,7 +531,8 @@ class InventoryArchitectureTest extends TestCase
         $this->assertTrue($summary['cost_coverage_complete']);
 
         $employeeUser = User::factory()->create(['type' => 'employee']);
-        EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $employee = EmployeeDetail::query()->create(['user_id' => $employeeUser->id]);
+        $this->grantInventorySection($employee);
         Sanctum::actingAs($employeeUser);
         $this->getJson('/api/product/stock/negative')->assertForbidden();
     }
@@ -1017,6 +1019,15 @@ class InventoryArchitectureTest extends TestCase
             ['key' => AppSetting::KEY_INVENTORY_COSTING_METHOD],
             ['value' => $method],
         );
+    }
+
+    private function grantInventorySection(EmployeeDetail $employee): void
+    {
+        $permission = Permission::query()->firstOrCreate(['name_en' => 'Stock'], ['name' => 'المخزون']);
+        EmployeePermission::query()->firstOrCreate([
+            'employee_id' => $employee->id,
+            'permission_id' => $permission->id,
+        ]);
     }
 
     private function product(int $stock = 0): Product

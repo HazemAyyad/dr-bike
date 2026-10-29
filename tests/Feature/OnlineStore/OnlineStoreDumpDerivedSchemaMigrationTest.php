@@ -21,17 +21,50 @@ class OnlineStoreDumpDerivedSchemaMigrationTest extends TestCase
     {
         $this->assertTrue(Schema::hasTable('sales_orders'));
         $this->assertTrue(Schema::hasTable('products'));
-        $this->assertFalse(Schema::hasColumn('sales_orders', 'origin'));
-
+        $alreadyHasOrigin = Schema::hasColumn('sales_orders', 'origin');
         $historicalCount = DB::table('sales_orders')->count();
+        $originsBefore = $alreadyHasOrigin
+            ? DB::table('sales_orders')->orderBy('id')->pluck('origin', 'id')->all()
+            : null;
 
         foreach ($this->phaseTwoMigrationFiles() as $file) {
-            (require $file)->up();
+            $alreadyApplied = Schema::hasTable('migrations')
+                && DB::table('migrations')->where('migration', basename($file, '.php'))->exists();
+            if (! $alreadyApplied) {
+                (require $file)->up();
+            }
         }
 
-        $this->assertSame($historicalCount, DB::table('sales_orders')->where('origin', 'admin')->count());
+        $this->assertSame($historicalCount, DB::table('sales_orders')->count());
+        if ($originsBefore !== null) {
+            $this->assertSame($originsBefore, DB::table('sales_orders')->orderBy('id')->pluck('origin', 'id')->all());
+        } else {
+            $this->assertSame($historicalCount, DB::table('sales_orders')->where('origin', 'admin')->count());
+        }
         $this->assertTrue(Schema::hasTable('online_store_listings'));
         $this->assertTrue(Schema::hasTable('online_store_legacy_checkout_attempts'));
+    }
+
+    public function test_catalog_and_administration_reads_work_against_the_restored_schema(): void
+    {
+        \Illuminate\Support\Facades\Http::preventStrayRequests();
+        $request = \Illuminate\Http\Request::create('/OnlineStore/Catalog', 'GET', ['per_page' => 2]);
+        $response = app(\App\Http\Controllers\API\Store\StoreItemsController::class)
+            ->catalog($request, app(\App\Services\OnlineStore\StoreCatalogQuery::class));
+        $this->assertSame(200, $response->getStatusCode());
+        $payload = $response->getData(true);
+        $this->assertIsArray($payload['rows']);
+        $this->assertLessThanOrEqual(2, count($payload['rows']));
+        $this->assertGreaterThanOrEqual(0, $payload['paginationInfo']['totalRowsCount']);
+
+        $dashboard = app(\App\Services\OnlineStore\OnlineStoreDashboardService::class)->summary();
+        $this->assertTrue($dashboard['pending_reviews']['available']);
+        $this->assertTrue($dashboard['debt_activity']['available']);
+        $this->assertSame(DB::table('sales_orders')->where('origin', 'store')->count(), $dashboard['orders']['store_count']);
+        $report = app(\App\Services\OnlineStore\OnlineStoreReportService::class)->report(['origin' => 'store']);
+        $this->assertSame($dashboard['orders']['store_count'], $report['orders']['count']);
+        $this->assertSame($dashboard['orders']['store_total'], $report['orders']['total']);
+        $this->assertIsArray(app(\App\Services\CashboxReportService::class)->permanentBoxes()->all());
     }
 
     private function phaseTwoMigrationFiles(): array

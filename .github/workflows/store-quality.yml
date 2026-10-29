@@ -37,10 +37,11 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
-          extensions: pdo_mysql, mbstring, gd, zip, bcmath, intl
+          extensions: pdo_mysql, pdo_sqlite, mbstring, gd, zip, bcmath, intl
           coverage: none
       - run: composer install --no-interaction --prefer-dist
-      - run: php vendor/bin/phpunit --no-coverage --exclude-group performance,schema tests/Unit/OnlineStore tests/Feature/OnlineStore
+      - name: Store, administration and accounting regressions
+        run: php vendor/bin/phpunit --no-coverage --exclude-group performance --exclude-group schema tests/Unit tests/Feature
       - name: Schema migration and rollback checks
         run: php vendor/bin/phpunit --no-coverage --group schema tests/Feature/OnlineStore
       - name: Catalog and administration performance

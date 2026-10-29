@@ -172,7 +172,7 @@ class FingerprintAttendanceProcessor
             return false;
         }
 
-        return Carbon::parse($last->scanned_at)->diffInMinutes($scanAt) < $dedup;
+        return (int) (Carbon::parse($last->scanned_at)->diffInMinutes($scanAt, true)) < $dedup;
     }
 
     /**
@@ -351,7 +351,7 @@ class FingerprintAttendanceProcessor
             return false;
         }
 
-        return abs($scheduledEnd->diffInMinutes($scanAt, false)) <= $window;
+        return abs((int) ($scheduledEnd->diffInMinutes($scanAt, false))) <= $window;
     }
 
     /**

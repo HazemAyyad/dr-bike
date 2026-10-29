@@ -17,6 +17,9 @@ return [
 
     'default' => env('CACHE_DRIVER', 'file'),
 
+    // Cached application payloads are scalars and arrays, never PHP objects.
+    'serializable_classes' => false,
+
     /*
     |--------------------------------------------------------------------------
     | Cache Stores
