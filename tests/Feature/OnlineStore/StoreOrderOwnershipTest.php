@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\OnlineStore;
 
+use App\Enums\SalesOrderStatus;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
 use App\Models\SalesOrderShiplyEvent;
@@ -54,6 +55,65 @@ class StoreOrderOwnershipTest extends TestCase
         $actor = OnlineStoreFixtureFactory::createStoreActor();
         $token = StoreUser::query()->findOrFail($actor->id)->createToken('fixture-store')->plainTextToken;
         $this->withToken($token)->postJson('/Orders/GetAllOrdersByUserId?userId='.($actor->id + 1), [])->assertNotFound();
+    }
+
+    public function test_store_history_keeps_every_in_progress_status_in_current_and_exposes_actual_status(): void
+    {
+        $admin = OnlineStoreFixtureFactory::createAdminActor();
+        $actor = OnlineStoreFixtureFactory::createStoreActor();
+        $other = OnlineStoreFixtureFactory::createStoreActor();
+        $customer = OnlineStoreFixtureFactory::createCustomer();
+        $otherCustomer = OnlineStoreFixtureFactory::createCustomer();
+        $identity = app(StoreIdentityService::class);
+        $identity->save($admin, $actor, ['role' => 'customer', 'customer_id' => $customer->id, 'account_source' => 'admin_app', 'status' => 'active']);
+        $identity->save($admin, $other, ['role' => 'customer', 'customer_id' => $otherCustomer->id, 'account_source' => 'admin_app', 'status' => 'active']);
+        $token = StoreUser::query()->findOrFail($actor->id)->createToken('fixture-store')->plainTextToken;
+        $orders = [];
+        foreach (SalesOrderStatus::cases() as $status) {
+            $orders[$status->value] = SalesOrder::query()->forceCreate([
+                'serial_number' => 'STATUS-'.$status->value,
+                'origin' => 'store', 'origin_user_id' => $actor->id,
+                'customer_id' => $customer->id,
+                'client_request_id' => 'status-'.$status->value,
+                'status' => $status->value, 'subtotal' => 0, 'discount' => 0,
+                'calculated_total' => 0, 'total' => 0,
+            ]);
+        }
+        SalesOrder::query()->forceCreate([
+            'serial_number' => 'OTHER-STATUS', 'origin' => 'store',
+            'origin_user_id' => $other->id, 'client_request_id' => 'other-status',
+            'customer_id' => $otherCustomer->id,
+            'status' => 'confirmed', 'subtotal' => 0, 'discount' => 0,
+            'calculated_total' => 0, 'total' => 0,
+        ]);
+        $orders['confirmed']->statusLogs()->create([
+            'from_status' => 'unconfirmed', 'to_status' => 'confirmed', 'user_id' => $actor->id,
+        ]);
+
+        $current = $this->withToken($token)
+            ->postJson('/Orders/GetAllOrdersByUserId?statusOrder=New', [])
+            ->assertOk()->json('rows');
+        $currentStatuses = [
+            'unconfirmed', 'confirmed', 'ready', 'postponed', 'with_delivery',
+            'review', 'stuck', 'returned', 'partial_delivered', 'partial_return', 'alternative_return',
+        ];
+        $this->assertEqualsCanonicalizing($currentStatuses, array_column($current, 'salesOrderStatus'));
+        $this->assertSame(['New'], array_values(array_unique(array_column($current, 'status'))));
+        $confirmed = collect($current)->firstWhere('id', $orders['confirmed']->id);
+        $this->assertSame('unconfirmed', $confirmed['statusLogs'][0]['fromSalesOrderStatus']);
+        $this->assertSame('confirmed', $confirmed['statusLogs'][0]['toSalesOrderStatus']);
+
+        $completed = $this->withToken($token)
+            ->postJson('/Orders/GetAllOrdersByUserId?statusOrder=Done', [])
+            ->assertOk()->json('rows');
+        $this->assertEqualsCanonicalizing(['delivered', 'archived'], array_column($completed, 'salesOrderStatus'));
+        $this->assertSame(['Done'], array_values(array_unique(array_column($completed, 'status'))));
+
+        $this->withToken($token)->postJson('/Orders/GetAllOrdersByUserId?statusOrder=Canceled', [])
+            ->assertOk()->assertJsonCount(1, 'rows')
+            ->assertJsonPath('rows.0.id', $orders['canceled']->id)
+            ->assertJsonPath('rows.0.status', 'Canceled')
+            ->assertJsonPath('rows.0.salesOrderStatus', 'canceled');
     }
 
     public function test_owned_cancel_uses_existing_status_log_and_preserves_delivery_and_shiply_evidence(): void

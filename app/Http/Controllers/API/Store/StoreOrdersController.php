@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\API\Store;
 
+use App\Enums\SalesOrderStatus;
 use App\Models\Store\StoreSalesOrder;
 use App\Models\Store\StoreSalesOrderItem;
 use App\Models\User;
@@ -95,7 +96,7 @@ class StoreOrdersController extends StoreBaseController
             ->orderByDesc('id');
 
         if ($status !== null && $status !== '') {
-            $query->where('status', $this->toSalesOrderStatus($status));
+            $query->whereIn('status', $this->salesOrderStatusesForFilter($status));
         }
 
         $rows = $query->limit(200)->get()->map(fn (StoreSalesOrder $order) => $this->orderPayload($order, ['customerId' => $actor->id]));
@@ -175,6 +176,7 @@ class StoreOrdersController extends StoreBaseController
             'cityId' => $cityId,
             'address' => (string) ($order->customer_address ?? $fallback['address'] ?? ''),
             'status' => $this->fromSalesOrderStatus($order->status),
+            'salesOrderStatus' => (string) $order->status,
             'isWholesale' => $order->partner_type === 'seller',
             'priceDelivery' => (float) ($order->customer_delivery_fee ?? 0),
             'totalPriceWithDiscound' => max(0, $subtotal - $discount),
@@ -193,6 +195,8 @@ class StoreOrdersController extends StoreBaseController
                 ->map(fn ($log) => [
                     'fromStatus' => $this->fromSalesOrderStatus($log->from_status),
                     'toStatus' => $this->fromSalesOrderStatus($log->to_status),
+                    'fromSalesOrderStatus' => (string) ($log->from_status ?? ''),
+                    'toSalesOrderStatus' => (string) $log->to_status,
                     'note' => (string) ($log->note ?? ''),
                     'userName' => (string) ($log->user?->name ?? ''),
                     'createdAt' => $this->dateString($log->created_at),
@@ -289,19 +293,19 @@ class StoreOrdersController extends StoreBaseController
         ];
     }
 
-    private function toSalesOrderStatus($status): string
+    private function salesOrderStatusesForFilter($status): array
     {
         return match (strtolower((string) $status)) {
-            'done', 'completed', 'complete', 'delivered' => 'delivered',
-            'canceled', 'cancelled', 'cancel', 'ملغي' => 'canceled',
-            default => 'unconfirmed',
+            'done', 'completed', 'complete', 'delivered' => ['delivered', 'archived'],
+            'canceled', 'cancelled', 'cancel', 'ملغي' => ['canceled'],
+            default => array_values(array_diff(SalesOrderStatus::listTabValues(), ['delivered', 'archived', 'canceled'])),
         };
     }
 
     private function fromSalesOrderStatus(?string $status): string
     {
         return match ($status) {
-            'delivered' => 'Done',
+            'delivered', 'archived' => 'Done',
             'canceled' => 'Canceled',
             default => 'New',
         };
