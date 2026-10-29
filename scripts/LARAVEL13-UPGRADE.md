@@ -162,4 +162,41 @@ The remaining Reverb gate is the hosting WebSocket/proxy/worker environment.
 GitHub CLI is unavailable on this host and no remote workflow result has been
 claimed. The local result is recorded in the task's `reverb-local-result.json`.
 
+### Hosting inspection, 29 October 2026
+
+Read-only SSH authentication succeeded using the previously saved encrypted
+credential. The earlier failed default-key attempt did not establish that saved
+access was unavailable. No credentials were copied into the repository or shown.
+
+- Production's lock still records Laravel `v10.48.29`. Both its HTTP response
+  header and default CLI report PHP `8.2.35` (`/opt/alt/php82/usr/bin/php`). The
+  upgraded branch has not been deployed.
+- PHP `8.3.36` is already installed at `/opt/alt/php83/usr/bin/php`. Its required
+  extensions are present except that `sodium` is not enabled by default. The
+  version-specific `sodium.so` module exists.
+- A single-process invocation with `-d extension=sodium` loaded sodium without
+  startup warnings. Comparing that runtime with the new lock verified the PHP
+  constraints and required extension names of all 145 production packages; none
+  were missing/incompatible. Extension-version constraints were not independently
+  evaluated by this name/presence check.
+- Process functions, symlink support, stream sockets, process-control signals and
+  sodium signing functions are available under the tested PHP 8.3 invocation.
+- `crontab -l` is unavailable in this SSH environment (exit 127). This does not
+  show whether hPanel's cron jobs exist or run; inspect their entries and logs in
+  hPanel before release. The hosting WebSocket proxy/worker was not started or
+  reconfigured during this read-only inspection.
+
+Before any separately authorized release, select PHP 8.3 and enable sodium for
+the website's PHP runtime. Configure scheduler/worker/Composer commands to use
+the intended PHP 8.3 binary consistently; the default `php` is still 8.2. For a
+reviewed command that needs process-local sodium, the verified invocation prefix
+is `/opt/alt/php83/usr/bin/php -d extension=sodium`. This is not a substitute for
+enabling the extension in the website's PHP configuration. Do not deploy the
+Laravel 13 vendor/code to the current PHP 8.2 website.
+
+No PHP settings, cron entries, application files, packages or production database
+were changed during the hosting inspection. Local diagnostic records:
+`storage/logs/hosting-platform-readonly.json` and
+`storage/logs/hosting-lock-platform-check.json`.
+
 There is no production, phone, APK, or remote CI acceptance in this branch yet.
