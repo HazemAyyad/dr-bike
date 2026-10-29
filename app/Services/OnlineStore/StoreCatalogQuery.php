@@ -90,11 +90,32 @@ final class StoreCatalogQuery
 
     public function count(Builder $query, array $filters): int
     {
+        return (int) $this->projection($query, $filters)->reorder()->toBase()->getCountForPagination();
+    }
+
+    public function page(Builder $query, array $filters, int $page, int $perPage): \Illuminate\Database\Eloquent\Collection
+    {
+        // Sort/filter narrow identities first. Large translations and correlated
+        // review summaries only need loading for the selected page.
+        $ids = $this->projection($query, $filters, true)->forPage($page, $perPage)
+            ->get()->pluck('id')->all();
+        if ($ids === []) {
+            return new \Illuminate\Database\Eloquent\Collection;
+        }
+        $position = array_flip($ids);
+
+        return \App\Models\OnlineStore\OnlineStoreListing::query()->withPublishedReviewSummary()
+            ->whereKey($ids)->get()->sortBy(fn ($listing) => $position[$listing->id])->values();
+    }
+
+    private function projection(Builder $query, array $filters, bool $forPage = false): Builder
+    {
         $required = [];
         if (filter_var($filters['availableOnly'] ?? false, FILTER_VALIDATE_BOOL)) {
             $required[] = 'catalog_available_qty';
         }
-        if (isset($filters['minPrice']) || isset($filters['maxPrice']) || filter_var($filters['onSale'] ?? false, FILTER_VALIDATE_BOOL)) {
+        if (isset($filters['minPrice']) || isset($filters['maxPrice']) || filter_var($filters['onSale'] ?? false, FILTER_VALIDATE_BOOL)
+            || ($forPage && in_array($filters['sort'] ?? '', ['price_asc', 'price_desc'], true))) {
             $required[] = 'catalog_price';
         }
         if (filter_var($filters['onSale'] ?? false, FILTER_VALIDATE_BOOL)) {
@@ -103,7 +124,7 @@ final class StoreCatalogQuery
         $columns = $query->getQuery()->columns;
         $grammar = $query->getQuery()->getGrammar();
         $priceBindings = array_slice($query->getQuery()->getRawBindings()['select'], -2);
-        $count = (clone $query)->reorder()->select('online_store_listings.id');
+        $projection = (clone $query)->select('online_store_listings.id');
         foreach ($columns as $column) {
             if (! $column instanceof \Illuminate\Database\Query\Expression) {
                 continue;
@@ -111,12 +132,12 @@ final class StoreCatalogQuery
             $sql = $column->getValue($grammar);
             foreach ($required as $alias) {
                 if (str_ends_with($sql, ' AS '.$alias)) {
-                    $count->selectRaw($sql, $alias === 'catalog_price' && str_contains($sql, '?') ? $priceBindings : []);
+                    $projection->selectRaw($sql, $alias === 'catalog_price' && str_contains($sql, '?') ? $priceBindings : []);
                 }
             }
         }
 
-        return (int) $count->toBase()->getCountForPagination();
+        return $projection;
     }
 
     private function requireReadyContent(Builder $query): void
