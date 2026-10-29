@@ -93,13 +93,53 @@ Official transition references: [Laravel 11](https://laravel.com/docs/11.x/upgra
   or PHPUnit notices; one dump-dependent case skipped. Log:
   `storage/logs/framework-functional-verified.log`.
 - Independent fresh schema: 1 test / 81 assertions passed on
-  `doctor_bike_laravel13_schema_test`; schema rollback and performance checks
-  are recorded separately. Composer audit reported no known advisories.
+  `doctor_bike_laravel13_schema_test`; full schema/rollback group passed
+  5 tests / 90 assertions. Composer audit reported no known advisories.
 - Administration baseline on Laravel 10 had 10 errors and 7 failures across 675
   cases. Test fixtures were corrected for missing audit tables, receipt identity,
   timestamps, future-task dates, Windows fake-upload handles, inventory route
   permissions and valid opening-stock cost coverage. Assertions were retained.
 - The latest focused inventory/invoice regression run passed 28 tests / 198
   assertions. Legacy schema preservation/idempotency passed 2 tests / 8 assertions.
+- The user supplied the 28 October database export. Its original SHA-256 is
+  `0e6d8563055c3ba8bcb20c2d2aca7076996493546328f113f9de1fe38cb68050`.
+  A separate disposable local restore contains 289 tables. Three MariaDB text
+  default literals required expression parentheses for MySQL 8; the original
+  export and all row values were left unchanged. A temporary import account had
+  privileges only on that disposable database and was removed after import.
+- The restored export already recorded all 432 prior migrations. The only pending
+  migration was the separately committed fresh-catalog compatibility repair.
+  After applying it locally, and again after catalog/dashboard/report/cashbox
+  reads, fingerprints of every original column in 288 business tables and
+  273677 rows matched the restored baseline. The migration ledger was the only
+  table excluded from row fingerprints. No customer values or credentials are
+  included in this repository.
+- Dump-derived migration and runtime contracts: 2 tests / 18 assertions passed.
+  The test supports both a historical pre-store schema and an already upgraded
+  export, respecting its recorded migrations and existing order origins.
+- Two performance runs overlapped schema/import verification and exceeded the
+  unchanged two-second threshold. They are failed checks, not acceptance results.
+  A further unloaded run still failed the catalog gate (p95 5.199s), while the
+  administration/report case passed at 0.640s with 29 queries. Query profiling
+  located the catalog bottleneck in wide page selection before sorting.
+- Catalog page selection now sorts/filters narrow listing identities and loads
+  full translated payloads and review aggregates only for the selected page.
+  Filters, readiness and live stock/price authorities remain unchanged. The
+  focused pagination/authority suite passed 12 tests / 108 assertions, including
+  stable order and published-only review aggregation. The optimized 10000-product
+  case passed 82 assertions at p95 0.667s / 21 queries / 20 samples. The two-second
+  gate was not relaxed. Log: `storage/logs/framework-catalog-optimized-performance.log`.
+- Final complete functional run after catalog optimization: 685 tests / 4522
+  assertions, no failures, errors or PHPUnit notices; the two dump-only cases
+  were skipped in this synthetic suite and passed separately against the supplied
+  export. Log: `storage/logs/framework-functional-release.log`.
+
+Local changes are committed independently: fresh-schema repair `95e6a9f`,
+framework upgrade `f0bf0ee`, catalog page optimization `b0eb051`. The primary
+Laravel checkout and production have not been advanced to this upgrade branch.
+
+Outstanding acceptance: hosting PHP/extensions, real Reverb and notification
+delivery, remote CI, user-owned APK/phone checks, Apple validation, production
+backup/restore and the separately authorized release observation window.
 
 There is no production, phone, APK, or remote CI acceptance in this branch yet.
