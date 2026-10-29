@@ -142,4 +142,24 @@ Outstanding acceptance: hosting PHP/extensions, real Reverb and notification
 delivery, remote CI, user-owned APK/phone checks, Apple validation, production
 backup/restore and the separately authorized release observation window.
 
+### Local Reverb and scheduler runtime check
+
+The installed Reverb server was started on a temporary loopback-only port with
+random disposable credentials and stopped after verification. A real WebSocket
+client connected, obtained authorization through the application's registered
+private user-channel callback, subscribed successfully, and received an event
+sent through Laravel's Reverb broadcaster. Authorization for a different user's
+private channel was rejected. The probe used in-memory synthetic user identities;
+it sent no FCM, email, Shiply, or production WebSocket traffic.
+
+The console kernel registered 24 schedules with valid cron expressions. Command
+registration and scheduling were checked for database backup, checkout-attempt
+purging, store low-stock notification, fingerprint processing and Shiply address
+synchronization. No scheduled command was executed. This proves local runtime
+registration, not that production cron/workers or external delivery are healthy.
+
+The remaining Reverb gate is the hosting WebSocket/proxy/worker environment.
+GitHub CLI is unavailable on this host and no remote workflow result has been
+claimed. The local result is recorded in the task's `reverb-local-result.json`.
+
 There is no production, phone, APK, or remote CI acceptance in this branch yet.
