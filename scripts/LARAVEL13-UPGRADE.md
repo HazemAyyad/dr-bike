@@ -138,9 +138,10 @@ Local changes are committed independently: fresh-schema repair `95e6a9f`,
 framework upgrade `f0bf0ee`, catalog page optimization `b0eb051`. The primary
 Laravel checkout and production have not been advanced to this upgrade branch.
 
-Outstanding acceptance: hosting PHP/extensions, real Reverb and notification
-delivery, remote CI, user-owned APK/phone checks, Apple validation, production
+Outstanding acceptance: website PHP 8.3/sodium activation, hosting Reverb and
+notification delivery, user-owned APK/phone checks, Apple validation, production
 backup/restore and the separately authorized release observation window.
+Read-only hosting inspection and remote CI results are recorded below.
 
 ### Local Reverb and scheduler runtime check
 
@@ -159,8 +160,7 @@ synchronization. No scheduled command was executed. This proves local runtime
 registration, not that production cron/workers or external delivery are healthy.
 
 The remaining Reverb gate is the hosting WebSocket/proxy/worker environment.
-GitHub CLI is unavailable on this host and no remote workflow result has been
-claimed. The local result is recorded in the task's `reverb-local-result.json`.
+The local result is recorded in the task's `reverb-local-result.json`.
 
 ### Hosting inspection, 29 October 2026
 
@@ -199,4 +199,21 @@ were changed during the hosting inspection. Local diagnostic records:
 `storage/logs/hosting-platform-readonly.json` and
 `storage/logs/hosting-lock-platform-check.json`.
 
-There is no production, phone, APK, or remote CI acceptance in this branch yet.
+### Verified GitHub quality checks
+
+The independent branches were pushed through the existing saved HTTPS access.
+No primary branch was merged and no production release was performed.
+
+| Candidate | Tested revision | Result |
+| --- | --- | --- |
+| Laravel 13 | `3be9de4671b67458bc9d2889c644530e08a913eb` | [Passed](https://github.com/HazemAyyad/dr-bike/actions/runs/40901143034): functional, schema/rollback and performance |
+| Stable Laravel 10 hardening | `09bdc1c8a74e2085514882cba720fc3e094c17ed` | [Passed](https://github.com/HazemAyyad/dr-bike/actions/runs/40902196424) |
+| Flutter store | `d937cd83ea701f43ba9977896e546773e778ecbe` | [Passed](https://github.com/HazemAyyad/dr-bike-store/actions/runs/40901466024): analysis and tests; APK job skipped |
+
+The stable Laravel 10 branch runs CI on PHP 8.2 because its locked mPDF version
+does not support PHP 8.3. This upgrade branch keeps PHP 8.3 and `pdo_sqlite` when
+integrating the stable CI correction. The stable branch remains independently
+releasable. Do not copy its PHP 8.2 workflow setting onto Laravel 13.
+
+These checks do not establish production, phone, final APK or external delivery
+acceptance. See [the staged release checklist](STORE-RELEASE.md) for remaining gates.
