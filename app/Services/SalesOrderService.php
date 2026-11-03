@@ -20,6 +20,7 @@ use App\Models\SizeColor;
 use App\Models\User;
 use App\Services\OnlineStore\CouponService;
 use App\Support\ProductImageResolver;
+use App\Support\SaleAdditionalNotes;
 use App\Support\ShiplySettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -373,6 +374,7 @@ class SalesOrderService
                 'debt_id' => $data['debt_id'] ?? null,
                 'is_debt_collection' => (bool) ($data['is_debt_collection'] ?? false),
                 'notes' => $data['notes'] ?? null,
+                'additional_notes' => $data['additional_notes'] ?? [],
                 'reserves_stock' => (bool) ($data['reserve_stock'] ?? true),
                 'created_by' => $user->id,
                 'updated_by' => $user->id,
@@ -483,14 +485,28 @@ class SalesOrderService
                 'debt_id' => $data['debt_id'] ?? $order->debt_id,
                 'is_debt_collection' => (bool) ($data['is_debt_collection'] ?? $order->is_debt_collection),
                 'notes' => $data['notes'] ?? $order->notes,
+                'additional_notes' => $data['additional_notes'] ?? $order->additional_notes,
                 'reserves_stock' => (bool) ($data['reserve_stock'] ?? $order->reserves_stock),
                 'updated_by' => $user->id,
             ]);
 
             if (! $order->is_debt_collection && array_key_exists('items', $data)) {
+                // Restore real stock before replacing a confirmed product order
+                // with a service-only order; the old item rows own the quantities.
+                if (empty($data['items']) && $order->stock_deducted_at) {
+                    $this->stockService->restoreDispatchedOrder($order, (int) $user->id);
+                    $order->update(['stock_deducted_at' => null]);
+                }
+                $wasServiceOnly = $order->items()->where('is_hidden', false)->doesntExist();
                 $order->items()->delete();
                 $order->packages()->delete();
                 $this->syncItems($order, $data['items'] ?? [], $data['packages'] ?? []);
+                if ($wasServiceOnly && ! empty($data['items'])
+                    && in_array($order->statusEnum(), [SalesOrderStatus::Confirmed, SalesOrderStatus::Ready], true)) {
+                    // Existing confirmed service orders must dispatch newly added
+                    // products through the same stock path as confirmed orders.
+                    $order->update(['stock_deducted_at' => now()]);
+                }
             }
 
             $freshOrder = $order->fresh(['items.product']);
@@ -542,7 +558,8 @@ class SalesOrderService
             });
         }
 
-        if ($order->items->where('is_hidden', false)->isEmpty()) {
+        if ($order->items->where('is_hidden', false)->isEmpty()
+            && $order->additional_notes_total <= 0) {
             throw ValidationException::withMessages([
                 'items' => [__('messages.sales_order_requires_items')],
             ]);
@@ -575,7 +592,7 @@ class SalesOrderService
                 'status' => SalesOrderStatus::Confirmed->value,
                 'postponed_until' => null,
                 'postpone_reason' => null,
-                'stock_deducted_at' => now(),
+                'stock_deducted_at' => $order->items->where('is_hidden', false)->isNotEmpty() ? now() : null,
                 'updated_by' => $user->id,
             ]);
             $this->logStatus($order, $from, SalesOrderStatus::Confirmed->value, 'تأكيد الطلبية', $user->id);
@@ -822,6 +839,8 @@ class SalesOrderService
             'postponed_until' => $order->postponed_until?->toDateTimeString(),
             'postpone_reason' => $order->postpone_reason,
             'notes' => $order->notes,
+            'additional_notes' => $order->additional_notes ?? [],
+            'additional_notes_total' => $order->additional_notes_total,
             'note_log' => $order->noteLog->map(fn ($note) => [
                 'id' => $note->id,
                 'scope' => $note->scope,
@@ -1100,9 +1119,12 @@ class SalesOrderService
             'debt_id' => 'nullable|integer|exists:debts,id',
             'is_debt_collection' => 'nullable|boolean',
             'notes' => 'nullable|string|max:2000',
+            'additional_notes' => 'nullable|array',
+            'additional_notes.*.text' => 'nullable|string',
+            'additional_notes.*.amount' => 'nullable|numeric|min:0',
             'parent_order_id' => 'nullable|integer|exists:sales_orders,id',
             'root_order_id' => 'nullable|integer|exists:sales_orders,id',
-            'items' => $isUpdate ? 'nullable|array' : 'required_without:is_debt_collection|array',
+            'items' => 'nullable|array',
             'items.*.product_id' => 'required_with:items|integer|exists:products,id',
             'items.*.size_id' => 'nullable|integer',
             'items.*.size_color_id' => 'nullable|integer',
@@ -1118,6 +1140,9 @@ class SalesOrderService
         ];
 
         $data = $request->validate($rules);
+        if (array_key_exists('additional_notes', $data)) {
+            $data['additional_notes'] = SaleAdditionalNotes::normalize($data['additional_notes']);
+        }
 
         if (! empty($data['partner_type']) && ! empty($data['partner_id'])) {
             $customerAddressProvided = array_key_exists('customer_address', $data);
@@ -1173,6 +1198,20 @@ class SalesOrderService
                 throw ValidationException::withMessages([
                     'debt_id' => [__('messages.sales_order_debt_required')],
                 ]);
+            }
+        } else {
+            $items = array_key_exists('items', $data)
+                ? ($data['items'] ?? [])
+                : ($order?->items?->toArray() ?? []);
+            $hasProducts = collect($items)->contains(fn ($item) => ! ($item['is_hidden'] ?? false));
+            $notes = $data['additional_notes'] ?? $order?->additional_notes ?? [];
+            if (! $hasProducts && SaleAdditionalNotes::total($notes) <= 0) {
+                throw ValidationException::withMessages([
+                    'items' => ['أضف منتجًا أو ملاحظة خدمة مع مبلغها.'],
+                ]);
+            }
+            if (! $hasProducts) {
+                $data['reserve_stock'] = false;
             }
         }
 
@@ -1258,7 +1297,7 @@ class SalesOrderService
             $subtotal += round($qty * $price, 2);
         }
 
-        if (empty($data['items']) && $order) {
+        if (! array_key_exists('items', $data) && $order) {
             $subtotal = (float) $order->subtotal;
         }
 
@@ -1271,7 +1310,10 @@ class SalesOrderService
                 ? (float) $order->customer_delivery_fee
                 : $this->resolveDeliveryFee($data));
 
-        $calculatedTotal = max(0, round($subtotal + $deliveryFee - $discount, 2));
+        $notesTotal = SaleAdditionalNotes::total(
+            $data['additional_notes'] ?? $order?->additional_notes ?? []
+        );
+        $calculatedTotal = max(0, round($subtotal + $notesTotal + $deliveryFee - $discount, 2));
         // The payable total has one authoritative formula. Any negotiated
         // reduction belongs in discount, not in a second editable total.
         $total = $calculatedTotal;

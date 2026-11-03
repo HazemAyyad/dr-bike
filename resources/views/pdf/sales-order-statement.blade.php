@@ -49,9 +49,27 @@
         </tbody>
     </table>
 
+    @if(!empty($order->additional_notes))
+        <h2>ملاحظات إضافية</h2>
+        <table>
+            <thead><tr><th>الملاحظة</th><th>السعر الإضافي</th></tr></thead>
+            <tbody>
+                @foreach($order->additional_notes as $note)
+                    <tr>
+                        <td>{{ $note['text'] ?: '—' }}</td>
+                        <td>{{ number_format($note['amount'], 2) }} ₪</td>
+                    </tr>
+                @endforeach
+            </tbody>
+        </table>
+    @endif
+
     <h2>الملخص</h2>
     <table>
         <tr><td>المجموع الفرعي</td><td>{{ number_format($order->subtotal, 2) }} ₪</td></tr>
+        @if($order->additional_notes_total > 0)
+            <tr><td>مجموع الملاحظات</td><td>{{ number_format($order->additional_notes_total, 2) }} ₪</td></tr>
+        @endif
         <tr><td>التوصيل</td><td>{{ number_format($order->customer_delivery_fee, 2) }} ₪</td></tr>
         <tr><td>الخصم</td><td>{{ number_format($order->discount, 2) }} ₪</td></tr>
         <tr><td><strong>الإجمالي</strong></td><td><strong>{{ number_format($order->total, 2) }} ₪</strong></td></tr>

@@ -1019,6 +1019,7 @@ class SalesOrderFulfillmentService
             'cost' => $first->unit_price,
             'discount' => $discount,
             'total_cost' => $orderTotal,
+            'additional_notes' => $order->additional_notes ?? [],
             'notes' => $notes,
             'type' => 'normal',
             'payment_box_id' => $paymentBox['id'] ?? null,

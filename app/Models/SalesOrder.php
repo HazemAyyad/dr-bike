@@ -72,6 +72,7 @@ class SalesOrder extends Model
         'sales_daily_session_id',
         'archived_at',
         'notes',
+        'additional_notes',
         'created_by',
         'updated_by',
     ];
@@ -88,6 +89,7 @@ class SalesOrder extends Model
         'customer_debt_balance' => 'float',
         'carrier_receivable_balance' => 'float',
         'address_snapshot' => 'array',
+        'additional_notes' => 'array',
         'payment_amount' => 'float',
         'delivery_settled_amount' => 'float',
         'is_debt_collection' => 'boolean',
@@ -101,6 +103,11 @@ class SalesOrder extends Model
         'stuck_follow_up_at' => 'datetime',
         'stuck_resolved_at' => 'datetime',
     ];
+
+    public function getAdditionalNotesTotalAttribute(): float
+    {
+        return \App\Support\SaleAdditionalNotes::total($this->additional_notes ?? []);
+    }
 
     public function statusEnum(): SalesOrderStatus
     {
