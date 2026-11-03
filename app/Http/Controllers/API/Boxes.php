@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Box;
 use App\Models\BoxLog;
 use App\Services\BoxAccessService;
+use App\Services\BoxLogBalanceService;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -153,7 +154,8 @@ class Boxes extends Controller
                     ->with('fromBox:id,name,total,type')
                     ->with('toBox:id,name,total,type')
                     ->with('box:id,name,total,type')
-                    ->get();         
+                    ->orderBy('created_at')->orderBy('id')->get();
+                app(BoxLogBalanceService::class)->attach($logs, [(int) $box->id], (int) $box->id);
                 $boxDetails =[
                         'box_name'=> $box->name,
                         'box_type'=> $box->type,

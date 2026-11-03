@@ -7,6 +7,7 @@ use App\Models\Box;
 use App\Models\BoxLog;
 use App\Models\MaintenanceDailyBoxLog;
 use App\Services\BoxReportService;
+use App\Services\BoxLogBalanceService;
 use App\Services\BoxAccessService;
 use ArPHP\I18N\Arabic;
 use Barryvdh\DomPDF\Facade\Pdf;
@@ -134,8 +135,9 @@ class BoxLogs extends Controller
             ->with('fromBox:id,name,total,type')
             ->with('toBox:id,name,total,type')
             ->with('box:id,name,total,type')
-            ->get()
-            ->map(fn (BoxLog $log) => $log->toArray());
+            ->get();
+            $boxLogs = app(BoxLogBalanceService::class)->attach($boxLogs, $visibleIds)
+                ->map(fn (BoxLog $log) => $log->toArray());
 
             $maintenanceLogs = MaintenanceDailyBoxLog::query()
                 ->when($visibleIds !== null, fn ($query) => $query->whereIn('box_id', $visibleIds))
