@@ -19,7 +19,7 @@ final class StorefrontCatalogService
             ->withPublishedReviewSummary()
             ->where('status', 'published')
             ->where('readiness_state', 'complete')
-            ->when($checkProduct, fn ($query) => $query->whereHas('product', fn (Builder $product) => $product->whereNull('deleted_at')))
+            ->when($checkProduct, fn ($query) => $query->whereHas('product', fn (Builder $product) => $product->whereNull('deleted_at')->where('is_sale_blocked', false)))
             ->whereExists(fn ($query) => $query->selectRaw('1')
                 ->from('online_store_category_listing as membership')
                 ->join('online_store_categories as category', 'category.id', '=', 'membership.online_store_category_id')

@@ -53,6 +53,7 @@ class OfferPackageController extends Controller
         try {
             $packages = OfferPackage::query()
                 ->where('is_active', true)
+                ->whereDoesntHave('items.product', fn ($query) => $query->where('is_sale_blocked', true))
                 ->with(['items.product'])
                 ->orderBy('name')
                 ->get()

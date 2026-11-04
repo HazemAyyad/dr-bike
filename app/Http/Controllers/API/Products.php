@@ -47,7 +47,7 @@ class Products extends Controller
                 ->keyBy('product_id');
         }
 
-        $products = Product::query()
+        $products = Product::query()->where('is_sale_blocked', false)
             ->with([
                 'projects:product_id,project_id',
                 'viewImages',
@@ -152,7 +152,7 @@ class Products extends Controller
         $stockService = app(ProductStockService::class);
         $settings = $this->personProductSettingsForRequest($request);
         $canViewCostPrice = $request->user()?->canViewInventoryCost() ?? false;
-        $products = Product::query()
+        $products = Product::query()->where('is_sale_blocked', false)
             ->with([
                 'projects:product_id,project_id',
                 'viewImages',

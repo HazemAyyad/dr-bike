@@ -34,6 +34,7 @@ class Product extends Model
         'nameEng',
         'nameAbree',
         'isShow',
+        'is_sale_blocked',
         'descriptionAr',
         'descriptionEng',
         'descriptionAbree',
@@ -69,6 +70,7 @@ class Product extends Model
     protected $hidden = ['wholesalePrice'];
 
     protected $casts = [
+        'is_sale_blocked' => 'boolean',
         'last_edit_marked_at' => 'datetime',
         'meta_catalog_last_synced_at' => 'datetime',
         'meta_catalog_payload' => 'array',

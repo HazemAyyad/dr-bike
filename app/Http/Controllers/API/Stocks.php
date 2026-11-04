@@ -115,10 +115,12 @@ class Stocks extends Controller
                 ->with(['viewImages', 'normalImages', 'image3d', 'storeSection:id,name', 'tags' => function ($q) {
                     $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                 }])
-                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at');
+                ->select('id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'created_at', 'updated_at', 'is_sale_blocked');
 
             ProductSearchFilter::apply($query, $request->input('search'));
             ProductStockStatusFilter::apply($query, $request->input('stock_status'));
+
+            \App\Support\ProductSaleStatusFilter::apply($query, $request->input('sale_status'));
 
             if ($request->filled('category_id')) {
                 $query->where('category_id', (int) $request->input('category_id'));
@@ -1087,6 +1089,7 @@ class Stocks extends Controller
     {
         ProductSearchFilter::apply($query, $request->input('search'));
         ProductStockStatusFilter::apply($query, $request->input('stock_status'));
+        \App\Support\ProductSaleStatusFilter::apply($query, $request->input('sale_status'));
 
         if ($request->filled('category_id')) {
             $query->where('category_id', (int) $request->input('category_id'));
@@ -2129,6 +2132,7 @@ class Stocks extends Controller
             'category_id' => $product->category_id !== null ? (int) $product->category_id : null,
             'product_name' => $product->nameAr,
             'product_stock' => $product->stock,
+            'is_sale_blocked' => (bool) $product->is_sale_blocked,
             'product_code' => $product->product_code,
             'product_image' => $images['product_image'],
             'product_viewImages' => $images['product_viewImages'],
@@ -3364,7 +3368,9 @@ class Stocks extends Controller
                         $q->select('product_tags.id', 'product_tags.name', 'product_tags.color', 'product_tags.is_active');
                     },
                 ])
-                ->get(['id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'normailPrice']);
+                ->when(in_array($request->input('sale_status'), ['allowed', 'blocked'], true),
+                    fn ($query) => $query->where('is_sale_blocked', $request->input('sale_status') === 'blocked'))
+                ->get(['id', 'nameAr', 'stock', 'product_code', 'category_id', 'store_section_id', 'normailPrice', 'is_sale_blocked']);
 
             $canViewInventoryCost = $request->user()?->canViewInventoryCost() ?? false;
             $formatted = $products->map(function ($product) use ($canViewInventoryCost) {

@@ -12,7 +12,7 @@ final class StoreAvailabilityService
 
     public function resolve(?Product $product, ?OnlineStoreListing $listing = null): array
     {
-        if (! $product || ! $product->exists || $product->trashed()) {
+        if (! $product || ! $product->exists || $product->trashed() || $product->is_sale_blocked) {
             return ['visible' => false, 'purchasable' => false, 'available_qty' => 0, 'physical_stock' => 0, 'reserved_qty' => 0, 'variants' => []];
         }
         $batch = app(StorefrontReadBatch::class);

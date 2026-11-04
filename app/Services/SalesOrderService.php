@@ -339,6 +339,7 @@ class SalesOrderService
 
         return DB::transaction(function () use ($user, $data, $origin, $originUserId, $clientRequestId, $beforeCreationEffects, $beforeReservationEffects) {
             $this->lockOrderStockScope($data['items'] ?? []);
+            app(ProductSaleStatusService::class)->assertLinesAllowed($data['items'] ?? []);
             $totals = $this->calculateTotals($data);
             $customerSnapshot = $this->resolveCustomerSnapshot($data);
 
@@ -456,6 +457,10 @@ class SalesOrderService
         }
 
         return DB::transaction(function () use ($user, $order, $data, $totals, $customerSnapshot, $stockChanged) {
+            if (array_key_exists('items', $data)) {
+                $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
+                app(ProductSaleStatusService::class)->assertLinesAllowed($data['items'] ?? [], $order->items()->get());
+            }
             $order->update([
                 'customer_id' => $customerSnapshot['customer_id'],
                 'partner_type' => $data['partner_type'] ?? $order->partner_type,

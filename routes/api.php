@@ -1254,6 +1254,8 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Stock','refresh.to
     Route::get('/get/deleted/products' , [Stocks::class,'deletedProducts']);
     Route::get('/get/product/size-options' , [Stocks::class,'productSizeOptions']);
     Route::post('/get/product/details' , [Stocks::class,'showProduct']);
+    Route::post('/product/sale-status', [\App\Http\Controllers\API\ProductSaleStatusController::class, 'update'])
+        ->middleware('check.permission:Stock');
     Route::post('/edit/product' , [Stocks::class,'editProduct']);
     /** إنشاء/تعديل منتج بالحقول الكاملة + صور (مثل صفحة الاختبار): save_scope، وسائط multipart */
     Route::post('/create/product' , [Stocks::class,'createProduct']);

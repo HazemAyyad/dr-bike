@@ -1414,6 +1414,7 @@ public function store(Request $request)
         $stockService = app(ProductStockService::class);
 
         DB::beginTransaction();
+        app(\App\Services\ProductSaleStatusService::class)->assertInstantSaleAllowed($data, $replaceId);
         if ($replaceId > 0) {
             $beforeHistorySnapshot = app(InstantSaleHistoryService::class)->snapshot($replaceId);
             $this->prepareInstantSaleReplacement(
@@ -1662,7 +1663,7 @@ public function store(Request $request)
             $errors = $e->errors();
             $response = [
                 'status' => 'error',
-                'message' => __('messages.validation_failed'),
+                'message' => collect($errors)->flatten()->first() ?: __('messages.validation_failed'),
                 'errors' => $errors,
             ];
             $restorationContext = $this->restorationCostContext($errors);
@@ -1728,6 +1729,8 @@ public function store(Request $request)
             $beforeHistorySnapshot = null;
             $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
             $isClosedDayFinancialSettlement = $closedDayEditMode === 'today_financial_settlement';
+
+            app(\App\Services\ProductSaleStatusService::class)->assertInstantSaleAllowed($data, $replaceId);
 
             if ($replaceId > 0) {
                 $beforeHistorySnapshot = app(InstantSaleHistoryService::class)->snapshot($replaceId);
