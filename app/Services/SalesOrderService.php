@@ -439,6 +439,10 @@ class SalesOrderService
         $data = $this->validateOrderPayload($request, true, $order);
         $totals = $this->calculateTotals($data, $order);
         $customerSnapshot = $this->resolveCustomerSnapshot($data, $order);
+        $stockChanged = array_key_exists('items', $data)
+            || (! $order->stock_deducted_at
+                && array_key_exists('reserve_stock', $data)
+                && (bool) $data['reserve_stock'] !== (bool) $order->reserves_stock);
         if (array_key_exists('payment_amount', $data)) {
             $postedPayment = round((float) $order->settlements()
                 ->where('source', 'order_payment')
@@ -451,7 +455,7 @@ class SalesOrderService
             }
         }
 
-        return DB::transaction(function () use ($user, $order, $data, $totals, $customerSnapshot) {
+        return DB::transaction(function () use ($user, $order, $data, $totals, $customerSnapshot, $stockChanged) {
             $order->update([
                 'customer_id' => $customerSnapshot['customer_id'],
                 'partner_type' => $data['partner_type'] ?? $order->partner_type,
@@ -510,12 +514,16 @@ class SalesOrderService
             }
 
             $freshOrder = $order->fresh(['items.product']);
-            $this->guardReservedStockConflicts($freshOrder, $data);
-            $this->stockService->syncReservationsAfterEdit(
-                $freshOrder,
-                (int) $user->id,
-                $this->shouldAllowNegativeStock($data, $freshOrder)
-            );
+            // Delivery/customer updates must preserve the stock and cost
+            // movements already posted when this order was confirmed.
+            if ($stockChanged) {
+                $this->guardReservedStockConflicts($freshOrder, $data);
+                $this->stockService->syncReservationsAfterEdit(
+                    $freshOrder,
+                    (int) $user->id,
+                    $this->shouldAllowNegativeStock($data, $freshOrder)
+                );
+            }
             if ((bool) ($data['acknowledge_negative_stock'] ?? false)) {
                 $this->shortages->syncAndNotify(
                     $freshOrder->fresh(['items']),
