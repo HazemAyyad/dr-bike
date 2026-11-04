@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\ProductStockMovement;
 use App\Models\SizeColor;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -697,7 +698,14 @@ class InventoryCostingService
             $currencies = collect($variants)
                 ->filter(fn (array $row) => (float) $row['quantity_on_hand'] > self::EPSILON)
                 ->pluck('currency')->filter()->unique()->values();
-            $currency = $currencies->count() === 1 ? (string) $currencies->first() : 'mixed';
+            // Newly added colors have no stock yet. Keep the currency of any
+            // existing uncolored stock instead of treating an empty list as mixed.
+            if ($currencies->isEmpty()) {
+                $currencies = $this->ownedStockCurrencies($product);
+            }
+            $currency = $currencies->count() > 1
+                ? 'mixed'
+                : $this->normalizeCurrency($currencies->first());
             $currencyConsistent = $currencies->count() <= 1;
 
             return [
@@ -1115,7 +1123,18 @@ class InventoryCostingService
     public function assertCurrencyCompatible(Product $product, string $currency): void
     {
         $currency = $this->normalizeCurrency($currency);
-        $currencies = InventoryCostBalance::query()
+        $currencies = $this->ownedStockCurrencies($product);
+
+        if ($currencies->isNotEmpty() && ($currencies->count() > 1 || ! $currencies->contains($currency))) {
+            throw ValidationException::withMessages([
+                'currency' => ['لا يمكن جمع تكاليف مخزون بعملات مختلفة دون سعر تحويل محاسبي موثق.'],
+            ]);
+        }
+    }
+
+    private function ownedStockCurrencies(Product $product): Collection
+    {
+        return InventoryCostBalance::query()
             ->where('product_id', $product->id)
             ->where('quantity', '>', self::EPSILON)
             ->pluck('currency')
@@ -1125,12 +1144,6 @@ class InventoryCostingService
                 ->pluck('currency'))
             ->map(fn ($value) => $this->normalizeCurrency((string) $value))
             ->unique();
-
-        if ($currencies->isNotEmpty() && ($currencies->count() > 1 || ! $currencies->contains($currency))) {
-            throw ValidationException::withMessages([
-                'currency' => ['لا يمكن جمع تكاليف مخزون بعملات مختلفة دون سعر تحويل محاسبي موثق.'],
-            ]);
-        }
     }
 
     private function layerIdentityQuery(int $productId, ?int $sizeColorId): Builder

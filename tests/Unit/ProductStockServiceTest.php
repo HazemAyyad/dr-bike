@@ -146,6 +146,99 @@ class ProductStockServiceTest extends TestCase
         ]);
     }
 
+    public function test_zero_stock_colors_keep_the_uncolored_inventory_currency(): void
+    {
+        $product = $this->productWithEmptyColors();
+        DB::table('inventory_cost_layers')->insert([
+            'product_id' => $product->id,
+            'quantity' => 188,
+            'remaining_quantity' => 188,
+            'unit_cost' => 5,
+            'currency' => 'USD',
+            'source_type' => 'opening_stock_backfill',
+            'effective_at' => now(),
+        ]);
+        DB::table('inventory_cost_balances')->insert([
+            'product_id' => $product->id,
+            'identity_key' => 'product:178:variant:main',
+            'quantity' => 188,
+            'inventory_value' => 940,
+            'currency' => 'دولار',
+        ]);
+
+        $costing = app(InventoryCostingService::class);
+        $summary = $costing->productSummary($product);
+
+        $this->assertSame('دولار', $summary['currency']);
+        $this->assertSame(0.0, (float) $summary['quantity_on_hand']);
+        $costing->assertCurrencyCompatible($product, $summary['currency']);
+        $this->assertSame(188.0, (float) DB::table('inventory_cost_layers')->sum('remaining_quantity'));
+    }
+
+    public function test_empty_colors_without_inventory_default_to_shekels(): void
+    {
+        $summary = app(InventoryCostingService::class)->productSummary($this->productWithEmptyColors());
+
+        $this->assertSame('شيكل', $summary['currency']);
+        $this->assertTrue($summary['cost_coverage_complete']);
+    }
+
+    public function test_empty_colors_do_not_hide_genuinely_incompatible_inventory_currencies(): void
+    {
+        $product = $this->productWithEmptyColors();
+        foreach (['ILS', 'USD'] as $currency) {
+            DB::table('inventory_cost_layers')->insert([
+                'product_id' => $product->id,
+                'quantity' => 1,
+                'remaining_quantity' => 1,
+                'unit_cost' => 5,
+                'currency' => $currency,
+                'source_type' => 'opening_stock_backfill',
+                'effective_at' => now(),
+            ]);
+        }
+        $costing = app(InventoryCostingService::class);
+        $summary = $costing->productSummary($product);
+
+        $this->assertSame('mixed', $summary['currency']);
+        $this->assertFalse($summary['cost_coverage_complete']);
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $costing->assertCurrencyCompatible($product, $summary['currency']);
+    }
+
+    public function test_stock_adjustment_response_shows_the_specific_validation_error(): void
+    {
+        $this->productWithEmptyColors();
+        $request = \Illuminate\Http\Request::create('/api/product/stock/adjust', 'POST', [
+            'product_id' => 178,
+            'actual_quantity' => -1,
+            'reason' => 'جرد فعلي',
+        ]);
+
+        $response = app(\App\Http\Controllers\API\ProductStockController::class)->adjust($request);
+        $body = $response->getData(true);
+
+        $this->assertSame('error', $body['status']);
+        $this->assertSame($body['errors']['actual_quantity'][0], $body['message']);
+        $this->assertNotSame(__('messages.validation_failed'), $body['message']);
+    }
+
+    private function productWithEmptyColors(): Product
+    {
+        $product = Product::withoutEvents(fn () => Product::query()->create([
+            'id' => 178,
+            'product_code' => '000180',
+            'nameAr' => 'علاقة جوال المنيوم رخيص',
+            'stock' => 0,
+        ]));
+        DB::table('sizes')->insert(['id' => 329, 'itemId' => 178, 'size' => '1']);
+        foreach ([986, 987, 988] as $id) {
+            DB::table('size_colors')->insert(['id' => $id, 'sizeId' => 329, 'stock' => 0]);
+        }
+
+        return $product->fresh(['sizes.colorSizes']);
+    }
+
     public function test_explicit_destructive_reversal_can_leave_negative_stock_with_audited_movement(): void
     {
         $product = Product::withoutEvents(fn () => Product::query()->create([

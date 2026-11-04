@@ -160,7 +160,7 @@ class ProductStockController extends Controller
         } catch (ValidationException $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => __('messages.validation_failed'),
+                'message' => collect($e->errors())->flatten()->first() ?: __('messages.validation_failed'),
                 'errors' => $e->errors(),
             ], 200);
         } catch (QueryException $e) {
