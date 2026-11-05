@@ -64,6 +64,19 @@ class DebtLedgerLabelsTest extends TestCase
         $this->assertSame('قبضت', $labels['by_type']['customers']['taken_label']);
     }
 
+    public function test_appearance_is_saved_without_losing_existing_settings(): void
+    {
+        $response = $this->updatePreferences(['debt_ledger' => [
+            'taken_label' => 'قبضت',
+            'appearance' => ['payment_color' => '123456'],
+        ]], ['appearance' => ['receivable_label' => 'مطلوب لنا', 'receipt_color' => 'ABCDEF']]);
+        $labels = $response['data']['debt_ledger'];
+        $this->assertSame('قبضت', $labels['taken_label']);
+        $this->assertSame('123456', $labels['appearance']['payment_color']);
+        $this->assertSame('ABCDEF', $labels['appearance']['receipt_color']);
+        $this->assertSame('مطلوب لنا', $labels['appearance']['receivable_label']);
+    }
+
     private function updatePreferences(array $preferences, array $labels): array
     {
         $user = Mockery::mock(User::class)->makePartial();

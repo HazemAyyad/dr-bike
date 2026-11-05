@@ -59,8 +59,8 @@ class DebtLedgerShareWebController extends Controller
                 : 'جميع المعاملات',
             'detail_level' => $detailLevel,
             'source_details' => $this->reportSourceDetails($transactions, $detailLevel),
-            'taken_label' => 'إضافات للرصيد',
-            'given_label' => 'خصومات من الرصيد',
+            'taken_label' => $payload['taken_label'] ?? $this->ledger->takenLabel(scope: $this->ledger->labelScopeForPerson($customerId, $sellerId)),
+            'given_label' => $payload['given_label'] ?? $this->ledger->givenLabel(scope: $this->ledger->labelScopeForPerson($customerId, $sellerId)),
         ]);
     }
 

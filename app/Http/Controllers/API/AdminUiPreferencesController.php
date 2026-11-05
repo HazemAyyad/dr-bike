@@ -46,6 +46,15 @@ class AdminUiPreferencesController extends Controller
                 'admin_dashboard.hidden_section_keys' => ['sometimes', 'array'],
                 'admin_dashboard.hidden_section_keys.*' => ['string', 'distinct', Rule::in(['overview', 'quick_access', 'all_sections'])],
                 'debt_ledger' => ['sometimes', 'array'],
+                'debt_ledger.appearance' => ['sometimes', 'array:receivable_label,payable_label,receipt_color,payment_color,invoice_color,receivable_color,payable_color,settled_color'],
+                'debt_ledger.appearance.receivable_label' => ['sometimes', 'required', 'string', 'max:30'],
+                'debt_ledger.appearance.payable_label' => ['sometimes', 'required', 'string', 'max:30'],
+                'debt_ledger.appearance.receipt_color' => ['sometimes', 'string', 'regex:/^[0-9a-fA-F]{6}$/'],
+                'debt_ledger.appearance.payment_color' => ['sometimes', 'string', 'regex:/^[0-9a-fA-F]{6}$/'],
+                'debt_ledger.appearance.invoice_color' => ['sometimes', 'string', 'regex:/^[0-9a-fA-F]{6}$/'],
+                'debt_ledger.appearance.receivable_color' => ['sometimes', 'string', 'regex:/^[0-9a-fA-F]{6}$/'],
+                'debt_ledger.appearance.payable_color' => ['sometimes', 'string', 'regex:/^[0-9a-fA-F]{6}$/'],
+                'debt_ledger.appearance.settled_color' => ['sometimes', 'string', 'regex:/^[0-9a-fA-F]{6}$/'],
                 'debt_ledger.taken_label' => ['sometimes', 'string', 'max:30'],
                 'debt_ledger.given_label' => ['sometimes', 'string', 'max:30'],
                 'debt_ledger.by_type' => ['sometimes', 'array:customers,sellers,private'],
@@ -79,6 +88,9 @@ class AdminUiPreferencesController extends Controller
 
             if (array_key_exists('debt_ledger', $data)) {
                 $debtLedger = $preferences['debt_ledger'] ?? [];
+                if (isset($data['debt_ledger']['appearance'])) {
+                    $debtLedger['appearance'] = array_replace($debtLedger['appearance'] ?? [], $data['debt_ledger']['appearance']);
+                }
                 foreach (['taken_label', 'given_label'] as $key) {
                     if (array_key_exists($key, $data['debt_ledger'])) {
                         $debtLedger[$key] = trim($data['debt_ledger'][$key])

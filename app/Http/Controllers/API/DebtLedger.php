@@ -1039,8 +1039,9 @@ class DebtLedger extends Controller
             $periodLabel = $this->formatPeriodLabel($request->period, $startDate, $endDate);
             $periodLabel = $periodLabel.' — '.$displayCurrency;
             $sourceDetails = $this->reportSourceDetails($transactions, $detailLevel);
-            $takenLabel = 'إضافات للرصيد';
-            $givenLabel = 'خصومات من الرصيد';
+            $scope = $this->ledger->labelScopeForPerson($request->customer_id, $request->seller_id);
+            $takenLabel = $this->ledger->takenLabel(scope: $scope);
+            $givenLabel = $this->ledger->givenLabel(scope: $scope);
 
             if ($request->boolean('json_response')) {
                 return response()->json([

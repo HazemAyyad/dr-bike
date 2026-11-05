@@ -336,7 +336,7 @@ class DebtLedgerTest extends TestCase
             ]);
             $html = app(DebtLedgerShareWebController::class)->show('paid-test')->render();
             $this->assertStringContainsString('فاتورة مبيعات', $html);
-            $this->assertStringContainsString('سند قبض', $html);
+            $this->assertStringContainsString(app(DebtLedgerService::class)->takenLabel(scope: 'customers'), $html);
             $this->assertStringContainsString('+35.00', $html);
         }
     }

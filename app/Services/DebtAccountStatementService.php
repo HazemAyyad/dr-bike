@@ -119,14 +119,14 @@ class DebtAccountStatementService
             fn (array $a, array $b) => ($a['source'] ?? '') <=> ($b['source'] ?? ''),
             fn (array $a, array $b) => ($a['source_id'] ?? 0) <=> ($b['source_id'] ?? 0),
             fn (array $a, array $b) => ($a['is_invoice_receipt'] ?? false) <=> ($b['is_invoice_receipt'] ?? false),
-        ])->map(function (array $row) use (&$balances) {
+        ])->map(function (array $row) use (&$balances, $customerId, $sellerId) {
             $currency = $row['currency'];
             $row['balance_before'] = $balances[$currency] ?? 0.0;
             $effect = $row['type'] === 'taken' ? $row['amount'] : -$row['amount'];
             $row['balance_after'] = $balances[$currency] = round($row['balance_before'] + $effect, 2);
             $row['entry_label'] = match ($row['entry_kind']) {
-                'receipt' => 'سند قبض',
-                'payment' => 'سند دفع',
+                'receipt' => $this->ledger->takenLabel(scope: $this->ledger->labelScopeForPerson($customerId, $sellerId)),
+                'payment' => $this->ledger->givenLabel(scope: $this->ledger->labelScopeForPerson($customerId, $sellerId)),
                 'sales_invoice' => 'فاتورة مبيعات',
                 'purchase_invoice' => 'فاتورة شراء',
                 default => $row['source_label'] ?? 'تسوية',

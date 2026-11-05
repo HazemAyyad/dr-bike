@@ -17,7 +17,7 @@ class DebtLedgerLabels
             }
         }
 
-        return $general + ['by_type' => (object) $byType];
+        return $general + ['by_type' => (object) $byType, 'appearance' => (object) ($labels['appearance'] ?? [])];
     }
 
     public static function forScope(array $labels, ?string $scope = null): array
