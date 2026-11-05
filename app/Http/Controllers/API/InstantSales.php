@@ -747,6 +747,7 @@ class InstantSales extends Controller
         int $mainSaleId,
         bool $reverseBox = true,
         array $restorationUnitCosts = [],
+        bool $requireUnpaid = false,
     ): void
     {
         $existing = InstantSale::query()
@@ -758,6 +759,12 @@ class InstantSales extends Controller
         if ($existing->isCancelled()) {
             throw ValidationException::withMessages([
                 'instant_sale_id' => [__('messages.instant_sale_already_cancelled')],
+            ]);
+        }
+
+        if ($requireUnpaid && (float) $existing->payment_box_value !== 0.0) {
+            throw ValidationException::withMessages([
+                'payment_box_value' => ['تغيّر المبلغ المدفوع. افتح الفاتورة من جديد قبل تعديلها.'],
             ]);
         }
 
@@ -1205,7 +1212,6 @@ public function store(Request $request)
         }
     }
     $isAdjustmentSale = $this->isAdjustmentSaleKind($saleKind);
-    $dailySession = $this->resolveSalesDailySessionForStore($request, $isAdjustmentSale);
 
     if ($request->input('project_id') === '' || $request->input('project_id') === '0') {
         $request->merge(['project_id' => null]);
@@ -1260,6 +1266,13 @@ public function store(Request $request)
         $closedDayEditMode = $this->closedDayEditMode($request, $existingReplaceSale);
         $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
         $isClosedDayFinancialSettlement = $closedDayEditMode === 'today_financial_settlement';
+        $isDebtOnlyCorrection = $isClosedDayAdministrativeCorrection
+            && (float) $existingReplaceSale->payment_box_value === 0.0
+            && (float) ($data['payment_box_value'] ?? 0) === 0.0;
+        $dailySession = $isDebtOnlyCorrection
+            ? null
+            : $this->resolveSalesDailySessionForStore($request, $isAdjustmentSale);
+
         if (! empty($data['restoration_unit_costs']) && ! $isClosedDayAdministrativeCorrection) {
             throw ValidationException::withMessages([
                 'restoration_unit_costs' => [
@@ -1288,7 +1301,7 @@ public function store(Request $request)
                 'payment_box_value' => 0,
                 'status' => 'active',
             ];
-        } else {
+        } elseif (! $isDebtOnlyCorrection) {
             $paymentBoxPayload = $this->movePaymentBoxPayloadToSession($paymentBoxPayload, $dailySession);
             if (empty($paymentBoxPayload['payment_box_id'])) {
                 $dailyBox = app(SalesDailySessionService::class)->dailyBoxForSessionCurrency($dailySession, 'شيكل')
@@ -1332,7 +1345,8 @@ public function store(Request $request)
                 $paymentBoxPayload,
                 $dailySession,
                 $existingReplaceSale,
-                $closedDayEditMode
+                $closedDayEditMode,
+                $isDebtOnlyCorrection
             );
         }
 
@@ -1421,6 +1435,7 @@ public function store(Request $request)
                 $replaceId,
                 reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement),
                 restorationUnitCosts: $data['restoration_unit_costs'] ?? [],
+                requireUnpaid: $isDebtOnlyCorrection,
             );
             $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
         }
@@ -1720,11 +1735,12 @@ public function store(Request $request)
         array $paymentBoxPayload,
         ?\App\Models\SalesDailySession $dailySession,
         ?InstantSale $existingReplaceSale = null,
-        ?string $closedDayEditMode = null
+        ?string $closedDayEditMode = null,
+        bool $isDebtOnlyCorrection = false,
     ) {
         $offerPackageService = app(OfferPackageService::class);
 
-        return DB::transaction(function () use ($request, $data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession, $existingReplaceSale, $closedDayEditMode) {
+        return DB::transaction(function () use ($request, $data, $buyerPayload, $paymentBoxPayload, $offerPackageService, $dailySession, $existingReplaceSale, $closedDayEditMode, $isDebtOnlyCorrection) {
             $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
             $beforeHistorySnapshot = null;
             $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
@@ -1738,6 +1754,7 @@ public function store(Request $request)
                     $replaceId,
                     reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement),
                     restorationUnitCosts: $data['restoration_unit_costs'] ?? [],
+                    requireUnpaid: $isDebtOnlyCorrection,
                 );
             }
 
