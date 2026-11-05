@@ -6,6 +6,7 @@ use App\Models\Bill;
 use App\Models\InstantSale;
 use App\Models\ProfitSale;
 use App\Models\SalesOrder;
+use App\Services\DebtAccountStatementService;
 use App\Services\DebtLedgerService;
 use Illuminate\Support\Facades\Cache;
 
@@ -29,21 +30,10 @@ class DebtLedgerShareWebController extends Controller
         $startDate = $payload['start_date'] ?? null;
         $endDate = $payload['end_date'] ?? null;
         $currency = $this->ledger->normalizeCurrency($payload['currency'] ?? null);
-        $takenLabel = trim((string) ($payload['taken_label'] ?? 'أخذت')) ?: 'أخذت';
-        $givenLabel = trim((string) ($payload['given_label'] ?? 'أعطيت')) ?: 'أعطيت';
-
         $person = $this->ledger->getPersonInfo($customerId, $sellerId);
-        $transactionsQuery = $this->ledger->baseQuery($customerId, $sellerId)
-            ->where('currency', $currency);
-        $this->ledger->applyDateFilter($transactionsQuery, $startDate, $endDate);
-        $transactions = $transactionsQuery
-            ->orderByDesc('transaction_date')
-            ->orderByDesc('id')
-            ->get();
-
-        $instantSaleNumbers = InstantSale::query()
-            ->whereIn('id', $transactions->where('source', 'instant_sale')->pluck('source_id')->filter())
-            ->pluck('serial_number', 'id');
+        $transactions = app(DebtAccountStatementService::class)
+            ->rows($customerId, $sellerId, $currency, $startDate, $endDate)
+            ->map(fn (array $row) => (object) $row);
 
         $totals = $this->ledger->calculateTotals(
             $customerId,
@@ -60,8 +50,8 @@ class DebtLedgerShareWebController extends Controller
         return view($view, [
             'person' => $person,
             'transactions' => $transactions,
-            'total_taken' => $totals['total_taken'],
-            'total_given' => $totals['total_given'],
+            'total_taken' => $transactions->where('type', 'taken')->sum('amount'),
+            'total_given' => $transactions->where('type', 'given')->sum('amount'),
             'balance' => $totals['balance'],
             'currency' => $currency,
             'period_label' => $startDate && $endDate
@@ -69,9 +59,8 @@ class DebtLedgerShareWebController extends Controller
                 : 'جميع المعاملات',
             'detail_level' => $detailLevel,
             'source_details' => $this->reportSourceDetails($transactions, $detailLevel),
-            'taken_label' => $takenLabel,
-            'given_label' => $givenLabel,
-            'instant_sale_numbers' => $instantSaleNumbers,
+            'taken_label' => 'إضافات للرصيد',
+            'given_label' => 'خصومات من الرصيد',
         ]);
     }
 
@@ -85,6 +74,9 @@ class DebtLedgerShareWebController extends Controller
         $details = [];
 
         foreach ($transactions as $transaction) {
+            if ($transaction->is_invoice_receipt ?? false) {
+                continue;
+            }
             $source = (string) ($transaction->source ?? '');
             $sourceId = (int) ($transaction->source_id ?? 0);
             if ($sourceId <= 0) {

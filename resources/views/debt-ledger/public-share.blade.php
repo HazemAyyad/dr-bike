@@ -70,32 +70,26 @@
     <section class="summary">
         <div class="summary-item"><span class="summary-label">إجمالي {{ $taken_label ?? 'أخذت' }}</span><span class="summary-value taken">{{ number_format($total_taken,2) }} {{ $currencyLabel }}</span></div>
         <div class="summary-item"><span class="summary-label">إجمالي {{ $given_label ?? 'أعطيت' }}</span><span class="summary-value given">{{ number_format($total_given,2) }} {{ $currencyLabel }}</span></div>
-        <div class="summary-item"><span class="summary-label">صافي الرصيد</span><span class="summary-value {{ $balance >= 0 ? 'taken' : 'given' }}">{{ number_format($balance,2) }} {{ $currencyLabel }}</span></div>
+        <div class="summary-item"><span class="summary-label">صافي الرصيد</span><span class="summary-value {{ $balance > 0 ? 'given' : 'taken' }}">{{ \App\Services\DebtAccountStatementService::balanceLabel($balance) }} {{ number_format(abs($balance),2) }} {{ $currencyLabel }}</span></div>
     </section>
 
     @if($transactions->isEmpty())
         <div class="empty">لا توجد معاملات</div>
     @else
-        <div class="ledger-wrap"><table class="ledger"><thead><tr><th>#</th><th>التاريخ</th><th class="statement">البيان</th><th>{{ $taken_label ?? 'أخذت' }}</th><th>{{ $given_label ?? 'أعطيت' }}</th><th>الرصيد</th></tr></thead><tbody>
+        <div class="ledger-wrap"><table class="ledger"><thead><tr><th>#</th><th>التاريخ</th><th class="statement">البيان</th><th>المبلغ</th><th>الرصيد</th></tr></thead><tbody>
         @foreach($transactions as $index => $transaction)
             @php
-                $isTaken = $transaction->type === 'taken';
                 $sourceDetail = $source_details[$transaction->id] ?? null;
-                $saleNumber = $transaction->source === 'instant_sale'
-                    ? (($instant_sale_numbers[$transaction->source_id] ?? null) ?: 'SAL-'.str_pad((string)$transaction->source_id, 7, '0', STR_PAD_LEFT))
-                    : null;
-                $displayNote = $saleNumber ? 'فاتورة بيع '.$saleNumber : ($transaction->note ?? '—');
             @endphp
             <tr>
                 <td class="num">{{ $index + 1 }}</td>
-                <td class="num">{{ $transaction->transaction_date?->format('Y-m-d') ?? '—' }}</td>
-                <td>{{ !empty(trim((string) $transaction->note)) ? $displayNote : '—' }}</td>
-                <td class="num taken">{{ $isTaken ? number_format($transaction->amount,2) : '—' }}</td>
-                <td class="num given">{{ !$isTaken ? number_format($transaction->amount,2) : '—' }}</td>
-                <td class="num {{ $transaction->balance_after >= 0 ? 'taken' : 'given' }}">{{ number_format($transaction->balance_after,2) }} {{ $currencyLabel }}</td>
+                <td class="num">{{ $transaction->transaction_date ?? '—' }}</td>
+                <td>{{ $transaction->entry_label }} {{ $transaction->source_label ?? '' }} {{ $transaction->note ?? '' }}</td>
+                <td class="num {{ $transaction->entry_kind === 'receipt' ? 'taken' : ($transaction->entry_kind === 'payment' ? 'given' : '') }}"><span dir="ltr">{{ $transaction->amount_prefix }}{{ number_format($transaction->amount,2) }} {{ $currencyLabel }}</span></td>
+                <td class="num {{ $transaction->balance_after > 0 ? 'given' : 'taken' }}">{{ \App\Services\DebtAccountStatementService::balanceLabel($transaction->balance_after) }} {{ number_format(abs($transaction->balance_after),2) }} {{ $currencyLabel }}</td>
             </tr>
                 @if($showSourceDetails && $sourceDetail)
-                    <tr class="source-row"><td colspan="6"><div class="source">
+                    <tr class="source-row"><td colspan="5"><div class="source">
                         @if(!empty($sourceDetail['items']))
                             <table class="products"><tbody>
                             @foreach($sourceDetail['items'] as $item)

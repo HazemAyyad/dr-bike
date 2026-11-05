@@ -155,7 +155,7 @@
         <span>إجمالي {{ $taken_label ?? 'أخذت' }}: <span class="taken">{{ number_format($total_taken, 2) }} {{ $currencyLabel }}</span></span>
         <span>إجمالي {{ $given_label ?? 'أعطيت' }}: <span class="given">{{ number_format($total_given, 2) }} {{ $currencyLabel }}</span></span>
         <span>الرصيد النهائي:
-            <span class="{{ $balance >= 0 ? 'taken' : 'given' }}">{{ number_format($balance, 2) }} {{ $currencyLabel }}</span>
+            <span class="{{ $balance > 0 ? 'given' : 'taken' }}">{{ \App\Services\DebtAccountStatementService::balanceLabel($balance) }} {{ number_format(abs($balance), 2) }} {{ $currencyLabel }}</span>
         </span>
     </div>
 
@@ -164,9 +164,8 @@
             <tr>
                 <th class="num">#</th>
                 <th>التاريخ</th>
-                <th>ملاحظة</th>
-                <th class="num">{{ $given_label ?? 'أعطيت' }}</th>
-                <th class="num">{{ $taken_label ?? 'أخذت' }}</th>
+                <th>البيان</th>
+                <th class="num">المبلغ</th>
                 <th class="num">الرصيد السابق</th>
                 <th class="num">الرصيد بعد</th>
             </tr>
@@ -175,22 +174,14 @@
             @foreach($transactions as $index => $transaction)
                 <tr>
                     <td class="num">{{ $index + 1 }}</td>
-                    <td class="num">{{ $transaction->transaction_date?->format('Y-m-d') }}</td>
-                    <td>{{ $transaction->note ?? '—' }}</td>
-                    <td class="num given">
-                        {{ $transaction->type === 'given' ? number_format($transaction->amount, 2) . ' '.$currencyLabel : '—' }}
+                    <td class="num">{{ $transaction->transaction_date }}</td>
+                    <td>{{ $transaction->entry_label }} {{ $transaction->source_label ?? '' }} {{ $transaction->note ?? '' }}</td>
+                    <td class="num {{ $transaction->entry_kind === 'receipt' ? 'taken' : ($transaction->entry_kind === 'payment' ? 'given' : '') }}">
+                        <span dir="ltr">{{ $transaction->amount_prefix }}{{ number_format($transaction->amount, 2) }} {{ $currencyLabel }}</span>
                     </td>
-                    <td class="num taken">
-                        {{ $transaction->type === 'taken' ? number_format($transaction->amount, 2) . ' '.$currencyLabel : '—' }}
-                    </td>
-                    @php
-                        $before = $transaction->type === 'taken'
-                            ? $transaction->balance_after - $transaction->amount
-                            : $transaction->balance_after + $transaction->amount;
-                    @endphp
-                    <td class="num">{{ number_format($before, 2) }} {{ $currencyLabel }}</td>
-                    <td class="num {{ $transaction->balance_after >= 0 ? 'taken' : 'given' }}">
-                        {{ number_format($transaction->balance_after, 2) }} {{ $currencyLabel }}
+                    <td class="num">{{ \App\Services\DebtAccountStatementService::balanceLabel($transaction->balance_before) }} {{ number_format(abs($transaction->balance_before), 2) }} {{ $currencyLabel }}</td>
+                    <td class="num {{ $transaction->balance_after > 0 ? 'given' : 'taken' }}">
+                        {{ \App\Services\DebtAccountStatementService::balanceLabel($transaction->balance_after) }} {{ number_format(abs($transaction->balance_after), 2) }} {{ $currencyLabel }}
                     </td>
                 </tr>
                 @php
@@ -198,7 +189,7 @@
                 @endphp
                 @if($showSourceDetails && $sourceDetail)
                     <tr class="source-detail">
-                        <td colspan="7">
+                        <td colspan="6">
                             <div class="source-box">
                                 <div class="source-title">{{ $sourceDetail['title'] }}</div>
                                 @if(!empty($sourceDetail['meta']))

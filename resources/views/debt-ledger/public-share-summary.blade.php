@@ -38,20 +38,14 @@
     <section class="summary">
         <div class="summary-item"><span class="summary-label">إجمالي {{ $taken_label ?? 'أخذت' }}</span><span class="summary-value taken">{{ number_format($total_taken,2) }} {{ $currency ?? 'شيكل' }}</span></div>
         <div class="summary-item"><span class="summary-label">إجمالي {{ $given_label ?? 'أعطيت' }}</span><span class="summary-value given">{{ number_format($total_given,2) }} {{ $currency ?? 'شيكل' }}</span></div>
-        <div class="summary-item"><span class="summary-label">الرصيد النهائي</span><span class="summary-value {{ $balance >= 0 ? 'taken' : 'given' }}">{{ number_format($balance,2) }} {{ $currency ?? 'شيكل' }}</span></div>
+        <div class="summary-item"><span class="summary-label">الرصيد النهائي</span><span class="summary-value {{ $balance > 0 ? 'given' : 'taken' }}">{{ \App\Services\DebtAccountStatementService::balanceLabel($balance) }} {{ number_format(abs($balance),2) }} {{ $currency ?? 'شيكل' }}</span></div>
     </section>
     @if($transactions->isEmpty())<div class="empty">لا توجد معاملات</div>@else
-    <div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th class="num">{{ $taken_label ?? 'أخذت' }}</th><th class="num">{{ $given_label ?? 'أعطيت' }}</th><th class="num">الرصيد</th></tr></thead><tbody>
+    <div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th class="num">المبلغ</th><th class="num">الرصيد</th></tr></thead><tbody>
     @foreach($transactions as $index => $transaction)
-        @php
-            $saleNumber = $transaction->source === 'instant_sale'
-                ? (($instant_sale_numbers[$transaction->source_id] ?? null) ?: 'SAL-'.str_pad((string)$transaction->source_id, 7, '0', STR_PAD_LEFT))
-                : null;
-            $displayNote = $saleNumber ? 'فاتورة بيع '.$saleNumber : ($transaction->note ?? '—');
-        @endphp
-        <tr><td class="num">{{ $transaction->transaction_date?->format('Y-m-d') }}</td><td class="note">{{ $displayNote }}</td>
-            <td class="num taken">{{ $transaction->type==='taken'?number_format($transaction->amount,2):'—' }}</td><td class="num given">{{ $transaction->type==='given'?number_format($transaction->amount,2):'—' }}</td>
-            <td class="num {{ $transaction->balance_after>=0?'taken':'given' }}">{{ number_format($transaction->balance_after,2) }} {{ $currency??'شيكل' }}</td></tr>
+        <tr><td class="num">{{ $transaction->transaction_date }}</td><td class="note">{{ $transaction->entry_label }} {{ $transaction->source_label ?? '' }} {{ $transaction->note ?? '' }}</td>
+            <td class="num {{ $transaction->entry_kind === 'receipt' ? 'taken' : ($transaction->entry_kind === 'payment' ? 'given' : '') }}"><span dir="ltr">{{ $transaction->amount_prefix }}{{ number_format($transaction->amount,2) }} {{ $currency ?? 'شيكل' }}</span></td>
+            <td class="num {{ $transaction->balance_after > 0 ? 'given' : 'taken' }}">{{ \App\Services\DebtAccountStatementService::balanceLabel($transaction->balance_after) }} {{ number_format(abs($transaction->balance_after),2) }} {{ $currency ?? 'شيكل' }}</td></tr>
     @endforeach
     </tbody></table></div>@endif
 </main>

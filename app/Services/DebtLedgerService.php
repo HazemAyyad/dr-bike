@@ -423,6 +423,10 @@ class DebtLedgerService
         DB::transaction(function () use ($transaction) {
             $transaction = DebtTransaction::query()->whereKey($transaction->id)->lockForUpdate()->firstOrFail();
             $this->assertManualMutationAllowed($transaction);
+            if ($transaction->linked_invoice_id) {
+                Box::query()->lockForUpdate()->findOrFail($transaction->box_id);
+                $this->validateInvoiceAllocation($transaction->getAttributes(), $transaction->currency, $transaction->id);
+            }
             $transaction->update(['archived_at' => null]);
             $transaction = $transaction->fresh(['customer', 'seller']);
 
@@ -721,6 +725,7 @@ class DebtLedgerService
         $sourceLabel = $source === 'manual' || $source === '' || $source === null
             ? null
             : $this->ledgerSourceLabel($source);
+        $billId = null;
         if (
             in_array($source, ['purchase_payment', 'purchase_initial_payment'], true)
             && $transaction->source_id
@@ -729,16 +734,25 @@ class DebtLedgerService
                 ->where('debt_transaction_id', $transaction->id)
                 ->first()
                 ?: PurchasePayment::query()->find($transaction->source_id);
-            $sourceLabel .= $payment?->bill_id
-                ? ' - فاتورة شراء #'.$payment->bill_id
+            $billId = $payment?->bill_id;
+            $sourceLabel .= $billId
+                ? ' - فاتورة شراء #'.$billId
                 : ' - دفعة #'.$transaction->source_id;
         } elseif ($source === 'purchase_invoice' && $transaction->source_id) {
             $sourceLabel .= ' #'.$transaction->source_id;
         }
 
+        $invoice = $transaction->linked_invoice_id
+            ? DebtTransaction::query()->find($transaction->linked_invoice_id)
+            : null;
+        if ($invoice) {
+            $sourceLabel = 'فاتورة مبيعات #'.$invoice->source_id;
+        }
+
         return [
             'id' => $transaction->id,
             'type' => $transaction->type,
+            'entry_kind' => $this->entryKind($transaction),
             'type_label' => $transaction->type === 'taken'
                 ? $this->takenLabel(scope: $this->labelScopeForPerson($transaction->customer_id, $transaction->seller_id))
                 : $this->givenLabel(scope: $this->labelScopeForPerson($transaction->customer_id, $transaction->seller_id)),
@@ -756,9 +770,26 @@ class DebtLedgerService
             'box_id' => $transaction->box_id,
             'source' => $transaction->source,
             'source_id' => $transaction->source_id,
+            'linked_invoice_id' => $transaction->linked_invoice_id,
+            'invoice_source' => $billId ? 'purchase_invoice' : $invoice?->source,
+            'invoice_source_id' => $billId ?? $invoice?->source_id,
             'archived_at' => $transaction->archived_at?->format('Y-m-d H:i:s'),
             'deleted_at' => $transaction->deleted_at?->format('Y-m-d H:i:s'),
         ];
+    }
+
+    public function entryKind(DebtTransaction $transaction): string
+    {
+        return match ($transaction->source ?: 'manual') {
+            'instant_sale', 'profit_sale', 'maintenance' => 'sales_invoice',
+            'sales_order' => $transaction->type === 'taken' ? 'receipt' : 'sales_invoice',
+            'purchase_invoice' => 'purchase_invoice',
+            'purchase_payment', 'purchase_initial_payment', 'purchase_account_payment',
+            'outgoing_check', 'incoming_check_disposal' => 'payment',
+            'incoming_check', 'purchase_refund' => 'receipt',
+            'manual' => $transaction->type === 'taken' ? 'receipt' : 'payment',
+            default => 'adjustment',
+        };
     }
 
     public function createTransaction(
@@ -782,6 +813,27 @@ class DebtLedgerService
                     : Box::query()->lockForUpdate()->findOrFail((int) $data['box_id']);
             }
             $currency = $this->normalizeCurrency($box?->currency ?? ($data['currency'] ?? 'شيكل'));
+            if (isset($data['linked_invoice_id'])) {
+                if (isset($data['receipt_request_id'])) {
+                    $recorded = DebtTransaction::query()->where('receipt_request_id', $data['receipt_request_id'])->first();
+                    if ($recorded) {
+                        if ($recorded->archived_at || $recorded->deleted_at
+                            || (int) $recorded->created_by !== (int) $userId
+                            || (int) $recorded->customer_id !== (int) ($data['customer_id'] ?? 0)
+                            || (int) $recorded->seller_id !== (int) ($data['seller_id'] ?? 0)
+                            || (int) $recorded->linked_invoice_id !== (int) $data['linked_invoice_id']
+                            || (int) $recorded->box_id !== (int) $data['box_id']
+                            || $recorded->type !== $data['type']
+                            || (float) $recorded->amount !== round((float) $data['amount'], 2)
+                            || $recorded->transaction_date?->toDateString() !== Carbon::parse($data['transaction_date'])->toDateString()) {
+                            throw new \RuntimeException('مرجع سند القبض مسجّل مسبقًا بحركة مختلفة.');
+                        }
+
+                        return $recorded;
+                    }
+                }
+                $this->validateInvoiceAllocation($data, $currency);
+            }
             $previousBalance = $this->getPreviousBalance(
                 $data['customer_id'] ?? null,
                 $data['seller_id'] ?? null,
@@ -806,6 +858,10 @@ class DebtLedgerService
                 'box_id' => $data['box_id'] ?? null,
                 'source' => $source === '' ? 'manual' : $source,
                 'source_id' => $data['source_id'] ?? null,
+                ...isset($data['linked_invoice_id']) ? ['linked_invoice_id' => $data['linked_invoice_id']] : [],
+                ...isset($data['linked_invoice_id'], $data['receipt_request_id'])
+                    ? ['receipt_request_id' => $data['receipt_request_id']]
+                    : [],
                 'created_by' => $userId,
             ]);
 
@@ -1851,6 +1907,9 @@ class DebtLedgerService
                     : Box::query()->lockForUpdate()->findOrFail((int) $newBoxId);
             }
             $currency = $this->normalizeCurrency($newBox?->currency ?? ($data['currency'] ?? $transaction->currency));
+            if ($transaction->linked_invoice_id) {
+                $this->validateInvoiceAllocation(array_replace($transaction->getAttributes(), $data), $currency, $transaction->id);
+            }
 
             $updatePayload = [
                 'type' => $data['type'],
@@ -1925,6 +1984,38 @@ class DebtLedgerService
 
             return $transaction;
         });
+    }
+
+    private function validateInvoiceAllocation(array $data, string $currency, ?int $excludingId = null): void
+    {
+        $party = $this->baseQuery($data['customer_id'] ?? null, $data['seller_id'] ?? null)
+            ->where('currency', $currency);
+        $invoice = (clone $party)
+            ->whereKey($data['linked_invoice_id'])
+            ->whereIn('source', ['instant_sale', 'profit_sale'])
+            ->where('type', 'given')
+            ->lockForUpdate()
+            ->first();
+
+        if (! $invoice || $data['type'] !== 'taken'
+            || Carbon::parse($data['transaction_date'])->lt($invoice->transaction_date)) {
+            throw new \RuntimeException('اختر فاتورة بيع لهذا الحساب بنفس عملة القبض وبتاريخ لا يسبق الفاتورة.');
+        }
+
+        $allocated = (float) (clone $party)
+            ->where('linked_invoice_id', $invoice->id)
+            ->when($excludingId, fn ($query) => $query->whereKeyNot($excludingId))
+            ->lockForUpdate()
+            ->pluck('amount')
+            ->sum();
+        $returned = app(DebtAccountStatementService::class)->returnCredit(
+            $invoice,
+            $party->where('source', 'sales_return')->get(['id', 'source']),
+        );
+        $remaining = round((float) $invoice->amount - $allocated - $returned, 2);
+        if (round((float) $data['amount'], 2) > $remaining) {
+            throw new \RuntimeException('مبلغ القبض أكبر من المتبقي على الفاتورة ('.number_format(max(0, $remaining), 2).').');
+        }
     }
 
     private function shouldSyncBox(DebtTransaction $transaction): bool

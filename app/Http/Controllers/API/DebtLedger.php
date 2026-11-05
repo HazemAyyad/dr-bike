@@ -12,6 +12,7 @@ use App\Models\InstantSale;
 use App\Models\ProfitSale;
 use App\Models\SalesOrder;
 use App\Services\DebtLedgerService;
+use App\Services\DebtAccountStatementService;
 use App\Services\MediaUploadService;
 use App\Services\BoxAccessService;
 use Illuminate\Support\Facades\Cache;
@@ -338,6 +339,13 @@ class DebtLedger extends Controller
                 'balances' => $balancesByCurrency,
                 'active_transactions_count' => $transactions->count(),
                 'transactions' => $transactions->map(fn ($t) => $this->ledger->formatTransaction($t))->values(),
+                'statement_transactions' => app(DebtAccountStatementService::class)->rows(
+                    $request->customer_id,
+                    $request->seller_id,
+                    $filterCurrency,
+                    $request->start_date,
+                    $request->end_date,
+                ),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -369,6 +377,8 @@ class DebtLedger extends Controller
                 'transaction_date' => 'required|date',
                 'note' => 'nullable|string',
                 'box_id' => 'required|integer',
+                'linked_invoice_id' => 'nullable|integer|min:1',
+                'receipt_request_id' => 'nullable|uuid|required_with:linked_invoice_id',
                 'receipt_images' => 'nullable|array',
                 'receipt_images.*' => [
                     'file',
@@ -415,6 +425,8 @@ class DebtLedger extends Controller
                 'box_id' => $data['box_id'] ?? null,
                 'receipt_images' => $imageNames ?: null,
                 'source' => 'manual',
+                ...isset($data['linked_invoice_id']) ? ['linked_invoice_id' => $data['linked_invoice_id']] : [],
+                ...isset($data['receipt_request_id']) ? ['receipt_request_id' => $data['receipt_request_id']] : [],
             ], auth()->id(), actor: $request->user());
 
             $personTotals = $this->ledger->calculateTotals($request->customer_id, $request->seller_id);
@@ -1008,18 +1020,13 @@ class DebtLedger extends Controller
                 : 'شيكل';
             $detailLevel = $request->input('report_detail_level', 'summary');
 
-            $query = $this->ledger->baseQuery($request->customer_id, $request->seller_id);
-            $this->ledger->applyDateFilter($query, $startDate, $endDate);
-            $query->where('currency', $displayCurrency);
-
-            $transactions = $query
-                ->orderBy('transaction_date')
-                ->orderBy('id')
-                ->get();
-
-            $instantSaleNumbers = InstantSale::query()
-                ->whereIn('id', $transactions->where('source', 'instant_sale')->pluck('source_id')->filter())
-                ->pluck('serial_number', 'id');
+            $transactions = app(DebtAccountStatementService::class)->rows(
+                $request->customer_id,
+                $request->seller_id,
+                $displayCurrency,
+                $startDate,
+                $endDate,
+            )->map(fn (array $row) => (object) $row);
 
             $totals = $this->ledger->calculateTotals(
                 $request->customer_id,
@@ -1032,9 +1039,8 @@ class DebtLedger extends Controller
             $periodLabel = $this->formatPeriodLabel($request->period, $startDate, $endDate);
             $periodLabel = $periodLabel.' — '.$displayCurrency;
             $sourceDetails = $this->reportSourceDetails($transactions, $detailLevel);
-            $labelScope = $this->ledger->labelScopeForPerson($request->customer_id, $request->seller_id);
-            $takenLabel = $this->ledger->takenLabel(scope: $labelScope);
-            $givenLabel = $this->ledger->givenLabel(scope: $labelScope);
+            $takenLabel = 'إضافات للرصيد';
+            $givenLabel = 'خصومات من الرصيد';
 
             if ($request->boolean('json_response')) {
                 return response()->json([
@@ -1042,8 +1048,8 @@ class DebtLedger extends Controller
                     'report' => [
                         'file_name' => 'debt_ledger_'.$person['id'].'.pdf',
                         'person' => $person,
-                        'total_taken' => $totals['total_taken'],
-                        'total_given' => $totals['total_given'],
+                        'total_taken' => $transactions->where('type', 'taken')->sum('amount'),
+                        'total_given' => $transactions->where('type', 'given')->sum('amount'),
                         'balance' => $totals['balance'],
                         'transactions_count' => $transactions->count(),
                         'period_label' => $periodLabel,
@@ -1051,17 +1057,7 @@ class DebtLedger extends Controller
                         'generated_at' => now()->format('Y-m-d H:i'),
                         'taken_label' => $takenLabel,
                         'given_label' => $givenLabel,
-                        'transactions' => $transactions->map(fn ($transaction) => [
-                            'id' => (int) $transaction->id,
-                            'type' => $transaction->type,
-                            'amount' => (float) $transaction->amount,
-                            'note' => $transaction->source === 'instant_sale'
-                                ? 'فاتورة بيع '.($instantSaleNumbers[$transaction->source_id]
-                                    ?: 'SAL-'.str_pad((string) $transaction->source_id, 7, '0', STR_PAD_LEFT))
-                                : $transaction->note,
-                            'transaction_date' => $transaction->transaction_date?->format('Y-m-d'),
-                            'balance_after' => (float) $transaction->balance_after,
-                        ])->values(),
+                        'transactions' => $transactions,
                         'source_details' => collect($sourceDetails)
                             ->mapWithKeys(fn ($detail, $transactionId) => [(string) $transactionId => $detail]),
                     ],
@@ -1071,8 +1067,8 @@ class DebtLedger extends Controller
             $reportHtml = view('pdf.debt-ledger-report', [
                 'person' => $person,
                 'transactions' => $transactions,
-                'total_taken' => $totals['total_taken'],
-                'total_given' => $totals['total_given'],
+                'total_taken' => $transactions->where('type', 'taken')->sum('amount'),
+                'total_given' => $transactions->where('type', 'given')->sum('amount'),
                 'balance' => $totals['balance'],
                 'period_label' => $periodLabel,
                 'currency' => $displayCurrency,
@@ -1120,6 +1116,9 @@ class DebtLedger extends Controller
         $details = [];
 
         foreach ($transactions as $transaction) {
+            if ($transaction->is_invoice_receipt ?? false) {
+                continue;
+            }
             $source = (string) ($transaction->source ?? '');
             $sourceId = (int) ($transaction->source_id ?? 0);
             if ($sourceId <= 0) {

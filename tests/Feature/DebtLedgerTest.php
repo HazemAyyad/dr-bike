@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\DebtLedgerShareWebController;
 use App\Models\Box;
 use App\Models\Customer;
 use App\Models\Debt;
@@ -12,6 +13,8 @@ use App\Models\User;
 use App\Services\DebtLedgerService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -240,5 +243,101 @@ class DebtLedgerTest extends TestCase
             'balance_after' => -40,
         ]);
         $this->assertSame(100.0, (float) $oldCustomerTransaction->fresh()->balance_after);
+    }
+
+    public function test_statement_expands_recorded_sale_payments_without_reposting_them(): void
+    {
+        $customer = Customer::create(['name' => 'Hazem', 'is_canceled' => false]);
+        $box = Box::create(['name' => 'Main', 'total' => 1000, 'currency' => 'شيكل', 'is_shown' => 1]);
+        $ledger = app(DebtLedgerService::class);
+
+        $sale = InstantSale::create([
+            'total_cost' => 35,
+            'buyer_id' => $customer->id,
+            'buyer_type' => 'customer',
+            'payment_box_id' => $box->id,
+            'payment_box_value' => 10,
+        ]);
+        $invoice = $ledger->syncInstantSaleToLedger($sale);
+        $query = '/api/debt-ledger/person?customer_id='.$customer->id;
+        $original = $invoice->getAttributes();
+
+        $this->getJson($query)->assertJsonPath('status', 'success')
+            ->assertJsonPath('balance', -25)
+            ->assertJsonCount(1, 'transactions')
+            ->assertJsonPath('statement_transactions.0.entry_kind', 'sales_invoice')
+            ->assertJsonPath('statement_transactions.0.amount', 35)
+            ->assertJsonPath('statement_transactions.0.balance_after', -35)
+            ->assertJsonPath('statement_transactions.0.invoice_remaining', 25)
+            ->assertJsonPath('statement_transactions.1.entry_kind', 'receipt')
+            ->assertJsonPath('statement_transactions.1.amount', 10)
+            ->assertJsonPath('statement_transactions.1.source_id', $sale->id)
+            ->assertJsonPath('statement_transactions.1.balance_after', -25);
+        $this->assertSame($original, $invoice->fresh()->getAttributes());
+        $this->assertEquals(1000, $box->fresh()->total);
+
+        $payment = [
+            'customer_id' => $customer->id,
+            'type' => 'taken',
+            'amount' => 25,
+            'transaction_date' => now()->toDateString(),
+            'box_id' => $box->id,
+            'linked_invoice_id' => $invoice->id,
+            'receipt_request_id' => (string) Str::uuid(),
+        ];
+        $this->postJson('/api/debt-ledger/transaction', array_replace($payment, ['amount' => 26]))
+            ->assertJsonPath('status', 'error');
+        $created = $this->postJson('/api/debt-ledger/transaction', $payment)
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('transaction.invoice_source_id', $sale->id)
+            ->assertJsonPath('transaction.balance_after', 0);
+        $this->postJson('/api/debt-ledger/transaction', $payment)
+            ->assertJsonPath('transaction.id', $created->json('transaction.id'));
+        $this->postJson('/api/debt-ledger/transaction', array_replace($payment, ['receipt_request_id' => (string) Str::uuid()]))
+            ->assertJsonPath('status', 'error');
+        $this->getJson($query)
+            ->assertJsonPath('statement_transactions.0.invoice_remaining', 0)
+            ->assertJsonPath('statement_transactions.2.balance_after', 0);
+        $this->assertEquals(1025, $box->fresh()->total);
+    }
+
+    public function test_fully_paid_sale_is_available_in_a_zero_balance_account(): void
+    {
+        $customer = Customer::create(['name' => 'Paid Customer', 'is_canceled' => false]);
+        $box = Box::create(['name' => 'Main', 'total' => 1000, 'currency' => 'شيكل', 'is_shown' => 1]);
+        $sale = InstantSale::create([
+            'total_cost' => 35,
+            'buyer_id' => $customer->id,
+            'buyer_type' => 'customer',
+            'payment_box_id' => $box->id,
+            'payment_box_value' => 35,
+        ]);
+        $this->assertNull(app(DebtLedgerService::class)->syncInstantSaleToLedger($sale));
+
+        $this->getJson('/api/debt-ledger/person?customer_id='.$customer->id)
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('balance', 0)
+            ->assertJsonCount(0, 'transactions')
+            ->assertJsonPath('statement_transactions.0.amount', 35)
+            ->assertJsonPath('statement_transactions.0.invoice_remaining', 0)
+            ->assertJsonPath('statement_transactions.1.amount', 35)
+            ->assertJsonPath('statement_transactions.1.balance_after', 0);
+        $this->postJson('/api/debt-ledger/person/report', ['customer_id' => $customer->id, 'json_response' => true])
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('report.total_given', 35)
+            ->assertJsonPath('report.total_taken', 35)
+            ->assertJsonPath('report.transactions.1.amount_prefix', '+');
+
+        foreach (['summary', 'detailed'] as $detailLevel) {
+            Cache::put('debt_ledger_share:paid-test', [
+                'customer_id' => $customer->id,
+                'report_detail_level' => $detailLevel,
+                'currency' => 'شيكل',
+            ]);
+            $html = app(DebtLedgerShareWebController::class)->show('paid-test')->render();
+            $this->assertStringContainsString('فاتورة مبيعات', $html);
+            $this->assertStringContainsString('سند قبض', $html);
+            $this->assertStringContainsString('+35.00', $html);
+        }
     }
 }

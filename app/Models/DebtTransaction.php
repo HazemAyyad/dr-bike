@@ -20,6 +20,8 @@ class DebtTransaction extends Model
         'box_id',
         'source',
         'source_id',
+        'linked_invoice_id',
+        'receipt_request_id',
         'archived_at',
         'deleted_at',
         'created_by',
