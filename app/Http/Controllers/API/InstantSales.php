@@ -28,6 +28,7 @@ use App\Services\ProductStockService;
 use App\Services\SalesDailySessionService;
 use App\Services\SalesReturnService;
 use App\Support\ApiImageUrl;
+use App\Support\InstantSaleBonus;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
@@ -748,6 +749,7 @@ class InstantSales extends Controller
         bool $reverseBox = true,
         array $restorationUnitCosts = [],
         bool $requireUnpaid = false,
+        bool $supportsBonus = false,
     ): void
     {
         $existing = InstantSale::query()
@@ -759,6 +761,12 @@ class InstantSales extends Controller
         if ($existing->isCancelled()) {
             throw ValidationException::withMessages([
                 'instant_sale_id' => [__('messages.instant_sale_already_cancelled')],
+            ]);
+        }
+
+        if (! $supportsBonus && $existing->hasBonusLines()) {
+            throw ValidationException::withMessages([
+                'is_bonus' => ['تعديل فاتورة فيها بونص يتطلب نسخة تدعم البونص.'],
             ]);
         }
 
@@ -1195,6 +1203,7 @@ public function store(Request $request)
  {
     $replaceId = 0;
     $beforeHistorySnapshot = null;
+    $initialTransactionLevel = DB::transactionLevel();
 
     try{
     $replaceId = (int) $request->attributes->get('replace_instant_sale_id', 0);
@@ -1222,6 +1231,7 @@ public function store(Request $request)
         'product_id' => 'required_without:offer_package_id|nullable|exists:products,id',
         'quantity' => 'required|numeric|min:1',
         'cost' => 'required|numeric|min:0',
+        'is_bonus' => 'sometimes|boolean',
         'discount' => 'required|numeric|min:0',
         'total_cost' => 'required|numeric|min:0',
 
@@ -1239,6 +1249,7 @@ public function store(Request $request)
         'other_products.*.size_color_id' => 'nullable|integer|exists:size_colors,id',
         'other_products.*.size_id' => 'nullable|integer|exists:sizes,id',
         'other_products.*.cost' => 'required|numeric|min:0',
+        'other_products.*.is_bonus' => 'sometimes|boolean',
         'other_products.*.quantity' => 'required|numeric|min:1',
         'other_products.*.type' => 'required|string|in:normal,project',
         'other_products.*.project_id' => 'nullable|exists:projects,id',
@@ -1262,6 +1273,13 @@ public function store(Request $request)
         'restoration_unit_costs.*' => 'nullable|numeric|min:0',
 
     ]);
+
+        InstantSaleBonus::validate($data, $isAdjustmentSale);
+        $hasBonus = ! empty($data['is_bonus']) || collect($data['other_products'] ?? [])
+            ->contains(fn (array $line) => ! empty($line['is_bonus']));
+        if ($hasBonus && ! Schema::hasColumn('instant_sales', 'is_bonus')) {
+            throw ValidationException::withMessages(['is_bonus' => ['تسجيل البونص يتطلب تحديث قاعدة البيانات.']]);
+        }
 
         $closedDayEditMode = $this->closedDayEditMode($request, $existingReplaceSale);
         $isClosedDayAdministrativeCorrection = $closedDayEditMode === 'administrative_correction';
@@ -1436,6 +1454,7 @@ public function store(Request $request)
                 reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement),
                 restorationUnitCosts: $data['restoration_unit_costs'] ?? [],
                 requireUnpaid: $isDebtOnlyCorrection,
+                supportsBonus: array_key_exists('is_bonus', $data),
             );
             $mainProduct = Product::with('sizes.colorSizes')->findOrFail($mainData['product_id']);
         }
@@ -1446,7 +1465,7 @@ public function store(Request $request)
         if (! $isAdjustmentSale) {
             $mainStockCheck = $stockService->validateSaleStock($mainProduct, $mainSaleQuantity, $mainSizeColorId, allowNegative: true);
             if (! ($mainStockCheck['ok'] ?? false)) {
-                if (DB::transactionLevel() > 0) {
+                if (DB::transactionLevel() > $initialTransactionLevel) {
                     DB::rollBack();
                 }
                 return response()->json([
@@ -1474,7 +1493,7 @@ public function store(Request $request)
                 $lineCheck = $stockService->validateSaleStock($product, $lineQty, $lineSizeColorId, allowNegative: true);
             }
             if (! ($lineCheck['ok'] ?? false)) {
-                    if (DB::transactionLevel() > 0) {
+                    if (DB::transactionLevel() > $initialTransactionLevel) {
                         DB::rollBack();
                     }
                     return response()->json([
@@ -1488,7 +1507,7 @@ public function store(Request $request)
 
 
         if($mainData['type']==='project' && $productProjects->isEmpty()){
-            if (DB::transactionLevel() > 0) {
+            if (DB::transactionLevel() > $initialTransactionLevel) {
                 DB::rollBack();
             }
             return response()->json([
@@ -1544,13 +1563,13 @@ public function store(Request $request)
 
         // Save other  if provided
         if ($request->has('other_products')) {
-            foreach ($request->other_products as  $product) {
+            foreach ($data['other_products'] ?? [] as $product) {
                 $subProduct = Product::with('sizes.colorSizes')->findOrFail($product['product_id']);
                 $subProductProjects = $subProduct->projects;
 
 
                 if($product['type']==='project' && $subProductProjects->isEmpty()){
-                    if (DB::transactionLevel() > 0) {
+                    if (DB::transactionLevel() > $initialTransactionLevel) {
                         DB::rollBack();
                     }
                     return response()->json([
@@ -1566,7 +1585,7 @@ public function store(Request $request)
                     $lineCheck = $stockService->validateSaleStock($subProduct, $lineQty, $lineSizeColorId, allowNegative: true);
                 }
                 if (! ($lineCheck['ok'] ?? false)) {
-                    if (DB::transactionLevel() > 0) {
+                    if (DB::transactionLevel() > $initialTransactionLevel) {
                         DB::rollBack();
                     }
                     return response()->json([
@@ -1582,6 +1601,7 @@ public function store(Request $request)
                     'size_color_id' => $lineSizeColorId > 0 ? $lineSizeColorId : null,
                     'size_id' => $lineCheck['size_id'] ?? ($product['size_id'] ?? null),
                     'cost' => $product['cost'],
+                    'is_bonus' => (bool) ($product['is_bonus'] ?? false),
                     'quantity' => $lineQty,
                     'discount' => 0,
                     'total_cost' => (float) $product['cost'] * $lineQty,
@@ -1672,7 +1692,7 @@ public function store(Request $request)
             }
 
         catch (ValidationException $e) {
-            if (DB::transactionLevel() > 0) {
+            if (DB::transactionLevel() > $initialTransactionLevel) {
                 DB::rollBack();
             }
             $errors = $e->errors();
@@ -1689,7 +1709,7 @@ public function store(Request $request)
             return response()->json($response, 200);
         }
             catch (QueryException $e) {
-            if (DB::transactionLevel() > 0) {
+            if (DB::transactionLevel() > $initialTransactionLevel) {
                 DB::rollBack();
             }
             Log::error('InstantSales::store QueryException', [
@@ -1705,7 +1725,7 @@ public function store(Request $request)
             ], 200);
         }
         catch (\Exception $e) {
-            if (DB::transactionLevel() > 0) {
+            if (DB::transactionLevel() > $initialTransactionLevel) {
                 DB::rollBack();
             }
             Log::error('InstantSales::store error', [
@@ -1755,6 +1775,7 @@ public function store(Request $request)
                     reverseBox: ! ($isClosedDayAdministrativeCorrection || $isClosedDayFinancialSettlement),
                     restorationUnitCosts: $data['restoration_unit_costs'] ?? [],
                     requireUnpaid: $isDebtOnlyCorrection,
+                    supportsBonus: array_key_exists('is_bonus', $data),
                 );
             }
 
@@ -1922,10 +1943,26 @@ public function store(Request $request)
                     $lineCost = (float) $item['cost'];
                     $lineQty = (float) $item['quantity'];
                     $lineTotal = $lineCost * $lineQty;
+                    $isBonus = (bool) ($item['is_bonus'] ?? false);
+                    $sizeColorId = $isBonus && ! empty($item['size_color_id']) ? (int) $item['size_color_id'] : null;
+                    $sizeId = $isBonus && ! empty($item['size_id']) ? (int) $item['size_id'] : null;
+                    if ($isBonus) {
+                        $stockCheck = $stockService->validateSaleStock($subProduct, (int) round($lineQty), $sizeColorId);
+                        if (! ($stockCheck['ok'] ?? false)) {
+                            throw ValidationException::withMessages([
+                                'other_products' => [$stockCheck['message'] ?? __('messages.cant_sale')],
+                            ]);
+                        }
+                        $sizeColorId = $stockCheck['size_color_id'] ?? $sizeColorId;
+                        $sizeId = $stockCheck['size_id'] ?? $sizeId;
+                    }
 
                     $extraLine = InstantSale::create($this->sanitizeInstantSaleAttributes(array_merge([
                         'product_id' => $item['product_id'],
                         'cost' => $lineCost,
+                        'is_bonus' => $isBonus,
+                        'size_color_id' => $sizeColorId,
+                        'size_id' => $sizeId,
                         'quantity' => $lineQty,
                         'discount' => 0,
                         'total_cost' => $lineTotal,
@@ -1937,6 +1974,8 @@ public function store(Request $request)
                     $stockService->deductForSale(
                         product: $subProduct,
                         quantity: (int) round($lineQty),
+                        sizeColorId: $sizeColorId,
+                        sizeId: $sizeId,
                         referenceType: 'instant_sale',
                         referenceId: (int) $extraLine->id,
                         note: 'منتج إضافي ضمن بيع حزمة #'.$package->id,
@@ -2064,6 +2103,7 @@ public function store(Request $request)
                         'id' => $sub->id,
                         'product_id' => $sub->product->nameAr,
                         'cost' => $sub->cost,
+                        'is_bonus' => (bool) $sub->is_bonus,
                         'quantity'=> $sub->quantity,
 
                     ];
@@ -2276,7 +2316,7 @@ public function store(Request $request)
                 $isPackageSale = $sale->offer_package_id !== null;
                 $packageName = $sale->offerPackage?->name;
                 $hasAdditionalProducts = $isPackageSale && $sale->subProducts->contains(
-                    fn ($sub) => (float) $sub->cost > 0
+                    fn ($sub) => $sub->is_bonus || (float) $sub->cost > 0
                 );
                 $saleComposition = $isPackageSale
                     ? ($hasAdditionalProducts ? 'mixed' : 'package')
@@ -2310,6 +2350,7 @@ public function store(Request $request)
                 ...$productDisplay,
                 ...$variantFields,
                 'cost' => $sale->cost,
+                'is_bonus' => (bool) $sale->is_bonus,
                 'total_cost' => $sale->total_cost,
                 'quantity' => $sale->quantity,
                 'notes' => $sale->notes,
@@ -2338,9 +2379,10 @@ public function store(Request $request)
                         ...$this->formatInstantSaleSubProductDisplay($subBase, $subVariant),
                         ...$subVariant,
                         'cost' => $sub->cost,
+                        'is_bonus' => (bool) $sub->is_bonus,
                         'quantity' => $sub->quantity,
-                        'is_package_component' => $isPackageSale && $lineCost <= 0,
-                        'is_additional_product' => $isPackageSale && $lineCost > 0,
+                        'is_package_component' => $isPackageSale && ! $sub->is_bonus && $lineCost <= 0,
+                        'is_additional_product' => $isPackageSale && ($sub->is_bonus || $lineCost > 0),
                     ];
                 }),
                 ...$this->formatInstantSaleAuditFields($sale),
@@ -2456,6 +2498,11 @@ public function edit(Request $request)
                     ->with(['product', 'subProducts.product', 'salesDailySession'])
                     ->lockForUpdate()
                     ->findOrFail($request->instant_sale_id);
+                if ($instantSale->hasBonusLines()) {
+                    throw ValidationException::withMessages([
+                        'is_bonus' => ['لتعديل فاتورة فيها بونص، أرسل بنود الفاتورة كاملة.'],
+                    ]);
+                }
                 $historyService = app(InstantSaleHistoryService::class);
                 $beforeHistorySnapshot = $historyService->snapshot((int) $instantSale->id);
                 $existingSnapshot = $instantSale->replicate();
@@ -2825,7 +2872,7 @@ public function edit(Request $request)
             $additionalNotesTotal = $this->instantSaleNotesTotal($additionalNotes);
             $isPackageSale = $sale->offer_package_id !== null;
             $hasAdditionalProducts = $isPackageSale && $sale->subProducts->contains(
-                fn ($sub) => (float) $sub->cost > 0
+                fn ($sub) => $sub->is_bonus || (float) $sub->cost > 0
             );
             $saleComposition = $isPackageSale
                 ? ($hasAdditionalProducts ? 'mixed' : 'package')
@@ -2877,6 +2924,7 @@ public function edit(Request $request)
                     ? app(OfferPackageService::class)->imagePublicPath($sale->offerPackage?->image_path)
                     : $this->invoiceProductImage($sale->product, $sale->sizeColor),
                 'cost' => $sale->cost,
+                'is_bonus' => (bool) $sale->is_bonus,
                 'quantity' => $sale->quantity,
                 'subtotal' => $subtotalBeforeDiscount,
                 'total_cost' => $totalCost,
@@ -2922,10 +2970,11 @@ public function edit(Request $request)
                         ...$subVariant,
                         'product_image' => $this->invoiceProductImage($sub->product, $sub->sizeColor),
                         'cost' => $sub->cost,
+                        'is_bonus' => (bool) $sub->is_bonus,
                         'quantity' => $sub->quantity,
                         'subtotal' => $lineSubtotal,
-                        'is_package_component' => $isPackageSale && $lineCost <= 0,
-                        'is_additional_product' => $isPackageSale && $lineCost > 0,
+                        'is_package_component' => $isPackageSale && ! $sub->is_bonus && $lineCost <= 0,
+                        'is_additional_product' => $isPackageSale && ($sub->is_bonus || $lineCost > 0),
                     ];
                 })->values(),
                 'history' => app(InstantSaleHistoryService::class)->timeline($sale),

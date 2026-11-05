@@ -22,6 +22,7 @@ class InstantSale extends Model
         'inventory_unit_cost',
         'inventory_total_cost',
         'cost',
+        'is_bonus',
         'notes',
         'additional_notes',
         'quantity',
@@ -52,12 +53,18 @@ class InstantSale extends Model
 
     protected $casts = [
         'payment_box_value' => 'float',
+        'is_bonus' => 'boolean',
         'inventory_unit_cost' => 'float',
         'inventory_total_cost' => 'float',
         'additional_notes' => 'array',
         'cancelled_at' => 'datetime',
         'stock_restored' => 'boolean',
     ];
+
+    public function hasBonusLines(): bool
+    {
+        return $this->is_bonus || $this->subProducts->contains(fn (InstantSale $line) => $line->is_bonus);
+    }
 
     public function product()
     {

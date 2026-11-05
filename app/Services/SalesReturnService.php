@@ -162,7 +162,8 @@ class SalesReturnService
                 fn (array $row) => $this->prepareLine($personType, $personId, $row)
             );
             $total = round((float) $prepared->sum('line_total'), 2);
-            if ($total <= 0) {
+            $bonusOnly = $prepared->isNotEmpty() && $prepared->every(fn (array $line) => $line['is_bonus']);
+            if ($total <= 0 && ! $bonusOnly) {
                 throw ValidationException::withMessages(['items' => ['يجب أن تكون قيمة المرتجع أكبر من صفر.']]);
             }
             if ($cash > $total + 0.001) {
@@ -678,6 +679,7 @@ class SalesReturnService
         $payload['size_label'] = $item->size?->size;
         $payload['color_label'] = $item->sizeColor?->colorAr;
         $payload['sale_invoice'] = $saleInvoice;
+        $payload['is_bonus'] = (bool) $item->instantSale?->is_bonus;
         $payload['purchase_sources'] = $this->purchaseSources($item, $saleInvoice);
 
         return $payload;
@@ -810,6 +812,7 @@ class SalesReturnService
             'product_id' => (int) $line->product_id,
             'product_code' => $product?->product_code,
             'product_name' => $product?->nameAr ?: $line->product_name,
+            'is_bonus' => $line instanceof InstantSale && $line->is_bonus,
             'image' => ProductImageResolver::preferredUrl($product),
             'size_id' => $line->size_id ? (int) $line->size_id : null,
             'size_label' => $line->size?->size,
@@ -903,6 +906,10 @@ class SalesReturnService
             throw ValidationException::withMessages(['items' => ['الكمية المتاحة للصنف '.($line->product?->nameAr ?: '#'.$line->product_id).' هي '.$available.'.']]);
         }
         $price = round((float) $row['unit_price'], 2);
+        $isBonus = $line instanceof InstantSale && $line->is_bonus;
+        if ($isBonus && $price !== 0.0) {
+            throw ValidationException::withMessages(['items' => ['قيمة استرداد بند البونص يجب أن تكون صفراً.']]);
+        }
         $reason = trim((string) ($row['price_override_reason'] ?? ''));
         if (abs($price - $original) > 0.001 && $reason === '') {
             throw ValidationException::withMessages(['items' => ['يجب كتابة سبب تعديل سعر الصنف '.($line->product?->nameAr ?: '#'.$line->product_id).'.']]);
@@ -913,6 +920,7 @@ class SalesReturnService
             'sales_order_id' => $orderId,
             'instant_sale_id' => $instantSaleId,
             'instant_sale_root_id' => $rootId,
+            'is_bonus' => $isBonus,
             'product_id' => (int) $line->product_id,
             'size_id' => $line->size_id ? (int) $line->size_id : null,
             'size_color_id' => $line->size_color_id ? (int) $line->size_color_id : null,

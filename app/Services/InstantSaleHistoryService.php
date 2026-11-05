@@ -44,6 +44,7 @@ class InstantSaleHistoryService
                 'variant' => $this->variantLabel($line),
                 'quantity' => (float) $line->quantity,
                 'unit_price' => (float) $line->cost,
+                'is_bonus' => (bool) $line->is_bonus,
                 'subtotal' => (float) $line->cost * (float) $line->quantity,
             ];
         })->values()->all();
@@ -235,6 +236,7 @@ class InstantSaleHistoryService
             'name' => $name,
             'quantity' => $quantity,
             'unit_price' => $price,
+            'is_bonus' => (bool) ($line['is_bonus'] ?? false),
             'subtotal' => $price * $quantity,
         ];
     }

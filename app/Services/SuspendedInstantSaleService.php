@@ -7,6 +7,7 @@ use App\Models\Box;
 use App\Models\SalesDailySession;
 use App\Models\SuspendedInstantSale;
 use App\Models\User;
+use App\Support\InstantSaleBonus;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -79,6 +80,7 @@ class SuspendedInstantSaleService
             'product_id' => 'required_without:offer_package_id|nullable|exists:products,id',
             'quantity' => 'nullable|numeric|min:1',
             'cost' => 'nullable|numeric|min:0',
+            'is_bonus' => 'sometimes|boolean',
             'discount' => 'nullable|numeric|min:0',
             'total_cost' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string',
@@ -90,6 +92,7 @@ class SuspendedInstantSaleService
             'other_products' => 'nullable|array',
             'other_products.*.product_id' => 'required_with:other_products|exists:products,id',
             'other_products.*.cost' => 'required_with:other_products|numeric|min:0',
+            'other_products.*.is_bonus' => 'sometimes|boolean',
             'other_products.*.quantity' => 'required_with:other_products|numeric|min:1',
             'other_products.*.type' => 'nullable|string|in:normal,project',
             'other_products.*.project_id' => 'nullable',
@@ -108,7 +111,10 @@ class SuspendedInstantSaleService
             'seller_id' => 'nullable|integer|exists:sellers,id',
         ];
 
-        return validator($payload, $rules)->validate();
+        $validated = validator($payload, $rules)->validate();
+        InstantSaleBonus::validate($validated, ($validated['sale_kind'] ?? null) === 'adjustment');
+
+        return $validated;
     }
 
     /**
