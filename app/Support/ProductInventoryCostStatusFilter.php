@@ -35,12 +35,12 @@ class ProductInventoryCostStatusFilter
                         ->when(Schema::hasColumn('inventory_adjustments', 'reversed_at'), fn ($q) => $q->whereNull('cost_reference.reversed_at'))
                         ->where(function ($identity) {
                             $identity->where(function ($simple) {
-                                $simple->whereNull('cost_reference.size_color_id')->where('products.stock', 0)
+                                $simple->whereNull('cost_reference.size_color_id')->where('products.stock', '<=', 0)
                                     ->whereNotExists(fn ($variants) => $variants->selectRaw('1')->from('sizes')
                                         ->join('size_colors', 'size_colors.sizeId', '=', 'sizes.id')
                                         ->whereColumn('sizes.itemId', 'products.id'));
                             })->orWhere(function ($variant) {
-                                $variant->whereColumn('reference_size.itemId', 'products.id')->where('reference_variant.stock', 0);
+                                $variant->whereColumn('reference_size.itemId', 'products.id')->where('reference_variant.stock', '<=', 0);
                             });
                         });
                 });

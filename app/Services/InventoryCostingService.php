@@ -784,7 +784,7 @@ class InventoryCostingService
             ])->all()
             : [];
 
-        $reference = $includeCost && abs($physical) <= self::EPSILON
+        $reference = $includeCost && $physical <= self::EPSILON
             ? $this->referenceCost((int) $product->id, $sizeColorId) : null;
 
         return [

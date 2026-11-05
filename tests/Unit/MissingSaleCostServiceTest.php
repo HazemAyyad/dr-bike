@@ -574,17 +574,34 @@ class MissingSaleCostServiceTest extends TestCase
         $this->assertEquals(300, app(InventoryCostingService::class)->productSummary($this->product->fresh())['reference_unit_cost']);
     }
 
-    public function test_reference_cannot_be_saved_after_quantity_changes_to_positive_or_negative(): void
+    public function test_reference_cannot_be_saved_after_quantity_changes_to_positive(): void
     {
-        foreach ([1, -1] as $quantity) {
-            DB::table('products')->where('id', 962)->update(['stock' => $quantity]);
-            try {
-                $this->reference();
-                $this->fail('Reference accepted for nonzero stock');
-            } catch (ValidationException) {
-            }
-        }
-        $this->assertSame(0, InventoryAdjustment::count());
+        DB::table('products')->where('id', 962)->update(['stock' => 1]);
+
+        $this->expectException(ValidationException::class);
+        $this->reference();
+    }
+
+    public function test_negative_stock_reference_preserves_quantity_and_sale_cost(): void
+    {
+        $sale = $this->sale();
+        DB::table('products')->where('id', 962)->update(['stock' => -3]);
+        $this->assertEquals([962], $this->filteredProducts('without'));
+
+        $adjustment = $this->reference();
+
+        $summary = app(InventoryCostingService::class)->productSummary($this->product->fresh());
+        $this->assertEquals(280, $summary['reference_unit_cost']);
+        $this->assertEquals(-3, $summary['quantity_on_hand']);
+        $this->assertEquals(0, $summary['inventory_value']);
+        $this->assertEquals(-3, $adjustment->stock_before);
+        $this->assertEquals(-3, $adjustment->stock_after);
+        $this->assertEquals(-3, ProductStockMovement::sole()->stock_before);
+        $this->assertEquals(-3, ProductStockMovement::sole()->stock_after);
+        $this->assertNull($sale->fresh()->inventory_total_cost);
+        $this->assertSame(0, InventoryCostLayer::count());
+        $this->assertEquals([], $this->filteredProducts('without'));
+        $this->assertEquals([962], $this->filteredProducts('with'));
     }
 
     public function test_reference_is_variant_specific_and_rejects_unselected_or_foreign_variants(): void
@@ -622,7 +639,7 @@ class MissingSaleCostServiceTest extends TestCase
         return $query->pluck('id')->all();
     }
 
-    public function test_cost_filter_recognizes_reference_only_while_identity_is_zero(): void
+    public function test_cost_filter_recognizes_reference_while_identity_has_no_positive_stock(): void
     {
         $this->assertEquals([962], $this->filteredProducts('without'));
         $this->reference();
@@ -654,7 +671,7 @@ class MissingSaleCostServiceTest extends TestCase
     public function test_variant_reference_filter_does_not_cover_positive_uncosted_stock(): void
     {
         Size::create(['id' => 50, 'itemId' => 962, 'size' => 'كبير']);
-        SizeColor::create(['id' => 60, 'sizeId' => 50, 'colorAr' => 'أسود']);
+        SizeColor::create(['id' => 60, 'sizeId' => 50, 'colorAr' => 'أسود', 'stock' => -2]);
         $this->reference(280, 60);
         $this->assertEquals([962], $this->filteredProducts('with'));
         $this->assertEquals([], $this->filteredProducts('without'));
