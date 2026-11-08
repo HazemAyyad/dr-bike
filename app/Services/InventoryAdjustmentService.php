@@ -31,7 +31,7 @@ class InventoryAdjustmentService
         ?int $sizeColorId,
         ?int $userId,
     ): InventoryAdjustment {
-        $currency = $this->costing->normalizeCurrency($currency);
+        $currency = $this->costing->requireShekelCurrency($currency);
         if ($actualQuantity < 0) {
             throw ValidationException::withMessages(['actual_quantity' => ['الكمية الفعلية لا يمكن أن تكون سالبة.']]);
         }
@@ -132,7 +132,7 @@ class InventoryAdjustmentService
         ?int $sizeColorId,
         ?int $userId,
     ): InventoryAdjustment {
-        $currency = $this->costing->normalizeCurrency($currency);
+        $currency = $this->costing->requireShekelCurrency($currency);
         if ($newUnitCost < 0) {
             throw ValidationException::withMessages(['new_unit_cost' => ['تكلفة الوحدة الجديدة لا يمكن أن تكون سالبة.']]);
         }
@@ -249,7 +249,7 @@ class InventoryAdjustmentService
         ?int $sizeColorId,
         ?int $userId,
     ): InventoryAdjustment {
-        $currency = $this->costing->normalizeCurrency($currency);
+        $currency = $this->costing->requireShekelCurrency($currency);
         if ($unitCost <= 0) {
             throw ValidationException::withMessages(['unit_cost' => ['تكلفة الوحدة يجب أن تكون أكبر من صفر.']]);
         }
@@ -351,7 +351,7 @@ class InventoryAdjustmentService
         if (! is_finite($unitCost) || $unitCost <= 0 || trim($reason) === '') {
             throw ValidationException::withMessages(['unit_cost' => ['أدخل تكلفة أكبر من صفر وسبب تسجيلها.']]);
         }
-        $currency = $this->costing->normalizeCurrency($currency);
+        $currency = $this->costing->requireShekelCurrency($currency);
 
         return DB::transaction(function () use ($product, $unitCost, $reason, $notes, $currency, $sizeColorId, $userId) {
             $product = Product::query()->lockForUpdate()->findOrFail($product->id);

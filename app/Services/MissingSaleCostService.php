@@ -69,7 +69,7 @@ class MissingSaleCostService
                     }
                 }
             }
-            $currency = $this->costing->normalizeCurrency($currency);
+            $currency = $this->costing->requireShekelCurrency($currency);
             $physical = $variantId ? (float) SizeColor::findOrFail($variantId)->stock : (float) $product->stock;
             $adjustment = InventoryAdjustment::create([
                 'reference' => 'SCC-'.strtoupper((string) \Illuminate\Support\Str::ulid()),
@@ -168,7 +168,7 @@ class MissingSaleCostService
         if (! is_finite($unitCost) || $unitCost <= 0) {
             $this->fail('أدخل تكلفة وحدة أكبر من صفر.');
         }
-        $currency = $this->costing->normalizeCurrency($currency);
+        $currency = $this->costing->requireShekelCurrency($currency);
         $query = InstantSale::query()->with(['parentSale', 'paymentBox', 'parentSale.paymentBox'])
             ->where('product_id', $product->id)->where('quantity', '>', 0)
             ->when($variantId, fn ($q) => $q->where('size_color_id', $variantId), fn ($q) => $q->whereNull('size_color_id'))

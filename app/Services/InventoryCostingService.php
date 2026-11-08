@@ -78,6 +78,18 @@ class InventoryCostingService
         };
     }
 
+    public function requireShekelCurrency(?string $currency): string
+    {
+        $currency = $this->normalizeCurrency($currency);
+        if ($currency !== 'شيكل') {
+            throw ValidationException::withMessages([
+                'currency' => ['عملة تكلفة المخزون يجب أن تكون الشيكل.'],
+            ]);
+        }
+
+        return $currency;
+    }
+
     public function addOwnedStock(
         Product $product,
         float $quantity,
@@ -95,7 +107,7 @@ class InventoryCostingService
         ?string $movementReferenceType = null,
         ?int $movementReferenceId = null,
     ): InventoryCostLayer {
-        $currency = $this->normalizeCurrency($currency);
+        $currency = $this->requireShekelCurrency($currency);
         $stockQuantity = $this->wholeStockQuantity($quantity);
         if ($unitCost < 0) {
             throw new \InvalidArgumentException('Unit cost cannot be negative.');
@@ -839,7 +851,7 @@ class InventoryCostingService
         ?int $userId = null,
         ?string $idempotencyKey = null,
     ): InventoryCostLayer {
-        $currency = $this->normalizeCurrency($currency);
+        $currency = $this->requireShekelCurrency($currency);
         if ($unitCost <= 0) {
             throw ValidationException::withMessages([
                 'unit_cost' => ['تكلفة الوحدة يجب أن تكون أكبر من صفر.'],
@@ -1084,7 +1096,7 @@ class InventoryCostingService
 
     public function lockedBalance(Product $product, ?int $sizeColorId = null, ?int $sizeId = null, string $currency = 'شيكل'): InventoryCostBalance
     {
-        $currency = $this->normalizeCurrency($currency);
+        $currency = $this->requireShekelCurrency($currency);
         $key = $this->identityKey((int) $product->id, $sizeColorId);
         $balance = InventoryCostBalance::query()->where('identity_key', $key)->lockForUpdate()->first();
         if ($balance instanceof InventoryCostBalance) {
@@ -1122,7 +1134,7 @@ class InventoryCostingService
 
     public function assertCurrencyCompatible(Product $product, string $currency): void
     {
-        $currency = $this->normalizeCurrency($currency);
+        $currency = $this->requireShekelCurrency($currency);
         $currencies = $this->ownedStockCurrencies($product);
 
         if ($currencies->isNotEmpty() && ($currencies->count() > 1 || ! $currencies->contains($currency))) {
