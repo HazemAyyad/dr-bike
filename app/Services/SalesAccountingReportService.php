@@ -2,10 +2,13 @@
 
 namespace App\Services;
 
+use App\Enums\SalesOrderStatus;
 use App\Models\InstantSale;
 use App\Models\ProfitSale;
+use App\Models\SalesOrder;
 use App\Models\SalesReturn;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Schema;
 
 class SalesAccountingReportService
@@ -56,9 +59,12 @@ class SalesAccountingReportService
                 ])));
         }
 
+        $sales = $sales->concat($this->orderSales($from, $to));
+
         $returns = collect();
         if ($includeReturns) {
-            $returns = SalesReturn::query()->with(['customer:id,name', 'seller:id,name', 'items', 'instantSale.createdByUser:id,name', 'instantSale.parentSale.createdByUser:id,name', 'salesOrder.createdByUser:id,name'])
+            $returns = SalesReturn::query()->with(['customer:id,name', 'seller:id,name', 'items', 'instantSale.createdByUser:id,name', 'instantSale.parentSale.createdByUser:id,name',
+                'salesOrder.customer:id,name', 'salesOrder.partnerCustomer:id,name', 'salesOrder.partnerSeller:id,name', 'salesOrder.createdByUser:id,name'])
                 ->where('status', 'completed')->whereNull('cancelled_at')
                 ->whereIn('return_type', ['direct', 'partial'])
                 ->whereBetween('completed_at', [$from, $to])->get()
@@ -72,11 +78,11 @@ class SalesAccountingReportService
                     );
 
                     $original = $return->instantSale?->parentSale ?: $return->instantSale ?: $return->salesOrder;
+                    $person = $return->salesOrder ? $this->orderPerson($return->salesOrder) : $this->person(
+                        $return->customer_id, $return->seller_id, $return->customer?->name ?: $return->seller?->name
+                    );
 
-                    return array_merge($this->person(
-                        $return->customer_id, $return->seller_id,
-                        $return->customer?->name ?: $return->seller?->name
-                    ), ['date' => $return->completed_at, 'total' => (float) $return->total_amount, 'discount' => $complete ? $discount : null,
+                    return array_merge($person, ['date' => $return->completed_at, 'total' => (float) $return->total_amount, 'discount' => $complete ? $discount : null,
                         'currency' => $return->currency ?: 'شيكل', 'representative_id' => $original?->created_by,
                         'representative_name' => $original?->createdByUser?->name,
                         'cash_only' => (float) $return->total_amount > 0 && (float) $return->cash_refund_amount >= (float) $return->total_amount,
@@ -114,15 +120,54 @@ class SalesAccountingReportService
             'people' => $people,
             'representatives' => $representatives,
             'notes' => [
-                'المبيعات تشمل فواتير البيع والبيع الربحي والطلبيات المرحّلة للمبيعات، وتستبعد الصيانة والفواتير الملغاة.',
-                'نطاق القيمة يطبق على كل فاتورة ومرتجع قبل التجميع، وليس على مجموع الشهر أو الزبون.',
-                'خيار نقدي يعرض الفواتير المدفوعة بالكامل والمرتجعات المستردة نقدًا بالكامل؛ يستبعد الديون والدفعات الجزئية.',
+                'المبيعات تشمل فواتير البيع والبيع الربحي والطلبيات حسب تاريخ ترحيلها المالي. تُستبعد الصيانة والمبيعات الملغاة وطلبات تحصيل الدين.',
+                'نطاق القيمة يطبق على كل عملية بيع ومرتجع قبل التجميع.',
+                'خيار نقدي يعرض المبيعات المدفوعة بالكامل والمرتجعات المستردة نقدًا بالكامل؛ يستبعد الديون والدفعات الجزئية.',
                 'كل عملة لها كشف وإجماليات ونسب مستقلة؛ لا تُحوّل العملات ولا تُجمع في إجمالي موحّد. نطاق القيمة يطبق بعملة الحركة نفسها.',
-                'المندوب هو موظف المبيعات الذي سجّل الفاتورة الأصلية. الحركات القديمة غير المنسوبة لموظف تظهر ضمن الكل فقط.',
+                'المندوب هو موظف المبيعات الذي سجّل الفاتورة أو الطلبية الأصلية. الحركات غير المنسوبة لموظف تظهر ضمن الكل فقط.',
                 'حصة المبيعات من إجمالي المبيعات بعد الخصم لنفس الفلاتر. نسبة المرتجع من مبيعات الصف نفسه؛ عند عدم وجود مبيعات تظهر —.',
                 'المرتجعات حسب تاريخ اعتمادها، وقد تخص مبيعات من فترة سابقة. الصافي = المبيعات بعد الخصم − المرتجعات.',
             ],
         ]);
+    }
+
+    private function orderSales(Carbon $from, Carbon $to): Collection
+    {
+        return SalesOrder::query()
+            ->with(['customer:id,name', 'partnerCustomer:id,name', 'partnerSeller:id,name', 'createdByUser:id,name'])
+            ->whereBetween('financial_posted_at', [$from, $to])
+            ->where('status', '!=', SalesOrderStatus::Canceled->value)
+            ->where('is_debt_collection', false)
+            // Keep historical orders already represented by their original sale invoice out of this source.
+            ->whereNull('instant_sale_id')
+            ->whereNotExists(fn ($query) => $query->from('instant_sales')
+                ->whereColumn('instant_sales.sales_order_id', 'sales_orders.id')
+                ->whereNull('instant_sales.parent_id'))
+            ->get()
+            ->map(fn (SalesOrder $order) => array_merge($this->orderPerson($order), [
+                'date' => $order->financial_posted_at,
+                'total' => (float) $order->total,
+                'discount' => (float) $order->discount,
+                'currency' => 'شيكل',
+                'representative_id' => $order->created_by,
+                'representative_name' => $order->createdByUser?->name,
+                'cash_only' => $order->total > 0 && $order->payment_amount >= $order->total,
+            ]));
+    }
+
+    private function orderPerson(SalesOrder $order): array
+    {
+        if ($order->partner_type === 'seller' && $order->partner_id) {
+            return $this->person(null, $order->partner_id, $order->partnerSeller?->name ?: $order->customer_name);
+        }
+
+        $partnerCustomer = $order->partner_type === 'customer' && $order->partner_id;
+
+        return $this->person(
+            $partnerCustomer ? $order->partner_id : $order->customer_id,
+            null,
+            ($partnerCustomer ? $order->partnerCustomer?->name : $order->customer?->name) ?: $order->customer_name,
+        );
     }
 
     private function person($customerId, $sellerId, ?string $name): array
