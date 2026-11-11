@@ -10,6 +10,7 @@ use App\Models\BoxLog;
 use App\Models\Customer;
 use App\Models\DebtTransaction;
 use App\Models\EmployeeDetail;
+use App\Models\IncomingCheck;
 use App\Models\InstantSale;
 use App\Models\Maintenance;
 use App\Models\MaintenancePayment;
@@ -35,6 +36,7 @@ use App\Services\AccountingReportService;
 use App\Services\AccountingService;
 use App\Services\AssetDepreciationCalculator;
 use App\Services\BoxAccessService;
+use App\Services\CheckSmsNotificationService;
 use App\Services\DebtLedgerBalanceRepairService;
 use App\Services\DebtLedgerService;
 use App\Services\MonthlyAssetDepreciationService;
@@ -226,6 +228,7 @@ class AccountingLedgerIntegrationTest extends TestCase
             $table->boolean('is_shown')->default(true);
             $table->timestamps();
         });
+        (require database_path('migrations/2025_07_14_223400_create_incoming_check_boxes_table.php'))->up();
         Schema::connection('accounting_test')->create('employee_details', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_id');
@@ -721,6 +724,77 @@ class AccountingLedgerIntegrationTest extends TestCase
         $this->assertNotNull($checks->first()->batch_number);
         $this->assertSame($checks->first()->batch_number, $checks->last()->batch_number);
         $this->assertSame(['OUT-100', 'OUT-101'], $checks->pluck('check_id')->all());
+    }
+
+    public function test_cash_incoming_check_only_credits_and_logs_it_once(): void
+    {
+        $customer = Customer::create(['name' => 'Check owner']);
+        $check = IncomingCheck::create([
+            'from_customer' => $customer->id, 'status' => 'not_cashed',
+            'check_id' => '3', 'total' => 1000, 'currency' => 'شيكل',
+        ]);
+        $box = Box::create(['name' => 'Office', 'total' => 200, 'currency' => 'شيكل']);
+        $otherBox = Box::create(['name' => 'Other', 'total' => 50, 'currency' => 'شيكل']);
+        $this->mock(CheckSmsNotificationService::class, function (MockInterface $mock) {
+            $mock->shouldReceive('dispatchForAction')->once()->withArgs(function (IncomingCheck $check, string $event) {
+                return $check->status === 'cashed_to_box' && $event === 'cashed' && DB::transactionLevel() === 0;
+            });
+        });
+
+        $this->withoutMiddleware()->postJson('/api/cash/incoming/check/to/box', [
+            'incoming_check_id' => (string) $check->id, 'box_id' => (string) $box->id,
+        ])->assertOk()->assertJsonPath('status', 'success');
+
+        foreach ([$box, $otherBox] as $retryBox) {
+            $this->postJson('/api/cash/incoming/check/to/box', [
+                'incoming_check_id' => $check->id, 'box_id' => $retryBox->id,
+            ])->assertOk()->assertJsonPath('status', 'error')
+                ->assertJsonPath('message', __('messages.incoming_check_already_cashed_to_box'));
+        }
+
+        $this->assertSame('cashed_to_box', $check->fresh()->status);
+        $this->assertSame(1200.0, (float) $box->fresh()->total);
+        $this->assertSame(50.0, (float) $otherBox->fresh()->total);
+        $this->assertDatabaseCount('incoming_check_boxes', 1);
+        $this->assertDatabaseCount('box_logs', 1);
+        $this->assertDatabaseHas('box_logs', ['box_id' => $box->id, 'source_id' => $check->id, 'value' => 1000]);
+        $this->assertSame(1, DebtTransaction::where('source', 'incoming_check')->where('source_id', $check->id)->count());
+    }
+
+    public function test_incoming_check_with_legacy_box_link_cannot_be_cashed_again(): void
+    {
+        $check = IncomingCheck::create(['status' => 'cashed_to_person', 'total' => 500, 'currency' => 'شيكل']);
+        $box = Box::create(['name' => 'Office', 'total' => 500, 'currency' => 'شيكل']);
+        $check->boxes()->create(['box_id' => $box->id]);
+
+        $this->withoutMiddleware()->postJson('/api/cash/incoming/check/to/box', [
+            'incoming_check_id' => $check->id, 'box_id' => $box->id,
+        ])->assertOk()->assertJsonPath('message', __('messages.incoming_check_already_cashed_to_box'));
+
+        $this->assertDatabaseCount('incoming_check_boxes', 1);
+        $this->assertDatabaseCount('box_logs', 0);
+        $this->assertSame(500.0, (float) $box->fresh()->total);
+    }
+
+    public function test_incoming_check_cash_rolls_back_if_ledger_sync_fails(): void
+    {
+        $check = IncomingCheck::create(['status' => 'not_cashed', 'total' => 500, 'currency' => 'شيكل']);
+        $box = Box::create(['name' => 'Office', 'total' => 200, 'currency' => 'شيكل']);
+        $this->mock(DebtLedgerService::class, function (MockInterface $mock) {
+            $mock->shouldReceive('syncIncomingCheckToLedger')->once()->andThrow(new RuntimeException('Ledger unavailable'));
+        });
+        $this->mock(CheckSmsNotificationService::class, function (MockInterface $mock) {
+            $mock->shouldNotReceive('dispatchForAction');
+        });
+
+        $this->withoutMiddleware()->postJson('/api/cash/incoming/check/to/box', [
+            'incoming_check_id' => $check->id, 'box_id' => $box->id,
+        ])->assertOk()->assertJsonPath('status', 'error');
+
+        $this->assertSame('not_cashed', $check->fresh()->status);
+        $this->assertSame(200.0, (float) $box->fresh()->total);
+        $this->assertDatabaseCount('incoming_check_boxes', 0);
+        $this->assertDatabaseCount('box_logs', 0);
     }
 
     public function test_incoming_and_outgoing_archives_are_newest_first(): void

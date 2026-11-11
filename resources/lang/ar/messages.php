@@ -334,6 +334,8 @@ return [
     'outgoing_check_not_found' => 'لم يتم العثور على الشيك الصادر',
     'outgoing_check_cancelled' => 'تم اعدام الشيك الصادر بنجاح',
     'check_cashed' =>'تم صرف الشيك بنجاح',
+    'incoming_check_already_cashed_to_box' => 'هذا الشيك الوارد مصروف لصندوق مسبقًا.',
+    'incoming_check_unavailable_for_cash' => 'حالة الشيك الوارد الحالية لا تسمح بصرفه للصندوق.',
     'one_person_required' => 'يجب إدخال الزبون أو البائع.',
     'only_one_person_allowed' => 'يرجى إدخال إما الزبون أو البائع، وليس كلاهما.',
     'outgoing_check_returned' => 'تم ارجاع الشيك الصادر بنجاح',

@@ -326,6 +326,8 @@ return [
     'outgoing_check_not_found' => 'outgoing check was not found',
     'outgoing_check_cancelled' => 'outgoing check was cancelled successfully',
     'check_cashed' =>'check was cashed successfully',
+    'incoming_check_already_cashed_to_box' => 'This incoming check has already been cashed into a box.',
+    'incoming_check_unavailable_for_cash' => 'This incoming check cannot be cashed into a box in its current status.',
     'one_person_required' => 'Either the customer or the seller must be provided.',
     'only_one_person_allowed' => 'Please provide either the customer or the seller, not both.',
     'outgoing_check_returned' => 'outgoing check was returned successfully',

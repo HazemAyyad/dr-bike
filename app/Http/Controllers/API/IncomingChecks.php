@@ -478,74 +478,78 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
 
     }
 
-    public function cashCheckToBox(Request $request){
-      try{
-        $request->validate([
-            'incoming_check_id'=>'required|exists:incoming_checks,id',
-            'box_id'=>'required|exists:boxes,id',
+    public function cashCheckToBox(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'incoming_check_id' => 'required|integer|exists:incoming_checks,id',
+                'box_id' => 'required|integer|exists:boxes,id',
+            ]);
 
-        ]);
+            return DB::transaction(function () use ($data) {
+                $incomingCheck = IncomingCheck::query()->lockForUpdate()->findOrFail($data['incoming_check_id']);
+                if ($incomingCheck->status === 'cashed_to_box' || $incomingCheck->boxes()->exists()) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => __('messages.incoming_check_already_cashed_to_box'),
+                    ]);
+                }
+                if (! in_array($incomingCheck->status, ['not_cashed', 'cashed_to_person'], true)) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => __('messages.incoming_check_unavailable_for_cash'),
+                    ]);
+                }
 
+                $box = Box::query()->lockForUpdate()->findOrFail($data['box_id']);
+                if ($incomingCheck->currency !== $box->currency) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => __('messages.must_be_same_currency_check'),
+                    ]);
+                }
 
-        $incomingCheck = IncomingCheck::findOrFail($request->incoming_check_id);
-        $box = Box::findOrFail($request->box_id);
+                $incomingCheck->boxes()->create(['box_id' => $box->id]);
+                $incomingCheck->update(['status' => 'cashed_to_box']);
+                $box->increment('total', $incomingCheck->total);
+                app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck);
 
-        if($incomingCheck->currency !== $box->currency){
+                BoxLogs::createBoxLog(
+                    $box,
+                    'تم صرف شيك وارد برقم  '.($incomingCheck->check_id ?? 'غير معروف').' للصندوق',
+                    'add',
+                    $incomingCheck->total,
+                    sourceType: 'incoming_check',
+                    sourceId: $incomingCheck->id,
+                );
+                Logs::createLog(
+                    'صرف شيك وارد لصندوق ',
+                    'تم صرف الشيك الوارد بقيمة '.$incomingCheck->total.' '.$incomingCheck->currency.'  لصالح الصندوق '.$box->name,
+                    'incoming_checks',
+                    'incoming_check',
+                    $incomingCheck->id,
+                );
+
+                DB::afterCommit(fn () => rescue(
+                    fn () => app(CheckSmsNotificationService::class)->dispatchForAction($incomingCheck, 'cashed')
+                ));
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => __('messages.check_cashed'),
+                ]);
+            }, 3);
+        } catch (ValidationException) {
             return response()->json([
-                'status'=>'error',
-                'message' => __('messages.must_be_same_currency_check'),
-
+                'status' => 'error',
+                'message' => __('messages.validation_failed'),
+            ]);
+        } catch (\Exception) {
+            return response()->json([
+                'status' => 'error',
+                'message' => __('messages.something_wrong'),
             ]);
         }
-        $incomingCheckBox = IncomingCheckBox::create([
-            'incoming_check_id' => $incomingCheck->id,
-            'box_id' => $box->id,
-            
-        ]);
-        $incomingCheck->update(['status' => 'cashed_to_box']);
-        $box->update(['total' => $box->total + $incomingCheck->total]);
-
-        $incomingCheck = $incomingCheck->fresh();
-        app(DebtLedgerService::class)->syncIncomingCheckToLedger($incomingCheck);
-        app(CheckSmsNotificationService::class)->dispatchForAction($incomingCheck, 'cashed');
-
-        BoxLogs::createBoxLog($box,'تم صرف شيك وارد برقم '.' '.($incomingCheck->check_id??'غير معروف').' '.'للصندوق'
-        ,'add',$incomingCheck->total);
-            Logs::createLog(
-            'صرف شيك وارد لصندوق ',
-            'تم صرف الشيك الوارد بقيمة ' . $incomingCheck->total.' '.$incomingCheck->currency.' ' . ' لصالح الصندوق' .' '. $box->name,
-            'incoming_checks'
-        );
-
-        return response()->json([
-            'status'  => 'success',
-            'message' => __('messages.check_cashed'),
-        ], 200);
-    }
-    catch (ValidationException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.validation_failed'),
-        ], 200);
-    } 
-        catch (ModelNotFoundException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
-    
-    catch (QueryException $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status'  => 'error',
-            'message' => __('messages.something_wrong')
-        ], 200);
-    }
     }
 
     private function changeCheckStatus(Request $request,$status){
