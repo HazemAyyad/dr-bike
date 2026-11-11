@@ -1458,6 +1458,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
 
   // reports
     Route::get('/admin/accounting-reports/sales', \App\Http\Controllers\API\SalesAccountingReportController::class);
+    Route::get('/admin/accounting-reports/sales-purchases-expenses', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'salesPurchasesExpenses']);
     Route::get('/admin/accounting-reports/{type}', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'report'])->whereIn('type', ['expenses', 'income']);
     Route::get('/admin/accounting-reports/movement/{kind}/{id}', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'detail'])->whereIn('kind', ['journal', 'expense', 'project', 'depreciation'])->whereNumber('id');
     Route::get('/get/all/report/information' , [Reports::class,'mainData']);

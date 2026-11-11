@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Services\FinancialAccountingReportService;
+use App\Services\SalesPurchasesExpensesReportService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -26,5 +27,16 @@ class FinancialAccountingReportController extends Controller
     public function detail(string $kind, int $id, FinancialAccountingReportService $service)
     {
         return response()->json(['status' => 'success', 'data' => $service->detail($kind, $id)]);
+    }
+
+    public function salesPurchasesExpenses(Request $request, SalesPurchasesExpensesReportService $service)
+    {
+        $filters = $request->validate([
+            'from_date' => ['required', 'date_format:Y-m-d'],
+            'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],
+            'currency' => ['required', Rule::in(['شيكل', 'دولار', 'دينار'])],
+        ]);
+
+        return response()->json(['status' => 'success', 'data' => $service->report($filters)]);
     }
 }
