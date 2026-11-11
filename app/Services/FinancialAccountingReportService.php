@@ -19,7 +19,10 @@ use Illuminate\Support\Facades\Schema;
 
 class FinancialAccountingReportService
 {
-    public function __construct(private FinancialAccountingReportBuilder $builder) {}
+    public function __construct(
+        private FinancialAccountingReportBuilder $builder,
+        private IncomeStatementDetailsService $incomeDetails,
+    ) {}
 
     public function report(string $type, array $filters): array
     {
@@ -56,6 +59,11 @@ class FinancialAccountingReportService
         }
         if (($payload['summary']['missing_cost_count'] ?? 0) > 0) {
             $notes[] = 'تكلفة بعض العمليات التاريخية غير محفوظة؛ تظهر التكلفة الكاملة والأرباح — بدل إعطاء ربح غير موثوق.';
+        }
+        if ($type === 'income') {
+            $details = $this->incomeDetails->build($payload, $events, $filters, $hasLedger);
+            $payload['statement_rows'] = $details['rows'];
+            $notes = array_merge($notes, $details['notes']);
         }
 
         return array_merge($payload, [
@@ -99,6 +107,8 @@ class FinancialAccountingReportService
                     'notes' => $expense?->notes ?? '', 'box_id' => $boxId,
                     'box_name' => $boxId ? ($boxes->get($boxId)?->name ?? 'صندوق #'.$boxId) : 'غير موزع على صندوق',
                     'source_type' => $entry->source_type ?: 'manual', 'source_id' => $entry->source_id,
+                    'is_sales_revenue' => $section === 'revenue' && ($entry->source_type === 'profit_sale'
+                        || $this->builder->accountHasSystemKey((int) $line->account_id, 'sales_revenue', $accounts)),
                 ]);
             })->all();
     }
@@ -159,7 +169,9 @@ class FinancialAccountingReportService
                 continue;
             }
             $currency = $sale->paymentBox?->currency ?: 'شيكل';
-            $rows[] = $this->event('sale:'.$sale->id, $sale->created_at, 'revenue', $sale->maintenance_id ? 'إيرادات الصيانة' : 'المبيعات بعد الخصم', 0, (float) $sale->total_cost, $currency);
+            $rows[] = $this->event('sale:'.$sale->id, $sale->created_at, 'revenue', $sale->maintenance_id ? 'إيرادات الصيانة' : 'المبيعات بعد الخصم', 0, (float) $sale->total_cost, $currency, [
+                'is_sales_revenue' => ! $sale->maintenance_id, 'sales_discount' => (float) $sale->discount,
+            ]);
             $lines = collect([$sale])->concat($sale->subProducts);
             $complete = $lines->every(fn ($line) => ! $line->product_id || $line->inventory_total_cost !== null);
             $rows[] = $this->event('sale-cost:'.$sale->id, $sale->created_at, 'cost', 'تكلفة المبيعات', (float) $lines->sum('inventory_total_cost'), 0, $currency, ['cost_complete' => $complete]);
@@ -169,13 +181,17 @@ class FinancialAccountingReportService
             ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('instant_sales')->whereColumn('instant_sales.sales_order_id', 'sales_orders.id')->whereNull('instant_sales.parent_id'))
             ->get() as $order) {
             $extra = ['covered_by' => ['sales_order:'.$order->id]];
-            $rows[] = $this->event('order:'.$order->id, $order->financial_posted_at, 'revenue', 'إيرادات الطلبيات', 0, (float) $order->total, 'شيكل', $extra);
+            $rows[] = $this->event('order:'.$order->id, $order->financial_posted_at, 'revenue', 'إيرادات الطلبيات', 0, (float) $order->total, 'شيكل', array_merge($extra, [
+                'is_sales_revenue' => true, 'sales_discount' => (float) $order->discount,
+            ]));
             // There is no immutable cost on the order itself; never use its sale price as cost.
             $rows[] = $this->event('order-cost:'.$order->id, $order->financial_posted_at, 'cost', 'تكلفة المبيعات', 0, 0, 'شيكل', array_merge($extra, ['cost_complete' => false]));
         }
         if (Schema::hasTable('profit_sales')) {
             foreach (ProfitSale::with('paymentBox')->whereNull('cancelled_at')->where(fn ($q) => $q->whereNull('status')->orWhere('status', '!=', 'cancelled'))->whereBetween('created_at', [$from, $to])->get() as $sale) {
-                $rows[] = $this->event('profit:'.$sale->id, $sale->created_at, 'revenue', 'البيع الربحي', 0, (float) $sale->total_cost, $sale->paymentBox?->currency ?: 'شيكل', ['covered_by' => ['profit_sale:'.$sale->id]]);
+                $rows[] = $this->event('profit:'.$sale->id, $sale->created_at, 'revenue', 'البيع الربحي', 0, (float) $sale->total_cost, $sale->paymentBox?->currency ?: 'شيكل', [
+                    'covered_by' => ['profit_sale:'.$sale->id], 'is_sales_revenue' => true,
+                ]);
             }
         }
         foreach (SalesReturn::with('items')->where('status', 'completed')->whereNull('cancelled_at')->whereIn('return_type', ['direct', 'partial'])->whereBetween('completed_at', [$from, $to])->get() as $return) {

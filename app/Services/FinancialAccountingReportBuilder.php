@@ -12,16 +12,21 @@ class FinancialAccountingReportBuilder
         if ($type === 'contra_revenue') {
             return 'sales_returns';
         }
+        return $this->accountHasSystemKey($id, 'cost_of_goods_sold', $accounts) ? 'cost' : 'expense';
+    }
+
+    public function accountHasSystemKey(int $id, string $systemKey, array $accounts): bool
+    {
         $seen = [];
         while ($id && isset($accounts[$id]) && ! isset($seen[$id])) {
             $seen[$id] = true;
-            if (($accounts[$id]['system_key'] ?? null) === 'cost_of_goods_sold') {
-                return 'cost';
+            if (($accounts[$id]['system_key'] ?? null) === $systemKey) {
+                return true;
             }
             $id = (int) ($accounts[$id]['parent_id'] ?? 0);
         }
 
-        return 'expense';
+        return false;
     }
 
     /** Ledger projections own their source; reversals remain separate dated movements. */
