@@ -5,6 +5,9 @@ namespace App\Http\Controllers\API;
 use App\Http\Controllers\Controller;
 use App\Services\FinancialAccountingReportService;
 use App\Services\SalesPurchasesExpensesReportService;
+use App\Services\PartyAccountStatementReportService;
+use App\Models\Customer;
+use App\Models\Seller;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -35,6 +38,31 @@ class FinancialAccountingReportController extends Controller
             'from_date' => ['required', 'date_format:Y-m-d'],
             'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],
             'currency' => ['required', Rule::in(['شيكل', 'دولار', 'دينار'])],
+        ]);
+
+        return response()->json(['status' => 'success', 'data' => $service->report($filters)]);
+    }
+
+    public function accountStatementPeople()
+    {
+        $people = Customer::query()->orderBy('name')->get(['id', 'name', 'phone'])
+            ->map(fn ($person) => array_merge($person->toArray(), ['type' => 'customer']))
+            ->concat(Seller::query()->orderBy('name')->get(['id', 'name', 'phone'])
+                ->map(fn ($person) => array_merge($person->toArray(), ['type' => 'seller'])));
+
+        return response()->json(['status' => 'success', 'data' => ['people' => $people->values()]]);
+    }
+
+    public function accountStatement(Request $request, PartyAccountStatementReportService $service)
+    {
+        $filters = $request->validate([
+            'person_type' => ['required', Rule::in(['customer', 'seller'])],
+            'person_id' => ['required', 'integer', Rule::exists($request->input('person_type') === 'seller' ? 'sellers' : 'customers', 'id')],
+            'from_date' => ['required', 'date_format:Y-m-d'],
+            'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],
+            'currency' => ['required', Rule::in(['شيكل', 'دولار', 'دينار'])],
+            'include_opening' => ['nullable', 'boolean'],
+            'include_returned_checks' => ['nullable', 'boolean'],
         ]);
 
         return response()->json(['status' => 'success', 'data' => $service->report($filters)]);
