@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\FinancialAccountingReportService;
 use App\Services\SalesPurchasesExpensesReportService;
 use App\Services\PartyAccountStatementReportService;
+use App\Services\SalesProfitReportService;
 use App\Models\Customer;
 use App\Models\Seller;
 use Illuminate\Http\Request;
@@ -13,6 +14,19 @@ use Illuminate\Validation\Rule;
 
 class FinancialAccountingReportController extends Controller
 {
+    public function salesProfit(Request $request, SalesProfitReportService $service)
+    {
+        $filters = $request->validate([
+            'from_date' => ['required', 'date_format:Y-m-d'],
+            'to_date' => ['required', 'date_format:Y-m-d', 'after_or_equal:from_date'],
+            'currency' => ['required', Rule::in(['شيكل', 'دولار', 'دينار'])],
+            'source' => ['nullable', Rule::in(['all', 'sale', 'order', 'maintenance', 'profit_sale', 'stock'])],
+            'include_returns' => ['nullable', 'boolean'],
+        ]);
+
+        return response()->json(['status' => 'success', 'data' => $service->report($filters)]);
+    }
+
     public function report(Request $request, string $type, FinancialAccountingReportService $service)
     {
         $filters = $request->validate([
