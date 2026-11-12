@@ -17,6 +17,7 @@ class SalesProfitReportTest extends TestCase
         DB::setDefaultConnection('profit_report_test');
         $this->table('products', ['product_code', 'nameAr', 'nameEng']);
         $this->table('sizes', ['size']);
+        $this->table('size_colors', ['colorAr']);
         $this->table('boxes', ['currency']);
         $this->table('instant_sales', ['serial_number', 'status', 'cancelled_at', 'sale_kind'],
             ['parent_id', 'sales_order_id', 'maintenance_id', 'product_id', 'size_id', 'size_color_id', 'payment_box_id', 'offer_package_id'],
@@ -129,6 +130,9 @@ class SalesProfitReportTest extends TestCase
 
     public function test_variant_costs_and_stock_withdrawn_before_the_posting_period_are_preserved(): void
     {
+        DB::table('size_colors')->insert([
+            ['id' => 5, 'colorAr' => 'أصفر'], ['id' => 6, 'colorAr' => 'أحمر'],
+        ]);
         $order = $this->order(100);
         DB::table('sales_order_items')->insert([
             ['sales_order_id' => $order, 'product_id' => 1, 'size_color_id' => 5, 'quantity' => 1, 'line_total' => 40, 'is_hidden' => 0],
@@ -140,6 +144,7 @@ class SalesProfitReportTest extends TestCase
         ]);
         $this->assertSame(65.0, $this->report()['summary']['profit']);
         $this->assertSame([5.0, 30.0], array_column($this->report()['documents'][0]['lines'], 'cost_total'));
+        $this->assertSame(['قطعة / أصفر', 'قطعة / أحمر'], array_column($this->report()['documents'][0]['lines'], 'product'));
         $this->sale(['sale_kind' => 'adjustment', 'total_cost' => 10, 'inventory_total_cost' => null]);
         $this->assertSame(75.0, $this->report()['summary']['profit']);
     }

@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Schema;
 
 class SalesProfitReportService
 {
+    private Collection $colors;
+
     public function __construct(private SalesProfitReportBuilder $builder) {}
 
     public function report(array $filters): array
@@ -21,6 +23,7 @@ class SalesProfitReportService
         $represented = [];
         $products = DB::table('products')->get(['id', 'product_code', 'nameAr', 'nameEng'])->keyBy('id'); // Include archived labels.
         $sizes = DB::table('sizes')->pluck('size', 'id');
+        $this->colors = DB::table('size_colors')->pluck('colorAr', 'id');
         $boxes = DB::table('boxes')->pluck('currency', 'id');
         $orders = DB::table('sales_orders')->get(['id', 'instant_sale_id', 'financial_posted_at', 'is_debt_collection', 'status', 'serial_number', 'total', 'discount'])->keyBy('id');
         $maintenance = DB::table('maintenance')->whereNull('deleted_at')->get(['id', 'instant_sale_id', 'status', 'end_date', 'updated_at', 'invoice_total', 'discount'])->keyBy('id');
@@ -234,9 +237,14 @@ class SalesProfitReportService
     private function line(object $line, Collection $products, Collection $sizes, float $quantity, float $gross, ?float $cost, bool $bonus = false): array
     {
         $product = $products->get($line->product_id);
+        $name = ($line->product_name ?? null) ?: ($product?->nameAr ?: $product?->nameEng ?: 'صنف #'.$line->product_id);
+        $color = trim((string) $this->colors->get($line->size_color_id));
+        if ($color !== '' && ! str_contains($name, $color)) {
+            $name .= ' / '.$color;
+        }
 
         return ['product_code' => (string) ($product?->product_code ?: $line->product_id),
-            'product' => ($line->product_name ?? null) ?: ($product?->nameAr ?: $product?->nameEng ?: 'صنف #'.$line->product_id),
+            'product' => $name, 'color' => $color,
             'quantity' => $quantity, 'bonus' => $bonus ? $quantity : 0.0,
             'unit' => (string) $sizes->get($line->size_id), 'gross' => $gross, 'cost_total' => $cost];
     }
