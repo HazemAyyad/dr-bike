@@ -239,4 +239,18 @@ class SuspendedInstantSaleController extends Controller
             ], 200);
         }
     }
+
+    public function history(Request $request)
+    {
+        $data = $request->validate([
+            'suspended_instant_sale_id' => 'required|integer|exists:suspended_instant_sales,id',
+        ]);
+        $record = $this->service->show($request->user(), (int) $data['suspended_instant_sale_id']);
+
+        return response()->json([
+            'status' => 'success',
+            'suspended_instant_sale' => $this->service->formatDetail($record),
+            'history' => app(\App\Services\SuspendedInstantSaleHistoryService::class)->timeline($record),
+        ]);
+    }
 }

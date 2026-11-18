@@ -313,6 +313,8 @@ return [
     'suspended_instant_sale_cannot_suspend_edit' => 'A sold invoice cannot be suspended while it is being edited',
     'suspended_instant_sale_forbidden' => 'You do not have access to this suspended invoice',
     'suspended_instant_sale_not_active' => 'This suspended invoice is not available',
+    'suspended_instant_sale_stale' => 'The suspended invoice changed or its current version was not opened. Reopen it from suspended invoices before changing or completing it. Update the app if this message persists.',
+    'suspended_instant_sale_buyer_changed' => 'The current buyer differs from the saved suspended invoice. Confirm the buyer change or start a new invoice.',
     'suspended_instant_sale_default_label' => 'Suspended invoice',
     'admin_notify_suspended_sale_created_title' => 'New suspended invoice',
     'admin_notify_suspended_sale_created_body' => ':employee suspended invoice :reference for :total',

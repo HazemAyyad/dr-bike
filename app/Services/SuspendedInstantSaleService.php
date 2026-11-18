@@ -180,12 +180,19 @@ class SuspendedInstantSaleService
 
     public function store(User $user, Request $request): SuspendedInstantSale
     {
+        return DB::transaction(fn () => $this->storeLocked($user, $request));
+    }
+
+    private function storeLocked(User $user, Request $request): SuspendedInstantSale
+    {
         $data = $request->validate([
             'current_step' => 'required|string|in:product_picker,checkout',
             'save_type' => 'nullable|string|in:manual,auto',
             'payload' => 'required|array',
             'suspended_instant_sale_id' => 'nullable|integer|exists:suspended_instant_sales,id',
             'note' => 'nullable|string|max:2000',
+            'expected_payload_hash' => 'nullable|string|size:64',
+            'confirm_buyer_change' => 'sometimes|boolean',
         ]);
 
         $payload = $this->validatePayload($data['payload']);
@@ -205,7 +212,7 @@ class SuspendedInstantSaleService
         $noteText = trim((string) ($data['note'] ?? ''));
 
         if (! empty($data['suspended_instant_sale_id'])) {
-            $existing = SuspendedInstantSale::query()->findOrFail($data['suspended_instant_sale_id']);
+            $existing = SuspendedInstantSale::query()->lockForUpdate()->findOrFail($data['suspended_instant_sale_id']);
             if (! $this->canMutate($user, $existing)) {
                 throw ValidationException::withMessages([
                     'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_forbidden')],
@@ -223,6 +230,8 @@ class SuspendedInstantSaleService
                 ]);
             }
 
+            $this->assertSafeReplacement($existing, $payload, $data);
+            $before = app(SuspendedInstantSaleHistoryService::class)->snapshot($existing);
             $wasAutoSaved = $existing->isAutoSaved();
             $existing->update([
                 'current_step' => $data['current_step'],
@@ -236,6 +245,7 @@ class SuspendedInstantSaleService
             if ($noteText !== '') {
                 $this->appendNote($existing, $user, $noteText);
             }
+            app(SuspendedInstantSaleHistoryService::class)->record($existing, $user, 'updated', $before);
 
             if ($saveType === SuspendedInstantSale::SAVE_TYPE_MANUAL) {
                 $this->logSuspendedActivity(
@@ -274,6 +284,7 @@ class SuspendedInstantSaleService
         ]);
 
         $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
+        app(SuspendedInstantSaleHistoryService::class)->record($record, $user, 'created', null);
 
         if ($saveType === SuspendedInstantSale::SAVE_TYPE_MANUAL) {
             $this->logSuspendedActivity(
@@ -326,10 +337,11 @@ class SuspendedInstantSaleService
             ->all();
     }
 
-    public function show(User $user, int $id): SuspendedInstantSale
+    public function show(User $user, int $id, bool $lockForUpdate = false): SuspendedInstantSale
     {
         $record = SuspendedInstantSale::query()
             ->with(['createdByUser:id,name', 'employee.user'])
+            ->when($lockForUpdate, fn ($query) => $query->lockForUpdate())
             ->findOrFail($id);
 
         if (! $this->canView($user, $record)) {
@@ -343,7 +355,12 @@ class SuspendedInstantSaleService
 
     public function cancel(User $user, int $id): SuspendedInstantSale
     {
-        $record = $this->show($user, $id);
+        return DB::transaction(fn () => $this->cancelLocked($user, $id));
+    }
+
+    private function cancelLocked(User $user, int $id): SuspendedInstantSale
+    {
+        $record = $this->show($user, $id, lockForUpdate: true);
 
         if (! $this->canMutate($user, $record)) {
             throw ValidationException::withMessages([
@@ -357,11 +374,13 @@ class SuspendedInstantSaleService
             ]);
         }
 
+        $before = app(SuspendedInstantSaleHistoryService::class)->snapshot($record);
         $record->update([
             'status' => SuspendedInstantSale::STATUS_CANCELLED,
             'cancelled_by_user_id' => $user->id,
             'cancelled_at' => now(),
         ]);
+        app(SuspendedInstantSaleHistoryService::class)->record($record, $user, 'cancelled', $before);
 
         if (! $record->isAutoSaved()) {
             $this->logSuspendedActivity(
@@ -378,7 +397,12 @@ class SuspendedInstantSaleService
 
     public function addNote(User $user, int $id, string $note): SuspendedInstantSale
     {
-        $record = $this->show($user, $id);
+        return DB::transaction(fn () => $this->addNoteLocked($user, $id, $note));
+    }
+
+    private function addNoteLocked(User $user, int $id, string $note): SuspendedInstantSale
+    {
+        $record = $this->show($user, $id, lockForUpdate: true);
 
         if (! $this->canMutate($user, $record)) {
             throw ValidationException::withMessages([
@@ -392,7 +416,9 @@ class SuspendedInstantSaleService
             ]);
         }
 
+        $before = app(SuspendedInstantSaleHistoryService::class)->snapshot($record);
         $this->appendNote($record, $user, $note);
+        app(SuspendedInstantSaleHistoryService::class)->record($record, $user, 'note_added', $before);
 
         if (! $record->isAutoSaved()) {
             $this->logSuspendedActivity(
@@ -416,30 +442,12 @@ class SuspendedInstantSaleService
         $data = $request->validate([
             'suspended_instant_sale_id' => 'required|integer|exists:suspended_instant_sales,id',
             'payload' => 'nullable|array',
+            'expected_payload_hash' => 'nullable|string|size:64',
+            'confirm_buyer_change' => 'sometimes|boolean',
         ]);
 
-        $record = $this->show($user, $data['suspended_instant_sale_id']);
-
-        if (! $record->isSuspended()) {
-            throw ValidationException::withMessages([
-                'suspended_instant_sale_id' => [__('messages.suspended_instant_sale_not_active')],
-            ]);
-        }
-
-        $payload = $this->validatePayload(
-            array_merge($record->payload ?? [], $data['payload'] ?? [])
-        );
-
-        $isAdjustmentSale = ($payload['sale_kind'] ?? null) === 'adjustment';
-        $activeSession = null;
-        if (! $isAdjustmentSale) {
-            $activeSession = $this->sessionService->assertCanCreateSaleToday($user);
-        }
-
-        return DB::transaction(function () use ($user, $record, $payload, $activeSession) {
-            $record = SuspendedInstantSale::query()
-                ->lockForUpdate()
-                ->findOrFail($record->id);
+        return DB::transaction(function () use ($user, $data) {
+            $record = $this->show($user, (int) $data['suspended_instant_sale_id'], lockForUpdate: true);
 
             if (! $this->canMutate($user, $record)) {
                 throw ValidationException::withMessages([
@@ -453,6 +461,11 @@ class SuspendedInstantSaleService
                 ]);
             }
 
+            $payload = $this->validatePayload(array_merge($record->payload ?? [], $data['payload'] ?? []));
+            $this->assertSafeReplacement($record, $payload, $data);
+            $before = app(SuspendedInstantSaleHistoryService::class)->snapshot($record);
+            $activeSession = ($payload['sale_kind'] ?? null) === 'adjustment'
+                ? null : $this->sessionService->assertCanCreateSaleToday($user);
             $payload = $activeSession
                 ? $this->movePaymentBoxToActiveSession($payload, $activeSession)
                 : $payload;
@@ -488,13 +501,16 @@ class SuspendedInstantSaleService
             ]);
 
             if (($body['status'] ?? '') !== 'success') {
-                return [
-                    'response' => response()->json($body, 200),
-                    'instant_sale_id' => null,
-                ];
+                // A failed sale must not commit an overwritten suspended payload.
+                throw ValidationException::withMessages($body['errors'] ?? [
+                    'payload' => [$body['message'] ?? __('messages.something_wrong')],
+                ]);
             }
 
             $instantSaleId = isset($body['instant_sale_id']) ? (int) $body['instant_sale_id'] : null;
+            if (! $instantSaleId) {
+                throw new \RuntimeException('Sale completion returned no invoice ID.');
+            }
 
             $record->update([
                 'status' => SuspendedInstantSale::STATUS_COMPLETED,
@@ -504,6 +520,7 @@ class SuspendedInstantSaleService
             ]);
 
             $record = $record->fresh(['createdByUser:id,name', 'employee.user']);
+            app(SuspendedInstantSaleHistoryService::class)->record($record, $user, 'completed', $before);
             if (! $record->isAutoSaved()) {
                 $this->notifyAdminSuspendedCompleted($record, $user);
                 $this->logSuspendedActivity(
@@ -528,6 +545,39 @@ class SuspendedInstantSaleService
                 'instant_sale_id' => $instantSaleId,
             ];
         });
+    }
+
+    private function assertSafeReplacement(SuspendedInstantSale $record, array $payload, array $data): void
+    {
+        $expected = $data['expected_payload_hash'] ?? null;
+        $current = app(SuspendedInstantSaleHistoryService::class)->payloadHash($record);
+        if (($expected !== null && ! hash_equals($current, $expected))
+            || ($expected === null && $payload != ($record->payload ?? []))) {
+            throw ValidationException::withMessages([
+                'expected_payload_hash' => [__('messages.suspended_instant_sale_stale')],
+            ]);
+        }
+
+        $original = $record->payload ?? [];
+        if ($this->buyerIdentity($original) !== null
+            && $this->buyerIdentity($original) !== $this->buyerIdentity($payload)
+            && ! ($data['confirm_buyer_change'] ?? false)) {
+            throw ValidationException::withMessages([
+                'confirm_buyer_change' => [__('messages.suspended_instant_sale_buyer_changed')],
+            ]);
+        }
+    }
+
+    private function buyerIdentity(array $payload): ?string
+    {
+        $type = $payload['buyer_type'] ?? 'unknown';
+        $id = $type === 'seller' ? ($payload['seller_id'] ?? null) : ($payload['buyer_id'] ?? null);
+        if ($id) {
+            return $type.':'.$id;
+        }
+        $name = trim((string) ($payload['buyer_name'] ?? ''));
+
+        return $name !== '' ? $type.':'.$name : null;
     }
 
     /**
@@ -657,6 +707,7 @@ class SuspendedInstantSaleService
             'note_count' => count($noteLog),
             'latest_note' => $this->latestNote($noteLog),
             'payload' => $item->payload,
+            'payload_hash' => app(SuspendedInstantSaleHistoryService::class)->payloadHash($item),
         ];
     }
 

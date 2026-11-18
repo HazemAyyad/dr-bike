@@ -322,6 +322,8 @@ return [
     'suspended_instant_sale_cannot_suspend_edit' => 'لا يمكن تعليق فاتورة مبيعات أثناء تعديل فاتورة مباعة',
     'suspended_instant_sale_forbidden' => 'لا تملك صلاحية لهذه الفاتورة العالقة',
     'suspended_instant_sale_not_active' => 'هذه الفاتورة العالقة غير متاحة',
+    'suspended_instant_sale_stale' => 'تغيّرت الفاتورة العالقة أو لم تُفتح نسختها الحالية. أعد فتحها من قائمة الفواتير العالقة قبل تعديلها أو إتمامها. إذا استمرت الرسالة، حدّث التطبيق.',
+    'suspended_instant_sale_buyer_changed' => 'الزبون الحالي مختلف عن الزبون المحفوظ على الفاتورة العالقة. أكّد تغيير الزبون أو ابدأ فاتورة جديدة.',
     'suspended_instant_sale_default_label' => 'فاتورة عالقة',
     'admin_notify_suspended_sale_created_title' => 'فاتورة عالقة جديدة',
     'admin_notify_suspended_sale_created_body' => 'علّق :employee فاتورة :reference بقيمة :total',

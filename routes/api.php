@@ -665,6 +665,7 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Sales','refresh.to
       Route::get('/suspended/instant/sales', [SuspendedInstantSaleController::class, 'index']);
       Route::get('/suspended/instant/sales/count', [SuspendedInstantSaleController::class, 'count']);
       Route::get('/suspended/instant/sale', [SuspendedInstantSaleController::class, 'show']);
+      Route::get('/suspended/instant/sale/history', [SuspendedInstantSaleController::class, 'history']);
       Route::post('/suspended/instant/sale', [SuspendedInstantSaleController::class, 'store']);
       Route::post('/suspended/instant/sale/note', [SuspendedInstantSaleController::class, 'addNote']);
       Route::post('/suspended/instant/sale/complete', [SuspendedInstantSaleController::class, 'complete']);
