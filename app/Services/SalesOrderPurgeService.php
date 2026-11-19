@@ -179,6 +179,7 @@ class SalesOrderPurgeService
 
         $allOrdersCount = SalesOrder::query()->count();
         $resetsCounters = $mode === self::MODE_ORDERS_ONLY_RESET;
+        $closedDrawerOrders = $resetsCounters ? [] : $this->closedDrawerCashOrderIds($orderIds);
 
         return [
             'orders_count' => $orderIds->count(),
@@ -200,6 +201,7 @@ class SalesOrderPurgeService
             'net_cash_by_currency' => $cashByCurrency,
             'linked_instant_sales_count' => $linkedInstantSales,
             'financial_returns_count' => $financialReturns,
+            'closed_drawer_cash_orders_count' => count($closedDrawerOrders),
             'mode' => $mode,
             'all_orders_count' => $allOrdersCount,
             'will_reset_counters' => $resetsCounters,
@@ -212,6 +214,7 @@ class SalesOrderPurgeService
                 : 0,
             'can_purge' => $financialReturns === 0
                 && $linkedInstantSales === 0
+                && $closedDrawerOrders === []
                 && (! $resetsCounters || $orderIds->count() === $allOrdersCount),
         ];
     }
@@ -225,6 +228,9 @@ class SalesOrderPurgeService
     ): array {
         $preview = $this->preview($cutoff, $maxOrderId, $mode);
         if (! $preview['can_purge']) {
+            if (($preview['closed_drawer_cash_orders_count'] ?? 0) > 0) {
+                throw ValidationException::withMessages(['orders' => ['لا يمكن عكس تحصيلات طلبيات مرتبطة بجلسة صندوق مغلقة. راجع الترحيلات قبل التصحيح المالي.']]);
+            }
             $message = $mode === self::MODE_ORDERS_ONLY_RESET && ! $preview['can_reset_counters']
                 ? 'تصفير العدادات يتطلب حذف جميع الطلبيات الحالية.'
                 : 'توجد فواتير بيع أو مرتجعات مالية مرتبطة بهذه الطلبيات. يجب تنظيفها بشكل منفصل أولاً.';
@@ -734,6 +740,9 @@ class SalesOrderPurgeService
     /** @param Collection<int, SalesOrderSettlement> $settlements */
     private function reverseCashImpact(SalesOrder $order, Collection $settlements): void
     {
+        if ($this->closedDrawerCashOrderIds(collect([$order->id]), lock: true) !== []) {
+            throw ValidationException::withMessages(['orders' => ['لا يمكن عكس تحصيلات طلبيات مرتبطة بجلسة صندوق مغلقة. راجع الترحيلات قبل التصحيح المالي.']]);
+        }
         $boxLogs = $this->orderBoxLogs($order);
         foreach ($this->cashEffectsForOrder($order, $settlements) as $effect) {
             $boxId = (int) $effect['box_id'];
@@ -783,6 +792,31 @@ class SalesOrderPurgeService
         }
 
         return $effects;
+    }
+
+    /** Cash already counted in a closed drawer cannot be reversed against its current balance. */
+    private function closedDrawerCashOrderIds(Collection $orderIds, bool $lock = false): array
+    {
+        if (! Schema::hasTable('sales_daily_sessions')
+            || ! Schema::hasColumn('sales_order_settlements', 'sales_daily_session_id')
+            || ! Schema::hasColumn('boxes', 'type')) {
+            return [];
+        }
+
+        return DB::table('sales_order_settlements as settlement')
+            ->join('boxes', 'boxes.id', '=', 'settlement.box_id')
+            ->leftJoin('sales_daily_sessions as session', 'session.id', '=', 'settlement.sales_daily_session_id')
+            ->whereIn('settlement.sales_order_id', $orderIds)
+            ->where('boxes.type', config('sales_orders.daily_box.type', 'daily_sales_orders'))
+            ->select('settlement.sales_order_id', 'settlement.box_id', 'settlement.sales_daily_session_id',
+                'settlement.amount', 'settlement.cash_amount', 'session.status')
+            ->orderBy('session.id')->orderBy('settlement.id')
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->get()
+            ->groupBy(fn ($row) => $row->sales_order_id.':'.$row->box_id.':'.$row->sales_daily_session_id)
+            ->filter(fn ($rows) => $rows->first()->status !== config('sales_daily.session_status.open', 'open')
+                && abs((float) $rows->sum(fn ($row) => $row->cash_amount ?? $row->amount)) > 0.001)
+            ->map(fn ($rows) => (int) $rows->first()->sales_order_id)->unique()->values()->all();
     }
 
     private function signedBoxLogValue(BoxLog $log): float

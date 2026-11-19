@@ -48,6 +48,7 @@ class SalesOrdersController extends Controller
                 'status' => 'success',
                 'sales_orders' => $this->service->list($filters),
                 'status_counts' => $this->service->statusCounts($filters),
+                'financial_summary' => $this->service->financialSummary($filters),
             ], 200);
         } catch (ValidationException $e) {
             return response()->json([
@@ -993,6 +994,7 @@ class SalesOrdersController extends Controller
                 'payment_amount' => 'nullable|numeric|min:0',
                 'payment_box_id' => 'nullable|integer|exists:boxes,id',
                 'delivery_settled_amount' => 'nullable|numeric|min:0',
+                'archive_after_settlement' => 'nullable|boolean',
                 'carrier_fee' => 'nullable|numeric|min:0',
                 'source' => 'nullable|string|in:carrier,customer_debt',
                 'idempotency_key' => 'nullable|string|max:100',

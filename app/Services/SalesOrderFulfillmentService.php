@@ -8,6 +8,7 @@ use App\Models\Box;
 use App\Models\DeliveryCompany;
 use App\Models\Expense;
 use App\Models\InstantSale;
+use App\Models\SalesDailySession;
 use App\Models\SalesOrder;
 use App\Models\SalesOrderDelivery;
 use App\Models\SalesOrderItem;
@@ -364,6 +365,33 @@ class SalesOrderFulfillmentService
 
     public function settleDelivery(User $user, int $orderId, array $payload): SalesOrder
     {
+        return DB::transaction(function () use ($user, $orderId, $payload) {
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
+            $key = $payload['idempotency_key'] ?? null;
+            if ($key) {
+                $existing = SalesOrderSettlement::query()->where('idempotency_key', $key)->first();
+                if ($existing) {
+                    if ((int) $existing->sales_order_id !== $orderId
+                        || $existing->source !== ($payload['source'] ?? 'carrier')
+                        || abs((float) $existing->amount - (float) ($payload['delivery_settled_amount'] ?? 0)) > 0.001
+                        || abs((float) $existing->carrier_fee - (float) ($payload['carrier_fee'] ?? 0)) > 0.001) {
+                        throw ValidationException::withMessages(['idempotency_key' => ['مرجع التسوية مستخدم لعملية مختلفة.']]);
+                    }
+
+                    return $order;
+                }
+            }
+
+            $settled = $this->settleDeliveryPayment($user, $orderId, $payload);
+
+            return ! empty($payload['archive_after_settlement'])
+                ? $this->archive($user, $settled->id)
+                : $settled;
+        }, 3);
+    }
+
+    private function settleDeliveryPayment(User $user, int $orderId, array $payload): SalesOrder
+    {
         $order = SalesOrder::query()->findOrFail($orderId);
         $this->assertTransition($order, [SalesOrderStatus::Delivered]);
 
@@ -444,6 +472,10 @@ class SalesOrderFulfillmentService
                 $user,
                 SalesDailySessionService::TYPE_SALES_ORDERS
             );
+            $session = SalesDailySession::query()->lockForUpdate()->findOrFail($session->id);
+            if (! $session->allowsSales()) {
+                throw ValidationException::withMessages(['session' => [__('messages.sales_daily_closing_pending')]]);
+            }
             $box = Box::lockForUpdate()->findOrFail($resolvedBox['id']);
             if ($cashAmount > 0) {
                 $box->total = round((float) $box->total + $cashAmount, 2);
@@ -518,16 +550,14 @@ class SalesOrderFulfillmentService
 
     public function archive(User $user, int $orderId): SalesOrder
     {
-        $order = SalesOrder::query()->findOrFail($orderId);
-        $this->assertTransition($order, [SalesOrderStatus::Delivered]);
-
-        if ((float) $order->customer_debt_balance > 0 || (float) $order->carrier_receivable_balance > 0) {
-            throw ValidationException::withMessages([
-                'order' => [__('messages.sales_order_settlement_required')],
-            ]);
-        }
-
-        return DB::transaction(function () use ($user, $order) {
+        return DB::transaction(function () use ($user, $orderId) {
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($orderId);
+            $this->assertTransition($order, [SalesOrderStatus::Delivered]);
+            if ((float) $order->customer_debt_balance > 0 || (float) $order->carrier_receivable_balance > 0) {
+                throw ValidationException::withMessages([
+                    'order' => [__('messages.sales_order_settlement_required')],
+                ]);
+            }
             $from = $order->status;
             $order->update([
                 'status' => SalesOrderStatus::Archived->value,

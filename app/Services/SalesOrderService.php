@@ -190,6 +190,18 @@ class SalesOrderService
         return $counts;
     }
 
+    /** Outstanding amounts across the search/source, independent of the selected tab or 500-row list limit. */
+    public function financialSummary(array $filters = []): array
+    {
+        $query = SalesOrder::query();
+        $this->applyListFilters($query, $filters, includeStatus: false);
+        $row = $query->whereNotIn('status', [SalesOrderStatus::Archived->value, SalesOrderStatus::Canceled->value])
+            ->selectRaw('COALESCE(SUM(carrier_receivable_balance), 0) as carrier, COALESCE(SUM(customer_debt_balance), 0) as customer')
+            ->first();
+
+        return ['carrier_receivable' => round((float) $row->carrier, 2), 'customer_debt' => round((float) $row->customer, 2)];
+    }
+
     /** @param \Illuminate\Database\Eloquent\Builder<SalesOrder> $query */
     private function applyListFilters($query, array $filters, bool $includeStatus): void
     {

@@ -315,7 +315,7 @@ class SalesDailySessionService
                 $this->syncOpeningDailyBoxBalances($user, $openingBalances, $expectedOpeningCounts);
             }
 
-            return SalesDailySession::create([
+            $session = SalesDailySession::create([
                 'user_id' => $owner['user_id'],
                 'employee_id' => $owner['employee_id'],
                 'session_type' => $sessionType,
@@ -326,13 +326,24 @@ class SalesDailySessionService
                 'opened_at' => now(),
                 'opened_by_user_id' => $owner['user_id'],
             ]);
-        });
 
-        if ($sessionType === self::TYPE_SALES_ORDERS) {
-            app(SalesOrdersDailyBoxService::class)->ensureBoxes($user, $session)->each(function (Box $box) use ($ordersOpeningBalances) {
-                $box->update(['total' => round((float) ($ordersOpeningBalances[$box->currency] ?? 0), 2)]);
-            });
-        }
+            if ($sessionType === self::TYPE_SALES_ORDERS) {
+                app(SalesOrdersDailyBoxService::class)->ensureBoxes($user, $session)->each(function (Box $box) use ($ordersOpeningBalances, $session, $user) {
+                    $box = Box::query()->lockForUpdate()->findOrFail($box->id);
+                    $counted = round((float) ($ordersOpeningBalances[$box->currency] ?? 0), 2);
+                    $before = round((float) $box->total, 2);
+                    $box->update(['total' => $counted]);
+                    $difference = round($counted - $before, 2);
+                    if (abs($difference) > 0.001) {
+                        BoxLogs::createBoxLog($box, 'فرق جرد افتتاح صندوق الطلبيات', $difference > 0 ? 'add' : 'minus', $difference,
+                            'جلسة #'.$session->id.' — الرصيد السابق '.$before.'، الجرد الفعلي '.$counted,
+                            'sales_orders_opening_variance', $user->id, SalesDailySession::class, $session->id);
+                    }
+                });
+            }
+
+            return $session;
+        });
 
         $this->logSessionActivity(
             $session,
