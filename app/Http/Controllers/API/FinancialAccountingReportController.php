@@ -22,6 +22,9 @@ class FinancialAccountingReportController extends Controller
             'currency' => ['required', Rule::in(['شيكل', 'دولار', 'دينار'])],
             'source' => ['nullable', Rule::in(['all', 'sale', 'order', 'maintenance', 'profit_sale', 'stock'])],
             'include_returns' => ['nullable', 'boolean'],
+            'group_by' => ['nullable', Rule::in(['document', 'product'])],
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+            'store_section_id' => ['nullable', 'integer', 'exists:store_sections,id'],
         ]);
 
         return response()->json(['status' => 'success', 'data' => $service->report($filters)]);

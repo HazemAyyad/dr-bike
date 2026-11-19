@@ -21,7 +21,12 @@ class SalesProfitReportService
         $to = $filters['to_date'].' 23:59:59.999999';
         $documents = [];
         $represented = [];
-        $products = DB::table('products')->get(['id', 'product_code', 'nameAr', 'nameEng'])->keyBy('id'); // Include archived labels.
+        $byProduct = ($filters['group_by'] ?? 'document') === 'product';
+        $productColumns = ['id', 'product_code', 'nameAr', 'nameEng'];
+        if ($byProduct) {
+            $productColumns = [...$productColumns, 'category_id', 'store_section_id'];
+        }
+        $products = DB::table('products')->get($productColumns)->keyBy('id'); // Include archived labels.
         $sizes = DB::table('sizes')->pluck('size', 'id');
         $this->colors = DB::table('size_colors')->pluck('colorAr', 'id');
         $boxes = DB::table('boxes')->pluck('currency', 'id');
@@ -215,7 +220,7 @@ class SalesProfitReportService
         }
         usort($documents, fn ($a, $b) => [$a['date'], $a['key']] <=> [$b['date'], $b['key']]);
 
-        return ['filters' => $filters, 'documents' => $documents, 'summary' => $this->builder->summary($documents),
+        $result = ['filters' => $filters, 'documents' => $documents, 'summary' => $this->builder->summary($documents),
             'withdrawals' => $this->unbilledWithdrawals($movements, $represented, $products, $sizes, $filters, $from, $to),
             'notes' => [
                 'يشمل البيع والطلبيات المرحّلة ماليًا والصيانة المسلّمة والبيع الربحي. الفاتورة المرتبطة بطلبية أو صيانة تُحتسب مرة واحدة. الملغى وطلبات تحصيل الدين مستبعدة.',
@@ -226,6 +231,11 @@ class SalesProfitReportService
                 '— تعني تكلفة غير مكتملة أو غير قابلة للمقارنة. لا تُستبدل تكلفة تاريخية مفقودة بسعر الشراء الحالي. تكلفة المخزون بالشيكل؛ لا يُطرح الشيكل من مبيعات بعملة أخرى.',
                 'السحوبات غير الممثلة بمستند بيع معتمد للفترة تظهر في كشف مستقل حسب تاريخ حركة المخزون، خارج إجمالي الأرباح؛ قد تشمل حركات داخلية أو تسويات وليست مبيعات.',
             ]];
+        if ($byProduct) {
+            $result['product_report'] = app(SalesProfitByProductReportService::class)->report($documents, $products, $filters);
+        }
+
+        return $result;
     }
 
     private function document(string $key, string $number, string $date, string $source, string $type, float $sales, float $discount): array
@@ -243,7 +253,8 @@ class SalesProfitReportService
             $name .= ' / '.$color;
         }
 
-        return ['product_code' => (string) ($product?->product_code ?: $line->product_id),
+        return ['product_id' => (int) $line->product_id,
+            'product_code' => (string) ($product?->product_code ?: $line->product_id),
             'product' => $name, 'color' => $color,
             'quantity' => $quantity, 'bonus' => $bonus ? $quantity : 0.0,
             'unit' => (string) $sizes->get($line->size_id), 'gross' => $gross, 'cost_total' => $cost];

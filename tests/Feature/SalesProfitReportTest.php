@@ -15,7 +15,12 @@ class SalesProfitReportTest extends TestCase
         parent::setUp();
         config(['database.connections.profit_report_test' => ['driver' => 'sqlite', 'database' => ':memory:', 'prefix' => '']]);
         DB::setDefaultConnection('profit_report_test');
-        $this->table('products', ['product_code', 'nameAr', 'nameEng']);
+        $this->table('products', ['product_code', 'nameAr', 'nameEng'], ['category_id', 'store_section_id']);
+        $this->table('categories', ['nameAr']);
+        $this->table('store_sections', ['name']);
+        $this->table('bills', ['status', 'workflow_status', 'currency']);
+        $this->table('purchase_receipts', ['received_at'], ['bill_id']);
+        $this->table('purchase_receipt_items', [], ['purchase_receipt_id', 'product_id'], ['accepted_quantity', 'unit_price']);
         $this->table('sizes', ['size']);
         $this->table('size_colors', ['colorAr']);
         $this->table('boxes', ['currency']);
@@ -147,6 +152,133 @@ class SalesProfitReportTest extends TestCase
         $this->assertSame(['قطعة / أصفر', 'قطعة / أحمر'], array_column($this->report()['documents'][0]['lines'], 'product'));
         $this->sale(['sale_kind' => 'adjustment', 'total_cost' => 10, 'inventory_total_cost' => null]);
         $this->assertSame(75.0, $this->report()['summary']['profit']);
+    }
+
+    public function test_product_report_combines_variants_bonus_and_returns_and_keeps_receipts_separate(): void
+    {
+        DB::table('categories')->insert(['id' => 1, 'nameAr' => 'قطع غيار']);
+        DB::table('store_sections')->insert(['id' => 2, 'name' => 'الرف الأول']);
+        DB::table('products')->where('id', 1)->update(['category_id' => 1, 'store_section_id' => 2]);
+        DB::table('products')->insert(['id' => 2, 'product_code' => 'P002', 'nameAr' => 'مشتريات فقط']);
+        DB::table('size_colors')->insert([['id' => 5, 'colorAr' => 'أصفر'], ['id' => 6, 'colorAr' => 'أحمر']]);
+        $sale = $this->sale(['size_color_id' => 5, 'quantity' => 2, 'cost' => 50, 'total_cost' => 90, 'discount' => 10, 'inventory_total_cost' => 60]);
+        $bonus = $this->sale(['parent_id' => $sale, 'quantity' => 1, 'cost' => 0, 'total_cost' => 0, 'is_bonus' => 1, 'inventory_total_cost' => 10]);
+        $this->sale(['size_color_id' => 6, 'quantity' => 1, 'cost' => 80, 'total_cost' => 80, 'inventory_total_cost' => 40]);
+        $return = DB::table('sales_returns')->insertGetId(['instant_sale_id' => $sale, 'status' => 'completed', 'return_type' => 'direct', 'completed_at' => '2026-11-04', 'currency' => 'شيكل', 'total_amount' => 45]);
+        DB::table('sales_return_items')->insert([
+            ['sales_return_id' => $return, 'instant_sale_id' => $sale, 'product_id' => 1, 'quantity' => 1, 'line_total' => 45, 'inventory_total_cost' => 30],
+            ['sales_return_id' => $return, 'instant_sale_id' => $bonus, 'product_id' => 1, 'quantity' => 1, 'line_total' => 0, 'inventory_total_cost' => 10],
+        ]);
+        $this->sale(['product_id' => null, 'total_cost' => 25]);
+        $this->receipt(1, 10, 20);
+        $this->receipt(2, 5, 10);
+        $this->receipt(1, 50, 999, ['status' => 'cancelled']);
+        $this->receipt(1, 50, 999, ['workflow_status' => 'cancelled']);
+        $this->receipt(1, 50, 999, [], '2026-10-31');
+        $this->receipt(1, 50, 999, ['currency' => 'USD']);
+
+        $report = $this->report(['group_by' => 'product']);
+        $data = $report['product_report'];
+        $row = collect($data['rows'])->firstWhere('product_id', 1);
+        $this->assertSame('قطعة', $row['product']);
+        $this->assertSame(2.0, $row['sold_quantity']);
+        $this->assertSame(0.0, $row['bonus_quantity']);
+        $this->assertSame(10.0, $row['purchased_quantity']);
+        $this->assertSame(200.0, $row['purchase_total']);
+        $this->assertSame(70.0, $row['cost_total']);
+        $this->assertSame(125.0, $row['sales_total']);
+        $this->assertSame(55.0, $row['profit']);
+        $this->assertSame(78.57, $row['profit_percent']);
+        $this->assertSame(35.0, $row['unit_cost']);
+        $this->assertSame(62.5, $row['price']);
+        $this->assertSame(150.0, $data['summary']['sales_total']);
+        $this->assertSame(80.0, $data['summary']['profit']);
+        $this->assertSame(114.29, $data['summary']['profit_percent']);
+        $this->assertSame(250.0, $data['summary']['purchase_total']);
+        $this->assertSame($report['summary']['profit'], $data['summary']['profit']);
+        $this->assertSame($report['summary']['sales_total'], $data['summary']['sales_total']);
+        $this->assertSame(0.0, collect($data['rows'])->firstWhere('product_id', 2)['profit']);
+        $this->assertCount(1, $data['charts']['top_products']);
+        $this->assertCount(3, $data['charts']['comparison']);
+        $this->assertSame('قطع غيار', $data['options']['categories'][0]->name);
+    }
+
+    public function test_product_filters_keep_allocated_discount_and_exclude_unassigned_services(): void
+    {
+        DB::table('products')->where('id', 1)->update(['category_id' => 1, 'store_section_id' => 2]);
+        DB::table('products')->insert(['id' => 2, 'nameAr' => 'صنف آخر', 'category_id' => 9, 'store_section_id' => 3]);
+        $sale = $this->sale(['total_cost' => 135, 'discount' => 15, 'inventory_total_cost' => 40]);
+        $this->sale(['parent_id' => $sale, 'product_id' => 2, 'cost' => 50, 'total_cost' => 0, 'inventory_total_cost' => 20]);
+        $this->sale(['product_id' => null, 'total_cost' => 25]);
+        $this->receipt(1, 10, 20);
+        $this->receipt(2, 10, 999);
+        $data = $this->report(['group_by' => 'product', 'category_id' => 1, 'store_section_id' => 2])['product_report'];
+        $this->assertCount(1, $data['rows']);
+        $this->assertSame(90.0, $data['summary']['sales_total']);
+        $this->assertSame(10.0, $data['summary']['discount']);
+        $this->assertSame(50.0, $data['summary']['profit']);
+        $this->assertSame(125.0, $data['summary']['profit_percent']);
+        $this->assertSame(200.0, $data['summary']['purchase_total']);
+        $purchasesOnly = $this->report(['group_by' => 'product', 'source' => 'maintenance', 'category_id' => 1])['product_report'];
+        $this->assertSame(0.0, $purchasesOnly['summary']['sales_total']);
+        $this->assertSame(200.0, $purchasesOnly['summary']['purchase_total']);
+        $empty = $this->report(['group_by' => 'product', 'category_id' => 1, 'store_section_id' => 3])['product_report'];
+        $this->assertSame([], $empty['rows']);
+        $this->assertSame(0.0, $empty['summary']['profit']);
+        $this->assertNull($empty['summary']['profit_percent']);
+    }
+
+    public function test_product_missing_cost_and_zero_quantity_are_not_replaced_with_receipt_prices(): void
+    {
+        $this->sale(['inventory_total_cost' => null]);
+        $this->receipt(1, 2, 1);
+        $data = $this->report(['group_by' => 'product'])['product_report'];
+        $this->assertNull($data['rows'][0]['cost_total']);
+        $this->assertNull($data['summary']['profit']);
+        $this->assertSame([], $data['charts']['top_products']);
+        $this->assertNull($data['charts']['comparison'][0]['profit']);
+        $this->assertSame(1, $data['summary']['missing_cost_count']);
+        DB::table('instant_sales')->update(['inventory_total_cost' => 40]);
+        $return = DB::table('sales_returns')->insertGetId(['status' => 'completed', 'return_type' => 'direct', 'completed_at' => '2026-11-04', 'currency' => 'شيكل', 'total_amount' => 90]);
+        DB::table('sales_return_items')->insert(['sales_return_id' => $return, 'product_id' => 1, 'quantity' => 1, 'line_total' => 90, 'inventory_total_cost' => 40]);
+        $data = $this->report(['group_by' => 'product'])['product_report'];
+        $this->assertSame(0.0, $data['rows'][0]['sold_quantity']);
+        $this->assertNull($data['rows'][0]['unit_cost']);
+        $this->assertNull($data['rows'][0]['price']);
+        $this->assertSame(10.0, $data['summary']['profit']);
+        $this->assertNull($data['summary']['profit_percent']);
+        $withoutReturns = $this->report(['group_by' => 'product', 'include_returns' => false])['product_report'];
+        $this->assertSame(60.0, $withoutReturns['summary']['profit']);
+        $this->assertSame(150.0, $withoutReturns['summary']['profit_percent']);
+        DB::table('boxes')->insert(['id' => 7, 'currency' => 'USD']);
+        $this->sale(['payment_box_id' => 7, 'inventory_total_cost' => 40]);
+        $foreign = $this->report(['group_by' => 'product', 'currency' => 'دولار'])['product_report'];
+        $this->assertNull($foreign['summary']['profit']);
+    }
+
+    public function test_product_charts_reconcile_remainder_and_exclude_incomplete_profits_from_rankings(): void
+    {
+        for ($id = 1; $id <= 7; $id++) {
+            if ($id > 1) {
+                DB::table('products')->insert(['id' => $id, 'nameAr' => 'صنف '.$id]);
+            }
+            $this->sale(['product_id' => $id, 'cost' => $id * 100, 'total_cost' => $id * 100, 'inventory_total_cost' => $id === 1 ? null : $id * 50]);
+        }
+        $data = $this->report(['group_by' => 'product'])['product_report'];
+        $this->assertCount(5, $data['charts']['top_products']);
+        $this->assertCount(6, $data['charts']['comparison']);
+        $other = $data['charts']['comparison'][5];
+        $this->assertSame('بقية الأصناف', $other['product']);
+        $this->assertSame(300.0, $other['sales_total']);
+        $this->assertNull($other['profit']);
+        $this->assertSame($data['summary']['sales_total'], array_sum(array_column($data['charts']['comparison'], 'sales_total')));
+    }
+
+    private function receipt(int $product, float $quantity, float $price, array $billFields = [], string $date = '2026-11-05'): void
+    {
+        $bill = DB::table('bills')->insertGetId($billFields + ['currency' => 'ILS', 'status' => 'completed']);
+        $receipt = DB::table('purchase_receipts')->insertGetId(['bill_id' => $bill, 'received_at' => $date, 'created_at' => '2026-10-01']);
+        DB::table('purchase_receipt_items')->insert(['purchase_receipt_id' => $receipt, 'product_id' => $product, 'accepted_quantity' => $quantity, 'unit_price' => $price]);
     }
 
     private function table(string $name, array $strings, array $ids = [], array $numbers = []): void
