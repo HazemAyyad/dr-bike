@@ -673,6 +673,7 @@ class ProductStockService
             $payload['reversal_of_id'] = $reversalOfId;
         }
 
+        app(InventoryLocationService::class)->mirrorMovement($productId, $sizeColorId, $quantity, $stockBefore, $stockAfter, $type);
         ProductStockMovement::create($payload);
     }
 

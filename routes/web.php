@@ -25,6 +25,8 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
+require __DIR__.'/inventory-web.php';
+
 /*
 |--------------------------------------------------------------------------
 | Web Routes

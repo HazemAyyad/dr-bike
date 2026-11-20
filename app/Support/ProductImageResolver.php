@@ -70,6 +70,10 @@ class ProductImageResolver
             return 'no image';
         }
 
+        if (self::isValidUrl($product->getAttribute('inventory_web_image'))) {
+            return ApiImageUrl::normalize($product->getAttribute('inventory_web_image'));
+        }
+
         foreach ([$product->viewImages, $product->normalImages, $product->image3d] as $images) {
             foreach ($images as $img) {
                 $url = self::urlFromRecord($img);

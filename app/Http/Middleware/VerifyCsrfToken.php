@@ -2,9 +2,14 @@
 
 namespace App\Http\Middleware;
 
-use Illuminate\Foundation\Http\Middleware\PreventRequestForgery as Middleware;
+// Laravel 13 renamed this middleware; retain the same CSRF protection on local Laravel 10 installs.
+if (! class_exists(__NAMESPACE__.'\\InventoryCompatibleCsrf', false)) {
+    class_alias(class_exists(\Illuminate\Foundation\Http\Middleware\PreventRequestForgery::class)
+        ? \Illuminate\Foundation\Http\Middleware\PreventRequestForgery::class
+        : \Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class, __NAMESPACE__.'\\InventoryCompatibleCsrf');
+}
 
-class VerifyCsrfToken extends Middleware
+class VerifyCsrfToken extends InventoryCompatibleCsrf
 {
     /**
      * The URIs that should be excluded from CSRF verification.

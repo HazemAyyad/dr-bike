@@ -36,6 +36,7 @@ return [
     */
 
     'guards' => [
+        'inventory_web' => ['driver' => 'session', 'provider' => 'users'],
         'web' => [
             'driver' => 'session',
             'provider' => 'users',
