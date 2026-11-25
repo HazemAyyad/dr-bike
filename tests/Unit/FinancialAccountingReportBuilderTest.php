@@ -126,4 +126,60 @@ class FinancialAccountingReportBuilderTest extends TestCase
         $this->assertSame(0.0, $opening['summary']['period_total']);
         $this->assertSame(70.0, $opening['summary']['closing_balance']);
     }
+
+    public function test_expense_summary_matches_statement_and_preserves_signed_adjustments_and_account_links(): void
+    {
+        $events = [
+            $this->event('old', '2026-08-31', 900),
+            $this->event('first', '2026-09-01', 150, extra: ['account_code' => '6000']),
+            $this->event('second', '2026-09-02', 50),
+            $this->event('reverse', '2026-09-03', 0, 40, ['account_code' => '6100']),
+            $this->event('refund', '2026-09-03', 0, 60, ['category_key' => 'rent', 'category_name' => 'إيجار']),
+            $this->event('foreign', '2026-09-04', 9999, extra: ['currency' => 'دولار']),
+            $this->event('cost', '2026-09-04', 9999, extra: ['section' => 'cost']),
+            $this->event('future', '2026-10-01', 9999),
+        ];
+        $builder = new FinancialAccountingReportBuilder;
+        $filters = $this->filters(['include_opening' => true]);
+        $report = $builder->expenseSummary($events, $filters);
+        $this->assertSame(100.0, $report['summary']['period_total']);
+        $this->assertSame(0.0, $report['summary']['opening_balance']);
+        $this->assertSame(4, $report['summary']['movement_count']);
+        $this->assertSame(2, $report['summary']['category_count']);
+        $this->assertSame(160.0, $report['rows'][0]['balance']);
+        $this->assertSame(160.0, $report['rows'][0]['percent']);
+        $this->assertSame(-60.0, $report['rows'][1]['percent']);
+        $this->assertSame(['6000', '6100'], $report['rows'][0]['account_codes']);
+        $this->assertSame(1, $report['rows'][0]['unlinked_movement_count']);
+        $this->assertCount(1, $report['top_expenses']);
+        $this->assertSame($builder->expenses($events, $filters)['summary']['period_total'], $report['summary']['period_total']);
+        $filtered = $builder->expenseSummary($events, $this->filters(['category_key' => 'rent']));
+        $this->assertSame(-60.0, $filtered['summary']['period_total']);
+        $this->assertNull($filtered['rows'][0]['percent']);
+        $this->assertSame([], $filtered['top_expenses']);
+        $this->assertSame([], $builder->expenseSummary($events, $this->filters(['box_id' => 5]))['rows']);
+    }
+
+    public function test_expense_summary_has_no_percentage_for_zero_or_negative_totals_and_keeps_cancelled_groups(): void
+    {
+        $builder = new FinancialAccountingReportBuilder;
+        foreach ([50, 70] as $credit) {
+            $report = $builder->expenseSummary([
+                $this->event('first', '2026-09-01', 50),
+                $this->event('reversal', '2026-09-02', 0, $credit),
+            ], $this->filters());
+            $this->assertNull($report['rows'][0]['percent']);
+            $this->assertSame(2, $report['rows'][0]['movement_count']);
+            $this->assertSame([], $report['top_expenses']);
+        }
+        $empty = $builder->expenseSummary([], $this->filters());
+        $this->assertSame([], $empty['rows']);
+        $this->assertSame(0, $empty['summary']['category_count']);
+        $events = [];
+        for ($i = 1; $i <= 8; $i++) {
+            $events[] = $this->event('item'.$i, '2026-09-01', $i, extra: ['category_key' => 'item'.$i]);
+        }
+        $top = $builder->expenseSummary($events, $this->filters())['top_expenses'];
+        $this->assertSame([8.0, 7.0, 6.0, 5.0, 4.0], array_column($top, 'balance'));
+    }
 }

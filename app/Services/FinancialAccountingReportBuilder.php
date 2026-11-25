@@ -81,6 +81,49 @@ class FinancialAccountingReportBuilder
         ]];
     }
 
+    public function expenseSummary(array $events, array $filters): array
+    {
+        // Reuse the statement's scope and reversal rules; opening is never a period expense.
+        $statement = $this->expenses($events, array_merge($filters, ['include_opening' => false]));
+        $groups = [];
+        foreach ($statement['rows'] as $event) {
+            $key = $event['category_key'];
+            $groups[$key] ??= [
+                'key' => $key, 'section' => 'expense', 'label' => $event['category_name'],
+                'movement_count' => 0, 'debit' => 0.0, 'credit' => 0.0,
+                'account_codes' => [], 'unlinked_movement_count' => 0,
+            ];
+            $groups[$key]['movement_count']++;
+            $groups[$key]['debit'] += $event['debit'];
+            $groups[$key]['credit'] += $event['credit'];
+            $code = $event['account_code'] ?? null;
+            if ($code !== null && $code !== '') {
+                $groups[$key]['account_codes'][] = (string) $code;
+            } else {
+                $groups[$key]['unlinked_movement_count']++;
+            }
+        }
+        $total = $statement['summary']['period_total'];
+        $rows = [];
+        foreach ($groups as $group) {
+            $group['balance'] = round($group['debit'] - $group['credit'], 2);
+            $group['debit'] = round($group['debit'], 2);
+            $group['credit'] = round($group['credit'], 2);
+            $group['percent'] = $total > 0 ? round($group['balance'] / $total * 100, 2) : null;
+            $group['account_codes'] = array_values(array_unique($group['account_codes']));
+            sort($group['account_codes'], SORT_STRING);
+            $rows[] = $group;
+        }
+        usort($rows, fn ($a, $b) => ($b['balance'] <=> $a['balance']) ?: strcmp($a['label'], $b['label']));
+
+        return [
+            'rows' => $rows,
+            'summary' => array_merge($statement['summary'], ['category_count' => count($rows)]),
+            'top_expenses' => array_slice(array_values(array_filter($rows, fn ($row) => $row['balance'] > 0)), 0, 5),
+            'unavailable_fields' => ['مراكز التكلفة', 'تفصيل طرق الدفع', 'الميزانية المعتمدة ونسبة الصرف منها'],
+        ];
+    }
+
     public function income(array $events, array $filters): array
     {
         $groups = [];

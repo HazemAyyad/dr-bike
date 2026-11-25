@@ -47,7 +47,11 @@ class FinancialAccountingReportService
         $options = collect($events)->where('section', 'expense')->where('currency', $filters['currency']);
         $categories = $options->unique('category_key')->map(fn ($r) => ['key' => $r['category_key'], 'name' => $r['category_name']])->sortBy('name')->values();
         $boxOptions = $options->filter(fn ($r) => ! empty($r['box_id']))->unique('box_id')->map(fn ($r) => ['key' => (string) $r['box_id'], 'name' => $r['box_name']])->sortBy('name')->values();
-        $payload = $type === 'expenses' ? $this->builder->expenses($events, $filters) : $this->builder->income($events, $filters);
+        $payload = match ($type) {
+            'expenses' => $this->builder->expenses($events, $filters),
+            'expenses-summary' => $this->builder->expenseSummary($events, $filters),
+            default => $this->builder->income($events, $filters),
+        };
         $notes = [
             'تُقرأ القيود المحاسبية المعتمدة مع قيود عكسها حسب تاريخ الحركة. لا تُضاف نسخة المصروف الأصلية إذا كان مرحّلًا للدفتر.',
             'يشمل الكشف المصاريف والرواتب ومصاريف المشاريع والإهلاك والقيود اليدوية؛ تكلفة البضاعة المباعة تظهر مستقلة في قائمة الدخل.',
@@ -65,9 +69,19 @@ class FinancialAccountingReportService
             $payload['statement_rows'] = $details['rows'];
             $notes = array_merge($notes, $details['notes']);
         }
+        if ($type === 'expenses-summary') {
+            $notes[] = 'التجميع حسب اسم المصروف المسجل، وليس تصنيفًا موحدًا؛ قد تظهر الأسماء المختلفة كبنود مستقلة. رقم الحساب هو حساب الترحيل الفعلي وقد يكون حساب مصاريف عامًا مشتركًا.';
+            $notes[] = 'عدد الحركات هو عدد أسطر المصروف في الكشف، بما فيها قيود العكس، وليس عدد سندات الدفع. الصافي = المدين - الدائن، ولا يمثل المدفوعات النقدية وحدها.';
+            $notes[] = 'النسبة = صافي البند ÷ صافي مصروف الفترة. قد تكون سالبة أو تتجاوز 100% بسبب التسويات؛ لا تحسب عندما يكون صافي الفترة صفرًا أو سالبًا. أعلى المصروفات تعرض أكبر خمسة بنود ذات صافي موجب.';
+            $notes[] = 'غير متوفر حاليًا: مراكز التكلفة، تفصيل طرق الدفع، والميزانية المعتمدة ونسبة الصرف منها. لا يمكن استنتاجها من اسم الصندوق.';
+        }
 
         return array_merge($payload, [
-            'title' => $type === 'expenses' ? 'كشف حركات المصاريف' : 'قائمة الدخل المفصّلة',
+            'title' => match ($type) {
+                'expenses' => 'كشف حركات المصاريف',
+                'expenses-summary' => 'تقرير المصروفات التجميعي',
+                default => 'قائمة الدخل المفصّلة',
+            },
             'type' => $type, 'filters' => $filters, 'currency' => $filters['currency'],
             'categories' => $categories, 'boxes' => $boxOptions, 'notes' => $notes,
             'quality' => ['ledger_available' => $hasLedger, 'cost_complete' => ($payload['summary']['missing_cost_count'] ?? 0) === 0],
@@ -107,6 +121,7 @@ class FinancialAccountingReportService
                     'notes' => $expense?->notes ?? '', 'box_id' => $boxId,
                     'box_name' => $boxId ? ($boxes->get($boxId)?->name ?? 'صندوق #'.$boxId) : 'غير موزع على صندوق',
                     'source_type' => $entry->source_type ?: 'manual', 'source_id' => $entry->source_id,
+                    'account_code' => $line->account->code,
                     'is_sales_revenue' => $section === 'revenue' && ($entry->source_type === 'profit_sale'
                         || $this->builder->accountHasSystemKey((int) $line->account_id, 'sales_revenue', $accounts)),
                 ]);

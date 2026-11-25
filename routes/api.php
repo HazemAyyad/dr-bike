@@ -1463,7 +1463,7 @@ Route::group(['middleware'=>['auth:sanctum','admin','refresh.token.expiry']] , f
     Route::get('/admin/accounting-reports/account-statement/people', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'accountStatementPeople']);
     Route::get('/admin/accounting-reports/account-statement', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'accountStatement']);
     Route::get('/admin/accounting-reports/sales-purchases-expenses', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'salesPurchasesExpenses']);
-    Route::get('/admin/accounting-reports/{type}', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'report'])->whereIn('type', ['expenses', 'income']);
+    Route::get('/admin/accounting-reports/{type}', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'report'])->whereIn('type', ['expenses', 'expenses-summary', 'income']);
     Route::get('/admin/accounting-reports/movement/{kind}/{id}', [\App\Http\Controllers\API\FinancialAccountingReportController::class, 'detail'])->whereIn('kind', ['journal', 'expense', 'project', 'depreciation'])->whereNumber('id');
     Route::get('/get/all/report/information' , [Reports::class,'mainData']);
     Route::post('/get/reprot/by/type' , [Reports::class,'getReport']);
