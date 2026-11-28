@@ -393,7 +393,7 @@ class SalesOrderPurgeService
                 $this->restoreRows('employee_activity_logs', $this->tablePayloadRows($tables, 'employee_activity_logs'));
                 $this->restoreRows('box_logs', $this->tablePayloadRows($tables, 'box_logs'));
 
-                $this->restoreCashEffects($payload['cash_effects'] ?? []);
+                $this->restoreCashEffects($payload['cash_effects'] ?? [], (int) $backup->id, (int) $user->id);
                 $this->restoreStockEffects($payload['stock_effects'] ?? [], (int) $user->id, (int) $backup->id);
                 $this->recalculateBackupDebtPeople($this->tablePayloadRows($tables, 'debt_transactions'));
 
@@ -751,6 +751,10 @@ class SalesOrderPurgeService
                 $box = Box::query()->lockForUpdate()->find($boxId);
                 if ($box) {
                     $box->update(['total' => round((float) $box->total - $netCash, 2)]);
+                    app(BoxMovementNotificationService::class)->balanceChanged(
+                        $box, -$netCash, 'عكس الأثر النقدي لحذف الطلبية '.($order->serial_number ?: '#'.$order->id),
+                        'sales_order', (int) $order->id,
+                    );
                 }
             }
         }
@@ -1082,7 +1086,7 @@ class SalesOrderPurgeService
         }
     }
 
-    private function restoreCashEffects(mixed $effects): void
+    private function restoreCashEffects(mixed $effects, int $backupId, int $actorId): void
     {
         if (! is_array($effects)) {
             return;
@@ -1101,6 +1105,10 @@ class SalesOrderPurgeService
             $box->update([
                 'total' => round((float) $box->total + (float) ($effect['amount'] ?? 0), 2),
             ]);
+            app(BoxMovementNotificationService::class)->balanceChanged(
+                $box, (float) ($effect['amount'] ?? 0), 'استعادة الأثر النقدي للطلبيات من النسخة #'.$backupId,
+                'sales_order_deletion_backup', $backupId, $actorId,
+            );
         }
     }
 

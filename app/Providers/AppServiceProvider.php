@@ -34,6 +34,7 @@ use App\Models\SubCategory;
 use App\Models\SubCategoryProduct;
 use App\Models\ViewImageProduct;
 use App\Observers\AccountingProjectionObserver;
+use App\Observers\BoxMovementNotificationObserver;
 use App\Observers\MetaCatalogHierarchyObserver;
 use App\Observers\ProductImageMetaCatalogObserver;
 use App\Observers\ProductMetaCatalogObserver;
@@ -60,6 +61,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        BoxLog::observe(BoxMovementNotificationObserver::class);
         Product::observe(ProductMetaCatalogObserver::class);
         SizeColor::observe(SizeColorMetaCatalogObserver::class);
         NormalImageProduct::observe(ProductImageMetaCatalogObserver::class);

@@ -77,6 +77,14 @@ class NotificationCatalogTest extends TestCase
         $this->assertArrayHasKey(SalesOrderNotificationService::TYPE_SHIPLY_STATUS, $types);
     }
 
+    public function test_main_box_movements_are_available_in_admin_notification_settings(): void
+    {
+        $definition = NotificationCatalog::types()[AdminNotificationService::TYPE_MAIN_BOX_MOVEMENT];
+
+        $this->assertSame('boxes', $definition['category']);
+        $this->assertSame('high', $definition['priority']);
+    }
+
     public function test_store_customer_push_types_are_available_in_the_catalog(): void
     {
         $types = NotificationCatalog::types();

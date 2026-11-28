@@ -663,6 +663,11 @@ private function handleBatchImages(Request $request, array $row, int $index): ar
                         $box = $boxCheck->box;
                         $box->total -= $incomingCheck->total;
                         $box->save();
+                        app(\App\Services\BoxMovementNotificationService::class)->balanceChanged(
+                            $box, -(float) $incomingCheck->total,
+                            'عكس قبض بعد حذف الشيك الوارد رقم '.($incomingCheck->check_id ?: $incomingCheck->id),
+                            'incoming_check', (int) $incomingCheck->id, $request->user()?->id,
+                        );
                         $boxCheck->delete();
                             Logs::createLog(
                                     'سحب رصيد صندوق بعد حذف الشيك',

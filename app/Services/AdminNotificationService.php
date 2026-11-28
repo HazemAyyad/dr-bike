@@ -48,6 +48,8 @@ class AdminNotificationService
 
     public const TYPE_CHECK_RETURNED = 'check_returned';
 
+    public const TYPE_MAIN_BOX_MOVEMENT = 'main_box_movement';
+
     public const TYPE_SALES_DAILY_CLOSING_REQUEST = 'sales_daily_closing_request';
 
     public const TYPE_SALES_CANCELLATION_REQUEST = 'sales_cancellation_request';

@@ -26,12 +26,22 @@ class OutgoingCheckPurgeService
                 ->whereIn('outgoing_check_id', $checkIds)->lockForUpdate()->get();
 
             foreach ($settlements->whereNotNull('box_id')->groupBy('box_id') as $boxId => $rows) {
-                Box::query()->lockForUpdate()->findOrFail($boxId)
-                    ->increment('total', round((float) $rows->sum('amount'), 4));
+                $amount = round((float) $rows->sum('amount'), 4);
+                $box = Box::query()->lockForUpdate()->findOrFail($boxId);
+                $box->increment('total', $amount);
+                app(BoxMovementNotificationService::class)->balanceChanged(
+                    $box->fresh(), $amount, 'إعادة مبالغ تسديد بعد حذف الشيك الصادر رقم '.($root->check_id ?: $root->id),
+                    'outgoing_check', (int) $root->id,
+                );
             }
             foreach ($checks->where('status', 'cashed_from_box')->whereNotNull('box_id')->groupBy('box_id') as $boxId => $rows) {
-                Box::query()->lockForUpdate()->findOrFail($boxId)
-                    ->increment('total', round((float) $rows->sum('total'), 4));
+                $amount = round((float) $rows->sum('total'), 4);
+                $box = Box::query()->lockForUpdate()->findOrFail($boxId);
+                $box->increment('total', $amount);
+                app(BoxMovementNotificationService::class)->balanceChanged(
+                    $box->fresh(), $amount, 'عكس صرف بعد حذف الشيك الصادر رقم '.($root->check_id ?: $root->id),
+                    'outgoing_check', (int) $root->id,
+                );
             }
 
             $settlementIds = $settlements->pluck('id')->map(fn ($id) => (int) $id);

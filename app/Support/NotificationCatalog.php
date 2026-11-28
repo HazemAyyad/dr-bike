@@ -17,6 +17,7 @@ final class NotificationCatalog
             'check_due_reminder' => self::item('تذكير شيك مستحق', 'checks', 'high', 'urgent'),
             'check_cashed' => self::item('صرف شيك', 'checks', 'normal', 'default'),
             'check_returned' => self::item('إرجاع شيك', 'checks', 'critical', 'urgent'),
+            'main_box_movement' => self::item('حركة على الصناديق الرئيسية', 'boxes', 'high', 'default'),
             'sales_daily_closing_request' => self::item('طلب إغلاق مبيعات', 'sales', 'high', 'default'),
             'sales_cancellation_request' => self::item('طلب إلغاء مبيعات', 'sales', 'high', 'default'),
             'sales_daily_reopen_request' => self::item('طلب إعادة فتح المبيعات', 'sales', 'high', 'default'),
