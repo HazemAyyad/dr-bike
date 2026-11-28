@@ -21,6 +21,7 @@ class EmployeeTaskTemplate extends Model
         'is_forced_to_upload_img',
         'proof_media_type',
         'requires_admin_review',
+        'is_paused',
         'not_shown_for_employee',
         'admin_img',
         'audio',
@@ -33,6 +34,7 @@ class EmployeeTaskTemplate extends Model
     ];
 
     protected $casts = [
+        'is_paused' => 'boolean',
         'display_number' => 'integer',
         'admin_img' => 'array',
         'recurrence_config' => 'array',

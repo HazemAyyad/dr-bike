@@ -21,6 +21,7 @@ class EmployeeTask extends Model
         'points',
         'priority',
         'rejection_notes',
+        'is_paused',
         'not_shown_for_employee',
         'employee_id',
         'completed_by_employee_id',
@@ -47,6 +48,7 @@ class EmployeeTask extends Model
     ];
 
     protected $casts = [
+        'is_paused' => 'boolean',
         'display_number' => 'integer',
         'task_recurrence_time'=>'array',
         'employee_img'=>'array',

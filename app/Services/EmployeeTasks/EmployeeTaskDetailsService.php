@@ -111,6 +111,7 @@ class EmployeeTaskDetailsService
             'requires_admin_review' => (bool) ($occurrence->requires_admin_review ?? true),
             'status' => EmployeeTaskStatus::normalize($occurrence->status)->value,
             'is_canceled' => (bool) $occurrence->is_canceled,
+            'is_paused' => (bool) $occurrence->is_paused,
             'is_forced_to_upload_img' => (bool) $occurrence->is_forced_to_upload_img,
             'proof_media_type' => $this->proofMediaType(
                 $occurrence->proof_media_type ?? null,

@@ -1,5 +1,6 @@
 <?php
 return [
+    'employee_task_paused' => 'This task is paused. Activate it first.',
     // general 
     'unexpected_error' => 'An unexpected error occurred',
     'validation_failed' => 'Validation failed',

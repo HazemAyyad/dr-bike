@@ -23,7 +23,7 @@ class EmployeeTaskNotificationService
         array $employeeIds,
         ?int $occurrenceId = null
     ): void {
-        if ($task->not_shown_for_employee) {
+        if ($task->is_paused || $task->not_shown_for_employee) {
             return;
         }
 
@@ -81,7 +81,7 @@ class EmployeeTaskNotificationService
 
     public function notifyAssignedOccurrence(EmployeeTaskOccurrence $occurrence): void
     {
-        if ($occurrence->not_shown_for_employee) {
+        if ($occurrence->is_paused || $occurrence->not_shown_for_employee) {
             return;
         }
 

@@ -32,7 +32,7 @@ class EmployeeTaskRecurrenceService
                 ->lockForUpdate()
                 ->find($template->id);
 
-            if (! $lockedTemplate || ! $lockedTemplate->is_active) {
+            if (! $lockedTemplate || ! $lockedTemplate->is_active || $lockedTemplate->is_paused) {
                 return collect();
             }
 
@@ -342,6 +342,7 @@ class EmployeeTaskRecurrenceService
     {
         $query = EmployeeTaskTemplate::query()
             ->where('is_active', true)
+            ->where('is_paused', false)
             ->where('recurrence_type', '!=', 'noRepeat');
 
         if ($employeeId !== null) {

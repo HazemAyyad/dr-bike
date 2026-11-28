@@ -29,6 +29,7 @@ class EmployeeTaskWorkflowService
 
     public function startTask(EmployeeTask $task): EmployeeTask
     {
+        $this->assertNotPaused($task);
         $status = EmployeeTaskStatus::normalize($task->status);
 
         if (! in_array($status, [EmployeeTaskStatus::Pending, EmployeeTaskStatus::Overdue, EmployeeTaskStatus::Ongoing], true)) {
@@ -47,6 +48,7 @@ class EmployeeTaskWorkflowService
 
     public function startOccurrence(EmployeeTaskOccurrence $occurrence): EmployeeTaskOccurrence
     {
+        $this->assertNotPaused($occurrence);
         $status = EmployeeTaskStatus::normalize($occurrence->status);
 
         if (! in_array($status, [EmployeeTaskStatus::Pending, EmployeeTaskStatus::Overdue], true)) {
@@ -65,6 +67,7 @@ class EmployeeTaskWorkflowService
 
     public function submitTaskForReview(EmployeeTask $task, ?string $employeeNotes = null): EmployeeTask
     {
+        $this->assertNotPaused($task);
         $this->assertSubtasksComplete($task);
         $this->assertProofIfRequired($task);
 
@@ -99,6 +102,7 @@ class EmployeeTaskWorkflowService
 
     public function submitOccurrenceForReview(EmployeeTaskOccurrence $occurrence, ?string $employeeNotes = null): EmployeeTaskOccurrence
     {
+        $this->assertNotPaused($occurrence);
         $this->assertOccurrenceSubtasksComplete($occurrence);
         $this->assertOccurrenceProofIfRequired($occurrence);
 
@@ -1015,6 +1019,12 @@ class EmployeeTaskWorkflowService
                 'employee_id' => $employee->id,
                 'message' => $e->getMessage(),
             ]);
+        }
+    }
+    private function assertNotPaused(EmployeeTask|EmployeeTaskOccurrence $task): void
+    {
+        if ($task->is_paused) {
+            throw new \RuntimeException(__('messages.employee_task_paused'));
         }
     }
 }

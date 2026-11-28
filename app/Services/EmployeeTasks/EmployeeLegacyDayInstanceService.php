@@ -15,7 +15,7 @@ class EmployeeLegacyDayInstanceService
 {
     public function isRecurringParent(EmployeeTask $task): bool
     {
-        if (! empty($task->parent_id)) {
+        if ($task->is_paused || ! empty($task->parent_id)) {
             return false;
         }
 

@@ -22,6 +22,7 @@ class EmployeeTaskOverdueService
 
         $legacy = EmployeeTask::query()
             ->where('is_canceled', 0)
+            ->where('is_paused', false)
             ->whereIn('status', [
                 EmployeeTaskStatus::Pending->value,
                 EmployeeTaskStatus::InProgress->value,
@@ -40,6 +41,7 @@ class EmployeeTaskOverdueService
         if (\Illuminate\Support\Facades\Schema::hasTable('employee_task_occurrences')) {
             $occurrences = EmployeeTaskOccurrence::query()
                 ->where('is_canceled', 0)
+                ->where('is_paused', false)
                 ->whereIn('status', [
                     EmployeeTaskStatus::Pending->value,
                     EmployeeTaskStatus::InProgress->value,

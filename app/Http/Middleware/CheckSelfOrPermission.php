@@ -35,7 +35,7 @@ class CheckSelfOrPermission
                 return $next($request);
             }
 
-            if (isset($models[$modelName])) {
+            if ($modelName !== 'employeeTask' && isset($models[$modelName])) {
                 $model = $models[$modelName];
                 $instance = $model::find($request->input($filed));
                 if ($instance && $employeeId === (int) $instance->employee_id) {
@@ -90,10 +90,6 @@ class CheckSelfOrPermission
         int $employeeId,
         EmployeeTaskAssigneeService $assigneeService
     ): bool {
-        if ((int) $task->employee_id === $employeeId) {
-            return true;
-        }
-
         return $assigneeService->isAssignee($task, $employeeId);
     }
 }

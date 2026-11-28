@@ -489,6 +489,9 @@ class EmployeeTasks extends Controller
 
         if ($request->filled('occurrence_id')) {
             $occurrence = EmployeeTaskOccurrence::with('employee.user')->findOrFail($request->occurrence_id);
+            if ($occurrence->is_paused) {
+                return response()->json(['status' => 'error', 'message' => __('messages.employee_task_paused')], 200);
+            }
             $ids = $assigneeService->idsForOccurrence($occurrence);
 
             foreach (array_unique($ids) as $employeeId) {
@@ -514,6 +517,9 @@ class EmployeeTasks extends Controller
             }
         } else {
             $task = EmployeeTask::with('employee.user')->findOrFail($request->employee_task_id);
+            if ($task->is_paused) {
+                return response()->json(['status' => 'error', 'message' => __('messages.employee_task_paused')], 200);
+            }
             foreach ($assigneeService->idsForTask($task) as $employeeId) {
                 $employee = \App\Models\EmployeeDetail::with('user')->find($employeeId);
                 if (! $employee || ! \App\Support\EmployeeWorkSchedule::isWithin($employee)) {
@@ -797,6 +803,16 @@ private function getTasks($status)
         ], 200);
     } 
 
+
+    public function pausedTasks()
+    {
+        return response()->json([
+            'status' => 'success',
+            'paused employee tasks' => $this->listService->getPausedItems(
+                fn ($employee) => $this->employeeProfilePhoto($employee)
+            ),
+        ]);
+    }
 
     public function canceledTasks()
     {

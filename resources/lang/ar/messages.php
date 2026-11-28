@@ -1,5 +1,6 @@
 <?php
 return [
+    'employee_task_paused' => 'المهمة موقوفة. يجب تفعيلها أولاً.',
     // general
     'unexpected_error' => 'حدث خطأ غير متوقع',
     'validation_failed' => 'فشل التحقق',

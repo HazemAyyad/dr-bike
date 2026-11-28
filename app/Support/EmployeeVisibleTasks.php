@@ -150,6 +150,10 @@ class EmployeeVisibleTasks
 
     public static function isVisibleToEmployee(EmployeeTask $task): bool
     {
+        if ($task->is_paused) {
+            return false;
+        }
+
         if (! (bool) $task->not_shown_for_employee) {
             return true;
         }
@@ -168,6 +172,10 @@ class EmployeeVisibleTasks
 
     public static function isOccurrenceVisibleToEmployee(EmployeeTaskOccurrence $task): bool
     {
+        if ($task->is_paused) {
+            return false;
+        }
+
         if (! (bool) $task->not_shown_for_employee) {
             return true;
         }

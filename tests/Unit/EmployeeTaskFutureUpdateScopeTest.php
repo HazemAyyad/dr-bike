@@ -42,6 +42,7 @@ class EmployeeTaskFutureUpdateScopeTest extends TestCase
             $table->string('recurrence_type');
             $table->json('recurrence_config')->nullable();
             $table->boolean('is_active')->default(true);
+            $table->boolean('is_paused')->default(false);
             $table->timestamps();
         });
 
@@ -70,6 +71,7 @@ class EmployeeTaskFutureUpdateScopeTest extends TestCase
             $table->string('priority')->default('medium');
             $table->string('status')->default('pending');
             $table->boolean('is_canceled')->default(false);
+            $table->boolean('is_paused')->default(false);
             $table->dateTime('start_time');
             $table->dateTime('end_time');
             $table->date('scheduled_date');

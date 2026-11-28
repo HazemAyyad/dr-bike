@@ -172,6 +172,10 @@ class EmployeeTaskAssigneeService
 
     public function isAssignee(EmployeeTask $task, int $employeeId): bool
     {
+        if ($task->is_paused) {
+            return false;
+        }
+
         if ($this->isDirectAssignee($task, $employeeId)) {
             return true;
         }
@@ -188,7 +192,7 @@ class EmployeeTaskAssigneeService
 
     public function canAccessOccurrence(EmployeeTaskOccurrence $occurrence, int $employeeId): bool
     {
-        return in_array($employeeId, $this->idsForOccurrence($occurrence), true);
+        return ! $occurrence->is_paused && in_array($employeeId, $this->idsForOccurrence($occurrence), true);
     }
 
     /** @return array<int> */

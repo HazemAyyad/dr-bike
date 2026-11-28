@@ -41,6 +41,7 @@ class EmployeeTaskReminderService
             $occurrences = EmployeeTaskOccurrence::query()
                 ->with(['template', 'employee.user'])
                 ->where('is_canceled', 0)
+                ->where('is_paused', false)
                 ->whereIn('status', $this->activeStatuses())
                 ->whereNotNull('start_time')
                 ->get();
@@ -58,6 +59,7 @@ class EmployeeTaskReminderService
         $legacyQuery = EmployeeTask::query()
             ->with('employee.user')
             ->where('is_canceled', 0)
+            ->where('is_paused', false)
             ->whereIn('status', $this->activeStatuses())
             ->whereNotNull('start_time');
 

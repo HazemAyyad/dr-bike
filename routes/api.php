@@ -536,6 +536,9 @@ Route::group(['middleware'=>['auth:sanctum','check.permission:Employee Tasks','r
     Route::get('/employee/completed/tasks' , [EmployeeTasks::class,'completedTasks']);
     Route::get('/employee/ongoing/tasks' , [EmployeeTasks::class,'ongoingTasks']);
     Route::get('/employee/canceled/tasks' , [EmployeeTasks::class,'canceledTasks']);
+    Route::get('/employee/paused/tasks', [EmployeeTasks::class, 'pausedTasks']);
+    Route::post('/employee/task/pause', [\App\Http\Controllers\API\EmployeeTaskPauseController::class, 'update'])
+        ->middleware('check.permission:Edit Employee Task');
     Route::get('/employee/tasks/export/future' , [EmployeeTasks::class,'exportFutureEmployeeTasks']);
     Route::get('/employee/tasks/clear/preview' , [EmployeeTasks::class,'clearEmployeeTasksPreview'])
         ->middleware('admin');

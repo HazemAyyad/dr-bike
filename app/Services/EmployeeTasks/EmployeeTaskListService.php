@@ -33,6 +33,7 @@ class EmployeeTaskListService
             'points' => (int) ($task->points ?? 0),
             'progress' => $progress,
             'is_canceled' => (bool) $task->is_canceled,
+            'is_paused' => (bool) $task->is_paused,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'employee_img' => $task->employee_img
@@ -85,6 +86,7 @@ class EmployeeTaskListService
             'points' => (int) ($task->points ?? 0),
             'progress' => $progress,
             'is_canceled' => (bool) $task->is_canceled,
+            'is_paused' => (bool) $task->is_paused,
             'is_forced_to_upload_img' => (bool) $task->is_forced_to_upload_img,
             'proof_media_type' => TaskProofMediaType::normalize($task->proof_media_type ?? null, (bool) $task->is_forced_to_upload_img),
             'employee_img' => $task->employee_img
@@ -159,6 +161,7 @@ class EmployeeTaskListService
             ])
             ->whereIn('status', $statuses)
             ->where('is_canceled', 0)
+            ->where('is_paused', false)
             ->whereNull('occurrence_id')
             ->where(fn ($q) => $this->applyAdminLegacyVisibilityScope($q))
             ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
@@ -182,6 +185,7 @@ class EmployeeTaskListService
             ])
             ->whereIn('status', $statuses)
             ->where('is_canceled', 0)
+            ->where('is_paused', false)
             ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
@@ -198,6 +202,7 @@ class EmployeeTaskListService
             ])
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
+            ->where('is_paused', false)
             ->whereNull('occurrence_id')
             ->where(fn ($q) => $this->applyAdminLegacyVisibilityScope($q))
             ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
@@ -216,6 +221,7 @@ class EmployeeTaskListService
         ])
             ->where('status', EmployeeTaskStatus::Completed->value)
             ->where('is_canceled', 0)
+            ->where('is_paused', false)
             ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
@@ -227,6 +233,7 @@ class EmployeeTaskListService
     {
         $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
             ->where('is_canceled', 1)
+            ->where('is_paused', false)
             ->whereNull('parent_id')
             ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
@@ -243,11 +250,32 @@ class EmployeeTaskListService
             'subtasks:id,occurrence_id,name',
         ])
             ->where('is_canceled', 1)
+            ->where('is_paused', false)
             ->where(fn ($q) => $this->excludeSuspendedEmployees($q))
             ->get()
             ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
 
         return $legacy->merge($occurrences)->values();
+    }
+
+    public function getPausedItems(callable $photoResolver): Collection
+    {
+        $legacy = EmployeeTask::with(['employee.user', 'subTasks:id,employee_task_id,name'])
+            ->where('is_paused', true)
+            ->whereNull('parent_id')
+            ->get();
+        $templateIds = $legacy->pluck('template_id')->filter();
+        $legacyIds = $legacy->pluck('id');
+        $items = $legacy->map(fn ($task) => $this->formatLegacyTask($task, $photoResolver));
+        $occurrences = EmployeeTaskOccurrence::with(['employee.user', 'template', 'legacyTask', 'subtasks:id,occurrence_id,name'])
+            ->where('is_paused', true)
+            ->orderByDesc('scheduled_date')
+            ->get()
+            ->reject(fn ($task) => $templateIds->contains($task->template_id) || $legacyIds->contains($task->legacy_task_id))
+            ->unique(fn ($task) => $task->template_id ? 'template:'.$task->template_id : 'occurrence:'.$task->id)
+            ->map(fn ($task) => $this->formatOccurrence($task, $photoResolver));
+
+        return $items->merge($occurrences)->values();
     }
 
     private function passesRecurrenceFilter(EmployeeTask $task): bool
